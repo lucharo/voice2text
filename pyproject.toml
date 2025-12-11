@@ -1,0 +1,36 @@
+[project]
+name = "voice2text"
+version = "0.1.0"
+description = "Local voice-to-text with Whisper + LLM cleanup"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx-whisper",
+    "sounddevice",
+    "numpy",
+    "scipy",
+    "pynput",
+    "loguru",
+]
+
+[project.scripts]
+v2t = "voice2text:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.dependencies]
+python = ">=3.11,<3.14"
+ollama = "*"
+# nowplaying-cli not on conda-forge, install via: brew install nowplaying-cli
+
+[tool.pixi.pypi-dependencies]
+voice2text = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+v2t = "v2t"
