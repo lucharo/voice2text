@@ -1,10 +1,11 @@
-# `voice2text`
+# `voice2text` | [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/lucharo)
 
 [![PyPI](https://img.shields.io/pypi/v/voice2text)](https://pypi.org/project/voice2text/)
 [![Downloads](https://static.pepy.tech/badge/voice2text/month)](https://pepy.tech/project/voice2text)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/lucharo)
+[![macOS](https://img.shields.io/badge/macOS-only-blue?logo=apple)](https://github.com/lucharo/voice2text)
+[![Works on my machine](https://img.shields.io/badge/works-on%20my%20machine-brightgreen)](https://github.com/lucharo/voice2text)
 
-Local voice-to-text with Whisper + LLM cleanup. Push-to-talk ⌘, pastes at cursor.
+Local voice-to-text with Whisper + LLM cleanup. Push-to-talk (Right ⌘), pastes at cursor.
 
 Voice-to-text tools like [Whisper Flow](https://www.wispr.ai/), [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper), and [VoiceInk](https://www.voiceink.app/) are becoming increasingly popular. It's a testament to our times that in 2025, ~270 lines of Python with local Whisper and a small `ollama` language model (Qwen 2.5-3B) can deliver a comparable experience on consumer hardware. Such tooling would have been unimaginable 3 years ago. This project is a proof of concept to demonstrate just that.
 
