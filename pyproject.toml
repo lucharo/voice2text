@@ -3,6 +3,7 @@ name = "voice2text"
 version = "0.1.0"
 description = "Local voice-to-text with Whisper + LLM cleanup"
 readme = "README.md"
+license = "GPL-2.0-only"
 requires-python = ">=3.11"
 dependencies = [
     "mlx-whisper",

@@ -11,6 +11,15 @@ Voice-to-text tools like [Whisper Flow](https://www.wispr.ai/), [MacWhisper](htt
 
 > **Note:** Before anyone suggests splitting this into modules and submodules — this is an intentional design choice to keep everything in a single readable file.
 
+> **Note 2:** This is macOS-only by design. We use:
+> - **[mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper)** — optimized for Apple Silicon
+> - **osascript** — for simulating Cmd+V paste via System Events
+> - **pbcopy/pbpaste** — macOS clipboard
+> - **[nowplaying-cli](https://github.com/kirtan-shah/nowplaying-cli)** — macOS media control
+> - **System Preferences** URLs for permissions
+>
+> You're welcome to fork this and make it work on Linux or Windows!
+
 ## Prerequisites
 
 > Skip this if using **`pixi`** — it handles ollama automatically.
