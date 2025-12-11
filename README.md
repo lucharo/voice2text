@@ -1,4 +1,4 @@
-# voice2text
+# `voice2text`
 
 [![PyPI](https://img.shields.io/pypi/v/voice2text)](https://pypi.org/project/voice2text/)
 [![Downloads](https://static.pepy.tech/badge/voice2text/month)](https://pepy.tech/project/voice2text)
@@ -12,7 +12,7 @@ Voice-to-text tools like [Whisper Flow](https://www.wispr.ai/), [MacWhisper](htt
 
 ## Prerequisites
 
-> Skip this if using **Pixi** — it handles ollama automatically.
+> Skip this if using **`pixi`** — it handles ollama automatically.
 
 ```bash
 brew install ollama
@@ -67,7 +67,7 @@ pixi run v2t
 ```bash
 v2t                      # strict mode (restructures sentences)
 v2t --casual             # light cleanup (punctuation only)
-v2t --pause-music        # pause media while recording (macOS only, requires nowplaying-cli)
+v2t --pause-music        # pause media while recording (macOS only, requires nowplaying-cli via brew)
 ```
 
 Hold **Right Command** to record, release to transcribe and paste.
@@ -79,7 +79,9 @@ Hold **Right Command** to record, release to transcribe and paste.
 | "Hey um I'll see you tomorrow at 9 actually no make it 10" | "Hey, I'll see you tomorrow at 10." | "Hey, I'll see you tomorrow at 9, actually no, make it 10." |
 | "So basically I was thinking we could um you know maybe try the other approach" | "I was thinking we could try the other approach." | "So basically, I was thinking we could maybe try the other approach." |
 
+
 **Strict** (default): Removes filler words, restructures for clarity, condenses.
+
 **Casual**: Only adds punctuation and removes "um/uh", keeps your phrasing.
 
 ### `--pause-music` (macOS only)
@@ -90,4 +92,5 @@ Pauses any playing media while recording and resumes after. Requires:
 brew install nowplaying-cli
 ```
 
-Not available via pixi/conda-forge.
+Not available via pixi/conda-forge for now, maybe will publish later!
+
