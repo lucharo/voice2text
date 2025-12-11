@@ -7,9 +7,9 @@ build:
     rm -rf dist/
     uv run hatch build
 
-# Publish to PyPI
+# Publish to PyPI (reads ~/.pypirc)
 publish:
-    uv run hatch publish
+    uvx twine upload dist/*
 
 # Build and publish
 release: build publish
