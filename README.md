@@ -1,4 +1,4 @@
-# Voice2Text
+# voice2text
 
 Local voice-to-text with Whisper + LLM cleanup. Push-to-talk, pastes at cursor.
 

@@ -219,7 +219,7 @@ class VoiceToText:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Voice-to-text with push-to-talk")
+    parser = argparse.ArgumentParser(description="voice2text: push-to-talk transcription")
     parser.add_argument(
         "--pause-music",
         action="store_true",
