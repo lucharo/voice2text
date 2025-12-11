@@ -19,7 +19,6 @@ import sounddevice as sd
 import mlx_whisper
 from scipy.io import wavfile
 from pynput import keyboard
-from pynput.keyboard import Controller, Key
 from loguru import logger
 
 # Config

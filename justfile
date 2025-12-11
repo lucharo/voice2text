@@ -1,11 +1,15 @@
+# Lint with ruff
+lint:
+    uv run ruff check --fix voice2text.py
+
 # Build the package
 build:
     rm -rf dist/
-    uvx hatch build
+    uv run hatch build
 
-# Publish to PyPI (requires HATCH_INDEX_USER and HATCH_INDEX_AUTH env vars, or will prompt)
+# Publish to PyPI
 publish:
-    uvx hatch publish
+    uv run hatch publish
 
 # Build and publish
 release: build publish

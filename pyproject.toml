@@ -16,6 +16,9 @@ dependencies = [
 [project.scripts]
 v2t = "voice2text:main"
 
+[dependency-groups]
+dev = ["hatch", "ruff"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
