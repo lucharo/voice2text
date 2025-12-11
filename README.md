@@ -1,5 +1,7 @@
 # voice2text
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/lucharo)
+
 Local voice-to-text with Whisper + LLM cleanup. Push-to-talk, pastes at cursor.
 
 > **Note:** Before anyone suggests splitting this into modules and submodules — this is an intentional design choice. I want to demonstrate that in December 2025, you can have a fully local voice-to-text system with automatic cleanup and correction, running almost instantly on consumer hardware, all in ~270 lines of Python.
