@@ -81,6 +81,7 @@ class VoiceToText:
         self.record_start = 0.0
         self.pause_music = pause_music
         self.casual = casual
+        self.was_playing = False
 
     def audio_callback(self, indata, frame_count, time_info, status):
         if self.recording:
@@ -95,7 +96,15 @@ class VoiceToText:
         self.record_start = time.perf_counter()
 
         if self.pause_music:
-            subprocess.run(["nowplaying-cli", "pause"])
+            # Check if something is playing before pausing
+            result = subprocess.run(
+                ["nowplaying-cli", "get", "playbackRate"],
+                capture_output=True,
+                text=True
+            )
+            self.was_playing = result.stdout.strip() == "1"
+            if self.was_playing:
+                subprocess.run(["nowplaying-cli", "pause"])
 
         logger.info("Recording...")
 
@@ -172,7 +181,7 @@ class VoiceToText:
             logger.success("Pasted!")
 
         finally:
-            if self.pause_music:
+            if self.pause_music and self.was_playing:
                 subprocess.run(["nowplaying-cli", "play"])
 
             self.processing = False
