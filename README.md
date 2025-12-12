@@ -34,13 +34,13 @@ ollama pull qwen2.5:3b
 ### uvx (easiest)
 
 ```bash
-uvx voice2text
+uvx --from voice2text v2t
 ```
 
 Or from GitHub:
 
 ```bash
-uvx --from git+https://github.com/lucharo/voice2text voice2text
+uvx --from git+https://github.com/lucharo/voice2text v2t
 ```
 
 ### pip
