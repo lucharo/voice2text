@@ -7,7 +7,7 @@
 
 Local voice-to-text with Whisper + LLM cleanup. Push-to-talk (Right ⌘), pastes at cursor.
 
-Voice-to-text tools like [Whisper Flow](https://www.wispr.ai/), [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper), and [VoiceInk](https://www.voiceink.app/) are becoming increasingly popular. It's a testament to our times that in 2025, ~270 lines of Python with local Whisper and a small `ollama` language model (Qwen 2.5-3B) can deliver a comparable experience on consumer hardware. Such tooling would have been unimaginable 3 years ago. This project is a proof of concept to demonstrate just that.
+Voice-to-text tools like [Wispr Flow](https://wisprflow.ai/), [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper), and [VoiceInk](https://www.voiceink.app/) are becoming increasingly popular. It's a testament to our times that in 2025, ~270 lines of Python with local Whisper and a small `ollama` language model (Qwen 2.5-3B) can deliver a comparable experience on consumer hardware. Such tooling would have been unimaginable 3 years ago. This project is a proof of concept to demonstrate just that.
 
 > **Note:** Before anyone suggests splitting this into modules and submodules — this is an intentional design choice to demonstrate how this whole functionality fits in less than 300 lines of python code.
 
