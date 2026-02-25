@@ -1,7 +1,8 @@
-# `voice2text` | [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/lucharo)
+# `voice2text`
 
 [![PyPI](https://img.shields.io/pypi/v/voice2text)](https://pypi.org/project/voice2text/)
 [![Downloads](https://static.pepy.tech/badge/voice2text/month)](https://pepy.tech/project/voice2text)
+[![Total Downloads](https://static.pepy.tech/badge/voice2text)](https://pepy.tech/project/voice2text)
 [![macOS](https://img.shields.io/badge/macOS-only-blue?logo=apple)](https://github.com/lucharo/voice2text)
 [![Works on my machine](https://img.shields.io/badge/works-on%20my%20machine-brightgreen)](https://github.com/lucharo/voice2text)
 
