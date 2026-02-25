@@ -32,7 +32,9 @@ ollama pull qwen2.5:3b
 
 ## Install
 
-### uvx (easiest)
+### uvx (quick try)
+
+The fastest way to try it out. Note: startup is slower because `uvx` creates a fresh virtual environment each time.
 
 ```bash
 uvx --from voice2text v2t
@@ -42,6 +44,15 @@ Or from GitHub:
 
 ```bash
 uvx --from git+https://github.com/lucharo/voice2text v2t
+```
+
+### uv tool install (recommended for daily use)
+
+Installs `v2t` as a persistent command — no virtual environment setup on each run, so startup is fast.
+
+```bash
+uv tool install voice2text
+v2t
 ```
 
 ### pip
