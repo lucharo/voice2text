@@ -264,12 +264,21 @@ def main():
     check_and_request_permissions()
 
     try:
-        logger.info("Loading Whisper model (first run downloads ~1.6GB)...")
+        logger.info("Loading models...")
+
+        t0 = time.perf_counter()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             silence = np.zeros(SAMPLE_RATE, dtype=np.int16)
             wavfile.write(f.name, SAMPLE_RATE, silence)
             mlx_whisper.transcribe(f.name, path_or_hf_repo=WHISPER_MODEL)
-        logger.success("Model loaded")
+        logger.success(f"Whisper model ready ({time.perf_counter()-t0:.1f}s)")
+
+        t0 = time.perf_counter()
+        subprocess.run(
+            ["ollama", "run", OLLAMA_MODEL, "hi"],
+            capture_output=True, text=True, timeout=60,
+        )
+        logger.success(f"Ollama model ready ({time.perf_counter()-t0:.1f}s)")
 
         app = VoiceToText(pause_music=args.pause_music, casual=args.casual)
         app.run()
