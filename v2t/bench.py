@@ -102,6 +102,7 @@ def bench_stt(model_specs: list[str], samples, repeat: int) -> dict:
         stt = backends.make_stt(backend, model)
         results[spec] = {"load": time.perf_counter() - t0}
         for name, wav, dur in samples:
+            stt.transcribe(str(wav))  # warm up: MLX compiles per input shape; the app warms up too
             times = []
             for _ in range(repeat):
                 t = time.perf_counter()
