@@ -34,37 +34,35 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 ## Install
 
-Requires **macOS on Apple Silicon** (MLX). Cleanup runs in-process via mlx-lm — nothing else to install, no daemon. Install with the backend you want (quote the brackets — zsh treats them as globs):
+Requires **macOS on Apple Silicon** (MLX). Everything's local and bundled — Parakeet transcription and in-process mlx-lm cleanup ship by default, no daemon, nothing else to pull:
 
 ```bash
-uv tool install 'voice2text[parakeet]'   # recommended — Parakeet STT + in-process Qwen3 cleanup
-uv tool install 'voice2text[whisper]'    # Whisper instead (no Parakeet)
-uv tool install 'voice2text[all]'        # both, switch via config
-v2t setup                                # optional: pick models, detect Ollama, write config
+uv tool install voice2text   # Parakeet STT + in-process Qwen3 cleanup
+v2t setup                    # optional: pick models, detect Ollama, write config
 v2t
 ```
 
-> **Note on extras:** MLX is an explicit extra so the install stays Mac-first and you pick exactly
-> one STT engine; each extra also pulls `mlx-lm` for the default cleanup. A bare `voice2text` (no
-> extra) installs no backend and tells you to add `[parakeet]`.
-> ([PEP 771](https://peps.python.org/pep-0771/) "default extras" would let a bare install imply
-> Parakeet automatically, but it isn't supported by uv/hatchling yet.)
+Prefer Whisper for transcription? Add the extra (quote the brackets — zsh treats them as globs):
+
+```bash
+uv tool install 'voice2text[whisper]'   # adds the Whisper backend; select it in config
+```
 
 <details>
 <summary>Other install methods (uvx, pip, dev, pixi)</summary>
 
 ```bash
 # quick try (fresh venv each run — slower startup)
-uvx --from 'voice2text[parakeet]' v2t
+uvx voice2text
 
 # pip
-pip install 'voice2text[parakeet]' && v2t
+pip install voice2text && v2t
 
 # from source
 git clone https://github.com/lucharo/voice2text.git && cd voice2text
-uv sync --extra parakeet && uv run v2t
+uv sync && uv run v2t
 
-# pixi (installs the parakeet extra)
+# pixi
 pixi run v2t
 ```
 </details>

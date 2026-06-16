@@ -2408,24 +2408,16 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "loguru" },
+    { name = "mlx-lm" },
     { name = "numpy" },
+    { name = "parakeet-mlx" },
     { name = "pynput" },
     { name = "scipy" },
     { name = "sounddevice" },
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "mlx-lm" },
-    { name = "mlx-whisper" },
-    { name = "parakeet-mlx" },
-]
-parakeet = [
-    { name = "mlx-lm" },
-    { name = "parakeet-mlx" },
-]
 whisper = [
-    { name = "mlx-lm" },
     { name = "mlx-whisper" },
 ]
 
@@ -2438,19 +2430,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "loguru" },
-    { name = "mlx-lm", marker = "extra == 'all'" },
-    { name = "mlx-lm", marker = "extra == 'parakeet'" },
-    { name = "mlx-lm", marker = "extra == 'whisper'" },
-    { name = "mlx-whisper", marker = "extra == 'all'" },
+    { name = "mlx-lm" },
     { name = "mlx-whisper", marker = "extra == 'whisper'" },
     { name = "numpy" },
-    { name = "parakeet-mlx", marker = "extra == 'all'" },
-    { name = "parakeet-mlx", marker = "extra == 'parakeet'" },
+    { name = "parakeet-mlx" },
     { name = "pynput" },
     { name = "scipy" },
     { name = "sounddevice" },
 ]
-provides-extras = ["parakeet", "whisper", "all"]
+provides-extras = ["whisper"]
 
 [package.metadata.requires-dev]
 dev = [

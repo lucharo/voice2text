@@ -11,15 +11,15 @@ dependencies = [
     "scipy",
     "pynput",
     "loguru",
+    "parakeet-mlx",
+    "mlx-lm",
 ]
 
-# MLX backends are extras (Apple Silicon only). Parakeet is the recommended
-# default; install it explicitly. Picking `whisper` keeps Parakeet out. Each
-# extra also pulls mlx-lm for the default in-process cleanup (no Ollama needed).
+# Mac-first: Parakeet (STT) + mlx-lm (cleanup) ship in core, so a bare
+# `uv tool install voice2text` just works on Apple Silicon. Whisper is an
+# optional alternative STT backend.
 [project.optional-dependencies]
-parakeet = ["parakeet-mlx", "mlx-lm"]
-whisper = ["mlx-whisper", "mlx-lm"]
-all = ["parakeet-mlx", "mlx-whisper", "mlx-lm"]
+whisper = ["mlx-whisper"]
 
 [project.scripts]
 v2t = "v2t.cli:main"
@@ -44,7 +44,7 @@ ollama = "*"
 # nowplaying-cli not on conda-forge, install via: brew install nowplaying-cli
 
 [tool.pixi.pypi-dependencies]
-voice2text = { path = ".", editable = true, extras = ["parakeet"] }
+voice2text = { path = ".", editable = true }
 
 [tool.pixi.tasks]
 v2t = "v2t"

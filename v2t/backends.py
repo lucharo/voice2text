@@ -24,7 +24,7 @@ class ParakeetSTT:
         try:
             from parakeet_mlx import from_pretrained
         except ImportError as e:
-            raise SystemExit("parakeet backend needs: uv tool install 'voice2text[parakeet]' (Apple Silicon).") from e
+            raise SystemExit("parakeet-mlx missing — reinstall voice2text (Apple Silicon only).") from e
         self.model = from_pretrained(model or self.default_model)
 
     def transcribe(self, wav_path: str) -> str:
@@ -83,7 +83,7 @@ class MLXCleanup:
         try:
             from mlx_lm import load, stream_generate
         except ImportError as e:
-            raise SystemExit("mlx cleanup needs mlx-lm — uv tool install 'voice2text[parakeet]' bundles it.") from e
+            raise SystemExit("mlx-lm missing — reinstall voice2text (Apple Silicon only).") from e
         self._stream = stream_generate
         self.model_id = model or self.default_model
         self.model, self.tokenizer = load(self.model_id)
