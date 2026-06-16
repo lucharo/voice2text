@@ -193,13 +193,11 @@ class VoiceToText:
             self.stop_recording()
 
     def warmup(self):
-        from scipy.io import wavfile as _wav
-
         logger.info("Loading models...")
         t0 = time.perf_counter()
         self.stt = backends.make_stt(self.cfg.backend, self.cfg.stt_model)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            _wav.write(f.name, self.cfg.sample_rate, np.zeros(self.cfg.sample_rate, dtype=np.int16))
+            wavfile.write(f.name, self.cfg.sample_rate, np.zeros(self.cfg.sample_rate, dtype=np.int16))
             self.stt.transcribe(f.name)
         logger.success(f"{self.cfg.backend} ready ({time.perf_counter()-t0:.1f}s)")
 
