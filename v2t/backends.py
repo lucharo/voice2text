@@ -1,14 +1,13 @@
-"""Speech-to-text backends (MLX) and text cleanup (Ollama).
+"""Speech-to-text backends and text-cleanup engines, both pluggable.
 
-STT is pluggable so models are easy to switch; Parakeet is the default because
-it's the fastest thing on Apple Silicon right now. Heavy MLX imports are lazy so
-`v2t config`/`v2t bench --cleanup` work without a GPU model loaded.
+STT: parakeet (default) or whisper, both MLX. Cleanup: mlx (in-process via
+mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
+`v2t config`/`v2t bench` work without a model loaded.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import time
 import urllib.error
@@ -70,58 +69,96 @@ PROMPTS = {
     ),
 }
 
-_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
 
 
-def cleanup(text: str, model: str, mode: str = "strict", url: str = "http://localhost:11434", timeout: int = 60):
-    """Clean a transcription with a local Ollama model.
+class MLXCleanup:
+    """In-process cleanup via mlx-lm — no daemon, no HTTP. The default. Pick a
+    non-thinking instruct model (the default Qwen3-Instruct-2507 doesn't think)."""
 
-    Returns (clean_text, ttft_seconds, total_seconds). Streams over HTTP so we can
-    time the first token; if the server isn't up, falls back to `ollama run`
-    (which starts it) and reports ttft=None. <think> blocks are stripped so a
-    thinking model can't leak reasoning into the output.
-    """
-    prompt = PROMPTS[mode].format(text=text)
-    t0 = time.perf_counter()
-    try:
-        req = urllib.request.Request(
-            f"{url}/api/generate",
-            data=json.dumps({"model": model, "prompt": prompt, "stream": True}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        ttft, parts = None, []
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            for line in r:
-                if not line.strip():
-                    continue
-                chunk = json.loads(line)
-                if (piece := chunk.get("response", "")):
-                    if ttft is None:
-                        ttft = time.perf_counter() - t0
-                    parts.append(piece)
-                if chunk.get("error"):
-                    raise RuntimeError(chunk["error"])
-                if chunk.get("done"):
-                    break
-        return _THINK.sub("", "".join(parts)).strip(), ttft, time.perf_counter() - t0
-    except urllib.error.URLError:
-        # ponytail: server not reachable; the CLI auto-starts it. No streaming, so no TTFT.
-        res = subprocess.run(["ollama", "run", model, prompt], capture_output=True, text=True, timeout=timeout)
-        if res.returncode != 0:
-            raise RuntimeError(res.stderr.strip() or "ollama run failed")
-        return _THINK.sub("", res.stdout).strip(), None, time.perf_counter() - t0
+    default_model = MLX_CLEANUP_DEFAULT
+
+    def __init__(self, model: str = "", url: str = ""):
+        try:
+            from mlx_lm import load, stream_generate
+        except ImportError as e:
+            raise SystemExit("mlx cleanup needs mlx-lm — uv tool install 'voice2text[parakeet]' bundles it.") from e
+        self._stream = stream_generate
+        self.model_id = model or self.default_model
+        self.model, self.tokenizer = load(self.model_id)
+
+    def cleanup(self, text: str, mode: str = "strict"):
+        messages = [{"role": "user", "content": PROMPTS[mode].format(text=text)}]
+        prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        t0, ttft, parts = time.perf_counter(), None, []
+        for resp in self._stream(self.model, self.tokenizer, prompt, max_tokens=400):
+            if ttft is None:
+                ttft = time.perf_counter() - t0
+            parts.append(resp.text)
+        return "".join(parts).strip(), ttft, time.perf_counter() - t0
+
+
+class OllamaCleanup:
+    """Cleanup via a running Ollama server — for people who already use it."""
+
+    default_model = OLLAMA_CLEANUP_DEFAULT
+
+    def __init__(self, model: str = "", url: str = "http://localhost:11434"):
+        self.model_id = model or self.default_model
+        self.url = url
+
+    def cleanup(self, text: str, mode: str = "strict", timeout: int = 60):
+        prompt = PROMPTS[mode].format(text=text)
+        t0 = time.perf_counter()
+        try:
+            req = urllib.request.Request(
+                f"{self.url}/api/generate",
+                data=json.dumps({"model": self.model_id, "prompt": prompt, "stream": True}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            ttft, parts = None, []
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                for line in r:
+                    if not line.strip():
+                        continue
+                    chunk = json.loads(line)
+                    if (piece := chunk.get("response", "")):
+                        if ttft is None:
+                            ttft = time.perf_counter() - t0
+                        parts.append(piece)
+                    if chunk.get("error"):
+                        raise RuntimeError(chunk["error"])
+                    if chunk.get("done"):
+                        break
+            return "".join(parts).strip(), ttft, time.perf_counter() - t0
+        except urllib.error.URLError:
+            # ponytail: server not reachable; the CLI auto-starts it. No streaming, so no TTFT.
+            res = subprocess.run(["ollama", "run", self.model_id, prompt], capture_output=True, text=True, timeout=timeout)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip() or "ollama run failed")
+            return res.stdout.strip(), None, time.perf_counter() - t0
+
+
+CLEANUP = {"mlx": MLXCleanup, "ollama": OllamaCleanup}
+
+
+def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434"):
+    if engine not in CLEANUP:
+        raise SystemExit(f"unknown cleanup engine {engine!r}; choose: {', '.join(CLEANUP)}")
+    return CLEANUP[engine](model, url)
 
 
 if __name__ == "__main__":
     # ponytail: pure-logic checks only; live model calls are covered by `v2t bench`.
     assert set(STT) == {"parakeet", "whisper"}
-    assert make_stt.__module__  # importable
-    assert _THINK.sub("", "<think>nope</think>Hello.").strip() == "Hello."
+    assert set(CLEANUP) == {"mlx", "ollama"}
     assert "filler" in PROMPTS["strict"] and "Keep the original phrasing" in PROMPTS["casual"]
-    try:
-        make_stt("bogus")
-    except SystemExit:
-        pass
-    else:
-        raise AssertionError("unknown backend must exit")
+    for fn in (make_stt, make_cleanup):
+        try:
+            fn("bogus")
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"{fn.__name__} must exit on unknown name")
     print("backends.py: all checks passed")

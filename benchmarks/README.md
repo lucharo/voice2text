@@ -24,11 +24,14 @@ v2t bench --stt-models \
   parakeet:mlx-community/parakeet-tdt-0.6b-v2 \
   whisper:mlx-community/whisper-large-v3-turbo
 
-v2t bench --cleanup-models qwen3:4b-instruct-2507 qwen3:1.7b qwen2.5:3b
+v2t bench --cleanup-models \
+  mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit \
+  ollama:qwen3:4b-instruct-2507
 ```
 
-Each run writes `results/<date>-<host>.md`. Commit it. Run on each Mac (and the
-Linux box, for the cleanup table) to build the grid.
+Cleanup models are `engine:model` specs (`mlx:…` or `ollama:…`); a model that isn't
+installed is marked `n/a` rather than aborting the run. Each run writes
+`results/<date>-<host>.md`. Commit it. Run on each Mac to build the grid.
 
 ## Default models
 
@@ -37,20 +40,19 @@ Linux box, for the cleanup table) to build the grid.
 | STT (default) | `mlx-community/parakeet-tdt-0.6b-v3` | multilingual (EN/ES/FR/DE…), fastest on Apple Silicon |
 | STT (alt) | `mlx-community/parakeet-tdt-0.6b-v2` | English-only, slightly higher EN accuracy |
 | STT (fallback) | `mlx-community/whisper-large-v3-turbo` | the old default; best for rare languages/accents |
-| cleanup (default) | `qwen3:4b-instruct-2507` | latest small instruct, **non-thinking** |
-| cleanup (alt) | `qwen3:1.7b` | smaller/faster |
-| cleanup (old) | `qwen2.5:3b` | the previous default |
+| cleanup (default) | `mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit` | in-process, non-thinking, no daemon |
+| cleanup (alt) | `mlx:mlx-community/Qwen2.5-3B-Instruct-4bit` | smaller, non-thinking |
+| cleanup (ollama) | `ollama:qwen3:4b-instruct-2507` | if you already run Ollama |
 
-> **Why the `-instruct-2507` Qwen3 and not plain `qwen3`?** The plain tags default
-> to hybrid *thinking* mode and emit `<think>…</think>` blocks, which add latency
-> and pollute the output. The `-instruct` variants don't think. (v2t also strips
-> any stray `<think>` blocks defensively.)
+> **Use a non-thinking model.** Hybrid Qwen3 tags emit `<think>…</think>` blocks that
+> add latency and pollute the output; the `-instruct-2507` and Qwen2.5-Instruct
+> models above don't think.
 
 ## Method
 
 - Models loaded once, then each sample transcribed/cleaned `--repeat` times; the median is reported.
 - STT inputs: short / medium / long clips synthesized with `say` and converted to 16 kHz mono with `afconvert` — no audio files to ship, fully reproducible.
 - Cleanup inputs: three filler-laden raw transcriptions (see `v2t/bench.py`).
-- TTFT comes from streaming the Ollama HTTP API and timing the first token.
+- TTFT comes from streaming generation (mlx-lm or the Ollama HTTP API) and timing the first token.
 
 See `results/` for collected runs.

@@ -26,7 +26,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 - **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste.
 - **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
-- **Local LLM cleanup** via Ollama (`qwen3:4b-instruct-2507`) — fixes punctuation and removes fillers. Strict or casual.
+- **In-process LLM cleanup** via mlx-lm (`Qwen3-4B-Instruct-2507`) — fixes punctuation, removes fillers. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
 - **SwiftBar plugin** — menu-bar toggle, status, and quick links to your config/history.
@@ -34,24 +34,19 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 ## Install
 
-Requires **macOS on Apple Silicon** (MLX) and **[Ollama](https://ollama.com)** for cleanup.
+Requires **macOS on Apple Silicon** (MLX). Cleanup runs in-process via mlx-lm — nothing else to install, no daemon. Install with the backend you want (quote the brackets — zsh treats them as globs):
 
 ```bash
-brew install ollama
-ollama pull qwen3:4b-instruct-2507
-```
-
-Then install v2t with the backend you want (quote the brackets — zsh treats them as globs):
-
-```bash
-uv tool install 'voice2text[parakeet]'   # recommended — Parakeet (default backend)
+uv tool install 'voice2text[parakeet]'   # recommended — Parakeet STT + in-process Qwen3 cleanup
 uv tool install 'voice2text[whisper]'    # Whisper instead (no Parakeet)
 uv tool install 'voice2text[all]'        # both, switch via config
+v2t setup                                # optional: pick models, detect Ollama, write config
 v2t
 ```
 
 > **Note on extras:** MLX is an explicit extra so the install stays Mac-first and you pick exactly
-> one engine. A bare `voice2text` (no extra) installs no backend and tells you to add `[parakeet]`.
+> one STT engine; each extra also pulls `mlx-lm` for the default cleanup. A bare `voice2text` (no
+> extra) installs no backend and tells you to add `[parakeet]`.
 > ([PEP 771](https://peps.python.org/pep-0771/) "default extras" would let a bare install imply
 > Parakeet automatically, but it isn't supported by uv/hatchling yet.)
 
@@ -69,8 +64,7 @@ pip install 'voice2text[parakeet]' && v2t
 git clone https://github.com/lucharo/voice2text.git && cd voice2text
 uv sync --extra parakeet && uv run v2t
 
-# pixi (handles ollama; installs the parakeet extra)
-pixi run ollama pull qwen3:4b-instruct-2507
+# pixi (installs the parakeet extra)
 pixi run v2t
 ```
 </details>
@@ -84,6 +78,7 @@ v2t --no-cleanup         # paste raw transcription, skip the LLM
 v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
 
+v2t setup                # guided config: pick models, detect Ollama
 v2t status               # running / idle (used by the SwiftBar plugin)
 v2t stop                 # stop a running v2t
 v2t config               # show resolved config + paths  (--init writes a template)
@@ -121,7 +116,8 @@ model = ""             # blank = backend default
 
 [cleanup]
 enabled = true
-model = "qwen3:4b-instruct-2507"   # any ollama model; use a non-thinking -instruct one
+engine = "mlx"         # mlx (in-process via mlx-lm) | ollama
+model = ""             # blank = engine default
 mode = "strict"        # strict | casual
 
 [hotkey]
@@ -131,6 +127,23 @@ key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
 pause_music = false
 save_history = true
 ```
+
+### Cleanup engine
+
+Cleanup runs **in-process via [mlx-lm](https://github.com/ml-explore/mlx-lm)** by default
+(`Qwen3-4B-Instruct-2507`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
+
+Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
+detects Ollama, or edit the config):
+
+```toml
+[cleanup]
+engine = "ollama"
+model = "qwen3:4b-instruct-2507"   # then: ollama pull qwen3:4b-instruct-2507
+```
+
+Either way, use a **non-thinking** model — a model that emits `<think>` blocks will paste its
+reasoning. The defaults don't.
 
 ## SwiftBar menu-bar toggle
 
@@ -152,7 +165,7 @@ TTFT/total), one column per model. Run it on each machine to build a grid. See
 | | default | why |
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
-| cleanup | `qwen3:4b-instruct-2507` | latest small instruct, non-thinking |
+| cleanup | `Qwen3-4B-Instruct-2507` (mlx-lm) | latest small instruct, non-thinking, no daemon |
 
 > This is **macOS / Apple Silicon-only** by design (MLX, `osascript` paste, `pbcopy`/`pbpaste`,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

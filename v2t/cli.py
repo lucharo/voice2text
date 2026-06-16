@@ -1,6 +1,7 @@
 """v2t command line.
 
     v2t                 run push-to-talk (default)
+    v2t setup           guided first-run config (pick models, detect Ollama)
     v2t bench           benchmark STT + cleanup models
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          running/idle line for the SwiftBar plugin
@@ -23,7 +24,8 @@ def cmd_run(argv: list[str]) -> int:
     p.add_argument("--config", help="path to a config.toml")
     p.add_argument("--backend", choices=["parakeet", "whisper"], help="override transcription backend")
     p.add_argument("--model", help="override STT model")
-    p.add_argument("--cleanup-model", help="override Ollama cleanup model")
+    p.add_argument("--cleanup-engine", choices=["mlx", "ollama"], help="override cleanup engine")
+    p.add_argument("--cleanup-model", help="override cleanup model")
     p.add_argument("--no-cleanup", action="store_true", help="paste raw transcription, skip LLM cleanup")
     p.add_argument("--casual", action="store_true", help="light cleanup (punctuation + fillers only)")
     p.add_argument("--strict", action="store_true", help="full cleanup (restructures) — the default")
@@ -35,6 +37,7 @@ def cmd_run(argv: list[str]) -> int:
     overrides = {
         "backend": a.backend,
         "stt_model": a.model,
+        "cleanup_engine": a.cleanup_engine,
         "cleanup_model": a.cleanup_model,
         "cleanup_enabled": False if a.no_cleanup else None,
         "mode": "casual" if a.casual else ("strict" if a.strict else None),
@@ -70,6 +73,69 @@ def cmd_config(argv: list[str]) -> int:
         print("\n[effective config]")
         for k, v in asdict(config.load()).items():
             print(f"  {k} = {v!r}")
+    return 0
+
+
+_SETUP_TOML = """\
+# Written by `v2t setup`. Run `v2t config` to see every option, or edit freely.
+
+[transcription]
+backend = "{backend}"
+model = ""
+
+[cleanup]
+enabled = {enabled}
+engine = "{engine}"
+model = ""
+mode = "strict"
+"""
+
+
+def _ask(prompt: str, options: list[tuple[str, str]], default: int = 0) -> str:
+    """Numbered single-choice prompt. options = [(value, label)]; returns the value."""
+    print(prompt)
+    for i, (_v, label) in enumerate(options):
+        print(f"  {i + 1}) {label}{'  (default)' if i == default else ''}")
+    raw = input(f"  choice [{default + 1}]: ").strip()
+    idx = int(raw) - 1 if raw.isdigit() and 1 <= int(raw) <= len(options) else default
+    return options[idx][0]
+
+
+def _yesno(prompt: str, default: bool = True) -> bool:
+    raw = input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+    return default if not raw else raw.startswith("y")
+
+
+def cmd_setup(argv: list[str]) -> int:
+    from shutil import which
+
+    path = config.config_path()
+    print(f"v2t setup → {path}\n")
+    if path.exists() and not _yesno(f"{path} exists. Overwrite?", default=False):
+        print("keeping existing config.")
+        return 0
+
+    backend = _ask("Transcription model:", [
+        ("parakeet", "Parakeet — fast, multilingual (recommended)"),
+        ("whisper", "Whisper — best for rare languages / accents"),
+    ])
+    engine = "mlx"
+    cleanup_enabled = _yesno("\nAdd an LLM cleanup pass (punctuation, fillers)?", default=True)
+    if cleanup_enabled:
+        if which("ollama"):
+            engine = _ask("\nOllama detected. Cleanup engine:", [
+                ("mlx", "mlx-lm — in-process, no daemon (recommended)"),
+                ("ollama", "Ollama — reuse what you already run"),
+            ])
+        else:
+            print("\nNo Ollama found — using in-process mlx-lm for cleanup.")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_SETUP_TOML.format(backend=backend, enabled=str(cleanup_enabled).lower(), engine=engine))
+    print(f"\nwrote {path}")
+    if cleanup_enabled and engine == "ollama":
+        print("next: ollama pull qwen3:4b-instruct-2507")
+    print(f"run:  v2t   (install with: uv tool install 'voice2text[{backend}]')")
     return 0
 
 
@@ -120,7 +186,7 @@ def _which(name: str) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    table = {"bench": cmd_bench, "config": cmd_config, "status": cmd_status, "stop": cmd_stop}
+    table = {"setup": cmd_setup, "bench": cmd_bench, "config": cmd_config, "status": cmd_status, "stop": cmd_stop}
     if argv and argv[0] in table:
         return table[argv[0]](argv[1:])
     return cmd_run(argv[1:] if argv and argv[0] == "run" else argv)

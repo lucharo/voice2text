@@ -24,7 +24,8 @@ class Config:
     backend: str = "parakeet"          # parakeet | whisper
     stt_model: str = ""                # blank = the backend's own default
     cleanup_enabled: bool = True
-    cleanup_model: str = "qwen3:4b-instruct-2507"
+    cleanup_engine: str = "mlx"        # mlx (in-process via mlx-lm) | ollama
+    cleanup_model: str = ""            # blank = the engine's own default
     mode: str = "strict"               # strict | casual
     hotkey: str = "cmd_r"
     sample_rate: int = 16000
@@ -57,7 +58,7 @@ def run_dir() -> Path:
 # TOML section -> Config field. Flat dataclass, sectioned file: friendlier to edit.
 _SECTIONS = {
     "transcription": {"backend": "backend", "model": "stt_model"},
-    "cleanup": {"enabled": "cleanup_enabled", "model": "cleanup_model", "mode": "mode"},
+    "cleanup": {"enabled": "cleanup_enabled", "engine": "cleanup_engine", "model": "cleanup_model", "mode": "mode"},
     "hotkey": {"key": "hotkey"},
     "audio": {"sample_rate": "sample_rate"},
     "behavior": {"pause_music": "pause_music", "save_history": "save_history"},
@@ -90,7 +91,8 @@ model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper
 
 [cleanup]
 enabled = true
-model = "qwen3:4b-instruct-2507"   # any ollama model; use an -instruct (non-thinking) one
+engine = "mlx"         # mlx (in-process via mlx-lm, default) | ollama
+model = ""             # blank = engine default (Qwen3-4B-Instruct-2507-4bit / qwen3:4b-instruct-2507)
 mode = "strict"        # strict (restructures) | casual (punctuation + fillers only)
 
 [hotkey]
@@ -146,7 +148,7 @@ if __name__ == "__main__":
         write_default()
         assert p.read_text() == before, "never clobbers existing config"
         # config.toml round-trips through the loader
-        assert load().cleanup_model == "qwen3:4b-instruct-2507", "toml parsed"
+        assert load().cleanup_engine == "mlx", "toml parsed"
 
         append_history({"raw": "héllo", "clean": "Hello."})
         line = json.loads(history_path().read_text().splitlines()[-1])

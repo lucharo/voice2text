@@ -18,15 +18,15 @@ _Lower time / higher RTF is better. Needs Apple Silicon (MLX)._
 
 _Lower is better. Needs Ollama._
 
-| machine | qwen3:4b-instruct-2507 | qwen3:1.7b | qwen2.5:3b |
+| machine | mlx:Qwen3-4B-Instruct-2507-4bit | mlx:Qwen2.5-3B-Instruct-4bit | ollama:qwen3:4b-instruct-2507 |
 |---|--:|--:|--:|
-| Linux x86 (remote container) | _todo¹_ | _todo¹_ | _todo¹_ |
+| Linux x86 (remote container) | n/a — no MLX | n/a — no MLX | _todo¹_ |
 | MacBook (personal) | _todo_ | _todo_ | _todo_ |
 | MacBook (work) | _todo_ | _todo_ | _todo_ |
 
-¹ The remote container can run the cleanup table once Ollama is installed
-(`v2t bench --cleanup`), but CPU x86 timings are not representative of a Mac —
-treat that row as a sanity check, not a target.
+¹ The default cleanup (mlx-lm) needs Apple Silicon. The remote Linux box can only
+run the `ollama:` column, and only once Ollama is installed — CPU x86 timings
+aren't representative of a Mac, so treat that cell as a sanity check, not a target.
 
 ---
 

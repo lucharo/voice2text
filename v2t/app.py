@@ -68,7 +68,8 @@ class VoiceToText:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.stt_model = cfg.stt_model or backends.STT[cfg.backend].default_model
-        self.stt = None  # loaded in run()
+        self.stt = None      # loaded in run()
+        self.cleaner = None  # loaded in run() if cleanup is enabled
         self.recording = False
         self.processing = False
         self.frames: list[np.ndarray] = []
@@ -147,12 +148,10 @@ class VoiceToText:
                 return
 
             cleaned_text, cleanup_s = raw_text, 0.0
-            if self.cfg.cleanup_enabled:
+            if self.cleaner is not None:
                 logger.info("Cleaning up...")
                 try:
-                    cleaned_text, _ttft, cleanup_s = backends.cleanup(
-                        raw_text, self.cfg.cleanup_model, self.cfg.mode, self.cfg.ollama_url,
-                    )
+                    cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(raw_text, self.cfg.mode)
                     if not cleaned_text:
                         raise RuntimeError("empty response")
                     logger.info(f"Clean: {cleaned_text} ({cleanup_s:.2f}s)")
@@ -167,6 +166,8 @@ class VoiceToText:
             if self.cfg.save_history:
                 config.append_history({
                     "audio_s": round(audio_s, 2), "backend": self.cfg.backend, "model": self.stt_model,
+                    "cleanup_engine": self.cfg.cleanup_engine if self.cleaner else None,
+                    "cleanup_model": self.cleaner.model_id if self.cleaner else None,
                     "mode": self.cfg.mode, "stt_s": round(stt_s, 3), "cleanup_s": round(cleanup_s, 3),
                     "raw": raw_text, "clean": cleaned_text,
                 })
@@ -203,9 +204,10 @@ class VoiceToText:
 
         if self.cfg.cleanup_enabled:
             t0 = time.perf_counter()
+            self.cleaner = backends.make_cleanup(self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url)
             try:
-                backends.cleanup("hi", self.cfg.cleanup_model, self.cfg.mode, self.cfg.ollama_url)
-                logger.success(f"cleanup model ready ({time.perf_counter()-t0:.1f}s)")
+                self.cleaner.cleanup("hi", self.cfg.mode)
+                logger.success(f"cleanup ({self.cfg.cleanup_engine}) ready ({time.perf_counter()-t0:.1f}s)")
             except Exception as e:
                 logger.warning(f"cleanup warmup failed ({e}); will retry per transcription")
 

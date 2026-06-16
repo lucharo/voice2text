@@ -1,13 +1,14 @@
-"""Benchmark STT (MLX) and cleanup (Ollama) models -> a markdown grid.
+"""Benchmark STT and cleanup models -> a markdown grid.
 
-Each table is models-as-columns. STT needs Apple Silicon; cleanup needs Ollama.
-Results are written to benchmarks/results/<date>-<host>.md so you can build a grid
-across machines: run on each Mac, commit the file. Absolute times reflect THAT
-machine — compare models within a run, not across machines.
+Each table is models-as-columns. STT and the default mlx cleanup need Apple Silicon;
+the ollama cleanup engine needs Ollama. Results are written to
+benchmarks/results/<date>-<host>.md so you can build a grid across machines: run on
+each Mac, commit the file. Absolute times reflect THAT machine — compare models
+within a run, not across machines.
 
     v2t bench                      # both tables, default models, samples via `say`
-    v2t bench --cleanup            # cleanup table only (runs anywhere Ollama runs)
-    v2t bench --stt-models parakeet:mlx-community/parakeet-tdt-0.6b-v3 ...
+    v2t bench --cleanup            # cleanup table only
+    v2t bench --cleanup-models mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit ollama:qwen3:4b-instruct-2507
 """
 
 from __future__ import annotations
@@ -28,7 +29,10 @@ STT_MODELS = [
     "parakeet:mlx-community/parakeet-tdt-0.6b-v2",
     "whisper:mlx-community/whisper-large-v3-turbo",
 ]
-CLEANUP_MODELS = ["qwen3:4b-instruct-2507", "qwen3:1.7b", "qwen2.5:3b"]
+CLEANUP_MODELS = [
+    "mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit",
+    "mlx:mlx-community/Qwen2.5-3B-Instruct-4bit",
+]
 
 # (name, text) — `say` turns these into audio so the STT bench is self-contained.
 SAY_SAMPLES = [
@@ -109,21 +113,28 @@ def bench_stt(model_specs: list[str], samples, repeat: int) -> dict:
     return results
 
 
-def bench_cleanup(models: list[str], samples: list[str], repeat: int, url: str) -> dict:
-    """{model: {sample_idx: (ttft_s, total_s)}}."""
+def bench_cleanup(specs: list[str], samples: list[str], repeat: int, url: str) -> dict:
+    """{spec: {sample_idx: (ttft_s, total_s)} | None}. spec is 'engine:model'."""
     results = {}
-    for model in models:
-        print(f"  cleanup {model} ... warming up")
-        backends.cleanup("hi", model, url=url)  # pull/warm
-        results[model] = {}
+    for spec in specs:
+        engine, _, model = spec.partition(":")
+        print(f"  cleanup {spec} ...")
+        try:
+            cleaner = backends.make_cleanup(engine, model, url)
+            cleaner.cleanup("hi")  # warm / pull
+        except Exception as e:  # missing model/engine shouldn't abort the whole run
+            print(f"    skipped ({e})")
+            results[spec] = None
+            continue
+        results[spec] = {}
         for i, sample in enumerate(samples):
             ttfts, totals = [], []
             for _ in range(repeat):
-                _text, ttft, total = backends.cleanup(sample, model, url=url)
+                _text, ttft, total = cleaner.cleanup(sample)
                 ttfts.append(ttft if ttft is not None else total)
                 totals.append(total)
-            results[model][i] = (_median(ttfts), _median(totals))
-            print(f"    sample {i}: ttft {results[model][i][0]:.2f}s  total {results[model][i][1]:.2f}s")
+            results[spec][i] = (_median(ttfts), _median(totals))
+            print(f"    sample {i}: ttft {results[spec][i][0]:.2f}s  total {results[spec][i][1]:.2f}s")
     return results
 
 
@@ -141,18 +152,26 @@ def md_stt_table(results: dict, samples) -> str:
 
 
 def md_cleanup_table(results: dict, samples: list[str]) -> str:
-    models = list(results)
-    head = "| sample | " + " | ".join(models) + " |"
-    sep = "|---|" + "|".join("--:" for _ in models) + "|"
-    rows = []
-    for i in range(len(samples)):
-        cells = " | ".join(f"{results[m][i][0]:.2f} / {results[m][i][1]:.2f}s" for m in models)
-        rows.append(f"| {i} | {cells} |")
-    med = " | ".join(
-        f"{_median([results[m][i][0] for i in range(len(samples))]):.2f} / "
-        f"{_median([results[m][i][1] for i in range(len(samples))]):.2f}s" for m in models
-    )
-    rows.append(f"| **median** | {med} |")
+    specs = list(results)
+
+    def label(s: str) -> str:
+        engine, _, model = s.partition(":")
+        return f"{engine}:{model.rsplit('/', 1)[-1]}"
+
+    def cell(spec: str, i: int) -> str:
+        r = results[spec]
+        return "n/a" if r is None else f"{r[i][0]:.2f} / {r[i][1]:.2f}s"
+
+    head = "| sample | " + " | ".join(label(s) for s in specs) + " |"
+    sep = "|---|" + "|".join("--:" for _ in specs) + "|"
+    rows = [f"| {i} | " + " | ".join(cell(s, i) for s in specs) + " |" for i in range(len(samples))]
+    med = []
+    for s in specs:
+        r = results[s]
+        med.append("n/a" if r is None else
+                   f"{_median([r[i][0] for i in range(len(samples))]):.2f} / "
+                   f"{_median([r[i][1] for i in range(len(samples))]):.2f}s")
+    rows.append("| **median** | " + " | ".join(med) + " |")
     note = "\n_Cells: time-to-first-token / total. Lower is better._"
     return "\n".join(["**Text cleanup** — TTFT & total", "", head, sep, *rows]) + "\n" + note
 
@@ -170,7 +189,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--stt", action="store_true", help="run the STT table only")
     p.add_argument("--cleanup", action="store_true", help="run the cleanup table only")
     p.add_argument("--stt-models", nargs="+", default=STT_MODELS, help="backend:model specs")
-    p.add_argument("--cleanup-models", nargs="+", default=CLEANUP_MODELS, help="ollama model names")
+    p.add_argument("--cleanup-models", nargs="+", default=CLEANUP_MODELS, help="engine:model specs (mlx:… or ollama:…)")
     p.add_argument("--repeat", type=int, default=3, help="runs per cell, median reported")
     p.add_argument("--audio", type=Path, default=config.home() / "bench-audio", help="sample wav dir")
     p.add_argument("--url", default="http://localhost:11434", help="ollama base url")
@@ -203,7 +222,7 @@ if __name__ == "__main__":
     }
     t = md_stt_table(fake, [("short", Path("x"), 6.0)])
     assert "0.10s (60x)" in t and "load" in t, t
-    fakec = {"qwen3:4b-instruct-2507": {0: (0.2, 0.9)}, "qwen2.5:3b": {0: (0.3, 1.1)}}
+    fakec = {"mlx:x/Qwen3-4B-Instruct-2507-4bit": {0: (0.2, 0.9)}, "ollama:qwen3:4b": None}
     c = md_cleanup_table(fakec, ["x"])
-    assert "0.20 / 0.90s" in c and "median" in c, c
+    assert "0.20 / 0.90s" in c and "n/a" in c and "median" in c, c
     print("bench.py: table-builder checks passed")

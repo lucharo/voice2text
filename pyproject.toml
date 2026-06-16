@@ -14,11 +14,12 @@ dependencies = [
 ]
 
 # MLX backends are extras (Apple Silicon only). Parakeet is the recommended
-# default; install it explicitly. Picking `whisper` keeps Parakeet out.
+# default; install it explicitly. Picking `whisper` keeps Parakeet out. Each
+# extra also pulls mlx-lm for the default in-process cleanup (no Ollama needed).
 [project.optional-dependencies]
-parakeet = ["parakeet-mlx"]
-whisper = ["mlx-whisper"]
-all = ["parakeet-mlx", "mlx-whisper"]
+parakeet = ["parakeet-mlx", "mlx-lm"]
+whisper = ["mlx-whisper", "mlx-lm"]
+all = ["parakeet-mlx", "mlx-whisper", "mlx-lm"]
 
 [project.scripts]
 v2t = "v2t.cli:main"
