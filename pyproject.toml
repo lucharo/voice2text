@@ -1,12 +1,11 @@
 [project]
 name = "voice2text"
-version = "0.2.0"
-description = "Local voice-to-text with Whisper + LLM cleanup"
+version = "0.3.0"
+description = "Local, MLX-first voice-to-text with LLM cleanup"
 readme = "README.md"
 license = "GPL-2.0-only"
 requires-python = ">=3.11"
 dependencies = [
-    "mlx-whisper",
     "sounddevice",
     "numpy",
     "scipy",
@@ -14,8 +13,15 @@ dependencies = [
     "loguru",
 ]
 
+# MLX backends are extras (Apple Silicon only). Parakeet is the recommended
+# default; install it explicitly. Picking `whisper` keeps Parakeet out.
+[project.optional-dependencies]
+parakeet = ["parakeet-mlx"]
+whisper = ["mlx-whisper"]
+all = ["parakeet-mlx", "mlx-whisper"]
+
 [project.scripts]
-v2t = "voice2text:main"
+v2t = "v2t.cli:main"
 
 [dependency-groups]
 dev = ["hatch", "ruff"]
@@ -23,6 +29,9 @@ dev = ["hatch", "ruff"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["v2t"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
@@ -34,7 +43,7 @@ ollama = "*"
 # nowplaying-cli not on conda-forge, install via: brew install nowplaying-cli
 
 [tool.pixi.pypi-dependencies]
-voice2text = { path = ".", editable = true }
+voice2text = { path = ".", editable = true, extras = ["parakeet"] }
 
 [tool.pixi.tasks]
 v2t = "v2t"

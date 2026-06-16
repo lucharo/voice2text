@@ -1,6 +1,10 @@
 # Lint with ruff
 lint:
-    uv run ruff check --fix voice2text.py
+    uv run ruff check --fix v2t/
+
+# Run module self-checks (no models needed)
+check:
+    python3 -m v2t.config && python3 -m v2t.backends && python3 -m v2t.bench
 
 # Build the package
 build:
