@@ -8,9 +8,7 @@ mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 from __future__ import annotations
 
 import json
-import subprocess
 import time
-import urllib.error
 import urllib.request
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
@@ -110,34 +108,26 @@ class OllamaCleanup:
 
     def cleanup(self, text: str, mode: str = "strict", timeout: int = 60):
         prompt = PROMPTS[mode].format(text=text)
-        t0 = time.perf_counter()
-        try:
-            req = urllib.request.Request(
-                f"{self.url}/api/generate",
-                data=json.dumps({"model": self.model_id, "prompt": prompt, "stream": True}).encode(),
-                headers={"Content-Type": "application/json"},
-            )
-            ttft, parts = None, []
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                for line in r:
-                    if not line.strip():
-                        continue
-                    chunk = json.loads(line)
-                    if (piece := chunk.get("response", "")):
-                        if ttft is None:
-                            ttft = time.perf_counter() - t0
-                        parts.append(piece)
-                    if chunk.get("error"):
-                        raise RuntimeError(chunk["error"])
-                    if chunk.get("done"):
-                        break
-            return "".join(parts).strip(), ttft, time.perf_counter() - t0
-        except urllib.error.URLError:
-            # ponytail: server not reachable; the CLI auto-starts it. No streaming, so no TTFT.
-            res = subprocess.run(["ollama", "run", self.model_id, prompt], capture_output=True, text=True, timeout=timeout)
-            if res.returncode != 0:
-                raise RuntimeError(res.stderr.strip() or "ollama run failed")
-            return res.stdout.strip(), None, time.perf_counter() - t0
+        req = urllib.request.Request(
+            f"{self.url}/api/generate",
+            data=json.dumps({"model": self.model_id, "prompt": prompt, "stream": True}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        t0, ttft, parts = time.perf_counter(), None, []
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # needs a running ollama server
+            for line in r:
+                if not line.strip():
+                    continue
+                chunk = json.loads(line)
+                if (piece := chunk.get("response", "")):
+                    if ttft is None:
+                        ttft = time.perf_counter() - t0
+                    parts.append(piece)
+                if chunk.get("error"):
+                    raise RuntimeError(chunk["error"])
+                if chunk.get("done"):
+                    break
+        return "".join(parts).strip(), ttft, time.perf_counter() - t0
 
 
 CLEANUP = {"mlx": MLXCleanup, "ollama": OllamaCleanup}

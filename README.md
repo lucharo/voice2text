@@ -22,6 +22,11 @@ enough now that the basics fit in a small Python package on consumer hardware.
 > From `0.3.0` it's a small, modular package: pluggable MLX backends, one config file, a benchmark
 > harness, and a SwiftBar menu-bar toggle.
 
+> **Design tenet — be communicative.** An ergonomic tool is an expressive one: every action gets
+> immediate, visible feedback. The menu-bar icon tracks live state (off · starting · ready ·
+> recording · transcribing · cleaning) and repaints the instant anything changes, so you always
+> know the tool heard you.
+
 ## What you get
 
 - **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste.

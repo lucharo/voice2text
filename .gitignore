@@ -8,3 +8,7 @@ dist/
 !.pixi/config.toml
 
 .env
+
+# agent skills installed via `npx skills add` (local tooling)
+.agents/
+skills-lock.json

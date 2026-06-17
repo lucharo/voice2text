@@ -3,7 +3,7 @@
 Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     config.toml                  user settings
     history/transcriptions.jsonl every transcription + metadata
-    run/                         pid + status for the SwiftBar plugin
+    run/status.json              live state for the SwiftBar plugin
 
 Zero config works: the defaults below are the shipped behaviour
 (Parakeet + Qwen3, MLX, strict cleanup).
@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,6 +53,26 @@ def history_path() -> Path:
 
 def run_dir() -> Path:
     return home() / "run"
+
+
+def read_status() -> dict | None:
+    """The running v2t's status (pid, model, mode, state), or None. Cleans a stale file."""
+    path = run_dir() / "status.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        pid = data["pid"]
+    except (ValueError, KeyError, OSError):
+        return None
+    try:
+        os.kill(pid, 0)  # signal 0 = liveness probe
+    except ProcessLookupError:
+        path.unlink(missing_ok=True)
+        return None
+    except PermissionError:
+        pass  # alive but owned by someone else
+    return data
 
 
 # TOML section -> Config field. Flat dataclass, sectioned file: friendlier to edit.

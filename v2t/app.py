@@ -33,6 +33,14 @@ def short_model(name: str) -> str:
     return tail
 
 
+def _refresh_swiftbar() -> None:
+    """Best-effort: tell SwiftBar to repaint the menu-bar icon right now."""
+    try:
+        subprocess.run(["open", "-g", "swiftbar://refreshplugin?name=v2t"], check=False, capture_output=True)
+    except OSError:
+        pass
+
+
 def _resolve_hotkey(name: str):
     from pynput import keyboard
 
@@ -56,6 +64,10 @@ def check_and_request_permissions() -> None:
     if "not allowed" in test.stderr.lower() or test.returncode != 0:
         logger.warning("Permissions needed! Grant them to your TERMINAL APP (or SwiftBar if you start v2t from the menu).")
         subprocess.run(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        if not sys.stdin.isatty():
+            # Launched headless (e.g. SwiftBar): can't prompt. Tell the user and exit cleanly.
+            logger.error("Grant Accessibility + Input Monitoring in System Settings, then start v2t again.")
+            sys.exit(1)
         input("Press Enter after granting Accessibility permission...")
         subprocess.run(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"])
         input("Press Enter after granting Input Monitoring permission...")
@@ -77,23 +89,23 @@ class VoiceToText:
         self.record_start = 0.0
         self.was_playing = False
 
-    # --- status file for the SwiftBar plugin -------------------------------
-    def _write_status(self) -> None:
+    # --- live status for the SwiftBar plugin -------------------------------
+    # state: starting | idle | recording | transcribing | cleaning. Written on
+    # every transition (and the icon repainted) so actions get instant feedback.
+    def _set_state(self, state: str) -> None:
         d = config.run_dir()
         d.mkdir(parents=True, exist_ok=True)
-        (d / "v2t.pid").write_text(str(os.getpid()))
         (d / "status.json").write_text(json.dumps({
             "pid": os.getpid(),
-            "backend": self.cfg.backend,
             "model": short_model(self.stt_model),
             "mode": self.cfg.mode,
-            "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "state": state,
         }))
+        _refresh_swiftbar()
 
     def _clear_status(self) -> None:
-        d = config.run_dir()
-        for name in ("v2t.pid", "status.json"):
-            (d / name).unlink(missing_ok=True)
+        (config.run_dir() / "status.json").unlink(missing_ok=True)
+        _refresh_swiftbar()
 
     # --- recording ----------------------------------------------------------
     def audio_callback(self, indata, frame_count, time_info, status):
@@ -106,6 +118,7 @@ class VoiceToText:
         self.recording = True
         self.frames = []
         self.record_start = time.perf_counter()
+        self._set_state("recording")
         if self.cfg.pause_music:
             r = subprocess.run(["nowplaying-cli", "get", "playbackRate"], capture_output=True, text=True)
             self.was_playing = r.stdout.strip() == "1"
@@ -129,10 +142,13 @@ class VoiceToText:
         logger.info(f"Stopped ({duration:.1f}s)")
         if self.frames:
             threading.Thread(target=self.process_audio, args=(duration,), daemon=True).start()
+        else:
+            self._set_state("idle")
 
     def process_audio(self, audio_s: float):
         self.processing = True
         try:
+            self._set_state("transcribing")
             audio = np.concatenate(self.frames, axis=0)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 wavfile.write(f.name, self.cfg.sample_rate, (audio * 32767).astype(np.int16))
@@ -149,6 +165,7 @@ class VoiceToText:
 
             cleaned_text, cleanup_s = raw_text, 0.0
             if self.cleaner is not None:
+                self._set_state("cleaning")
                 logger.info("Cleaning up...")
                 try:
                     cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(raw_text, self.cfg.mode)
@@ -175,6 +192,7 @@ class VoiceToText:
             if self.cfg.pause_music and self.was_playing:
                 subprocess.run(["nowplaying-cli", "play"])
             self.processing = False
+            self._set_state("idle")
 
     def paste_to_cursor(self, text: str) -> None:
         """Copy, paste at cursor, restore the previous clipboard."""
@@ -214,9 +232,13 @@ class VoiceToText:
     def run(self):
         from pynput import keyboard
 
+        if (other := config.read_status()) is not None:
+            logger.error(f"v2t already running (pid {other['pid']}). Stop it first: v2t stop")
+            sys.exit(1)
         self.hotkey = _resolve_hotkey(self.cfg.hotkey)
+        self._set_state("starting")  # instant feedback before the slow model warmup
         self.warmup()
-        self._write_status()
+        self._set_state("idle")
         signal.signal(signal.SIGTERM, lambda *_: (self._clear_status(), sys.exit(0)))
 
         logger.info(f"Voice-to-Text — {self.cfg.backend} · {self.cfg.mode}")

@@ -4,14 +4,13 @@
     v2t setup           guided first-run config (pick models, detect Ollama)
     v2t bench           benchmark STT + cleanup models
     v2t config          show resolved config + paths   (--init to write a template)
-    v2t status          running/idle line for the SwiftBar plugin
+    v2t status          live state line (off / starting / idle / recording / …)
     v2t stop            stop a running v2t
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
 import sys
@@ -139,33 +138,15 @@ def cmd_setup(argv: list[str]) -> int:
     return 0
 
 
-def _status() -> dict | None:
-    path = config.run_dir() / "status.json"
-    if not path.exists():
-        return None
-    data = json.loads(path.read_text())
-    try:
-        os.kill(data["pid"], 0)  # signal 0 = liveness probe
-    except ProcessLookupError:
-        for f in ("v2t.pid", "status.json"):
-            (config.run_dir() / f).unlink(missing_ok=True)
-        return None
-    except PermissionError:
-        pass  # alive but owned by someone else
-    return data
-
-
 def cmd_status(argv: list[str]) -> int:
-    s = _status()
-    if s is None:
-        print("idle")
-    else:
-        print(f"running\t{s['backend']}\t{s['model']}\t{s['mode']}")
+    """For the SwiftBar plugin: 'off', or '<state>\t<model>\t<mode>'."""
+    s = config.read_status()
+    print("off" if s is None else f"{s['state']}\t{s['model']}\t{s['mode']}")
     return 0
 
 
 def cmd_stop(argv: list[str]) -> int:
-    s = _status()
+    s = config.read_status()
     if s is None:
         print("not running")
         return 1

@@ -141,10 +141,14 @@ def bench_cleanup(specs: list[str], samples: list[str], repeat: int, url: str) -
 
 def md_stt_table(results: dict, samples) -> str:
     specs = list(results)
-    head = "| sample | " + " | ".join(backends.STT[s.split(':')[0]].__name__.replace("STT", "") +
-                                       " " + (s.split(':')[1].rsplit('/', 1)[-1]) for s in specs) + " |"
+
+    def label(s: str) -> str:
+        backend, _, model = s.partition(":")
+        return f"{backend} {model.rsplit('/', 1)[-1]}"
+
+    head = "| sample | " + " | ".join(label(s) for s in specs) + " |"
     sep = "|---|" + "|".join("--:" for _ in specs) + "|"
-    rows = [f"| load | " + " | ".join(f"{results[s]['load']:.1f}s" for s in specs) + " |"]
+    rows = ["| load | " + " | ".join(f"{results[s]['load']:.1f}s" for s in specs) + " |"]
     for name, _wav, dur in samples:
         cells = " | ".join(f"{results[s][name][0]:.2f}s ({results[s][name][1]:.0f}x)" for s in specs)
         rows.append(f"| {name} ({dur:.1f}s) | {cells} |")

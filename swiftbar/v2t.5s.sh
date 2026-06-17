@@ -10,7 +10,8 @@
 # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
 #
 # Install: brew install swiftbar, then drop this file in your SwiftBar plugins
-# folder (keep the `.5s.sh` suffix — it sets the 5-second refresh).
+# folder (keep the `.5s.sh` suffix — a 5s safety refresh; v2t also pushes an
+# instant repaint on every state change, so the icon tracks live activity).
 #
 # "Start v2t" from the menu needs SwiftBar to have Accessibility + Input
 # Monitoring permissions (System Settings > Privacy). Without them, start v2t
@@ -38,20 +39,27 @@ if [ -z "$V2T_BIN" ]; then
   exit 0
 fi
 
+# `v2t status` -> "off"  or  "<state>\t<model>\t<mode>"
 STATUS="$("$V2T_BIN" status 2>/dev/null)"
 STATE="$(printf '%s' "$STATUS" | cut -f1)"
+MODEL="$(printf '%s' "$STATUS" | cut -f2)"
+MODE="$(printf '%s' "$STATUS" | cut -f3)"
 
-if [ "$STATE" = "running" ]; then
-  MODEL="$(printf '%s' "$STATUS" | cut -f3)"
-  MODE="$(printf '%s' "$STATUS" | cut -f4)"
-  echo "🎙️ | color=#34c759"
-  echo "---"
-  echo "● Running ($MODEL · $MODE) | color=#34c759"
+case "$STATE" in
+  starting)     TITLE="🎙️🟠"; LINE="🟠 Starting… (loading models)" ; RUN=1 ;;
+  idle)         TITLE="🎙️🟢"; LINE="🟢 Ready ($MODEL · $MODE)"     ; RUN=1 ;;
+  recording)    TITLE="🎙️🔴"; LINE="🔴 Recording…"                 ; RUN=1 ;;
+  transcribing) TITLE="🎙️🟡"; LINE="🟡 Transcribing…"              ; RUN=1 ;;
+  cleaning)     TITLE="🎙️🟡"; LINE="🟡 Cleaning up…"               ; RUN=1 ;;
+  *)            TITLE="🎙️";   LINE="○ Off"                         ; RUN=0 ;;
+esac
+
+echo "$TITLE"
+echo "---"
+echo "$LINE"
+if [ "$RUN" = "1" ]; then
   echo "Stop v2t | bash=\"$0\" param0=stop terminal=false refresh=true"
 else
-  echo "🎙️ | color=#8e8e93"
-  echo "---"
-  echo "○ Idle | color=#8e8e93"
   echo "Start v2t | bash=\"$0\" param0=start terminal=false refresh=true"
 fi
 echo "---"
