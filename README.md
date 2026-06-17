@@ -155,9 +155,15 @@ brew install swiftbar
 cp swiftbar/v2t.5s.sh "$HOME/Library/Application Support/SwiftBar/Plugins/"   # your plugins folder
 ```
 
-The menu shows running/idle, the current model · mode, a Start/Stop toggle, and links to open
-your config and transcription history. **Start from the menu** needs SwiftBar to have Accessibility +
-Input Monitoring permissions; otherwise start `v2t` in a terminal and use the menu for status/stop.
+The menu shows a colored live-state icon (off · starting · ready · recording · transcribing ·
+cleaning), the active models, a Start/Stop toggle, a **Permissions** submenu, and links to open
+your config and transcription history.
+
+**Permissions.** v2t needs three grants, given to the app that *launches* it (your terminal, or
+SwiftBar if you use "Start v2t"): **Microphone** (record), **Accessibility** + **Input Monitoring**
+(hotkey + paste). The Permissions submenu opens each pane — grant them, then **restart the launching
+app** (macOS only applies the grant on relaunch). If audio comes back silent, that's a missing
+Microphone grant: v2t says so and opens the Mic pane.
 
 ## Models & benchmarks
 

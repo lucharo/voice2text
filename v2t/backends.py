@@ -139,10 +139,29 @@ def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:1143
     return CLEANUP[engine](model, url)
 
 
+_LABELS = {
+    "parakeet-tdt-0.6b-v3": "parakeet-v3",
+    "parakeet-tdt-0.6b-v2": "parakeet-v2",
+    "whisper-large-v3-turbo": "whisper-turbo",
+    "Qwen3-4B-Instruct-2507-4bit": "Qwen3-4B",
+    "Qwen2.5-3B-Instruct-4bit": "Qwen2.5-3B",
+    "qwen3:4b-instruct-2507": "qwen3:4b",
+}
+
+
+def short_model(name: str) -> str:
+    """Friendly menu-bar label, e.g. mlx-community/parakeet-tdt-0.6b-v3 -> parakeet-v3."""
+    tail = name.rsplit("/", 1)[-1]
+    return _LABELS.get(tail, tail)
+
+
 if __name__ == "__main__":
     # ponytail: pure-logic checks only; live model calls are covered by `v2t bench`.
     assert set(STT) == {"parakeet", "whisper"}
     assert set(CLEANUP) == {"mlx", "ollama"}
+    assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
+    assert short_model("mlx-community/Qwen3-4B-Instruct-2507-4bit") == "Qwen3-4B"
+    assert short_model("custom/unknown") == "unknown"
     assert "filler" in PROMPTS["strict"] and "Keep the original phrasing" in PROMPTS["casual"]
     for fn in (make_stt, make_cleanup):
         try:

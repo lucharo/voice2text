@@ -23,14 +23,7 @@ from . import backends, config
 from .config import Config
 
 
-def short_model(name: str) -> str:
-    """parakeet-tdt-0.6b-v3 -> parakeet-v3, whisper-large-v3-turbo -> whisper-turbo."""
-    tail = name.rsplit("/", 1)[-1]
-    for short in ("parakeet-v3", "parakeet-v2", "whisper-turbo"):
-        a, b = short.split("-")
-        if a in tail and b in tail:
-            return short
-    return tail
+MIC_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 
 
 def _refresh_swiftbar() -> None:
@@ -88,6 +81,7 @@ class VoiceToText:
         self.stream = None
         self.record_start = 0.0
         self.was_playing = False
+        self._warned_mic = False
 
     # --- live status for the SwiftBar plugin -------------------------------
     # state: starting | idle | recording | transcribing | cleaning. Written on
@@ -95,12 +89,7 @@ class VoiceToText:
     def _set_state(self, state: str) -> None:
         d = config.run_dir()
         d.mkdir(parents=True, exist_ok=True)
-        (d / "status.json").write_text(json.dumps({
-            "pid": os.getpid(),
-            "model": short_model(self.stt_model),
-            "mode": self.cfg.mode,
-            "state": state,
-        }))
+        (d / "status.json").write_text(json.dumps({"pid": os.getpid(), "state": state}))
         _refresh_swiftbar()
 
     def _clear_status(self) -> None:
@@ -150,6 +139,13 @@ class VoiceToText:
         try:
             self._set_state("transcribing")
             audio = np.concatenate(self.frames, axis=0)
+            if float(np.abs(audio).max()) < 1e-4:  # dead silence == no mic access, not a quiet room
+                logger.error("No audio captured. Grant Microphone permission to the app that launched "
+                             "v2t (your terminal, or SwiftBar), then RESTART that app.")
+                if not self._warned_mic:
+                    self._warned_mic = True
+                    subprocess.run(["open", MIC_PANE])
+                return
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 wavfile.write(f.name, self.cfg.sample_rate, (audio * 32767).astype(np.int16))
                 temp_path = f.name
@@ -235,6 +231,7 @@ class VoiceToText:
         if (other := config.read_status()) is not None:
             logger.error(f"v2t already running (pid {other['pid']}). Stop it first: v2t stop")
             sys.exit(1)
+        config.history_path().parent.mkdir(parents=True, exist_ok=True)  # so 'Open history' always works
         self.hotkey = _resolve_hotkey(self.cfg.hotkey)
         self._set_state("starting")  # instant feedback before the slow model warmup
         self.warmup()
@@ -255,8 +252,5 @@ class VoiceToText:
 
 
 if __name__ == "__main__":
-    # ponytail: only the pure helper is testable off-Mac; the rest needs audio + MLX.
-    assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
-    assert short_model("mlx-community/whisper-large-v3-turbo") == "whisper-turbo"
-    assert short_model("custom/my-model") == "my-model"
-    print("app.py: helper checks passed")
+    # Logic here needs audio + MLX; pure helpers/tests live in backends.py & config.py.
+    print("app.py: import OK")

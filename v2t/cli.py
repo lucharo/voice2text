@@ -139,9 +139,16 @@ def cmd_setup(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    """For the SwiftBar plugin: 'off', or '<state>\t<model>\t<mode>'."""
+    """For the SwiftBar plugin: '<state>\t<stt>\t<cleanup>\t<mode>' (state is 'off' when not running)."""
+    from . import backends
+
     s = config.read_status()
-    print("off" if s is None else f"{s['state']}\t{s['model']}\t{s['mode']}")
+    cfg = config.load()
+    state = s["state"] if s else "off"
+    stt = backends.short_model(cfg.stt_model or backends.STT[cfg.backend].default_model)
+    cleanup = (backends.short_model(cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model)
+               if cfg.cleanup_enabled else "off")
+    print(f"{state}\t{stt}\t{cleanup}\t{cfg.mode}")
     return 0
 
 
