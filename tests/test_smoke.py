@@ -16,7 +16,7 @@ from unittest import mock
 
 import numpy as np
 
-from v2t import app, backends, bench, cli, config, service
+from v2t import app, backends, bench, cli, config, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
@@ -70,6 +70,34 @@ class V2TSmokeTests(unittest.TestCase):
         )
         self.assertIn("Input Monitoring", config.read_last_error())
 
+    def test_permission_statuses_use_native_macos_checks(self):
+        application_services = types.SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            CGPreflightListenEventAccess=lambda: False,
+        )
+        avfoundation = types.SimpleNamespace(
+            AVCaptureDevice=types.SimpleNamespace(
+                authorizationStatusForMediaType_=lambda _media: 3
+            ),
+            AVMediaTypeAudio="audio",
+        )
+        with (
+            mock.patch.object(permissions.sys, "platform", "darwin"),
+            mock.patch.dict(
+                sys.modules,
+                {
+                    "ApplicationServices": application_services,
+                    "AVFoundation": avfoundation,
+                },
+            ),
+        ):
+            states = permissions.statuses()
+
+        self.assertEqual(
+            states,
+            {"microphone": "granted", "accessibility": "granted", "input": "missing"},
+        )
+
     def test_status_reports_the_running_overrides(self):
         cfg = config.Config(cleanup_enabled=False, mode="casual")
         voice = app.VoiceToText(cfg)
@@ -78,10 +106,24 @@ class V2TSmokeTests(unittest.TestCase):
 
         voice._set_state("idle")
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with (
+            mock.patch.object(
+                permissions,
+                "statuses",
+                return_value={
+                    "microphone": "granted",
+                    "accessibility": "granted",
+                    "input": "granted",
+                },
+            ),
+            contextlib.redirect_stdout(output),
+        ):
             cli.cmd_status([])
 
-        self.assertEqual(output.getvalue(), "idle\tparakeet-v3\toff\tcasual\t\n")
+        self.assertEqual(
+            output.getvalue(),
+            "idle\tparakeet-v3\toff\tcasual\t\tgranted\tgranted\tgranted\n",
+        )
 
     def test_recording_cannot_restart_before_processing_begins(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

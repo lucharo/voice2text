@@ -61,20 +61,37 @@ case "$1" in
     ;;
 esac
 
-# `v2t status` -> "<state>\t<stt>\t<cleanup>\t<mode>\t<error>"
+# `v2t status` -> state, models, mode, error, then the three permission states.
 if ! STATUS="$("$V2T_BIN" status 2>/dev/null)"; then
-  STATUS="$(printf 'config-error\t?\t?\t?\tv2t status failed — check config or log')"
+  STATUS="$(printf 'config-error\t?\t?\t?\tv2t status failed — check config or log\tunknown\tunknown\tunknown')"
 fi
 STATE="$(printf '%s' "$STATUS" | cut -f1)"
 STT="$(printf '%s' "$STATUS" | cut -f2)"
 CLEANUP="$(printf '%s' "$STATUS" | cut -f3)"
 MODE="$(printf '%s' "$STATUS" | cut -f4)"
 ERROR="$(printf '%s' "$STATUS" | cut -f5)"
+MIC_PERMISSION="$(printf '%s' "$STATUS" | cut -f6)"
+AX_PERMISSION="$(printf '%s' "$STATUS" | cut -f7)"
+INPUT_PERMISSION="$(printf '%s' "$STATUS" | cut -f8)"
 [ "$CLEANUP" = "off" ] && CLEAN_LBL="no cleanup" || CLEAN_LBL="clean: $CLEANUP"
+[ "$CLEANUP" = "off" ] && START_STEPS=1 || START_STEPS=2
+
+permission_item() {
+  NAME="$1"; STATE="$2"; PANE="$3"
+  case "$STATE" in
+    granted)       ICON="✓"; LABEL="Granted";       COLOR="#34c759" ;;
+    not-requested) ICON="○"; LABEL="Not requested"; COLOR="#8e8e93" ;;
+    denied)        ICON="✕"; LABEL="Denied";        COLOR="#ff3b30" ;;
+    restricted)    ICON="✕"; LABEL="Restricted";    COLOR="#ff3b30" ;;
+    missing)       ICON="○"; LABEL="Not granted";   COLOR="#ff9500" ;;
+    *)             ICON="?"; LABEL="Unknown";       COLOR="#8e8e93" ;;
+  esac
+  echo "--$ICON $NAME · $LABEL | color=$COLOR bash=/usr/bin/open param0=\"$SEC?$PANE\" terminal=false"
+}
 
 case "$STATE" in
-  loading-stt)  TITLE="🎙️🟠"; LINE="🟠 Loading transcription model…" ; RUN=1 ;;
-  loading-cleanup) TITLE="🎙️🟠"; LINE="🟠 Loading cleanup model…" ; RUN=1 ;;
+  loading-stt)  TITLE="🎙️🟠"; LINE="🟠 Starting 1/$START_STEPS · Loading $STT…" ; RUN=1 ;;
+  loading-cleanup) TITLE="🎙️🟠"; LINE="🟠 Starting 2/2 · Loading $CLEANUP…" ; RUN=1 ;;
   idle)         TITLE="🎙️🟢"; LINE="🟢 Ready ($MODE)"              ; RUN=1 ;;
   recording)    TITLE="🎙️🔴"; LINE="🔴 Recording…"                 ; RUN=1 ;;
   transcribing) TITLE="🎙️🟡"; LINE="🟡 Transcribing…"              ; RUN=1 ;;
@@ -97,10 +114,10 @@ else
 fi
 [ -f "$SERVICE_PLIST" ] && echo "Start at login: on | color=#8e8e93 size=12" || echo "Start at login: off | color=#8e8e93 size=12"
 echo "---"
-echo "Permissions (grant, then restart the launching app)"
-echo "--🎙️ Microphone | bash=/usr/bin/open param0=\"$SEC?Privacy_Microphone\" terminal=false"
-echo "--♿ Accessibility | bash=/usr/bin/open param0=\"$SEC?Privacy_Accessibility\" terminal=false"
-echo "--⌨️ Input Monitoring | bash=/usr/bin/open param0=\"$SEC?Privacy_ListenEvent\" terminal=false"
+echo "Permissions"
+permission_item "🎙️ Microphone" "$MIC_PERMISSION" "Privacy_Microphone"
+permission_item "♿ Accessibility" "$AX_PERMISSION" "Privacy_Accessibility"
+permission_item "⌨️ Input Monitoring" "$INPUT_PERMISSION" "Privacy_ListenEvent"
 echo "Open config (~/.v2t) | bash=/usr/bin/open param0=\"$V2T_HOME\" terminal=false"
 echo "Open transcription history | bash=/usr/bin/open param0=\"$V2T_HOME/history\" terminal=false"
 [ -f "$V2T_HOME/run/v2t.log" ] && echo "Open log | bash=/usr/bin/open param0=\"$V2T_HOME/run/v2t.log\" terminal=false"

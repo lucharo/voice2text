@@ -184,8 +184,8 @@ def cmd_setup(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    """For SwiftBar: state, STT, cleanup, mode, and any error detail."""
-    from . import backends
+    """For SwiftBar: runtime state, models, error, and native permission grants."""
+    from . import backends, permissions
 
     s = config.read_status()
     if s:
@@ -211,9 +211,19 @@ def cmd_status(argv: list[str]) -> int:
             else "off"
         )
         mode = cfg.mode
+    grants = permissions.statuses()
     fields = [
         " ".join(str(value).replace("|", "/").split())
-        for value in (state, stt, cleanup, mode, error)
+        for value in (
+            state,
+            stt,
+            cleanup,
+            mode,
+            error,
+            grants["microphone"],
+            grants["accessibility"],
+            grants["input"],
+        )
     ]
     print("\t".join(fields))
     return 0

@@ -178,9 +178,9 @@ separate app in Privacy & Security, grant it the same three permissions.
 
 **Permissions.** v2t needs three grants, given to the app that *launches* it (your terminal, or
 SwiftBar if you use "Start v2t"): **Microphone** (record), **Accessibility** + **Input Monitoring**
-(hotkey + paste). The Permissions submenu opens each pane — grant them, then **restart the launching
-app** (macOS only applies the grant on relaunch). If audio comes back silent, that's a missing
-Microphone grant: v2t says so and opens the Mic pane.
+(hotkey + paste). The Permissions submenu shows the native state of each grant and opens its pane —
+grant missing permissions, then **restart the launching app** (macOS only applies the grant on
+relaunch). If audio comes back silent, v2t says so and opens the Mic pane.
 
 ## Models & benchmarks
 
