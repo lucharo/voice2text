@@ -7,7 +7,7 @@ check: lint
     uv run python -m unittest -v tests.test_smoke
     uv run python -m v2t.config
     uv run python -m v2t.backends
-    bash -n swiftbar/v2t.5s.sh
+    xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices
 
 # Contributor benchmark harness (the dev group includes optional Whisper)
 bench *args:

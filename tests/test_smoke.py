@@ -16,7 +16,7 @@ from unittest import mock
 
 import numpy as np
 
-from v2t import app, backends, bench, cli, config, permissions, service
+from v2t import app, backends, bench, cli, config, menubar, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
@@ -143,22 +143,13 @@ class V2TSmokeTests(unittest.TestCase):
         voice._set_state("idle")
         output = io.StringIO()
         with (
-            mock.patch.object(
-                permissions,
-                "statuses",
-                return_value={
-                    "microphone": "granted",
-                    "accessibility": "granted",
-                    "input": "granted",
-                },
-            ),
             contextlib.redirect_stdout(output),
         ):
             cli.cmd_status([])
 
         self.assertEqual(
             output.getvalue(),
-            "idle\tparakeet-v3\toff\tcasual\t\tgranted\tgranted\tgranted\n",
+            "idle\tparakeet-v3\toff\tcasual\t\n",
         )
 
     def test_recording_cannot_restart_before_processing_begins(self):
@@ -225,11 +216,17 @@ class V2TSmokeTests(unittest.TestCase):
             NSPasteboardItem=item_class,
             NSPasteboardTypeString="public.utf8-plain-text",
         )
+        fake_quartz = types.SimpleNamespace(
+            CGEventCreateKeyboardEvent=lambda *_args: object(),
+            CGEventPost=lambda *_args: None,
+            CGEventSetFlags=mock.Mock(side_effect=RuntimeError("paste failed")),
+            kCGEventFlagMaskCommand=1,
+            kCGHIDEventTap=0,
+        )
 
         with (
-            mock.patch.dict(sys.modules, {"AppKit": fake_appkit}),
-            mock.patch.object(
-                app.subprocess, "run", side_effect=RuntimeError("paste failed")
+            mock.patch.dict(
+                sys.modules, {"AppKit": fake_appkit, "Quartz": fake_quartz}
             ),
             self.assertRaisesRegex(RuntimeError, "paste failed"),
         ):
@@ -268,6 +265,13 @@ class V2TSmokeTests(unittest.TestCase):
         with self.assertRaises(BlockingIOError):
             config.acquire_instance_lock()
 
+    def test_stale_status_cannot_reuse_an_unrelated_live_pid(self):
+        config.ensure_dirs()
+        config.write_status({"pid": os.getpid(), "state": "idle"})
+
+        self.assertIsNone(config.read_status())
+        self.assertFalse((config.run_dir() / "status.json").exists())
+
     def test_missing_optional_stt_is_rendered_as_not_available(self):
         samples = [("short", Path("short.wav"), 1.0)]
         with mock.patch.object(backends, "make_stt", side_effect=SystemExit("missing")):
@@ -291,32 +295,97 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
-    def test_swiftbar_command_installs_the_bundled_plugin(self):
-        plugin_dir = Path(self.tempdir.name) / "plugins"
-        cli.cmd_swiftbar(["--dir", str(plugin_dir)])
+    def test_menubar_install_builds_a_grantable_native_app(self):
+        destination = Path(self.tempdir.name) / "Voice2Text.app"
 
-        installed = plugin_dir / "v2t.5s.sh"
-        source = Path(cli.__file__).resolve().parent.parent / "swiftbar" / "v2t.5s.sh"
-        self.assertEqual(installed.read_text(), source.read_text())
-        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o755)
+        def compile_app(command, **_kwargs):
+            if command[0] == "xcrun":
+                Path(command[command.index("-o") + 1]).touch(mode=0o755)
+            return mock.Mock(returncode=0)
+
+        with (
+            mock.patch.object(menubar, "app_path", return_value=destination),
+            mock.patch.object(menubar, "signing_identity", return_value="-"),
+            mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
+            mock.patch.dict(
+                os.environ, {"V2T_HOME": self.tempdir.name}, clear=True
+            ),
+        ):
+            installed = menubar.install()
+
+        info = plistlib.loads(
+            (installed / "Contents" / "Info.plist").read_bytes()
+        )
+        self.assertEqual(
+            info,
+            {
+                "CFBundleDevelopmentRegion": "en",
+                "CFBundleExecutable": "Voice2Text",
+                "CFBundleIdentifier": "com.lucharo.voice2text",
+                "CFBundleInfoDictionaryVersion": "6.0",
+                "CFBundleName": "Voice2Text",
+                "CFBundlePackageType": "APPL",
+                "CFBundleShortVersionString": "0.3.0",
+                "CFBundleVersion": "1",
+                "LSMinimumSystemVersion": "13.0",
+                "LSUIElement": True,
+                "NSMicrophoneUsageDescription": "Voice2Text uses the microphone for fully local transcription.",
+                "NSPrincipalClass": "NSApplication",
+                "V2THome": self.tempdir.name,
+                "V2TPythonExecutable": sys.executable,
+            },
+        )
+        self.assertEqual(
+            stat.S_IMODE(
+                (installed / "Contents" / "MacOS" / "Voice2Text").stat().st_mode
+            ),
+            0o755,
+        )
+
+    def test_menubar_prefers_a_stable_apple_development_signature(self):
+        output = """\
+  1) ABCDEF \"Apple Development: Developer (TEAMID)\"
+  2) 123456 \"Apple Distribution: Developer (TEAMID)\"
+     2 valid identities found
+"""
+        with mock.patch.object(
+            menubar.subprocess,
+            "run",
+            return_value=mock.Mock(stdout=output),
+        ):
+            self.assertEqual(
+                menubar.signing_identity(),
+                "Apple Development: Developer (TEAMID)",
+            )
 
     def test_launch_agent_keeps_one_warm_v2t_process(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        app_executable = Path(self.tempdir.name) / "Voice2Text.app/Contents/MacOS/Voice2Text"
+        app_executable.parent.mkdir(parents=True)
+        app_executable.touch()
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(menubar, "app_executable", return_value=app_executable),
             mock.patch.object(service, "loaded", return_value=False),
             mock.patch.object(service, "service_pid", return_value=None),
-            mock.patch.object(service, "start") as start,
+            mock.patch.object(service, "_launchctl") as launchctl,
             mock.patch.object(service.sys, "platform", "darwin"),
         ):
             service.install()
 
         data = plistlib.loads(plist.read_bytes())
-        self.assertEqual(data["ProgramArguments"], [sys.executable, "-m", "v2t"])
+        self.assertEqual(
+            data["ProgramArguments"],
+            [
+                str(app_executable),
+                "--start",
+            ],
+        )
         self.assertTrue(data["RunAtLoad"])
         self.assertNotIn("KeepAlive", data)
-        self.assertEqual(data["EnvironmentVariables"]["V2T_HOME"], self.tempdir.name)
-        start.assert_called_once_with()
+        launchctl.assert_called_once_with(
+            "bootstrap", f"gui/{os.getuid()}", str(plist)
+        )
 
     def test_service_start_does_not_restart_a_healthy_process(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"

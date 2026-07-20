@@ -11,13 +11,13 @@ This release turns v2t into a small, modular, MLX-first package.
 - **Guided `v2t setup`** — pick the transcription model and cleanup engine; detects Ollama and offers it, otherwise defaults to mlx-lm. Writes `~/.v2t/config.toml`.
 - **Config file** at `~/.v2t/config.toml` (honors `$V2T_HOME` / `$XDG_CONFIG_HOME`), with `v2t config [--init]`.
 - **Transcription history** — every result + metadata appended to `~/.v2t/history/transcriptions.jsonl`.
-- **SwiftBar plugin** (`swiftbar/v2t.5s.sh`) — menu-bar toggle, status, open config/history.
-- **Optional LaunchAgent** — `v2t service install` keeps one warm process running across the login session; SwiftBar detects and controls it through the same status protocol.
+- **Optional one-file menu-bar app** — native permission identity, immediate state, Start/Stop, and config/history/log links without a window or Xcode project.
+- **Optional LaunchAgent** — `v2t service install` starts the same menu app at login and keeps one warm Python engine.
 - **Reliable runtime lifecycle** — single-instance locking, honest live states, microphone failure recovery, native permission checks, and safe shutdown while a transcription finishes.
 - **Private, lossless local data** — config/history/status use owner-only permissions, temporary audio is always removed, logs no longer include dictated text, and rich clipboard contents survive paste.
-- **Reproducible install and release path** — constrained scientific dependencies, bundled SwiftBar installer, clean sdists, smoke-test CI, and validated build/release commands.
+- **Reproducible install and release path** — constrained scientific dependencies, bundled Swift source, clean sdists, smoke-test CI, and validated build/release commands.
 - **Contributor benchmark harness** — `just bench` writes a per-machine markdown grid (STT RTF + cleanup TTFT/total) with `engine:model` columns. Optional Whisper stays in the dev dependency group.
-- **New commands**: `v2t setup`, `v2t status`, `v2t stop`, `v2t service`, `v2t config`, `v2t swiftbar`.
+- **New commands**: `v2t setup`, `v2t status`, `v2t stop`, `v2t service`, `v2t config`, `v2t menubar`.
 
 ## 0.2.0
 

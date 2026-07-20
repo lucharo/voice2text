@@ -5,8 +5,8 @@ v2t setup           guided first-run config (pick models, detect Ollama)
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          live state line (off / starting / idle / recording / …)
     v2t stop            stop a running v2t
-    v2t service         install/control an optional launch-at-login service
-    v2t swiftbar        install/update the bundled SwiftBar plugin
+    v2t menubar         install/open the optional native menu-bar app
+    v2t service         start the menu app automatically at login
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import argparse
 import os
 import signal
 import sys
-from pathlib import Path
 
 from . import config
 
@@ -77,7 +76,8 @@ def cmd_run(argv: list[str]) -> int:
             "nowplaying-cli not found (brew install nowplaying-cli) — music pause disabled."
         )
         cfg.pause_music = False
-    app.check_and_request_permissions()
+    if os.environ.get("V2T_LAUNCH_CONTEXT") != "menubar":
+        app.check_and_request_permissions()
     app.VoiceToText(cfg).run()
     return 0
 
@@ -184,8 +184,8 @@ def cmd_setup(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    """For SwiftBar: runtime state, models, error, and native permission grants."""
-    from . import backends, permissions
+    """Runtime state, models, mode, and any launch error."""
+    from . import backends
 
     s = config.read_status()
     if s:
@@ -211,7 +211,6 @@ def cmd_status(argv: list[str]) -> int:
             else "off"
         )
         mode = cfg.mode
-    grants = permissions.statuses()
     fields = [
         " ".join(str(value).replace("|", "/").split())
         for value in (
@@ -220,9 +219,6 @@ def cmd_status(argv: list[str]) -> int:
             cleanup,
             mode,
             error,
-            grants["microphone"],
-            grants["accessibility"],
-            grants["input"],
         )
     ]
     print("\t".join(fields))
@@ -240,31 +236,22 @@ def cmd_stop(argv: list[str]) -> int:
     return 0
 
 
-def cmd_swiftbar(argv: list[str]) -> int:
-    from shutil import copy2
+def cmd_menubar(argv: list[str]) -> int:
+    from . import menubar
 
-    default_dir = Path(
-        os.environ.get(
-            "SWIFTBAR_PLUGIN_DIR",
-            "~/Library/Application Support/SwiftBar/Plugins",
-        )
-    ).expanduser()
     parser = argparse.ArgumentParser(
-        prog="v2t swiftbar", description="install/update the SwiftBar plugin"
+        prog="v2t menubar", description="install or open the optional menu-bar app"
     )
     parser.add_argument(
-        "--dir", type=Path, default=default_dir, help="SwiftBar plugins directory"
+        "action", nargs="?", choices=["install", "open"], default="install"
     )
     args = parser.parse_args(argv)
-
-    source = Path(__file__).resolve().parent.parent / "swiftbar" / "v2t.5s.sh"
-    if not source.exists():
-        raise SystemExit("bundled SwiftBar plugin is missing; reinstall voice2text")
-    args.dir.mkdir(parents=True, exist_ok=True)
-    destination = args.dir / source.name
-    copy2(source, destination)
-    destination.chmod(0o755)
-    print(f"installed {destination}")
+    if args.action == "install":
+        path = menubar.install()
+        print(f"installed {path}")
+        menubar.open_app()
+    else:
+        menubar.open_app()
     return 0
 
 
@@ -282,8 +269,8 @@ def cmd_service(argv: list[str]) -> int:
     try:
         if args.action == "install":
             path = service.install()
-            print(f"installed and started {path}")
-            print(f"service executable: {sys.executable}")
+            print(f"installed for login {path}")
+            print(f"menu app: {service.menubar.app_path()}")
             return 0
         getattr(service, args.action)()
     except RuntimeError as error:
@@ -306,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "stop": cmd_stop,
         "service": cmd_service,
-        "swiftbar": cmd_swiftbar,
+        "menubar": cmd_menubar,
     }
     if argv and argv[0] in table:
         return table[argv[0]](argv[1:])

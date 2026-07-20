@@ -100,7 +100,7 @@ class VoiceToText:
             "mode": cfg.mode,
         }
 
-    # --- live status for the SwiftBar plugin -------------------------------
+    # --- live status for CLI and menu-bar clients --------------------------
     # state: starting | idle | recording | transcribing | cleaning. Written on
     # every transition (and the icon repainted) so actions get instant feedback.
     def _set_state(self, state: str, error: str = "") -> None:
@@ -283,6 +283,13 @@ class VoiceToText:
     def paste_to_cursor(self, text: str) -> None:
         """Paste at the cursor, preserving every native pasteboard representation."""
         from AppKit import NSPasteboard, NSPasteboardItem, NSPasteboardTypeString
+        from Quartz import (
+            CGEventCreateKeyboardEvent,
+            CGEventPost,
+            CGEventSetFlags,
+            kCGEventFlagMaskCommand,
+            kCGHIDEventTap,
+        )
 
         pasteboard = NSPasteboard.generalPasteboard()
         saved = []
@@ -296,14 +303,12 @@ class VoiceToText:
             pasteboard.clearContents()
             if not pasteboard.setString_forType_(text, NSPasteboardTypeString):
                 raise RuntimeError("could not write to the clipboard")
-            subprocess.run(
-                [
-                    "osascript",
-                    "-e",
-                    'tell application "System Events" to keystroke "v" using command down',
-                ],
-                check=True,
-            )
+            down = CGEventCreateKeyboardEvent(None, 9, True)
+            up = CGEventCreateKeyboardEvent(None, 9, False)
+            CGEventSetFlags(down, kCGEventFlagMaskCommand)
+            CGEventSetFlags(up, kCGEventFlagMaskCommand)
+            CGEventPost(kCGHIDEventTap, down)
+            CGEventPost(kCGHIDEventTap, up)
             # Give slower targets time to consume the synthetic paste before restoration.
             time.sleep(0.3)
         finally:

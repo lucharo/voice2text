@@ -14,7 +14,6 @@ jobs:
           python-version: "3.12"
       - run: uv lock --check
       - run: uvx ruff check v2t tests
-      - run: bash -n swiftbar/v2t.5s.sh
       - name: Mechanics smoke tests
         run: >-
           uv run --no-project --python 3.12
@@ -22,3 +21,9 @@ jobs:
           python -m unittest -v tests.test_smoke
       - run: uv build
       - run: uvx twine check dist/*
+
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices

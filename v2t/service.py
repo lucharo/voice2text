@@ -10,9 +10,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config
+from . import config, menubar
 
-LABEL = "com.lucharo.voice2text"
+LABEL = menubar.BUNDLE_ID
 
 
 def plist_path() -> Path:
@@ -51,20 +51,11 @@ def service_pid() -> int | None:
 
 
 def plist_data() -> dict:
-    environment = {
-        "PATH": os.environ.get(
-            "PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        ),
-        "V2T_HOME": str(config.home()),
-    }
-    if custom_config := os.environ.get("V2T_CONFIG"):
-        environment["V2T_CONFIG"] = str(Path(custom_config).expanduser())
     log = config.run_dir() / "v2t.log"
     return {
         "Label": LABEL,
-        "ProgramArguments": [sys.executable, "-m", "v2t"],
+        "ProgramArguments": [str(menubar.app_executable()), "--start"],
         "RunAtLoad": True,
-        "EnvironmentVariables": environment,
         "StandardOutPath": str(log),
         "StandardErrorPath": str(log),
         "Umask": 0o077,
@@ -74,8 +65,6 @@ def plist_data() -> dict:
 def _prepare_log() -> None:
     config.ensure_dirs()
     log = config.run_dir() / "v2t.log"
-    if log.exists() and log.stat().st_size > 1_048_576:
-        log.replace(log.with_suffix(".log.1"))
     log.touch()
     log.chmod(0o600)
 
@@ -83,12 +72,16 @@ def _prepare_log() -> None:
 def install() -> Path:
     if sys.platform != "darwin":
         raise SystemExit("the v2t service is macOS-only")
-    running, managed = config.running_pid(), service_pid()
-    if running is not None and running != managed:
+    if not menubar.installed():
+        raise SystemExit("menu app is not installed; run: v2t menubar install")
+    if menubar.running() and service_pid() is None:
+        raise SystemExit("quit Voice2Text before installing the login service")
+    if config.running_pid() is not None and service_pid() is None:
         raise SystemExit(
-            "v2t is already running directly; stop it before installing the service"
+            "v2t is already running outside the login service; stop it first"
         )
     if loaded():
+        stop()
         _launchctl("bootout", target())
     _prepare_log()
     path = plist_path()
@@ -101,7 +94,7 @@ def install() -> Path:
         os.replace(temp_name, path)
     finally:
         Path(temp_name).unlink(missing_ok=True)
-    start()
+    _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
     return path
 
 
@@ -109,22 +102,22 @@ def start() -> None:
     path = plist_path()
     if not path.exists():
         raise SystemExit("service is not installed; run: v2t service install")
-    _prepare_log()
-    running, managed = config.running_pid(), service_pid()
-    if running is not None and running == managed:
+    if service_pid() is not None:
         return
-    if running is not None:
+    if menubar.running():
+        raise SystemExit("quit Voice2Text before starting the login service")
+    if config.running_pid() is not None:
         raise SystemExit(
-            "v2t is already running directly; stop it before starting the service"
+            "v2t is already running outside the login service; stop it first"
         )
-    config.clear_last_error()
+    _prepare_log()
     if loaded():
         _launchctl("kickstart", target())
     else:
         _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        if config.running_pid() is not None:
+        if service_pid() is not None:
             return
         if error := config.read_last_error():
             raise RuntimeError(error)
@@ -138,12 +131,8 @@ def stop() -> None:
 
 
 def uninstall() -> None:
-    running, managed = config.running_pid(), service_pid()
-    if running is not None and running != managed:
-        raise SystemExit(
-            "v2t is running directly; stop it before uninstalling the service"
-        )
     if loaded():
+        stop()
         _launchctl("bootout", target())
     plist_path().unlink(missing_ok=True)
 
@@ -151,9 +140,8 @@ def uninstall() -> None:
 def status() -> str:
     if not plist_path().exists():
         return "not installed"
-    running, managed = config.running_pid(), service_pid()
-    if running is not None and running == managed:
-        return "running"
-    if running is not None:
-        return "installed; v2t is running directly"
+    if service_pid() is not None:
+        return "running" if config.running_pid() is not None else "menu running; v2t off"
+    if config.running_pid() is not None:
+        return "installed; v2t is running outside the login service"
     return "loaded" if loaded() else "installed but unloaded"

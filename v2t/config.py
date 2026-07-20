@@ -3,7 +3,7 @@
 Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     config.toml                  user settings
     history/transcriptions.jsonl every transcription + metadata
-    run/status.json              live state for the SwiftBar plugin
+    run/status.json              live state for CLI and menu-bar clients
 
 Zero config works: the defaults below are the shipped behaviour
 (Parakeet + Qwen3, MLX, strict cleanup).
@@ -122,8 +122,8 @@ def running_pid() -> int | None:
 
 
 def write_status(data: dict) -> None:
-    """Atomically write private runtime status for SwiftBar."""
-    directory = _private_dir(run_dir())
+    """Atomically write private runtime status for CLI and menu-bar clients."""
+    directory = run_dir()
     fd, temp_name = tempfile.mkstemp(dir=directory)
     try:
         os.fchmod(fd, 0o600)

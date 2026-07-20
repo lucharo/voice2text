@@ -21,12 +21,11 @@ enough now that the basics fit in a small Python package on consumer hardware.
 > **Heritage:** this started as a single `voice2text.py` under 300 lines — that proof-of-concept is
 > preserved forever at the [`nano`](https://github.com/lucharo/voice2text/releases/tag/nano) tag.
 > From `0.3.0` it's a small, modular package: pluggable MLX backends, one config file, a benchmark
-> harness, and a SwiftBar menu-bar toggle.
+> harness, and an optional one-file menu-bar app.
 
 > **Design tenet — be communicative.** An ergonomic tool is an expressive one: every action gets
-> immediate, visible feedback. The menu-bar icon tracks live state (off · loading · ready ·
-> recording · transcribing · cleaning · error) on SwiftBar's five-second refresh, so you always
-> know whether the tool heard you.
+> immediate, visible feedback. The optional menu-bar icon tracks live state (off · loading · ready ·
+> recording · transcribing · cleaning · error), so you always know whether the tool heard you.
 
 ## What you get
 
@@ -35,7 +34,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 - **In-process LLM cleanup** via mlx-lm (`Qwen3-4B-Instruct-2507`) — fixes punctuation, removes fillers. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
-- **SwiftBar plugin** — menu-bar toggle, status, and quick links to your config/history.
+- **Optional one-file Swift menu** — native permissions, instant state, and quick links; no window or Xcode project.
 
 ## Install
 
@@ -56,7 +55,7 @@ uv tool install 'voice2text[whisper]'   # adds the Whisper backend; select it in
 ```
 
 <details>
-<summary>Other install methods (uvx, pip, dev, pixi)</summary>
+<summary>Other install methods (uvx, pip, dev)</summary>
 
 ```bash
 # quick try (fresh venv each run — slower startup)
@@ -68,9 +67,6 @@ pip install voice2text && v2t
 # from source
 git clone https://github.com/lucharo/voice2text.git && cd voice2text
 uv sync --no-dev && uv run v2t
-
-# pixi
-pixi run v2t
 ```
 </details>
 
@@ -84,10 +80,11 @@ v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
 
 v2t setup                # guided config: pick models, detect Ollama
-v2t status               # running / idle (used by the SwiftBar plugin)
+v2t status               # running / idle (also used by the menu app)
 v2t stop                 # stop a running v2t
 v2t config               # show resolved config + paths  (--init writes a template)
-v2t service install      # optional: keep v2t warm and start it at login
+v2t menubar install      # optional: compile + open the tiny native menu app
+v2t service install      # optional: start that menu app at login
 ```
 
 Hold **Right Command** to record, release to transcribe and paste.
@@ -109,7 +106,7 @@ Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HO
 ~/.v2t/
   config.toml                    # all settings (v2t config --init to create)
   history/transcriptions.jsonl   # every transcription + metadata (toggle in config)
-  run/                           # pid + status for the SwiftBar plugin
+  run/                           # private runtime status + log
 ```
 
 `config.toml` (every key optional — these are the defaults):
@@ -150,37 +147,33 @@ model = "qwen3:4b-instruct-2507"   # then: ollama pull qwen3:4b-instruct-2507
 Either way, use a **non-thinking** model — a model that emits `<think>` blocks will paste its
 reasoning. The defaults don't.
 
-## SwiftBar menu-bar toggle
+## Optional menu-bar app
 
 ```bash
-brew install swiftbar
-v2t swiftbar             # install/update the bundled, hackable shell plugin
+v2t menubar install      # compile the bundled Swift file into ~/Applications/Voice2Text.app
 ```
 
-The menu shows a colored live-state icon (off · loading · ready · recording · transcribing ·
-cleaning · error), the active models, a Start/Stop toggle, a **Permissions** submenu, and links to
-open your config, transcription history, and log. The installed plugin remains a normal shell file
-in SwiftBar's Plugins folder, so it is easy to inspect or change.
+The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
+or separate settings system. It exists because macOS only grants microphone access to a real app
+identity. The menu requests the three native grants, starts one long-running Python process, shows
+state immediately, and links to config, history, and log. Run `v2t` in a terminal instead if you do
+not want the menu.
 
-SwiftBar's normal **Start v2t** action already launches one long-running process: Parakeet and the
-cleanup model load once, then stay warm for every transcription. To also start that process at login,
-install the optional per-user LaunchAgent:
+**Start v2t** loads Parakeet and the cleanup model once, then keeps them warm for every
+transcription. To start the same menu app at login, install the optional per-user LaunchAgent:
 
 ```bash
 v2t service install       # install + start ~/Library/LaunchAgents/com.lucharo.voice2text.plist
 v2t service status
-v2t service uninstall     # stop it and return SwiftBar to direct-launch mode
+v2t service uninstall
 ```
 
-The service uses the same lock and status files as direct mode, so SwiftBar detects it automatically.
-It runs the exact Python executable shown during installation. If macOS lists that executable as a
-separate app in Privacy & Security, grant it the same three permissions.
+The service starts the same `Voice2Text.app` bundle, so manual and login launches share one stable
+permission identity. The engine lock still prevents duplicate Python processes.
 
-**Permissions.** v2t needs three grants, given to the app that *launches* it (your terminal, or
-SwiftBar if you use "Start v2t"): **Microphone** (record), **Accessibility** + **Input Monitoring**
-(hotkey + paste). The Permissions submenu shows the native state of each grant and opens its pane —
-grant missing permissions, then **restart the launching app** (macOS only applies the grant on
-relaunch). If audio comes back silent, v2t says so and opens the Mic pane.
+**Permissions.** v2t needs **Microphone** (record), **Accessibility** + **Input Monitoring** (hotkey
++ paste). A terminal launch uses your terminal's grants. The menu app requests its own grants and
+shows their live state as flat rows; click a missing row to open the exact Settings pane.
 
 ## Models & benchmarks
 
@@ -193,5 +186,5 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
 | cleanup | `Qwen3-4B-Instruct-2507` (mlx-lm) | latest small instruct, non-thinking, no daemon |
 
-> This is **macOS / Apple Silicon-only** by design (MLX, `osascript` paste, the native pasteboard,
+> This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

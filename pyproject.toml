@@ -36,9 +36,6 @@ build-backend = "hatchling.build"
 packages = ["v2t"]
 exclude = ["v2t/bench.py"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"swiftbar/v2t.5s.sh" = "swiftbar/v2t.5s.sh"
-
 [tool.hatch.build.targets.sdist]
 include = [
     "/CHANGELOG.md",
@@ -47,22 +44,6 @@ include = [
     "/benchmarks",
     "/justfile",
     "/pyproject.toml",
-    "/swiftbar",
     "/tests",
     "/v2t",
 ]
-
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["osx-arm64"]
-
-[tool.pixi.dependencies]
-python = ">=3.11,<3.14"
-ollama = "*"
-# nowplaying-cli not on conda-forge, install via: brew install nowplaying-cli
-
-[tool.pixi.pypi-dependencies]
-voice2text = { path = ".", editable = true }
-
-[tool.pixi.tasks]
-v2t = "v2t"
