@@ -108,6 +108,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         var environment = ProcessInfo.processInfo.environment
         environment["V2T_HOME"] = home.path
         environment["V2T_LAUNCH_CONTEXT"] = "menubar"
+        let toolBin = URL(fileURLWithPath: python).deletingLastPathComponent().path
+        let inheritedPath = environment["PATH"] ?? "/usr/bin:/bin"
+        environment["PATH"] = "\(toolBin):/opt/homebrew/bin:/usr/local/bin:\(inheritedPath)"
         if let path = Bundle.main.object(forInfoDictionaryKey: "V2TConfig") as? String {
             environment["V2T_CONFIG"] = path
         }

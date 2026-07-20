@@ -302,6 +302,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         with (
             mock.patch.object(menubar, "app_path", return_value=destination),
+            mock.patch.object(menubar.sys, "platform", "darwin"),
             mock.patch.object(menubar, "signing_identity", return_value="-"),
             mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
             mock.patch.dict(
@@ -396,6 +397,17 @@ class V2TSmokeTests(unittest.TestCase):
             service.start()
 
         launchctl.assert_not_called()
+
+    def test_service_start_rejects_a_menu_with_no_engine(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(config, "running_pid", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "engine is off"),
+        ):
+            service.start()
 
     def test_cleanup_refuses_to_return_a_capped_partial_result(self):
         cleaner = object.__new__(backends.MLXCleanup)

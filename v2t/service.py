@@ -103,7 +103,11 @@ def start() -> None:
     if not path.exists():
         raise SystemExit("service is not installed; run: v2t service install")
     if service_pid() is not None:
-        return
+        if config.running_pid() is not None:
+            return
+        if error := config.read_last_error():
+            raise RuntimeError(error)
+        raise RuntimeError("Voice2Text menu is running but the v2t engine is off")
     if menubar.running():
         raise SystemExit("quit Voice2Text before starting the login service")
     if config.running_pid() is not None:
@@ -117,11 +121,13 @@ def start() -> None:
         _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        if service_pid() is not None:
+        if config.running_pid() is not None:
             return
         if error := config.read_last_error():
             raise RuntimeError(error)
         time.sleep(0.1)
+    if service_pid() is not None:
+        raise RuntimeError("Voice2Text menu started but the v2t engine is off")
     raise RuntimeError(f"service did not start; check {config.run_dir() / 'v2t.log'}")
 
 
