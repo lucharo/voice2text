@@ -288,6 +288,49 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("| load | n/a |", table)
         self.assertIn("| short (1.0s) | n/a |", table)
 
+    def test_parakeet_prefers_cached_weights_without_hub_validation(self):
+        cached = "/cache/parakeet"
+        load = mock.Mock(return_value=mock.Mock())
+        snapshot_download = mock.Mock(return_value=cached)
+        hub_error = type("LocalEntryNotFoundError", (Exception,), {})
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "parakeet_mlx": types.SimpleNamespace(from_pretrained=load),
+                "huggingface_hub": types.SimpleNamespace(
+                    snapshot_download=snapshot_download
+                ),
+                "huggingface_hub.errors": types.SimpleNamespace(
+                    LocalEntryNotFoundError=hub_error
+                ),
+            },
+        ):
+            backends.ParakeetSTT()
+
+            snapshot_download.side_effect = hub_error()
+            backends.ParakeetSTT("owner/not-cached")
+
+        self.assertEqual(
+            snapshot_download.call_args_list,
+            [
+                mock.call(
+                    backends.PARAKEET_DEFAULT,
+                    allow_patterns=["config.json", "model.safetensors"],
+                    local_files_only=True,
+                ),
+                mock.call(
+                    "owner/not-cached",
+                    allow_patterns=["config.json", "model.safetensors"],
+                    local_files_only=True,
+                ),
+            ],
+        )
+        self.assertEqual(
+            load.call_args_list,
+            [mock.call(cached), mock.call("owner/not-cached")],
+        )
+
     def test_setup_recommends_the_real_parakeet_install(self):
         output = io.StringIO()
         with (
