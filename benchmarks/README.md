@@ -3,35 +3,37 @@
 Two tables, models-as-columns, **median of N runs per cell**:
 
 - **Speech-to-text** — transcription time and real-time factor (RTF = audio length ÷ processing time; higher is faster). Inputs are generated on the fly with macOS `say`, so the benchmark is self-contained.
-- **Text cleanup** — time-to-first-token and total time for the Ollama cleanup model.
+- **Text cleanup** — time-to-first-token and total time for MLX or Ollama cleanup models.
 
 Absolute numbers reflect the machine they ran on. **Compare models within a file, not across machines** — that's the point of one file per host.
 
 ## Run it
 
 ```bash
-v2t bench                 # both tables, default models
-v2t bench --cleanup       # cleanup only (runs anywhere Ollama runs — no Apple Silicon needed)
-v2t bench --stt           # STT only (needs Apple Silicon / MLX)
-v2t bench --repeat 5      # more runs per cell
+just bench                 # both tables, default models
+just bench --cleanup       # cleanup only (default models use MLX)
+just bench --cleanup --cleanup-models ollama:qwen3:4b-instruct-2507  # Ollama/Linux
+just bench --stt           # STT only (needs Apple Silicon / MLX)
+just bench --repeat 5      # more runs per cell
 ```
 
 Override the model lists:
 
 ```bash
-v2t bench --stt-models \
+just bench --stt-models \
   parakeet:mlx-community/parakeet-tdt-0.6b-v3 \
   parakeet:mlx-community/parakeet-tdt-0.6b-v2 \
   whisper:mlx-community/whisper-large-v3-turbo
 
-v2t bench --cleanup-models \
+just bench --cleanup-models \
   mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit \
   ollama:qwen3:4b-instruct-2507
 ```
 
 Cleanup models are `engine:model` specs (`mlx:…` or `ollama:…`); a model that isn't
 installed is marked `n/a` rather than aborting the run. Each run writes
-`results/<date>-<host>.md`. Commit it. Run on each Mac to build the grid.
+`~/.v2t/benchmarks/results/<date>-<host>.md`; copy results into this directory when contributing
+to the grid.
 
 ## Default models
 

@@ -8,13 +8,14 @@
 
 Local, MLX-first voice-to-text. Hold **Right ⌘**, talk, release — it transcribes with
 [Parakeet](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3), cleans the text up with a
-small local LLM, and pastes at your cursor. No cloud, no network, no account.
+small local LLM, and pastes at your cursor. No cloud or account; after the one-time model download,
+it runs without a network connection.
 
 Voice-to-text tools like [Wispr Flow](https://wisprflow.ai/), [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper),
 and [VoiceInk](https://www.voiceink.app/) are great until the network gets in the way — Wispr Flow
 [isn't compatible with most VPNs](https://docs.wisprflow.ai/troubleshooting), so behind a corporate
-SSL-intercepting gateway (Zscaler and friends) it stalls or fails. Going local makes that whole class
-of problem disappear: zero network dependency means the VPN is irrelevant. Speech models are good
+SSL-intercepting gateway (Zscaler and friends) it stalls or fails. Once the models are cached, going
+local makes that whole class of problem disappear: the VPN is irrelevant. Speech models are good
 enough now that the basics fit in a small Python package on consumer hardware.
 
 > **Heritage:** this started as a single `voice2text.py` under 300 lines — that proof-of-concept is
@@ -23,9 +24,9 @@ enough now that the basics fit in a small Python package on consumer hardware.
 > harness, and a SwiftBar menu-bar toggle.
 
 > **Design tenet — be communicative.** An ergonomic tool is an expressive one: every action gets
-> immediate, visible feedback. The menu-bar icon tracks live state (off · starting · ready ·
-> recording · transcribing · cleaning) and repaints the instant anything changes, so you always
-> know the tool heard you.
+> immediate, visible feedback. The menu-bar icon tracks live state (off · loading · ready ·
+> recording · transcribing · cleaning · error) and repaints the instant anything changes, so you
+> always know whether the tool heard you.
 
 ## What you get
 
@@ -35,11 +36,12 @@ enough now that the basics fit in a small Python package on consumer hardware.
 - **Pastes at cursor**, restoring your previous clipboard.
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
 - **SwiftBar plugin** — menu-bar toggle, status, and quick links to your config/history.
-- **Benchmark harness** — `v2t bench` writes a per-machine markdown grid of model speeds.
 
 ## Install
 
-Requires **macOS on Apple Silicon** (MLX). Everything's local and bundled — Parakeet transcription and in-process mlx-lm cleanup ship by default, no daemon, nothing else to pull:
+Requires **macOS on Apple Silicon** (MLX). Parakeet transcription and in-process mlx-lm cleanup ship
+as dependencies, with no daemon. The models download from Hugging Face on first launch, then remain
+in the local cache:
 
 ```bash
 uv tool install voice2text   # Parakeet STT + in-process Qwen3 cleanup
@@ -65,7 +67,7 @@ pip install voice2text && v2t
 
 # from source
 git clone https://github.com/lucharo/voice2text.git && cd voice2text
-uv sync && uv run v2t
+uv sync --no-dev && uv run v2t
 
 # pixi
 pixi run v2t
@@ -85,7 +87,7 @@ v2t setup                # guided config: pick models, detect Ollama
 v2t status               # running / idle (used by the SwiftBar plugin)
 v2t stop                 # stop a running v2t
 v2t config               # show resolved config + paths  (--init writes a template)
-v2t bench                # benchmark STT + cleanup models on this machine
+v2t service install      # optional: keep v2t warm and start it at login
 ```
 
 Hold **Right Command** to record, release to transcribe and paste.
@@ -152,12 +154,27 @@ reasoning. The defaults don't.
 
 ```bash
 brew install swiftbar
-cp swiftbar/v2t.5s.sh "$HOME/Library/Application Support/SwiftBar/Plugins/"   # your plugins folder
+v2t swiftbar             # install/update the bundled, hackable shell plugin
 ```
 
-The menu shows a colored live-state icon (off · starting · ready · recording · transcribing ·
-cleaning), the active models, a Start/Stop toggle, a **Permissions** submenu, and links to open
-your config and transcription history.
+The menu shows a colored live-state icon (off · loading · ready · recording · transcribing ·
+cleaning · error), the active models, a Start/Stop toggle, a **Permissions** submenu, and links to
+open your config, transcription history, and log. The installed plugin remains a normal shell file
+in SwiftBar's Plugins folder, so it is easy to inspect or change.
+
+SwiftBar's normal **Start v2t** action already launches one long-running process: Parakeet and the
+cleanup model load once, then stay warm for every transcription. To also start that process at login,
+install the optional per-user LaunchAgent:
+
+```bash
+v2t service install       # install + start ~/Library/LaunchAgents/com.lucharo.voice2text.plist
+v2t service status
+v2t service uninstall     # stop it and return SwiftBar to direct-launch mode
+```
+
+The service uses the same lock and status files as direct mode, so SwiftBar detects it automatically.
+It runs the exact Python executable shown during installation. If macOS lists that executable as a
+separate app in Privacy & Security, grant it the same three permissions.
 
 **Permissions.** v2t needs three grants, given to the app that *launches* it (your terminal, or
 SwiftBar if you use "Start v2t"): **Microphone** (record), **Accessibility** + **Input Monitoring**
@@ -167,14 +184,14 @@ Microphone grant: v2t says so and opens the Mic pane.
 
 ## Models & benchmarks
 
-`v2t bench` writes `benchmarks/results/<date>-<host>.md` — two tables (speech-to-text RTF, and cleanup
-TTFT/total), one column per model. Run it on each machine to build a grid. See
-[`benchmarks/`](benchmarks/) for the method and defaults.
+The contributor-only `just bench` harness writes `~/.v2t/benchmarks/results/<date>-<host>.md` — two
+tables (speech-to-text RTF and cleanup TTFT/total), one column per model. It lives in the dev group,
+not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defaults.
 
 | | default | why |
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
 | cleanup | `Qwen3-4B-Instruct-2507` (mlx-lm) | latest small instruct, non-thinking, no daemon |
 
-> This is **macOS / Apple Silicon-only** by design (MLX, `osascript` paste, `pbcopy`/`pbpaste`,
+> This is **macOS / Apple Silicon-only** by design (MLX, `osascript` paste, the native pasteboard,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

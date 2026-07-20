@@ -57,9 +57,9 @@ words, so STT WER is the accuracy that matters; punctuation/casing it fixes anyw
 
 ```bash
 # on each Mac:
-v2t bench                       # both tables -> benchmarks/results/<date>-<host>.md
+just bench                      # both tables -> ~/.v2t/benchmarks/results/<date>-<host>.md
 # on a Linux box with Ollama:
-v2t bench --cleanup             # cleanup table only
+just bench --cleanup --cleanup-models ollama:qwen3:4b-instruct-2507
 ```
 
 Then copy the medium-clip / median-sample numbers from each per-host file into

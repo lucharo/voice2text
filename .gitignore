@@ -8,3 +8,7 @@ dist/
 !.pixi/config.toml
 
 .env
+
+# Local agent handoff state
+.continues-handoff.md
+.omo/
