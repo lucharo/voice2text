@@ -93,11 +93,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
             render()
             return
         }
-        guard CGRequestListenEventAccess() else {
-            phase = "permission-error"
-            render()
-            return
-        }
         launchEngine()
     }
 
@@ -199,10 +194,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
     private func render() {
         let microphone = microphoneGranted
         let accessibility = AXIsProcessTrusted()
-        let input = CGPreflightListenEventAccess()
         let stt = status["stt"] as? String ?? ""
         let cleanup = status["cleanup"] as? String ?? ""
-        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(input)"
+        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String) = switch phase {
@@ -232,7 +226,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         add(permissionLabel("Microphone", microphone), action: #selector(openMicrophone))
         add(permissionLabel("Accessibility", accessibility), action: #selector(openAccessibility))
-        add(permissionLabel("Input Monitoring", input), action: #selector(openInput))
         menu.addItem(.separator())
         add("Config", action: #selector(openConfig))
         add("Transcription History", action: #selector(openHistory))
@@ -279,12 +272,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         render()
     }
 
-    @objc private func openInput() {
-        NSApp.activate(ignoringOtherApps: true)
-        if !CGRequestListenEventAccess() { openPane("Privacy_ListenEvent") }
-        rendered = ""
-        render()
-    }
     @objc private func openConfig() { NSWorkspace.shared.open(home) }
     @objc private func openHistory() { NSWorkspace.shared.open(home.appendingPathComponent("history")) }
     @objc private func openLog() { NSWorkspace.shared.open(home.appendingPathComponent("run/v2t.log")) }

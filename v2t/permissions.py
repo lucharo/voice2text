@@ -1,4 +1,4 @@
-"""Read the three macOS privacy grants v2t needs, without prompting."""
+"""Read the two macOS privacy grants v2t needs, without prompting."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ import threading
 
 def statuses() -> dict[str, str]:
     if sys.platform != "darwin":
-        return {"microphone": "unknown", "accessibility": "unknown", "input": "unknown"}
+        return {"microphone": "unknown", "accessibility": "unknown"}
 
-    from ApplicationServices import AXIsProcessTrusted, CGPreflightListenEventAccess
+    from ApplicationServices import AXIsProcessTrusted
 
     accessibility = "granted" if AXIsProcessTrusted() else "missing"
-    input_monitoring = "granted" if CGPreflightListenEventAccess() else "missing"
     try:
         from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
 
@@ -31,7 +30,6 @@ def statuses() -> dict[str, str]:
     return {
         "microphone": microphone,
         "accessibility": accessibility,
-        "input": input_monitoring,
     }
 
 

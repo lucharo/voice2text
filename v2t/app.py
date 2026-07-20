@@ -58,7 +58,6 @@ def check_and_request_permissions() -> None:
             states["accessibility"] == "granted",
             "Privacy_Accessibility",
         ),
-        ("Input Monitoring", states["input"] == "granted", "Privacy_ListenEvent"),
     ]
     missing = [(name, pane) for name, granted, pane in checks if not granted]
     if missing:

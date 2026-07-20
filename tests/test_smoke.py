@@ -49,15 +49,14 @@ class V2TSmokeTests(unittest.TestCase):
             ["nowplaying-cli", "pause"], [call.args[0] for call in run.call_args_list]
         )
 
-    def test_permission_check_reports_each_missing_native_permission(self):
+    def test_permission_check_reports_missing_accessibility(self):
         with (
             mock.patch.object(
                 app.permissions,
                 "statuses",
                 return_value={
                     "microphone": "granted",
-                    "accessibility": "granted",
-                    "input": "missing",
+                    "accessibility": "missing",
                 },
             ),
             mock.patch.object(app.subprocess, "run") as run,
@@ -68,11 +67,11 @@ class V2TSmokeTests(unittest.TestCase):
         run.assert_any_call(
             [
                 "open",
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             ],
             check=False,
         )
-        self.assertIn("Input Monitoring", config.read_last_error())
+        self.assertIn("Accessibility", config.read_last_error())
 
     def test_permission_check_requests_microphone_before_startup(self):
         with (
@@ -82,7 +81,6 @@ class V2TSmokeTests(unittest.TestCase):
                 return_value={
                     "microphone": "not-requested",
                     "accessibility": "granted",
-                    "input": "granted",
                 },
             ),
             mock.patch.object(
@@ -96,7 +94,6 @@ class V2TSmokeTests(unittest.TestCase):
     def test_permission_statuses_use_native_macos_checks(self):
         application_services = types.SimpleNamespace(
             AXIsProcessTrusted=lambda: True,
-            CGPreflightListenEventAccess=lambda: False,
         )
         avfoundation = types.SimpleNamespace(
             AVCaptureDevice=types.SimpleNamespace(
@@ -118,7 +115,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(
             states,
-            {"microphone": "granted", "accessibility": "granted", "input": "missing"},
+            {"microphone": "granted", "accessibility": "granted"},
         )
 
     def test_microphone_request_waits_for_native_result(self):

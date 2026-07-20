@@ -171,8 +171,8 @@ v2t service uninstall
 The service starts the same `Voice2Text.app` bundle, so manual and login launches share one stable
 permission identity. The engine lock still prevents duplicate Python processes.
 
-**Permissions.** v2t needs **Microphone** (record), **Accessibility** + **Input Monitoring** (hotkey
-+ paste). A terminal launch uses your terminal's grants. The menu app requests its own grants and
+**Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
+terminal launch uses your terminal's grants. The menu app requests its own grants and
 shows their live state as flat rows; click a missing row to open the exact Settings pane.
 
 ## Models & benchmarks
