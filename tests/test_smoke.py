@@ -50,12 +50,16 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_permission_check_reports_each_missing_native_permission(self):
-        permissions = types.SimpleNamespace(
-            AXIsProcessTrusted=lambda: True,
-            CGPreflightListenEventAccess=lambda: False,
-        )
         with (
-            mock.patch.dict(sys.modules, {"ApplicationServices": permissions}),
+            mock.patch.object(
+                app.permissions,
+                "statuses",
+                return_value={
+                    "microphone": "granted",
+                    "accessibility": "granted",
+                    "input": "missing",
+                },
+            ),
             mock.patch.object(app.subprocess, "run") as run,
             self.assertRaises(SystemExit),
         ):
@@ -69,6 +73,25 @@ class V2TSmokeTests(unittest.TestCase):
             check=False,
         )
         self.assertIn("Input Monitoring", config.read_last_error())
+
+    def test_permission_check_requests_microphone_before_startup(self):
+        with (
+            mock.patch.object(
+                app.permissions,
+                "statuses",
+                return_value={
+                    "microphone": "not-requested",
+                    "accessibility": "granted",
+                    "input": "granted",
+                },
+            ),
+            mock.patch.object(
+                app.permissions, "request_microphone", return_value=True
+            ) as request,
+        ):
+            app.check_and_request_permissions()
+
+        request.assert_called_once_with()
 
     def test_permission_statuses_use_native_macos_checks(self):
         application_services = types.SimpleNamespace(
@@ -97,6 +120,19 @@ class V2TSmokeTests(unittest.TestCase):
             states,
             {"microphone": "granted", "accessibility": "granted", "input": "missing"},
         )
+
+    def test_microphone_request_waits_for_native_result(self):
+        device = types.SimpleNamespace(
+            authorizationStatusForMediaType_=lambda _media: 0,
+            requestAccessForMediaType_completionHandler_=lambda _media,
+            callback: callback(True),
+        )
+        avfoundation = types.SimpleNamespace(
+            AVCaptureDevice=device,
+            AVMediaTypeAudio="audio",
+        )
+        with mock.patch.dict(sys.modules, {"AVFoundation": avfoundation}):
+            self.assertTrue(permissions.request_microphone(timeout=0.1))
 
     def test_status_reports_the_running_overrides(self):
         cfg = config.Config(cleanup_enabled=False, mode="casual")

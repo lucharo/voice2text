@@ -19,7 +19,7 @@ import sounddevice as sd
 from loguru import logger
 from scipy.io import wavfile
 
-from . import backends, config
+from . import backends, config, permissions
 from .config import Config
 
 
@@ -44,16 +44,21 @@ def _resolve_hotkey(name: str):
 
 def check_and_request_permissions() -> None:
     """Fail early with the exact macOS permission panes that still need a grant."""
-    from ApplicationServices import AXIsProcessTrusted, CGPreflightListenEventAccess
-
     logger.info("Checking permissions...")
+    states = permissions.statuses()
+    if states["microphone"] == "not-requested":
+        logger.info("Requesting Microphone permission...")
+        states["microphone"] = (
+            "granted" if permissions.request_microphone() else "denied"
+        )
     checks = [
-        ("Accessibility", bool(AXIsProcessTrusted()), "Privacy_Accessibility"),
+        ("Microphone", states["microphone"] == "granted", "Privacy_Microphone"),
         (
-            "Input Monitoring",
-            bool(CGPreflightListenEventAccess()),
-            "Privacy_ListenEvent",
+            "Accessibility",
+            states["accessibility"] == "granted",
+            "Privacy_Accessibility",
         ),
+        ("Input Monitoring", states["input"] == "granted", "Privacy_ListenEvent"),
     ]
     missing = [(name, pane) for name, granted, pane in checks if not granted]
     if missing:

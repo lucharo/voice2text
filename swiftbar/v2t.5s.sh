@@ -79,14 +79,14 @@ INPUT_PERMISSION="$(printf '%s' "$STATUS" | cut -f8)"
 permission_item() {
   NAME="$1"; STATE="$2"; PANE="$3"
   case "$STATE" in
-    granted)       ICON="✓"; LABEL="Granted";       COLOR="#34c759" ;;
-    not-requested) ICON="○"; LABEL="Not requested"; COLOR="#8e8e93" ;;
-    denied)        ICON="✕"; LABEL="Denied";        COLOR="#ff3b30" ;;
-    restricted)    ICON="✕"; LABEL="Restricted";    COLOR="#ff3b30" ;;
-    missing)       ICON="○"; LABEL="Not granted";   COLOR="#ff9500" ;;
-    *)             ICON="?"; LABEL="Unknown";       COLOR="#8e8e93" ;;
+    granted)       ICON="✓"; LABEL="Granted" ;;
+    not-requested) ICON="○"; LABEL="Start v2t to request" ;;
+    denied)        ICON="✕"; LABEL="Denied" ;;
+    restricted)    ICON="✕"; LABEL="Restricted" ;;
+    missing)       ICON="○"; LABEL="Not granted" ;;
+    *)             ICON="?"; LABEL="Unknown" ;;
   esac
-  echo "--$ICON $NAME · $LABEL | color=$COLOR bash=/usr/bin/open param0=\"$SEC?$PANE\" terminal=false"
+  echo "$ICON $NAME · $LABEL | bash=/usr/bin/open param0=\"$SEC?$PANE\" terminal=false"
 }
 
 case "$STATE" in
@@ -118,7 +118,8 @@ echo "Permissions"
 permission_item "🎙️ Microphone" "$MIC_PERMISSION" "Privacy_Microphone"
 permission_item "♿ Accessibility" "$AX_PERMISSION" "Privacy_Accessibility"
 permission_item "⌨️ Input Monitoring" "$INPUT_PERMISSION" "Privacy_ListenEvent"
-echo "Open config (~/.v2t) | bash=/usr/bin/open param0=\"$V2T_HOME\" terminal=false"
-echo "Open transcription history | bash=/usr/bin/open param0=\"$V2T_HOME/history\" terminal=false"
-[ -f "$V2T_HOME/run/v2t.log" ] && echo "Open log | bash=/usr/bin/open param0=\"$V2T_HOME/run/v2t.log\" terminal=false"
+echo "---"
+echo "Config | bash=/usr/bin/open param0=\"$V2T_HOME\" terminal=false"
+echo "Transcription History | bash=/usr/bin/open param0=\"$V2T_HOME/history\" terminal=false"
+[ -f "$V2T_HOME/run/v2t.log" ] && echo "Log | bash=/usr/bin/open param0=\"$V2T_HOME/run/v2t.log\" terminal=false"
 echo "Refresh | refresh=true"

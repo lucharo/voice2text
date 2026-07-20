@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 
 
 def statuses() -> dict[str, str]:
@@ -32,3 +33,26 @@ def statuses() -> dict[str, str]:
         "accessibility": accessibility,
         "input": input_monitoring,
     }
+
+
+def request_microphone(timeout: float = 60) -> bool:
+    """Ask macOS for microphone access once, waiting for the user's choice."""
+    from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+
+    current = int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio))
+    if current != 0:
+        return current == 3
+
+    answered = threading.Event()
+    granted = False
+
+    def complete(value):
+        nonlocal granted
+        granted = bool(value)
+        answered.set()
+
+    AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+        AVMediaTypeAudio, complete
+    )
+    answered.wait(timeout)
+    return granted
