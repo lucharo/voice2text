@@ -26,18 +26,6 @@ from .config import Config
 MIC_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 
 
-def _refresh_swiftbar() -> None:
-    """Best-effort: tell SwiftBar to repaint the menu-bar icon right now."""
-    try:
-        subprocess.run(
-            ["open", "-g", "swiftbar://refreshplugin?name=v2t"],
-            check=False,
-            capture_output=True,
-        )
-    except OSError:
-        pass
-
-
 def _resolve_hotkey(name: str):
     from pynput import keyboard
 
@@ -72,7 +60,6 @@ def check_and_request_permissions() -> None:
         names = " + ".join(name for name, _pane in missing)
         message = f"Grant {names} to the launching app, restart that app, then start v2t again."
         config.write_last_error(message)
-        _refresh_swiftbar()
         logger.error(message)
         security = "x-apple.systempreferences:com.apple.preference.security"
         for _name, pane in missing:
@@ -121,11 +108,9 @@ class VoiceToText:
                 "error": clean_error,
             }
         )
-        _refresh_swiftbar()
 
     def _clear_status(self) -> None:
         config.clear_status()
-        _refresh_swiftbar()
 
     def _close_stream(self) -> None:
         if self.stream is not None:

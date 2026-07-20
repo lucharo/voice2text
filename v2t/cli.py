@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import os
 import signal
-import subprocess
 import sys
 from pathlib import Path
 
@@ -255,9 +254,6 @@ def cmd_swiftbar(argv: list[str]) -> int:
     destination = args.dir / source.name
     copy2(source, destination)
     destination.chmod(0o755)
-    subprocess.run(
-        ["open", "-g", "swiftbar://refreshallplugins"], check=False, capture_output=True
-    )
     print(f"installed {destination}")
     return 0
 

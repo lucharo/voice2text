@@ -38,7 +38,6 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(
                 app.sd, "InputStream", side_effect=RuntimeError("device unavailable")
             ),
-            mock.patch.object(app, "_refresh_swiftbar"),
             mock.patch.object(app.subprocess, "run") as run,
         ):
             voice.start_recording()
@@ -77,8 +76,7 @@ class V2TSmokeTests(unittest.TestCase):
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
 
-        with mock.patch.object(app, "_refresh_swiftbar"):
-            voice._set_state("idle")
+        voice._set_state("idle")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             cli.cmd_status([])
@@ -120,10 +118,7 @@ class V2TSmokeTests(unittest.TestCase):
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
 
-        with (
-            mock.patch.object(voice, "paste_to_cursor") as paste,
-            mock.patch.object(app, "_refresh_swiftbar"),
-        ):
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
             voice.process_audio([np.ones((8, 1), dtype=np.float32)], 1.0)
 
         paste.assert_called_once_with("Clean words.")
@@ -220,8 +215,7 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_swiftbar_command_installs_the_bundled_plugin(self):
         plugin_dir = Path(self.tempdir.name) / "plugins"
-        with mock.patch.object(cli.subprocess, "run"):
-            cli.cmd_swiftbar(["--dir", str(plugin_dir)])
+        cli.cmd_swiftbar(["--dir", str(plugin_dir)])
 
         installed = plugin_dir / "v2t.5s.sh"
         source = Path(cli.__file__).resolve().parent.parent / "swiftbar" / "v2t.5s.sh"

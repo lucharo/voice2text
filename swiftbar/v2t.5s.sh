@@ -10,8 +10,7 @@
 # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
 #
 # Install: brew install swiftbar, then drop this file in your SwiftBar plugins
-# folder (keep the `.5s.sh` suffix — a 5s safety refresh; v2t also pushes an
-# instant repaint on every state change, so the icon tracks live activity).
+# folder (keep the `.5s.sh` suffix — SwiftBar refreshes the live state every 5s).
 #
 # v2t needs three permissions, granted to the app that LAUNCHES it (your terminal,
 # or SwiftBar if you use "Start v2t"): Microphone (to record), Accessibility +

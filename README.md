@@ -25,8 +25,8 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 > **Design tenet — be communicative.** An ergonomic tool is an expressive one: every action gets
 > immediate, visible feedback. The menu-bar icon tracks live state (off · loading · ready ·
-> recording · transcribing · cleaning · error) and repaints the instant anything changes, so you
-> always know whether the tool heard you.
+> recording · transcribing · cleaning · error) on SwiftBar's five-second refresh, so you always
+> know whether the tool heard you.
 
 ## What you get
 
