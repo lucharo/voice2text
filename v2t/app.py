@@ -6,11 +6,11 @@ macOS-only at runtime (native pasteboard, System Events paste, global hotkey).
 from __future__ import annotations
 
 import os
+import queue
 import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -85,7 +85,7 @@ class VoiceToText:
         self.record_start = 0.0
         self.was_playing = False
         self._warned_mic = False
-        self.worker = None
+        self.jobs = queue.Queue()
         self.instance_lock = None
         self.stopping = False
         cleanup_model = (
@@ -187,10 +187,7 @@ class VoiceToText:
         if self.frames:
             frames, self.frames = self.frames, []
             self.processing = True
-            self.worker = threading.Thread(
-                target=self.process_audio, args=(frames, duration)
-            )
-            self.worker.start()
+            self.jobs.put((frames, duration))
         else:
             self._restore_media()
             self._set_state("idle")
@@ -278,6 +275,14 @@ class VoiceToText:
             if not self.stopping:
                 self._set_state(next_state, error_message)
             self.processing = False
+
+    def process_next(self) -> bool:
+        """Process one queued recording on the model-owning thread."""
+        job = self.jobs.get()
+        if job is None:
+            return False
+        self.process_audio(*job)
+        return True
 
     def paste_to_cursor(self, text: str) -> None:
         """Paste at the cursor, preserving every native pasteboard representation."""
@@ -388,8 +393,9 @@ class VoiceToText:
             )
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release
-            ) as listener:
-                listener.join()
+            ):
+                while self.process_next():
+                    pass
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         except SystemExit as error:
@@ -411,15 +417,9 @@ class VoiceToText:
             return
         self.stopping = True
         self.recording = False
+        self.jobs.put(None)
         self._close_stream()
         self._restore_media()
-        if (
-            self.worker is not None
-            and self.worker.is_alive()
-            and self.worker is not threading.current_thread()
-        ):
-            self._set_state("stopping")
-            self.worker.join()
         self._clear_status()
         if self.instance_lock is not None:
             self.instance_lock.close()

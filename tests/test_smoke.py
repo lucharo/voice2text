@@ -156,17 +156,25 @@ class V2TSmokeTests(unittest.TestCase):
         voice.frames = [np.ones((2, 1), dtype=np.float32)]
         voice.stream = mock.Mock()
 
-        with (
-            mock.patch.object(app.threading, "Thread") as thread,
-            mock.patch.object(app.sd, "InputStream") as input_stream,
-        ):
+        with mock.patch.object(app.sd, "InputStream") as input_stream:
             voice.stop_recording()
             voice.start_recording()
 
         self.assertTrue(voice.processing)
         self.assertEqual(voice.frames, [])
-        thread.return_value.start.assert_called_once_with()
+        frames, duration = voice.jobs.get_nowait()
+        self.assertEqual(len(frames), 1)
+        self.assertGreaterEqual(duration, 0)
         input_stream.assert_not_called()
+
+    def test_queued_transcription_runs_on_the_processing_thread(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.jobs.put(([np.ones((8, 1), dtype=np.float32)], 1.0))
+
+        with mock.patch.object(voice, "process_audio") as process:
+            self.assertTrue(voice.process_next())
+
+        process.assert_called_once()
 
     def test_transcription_pipeline_pastes_cleanup_and_deletes_audio(self):
         voice = app.VoiceToText(config.Config(save_history=False))
