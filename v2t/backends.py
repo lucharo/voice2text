@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import time
 import urllib.request
-from pathlib import Path
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
@@ -22,23 +21,11 @@ class ParakeetSTT:
     def __init__(self, model: str = ""):
         try:
             from parakeet_mlx import from_pretrained
-            from huggingface_hub import snapshot_download
-            from huggingface_hub.errors import LocalEntryNotFoundError
         except ImportError as e:
             raise SystemExit(
                 "parakeet-mlx missing — reinstall voice2text (Apple Silicon only)."
             ) from e
-        source = model or self.default_model
-        if not Path(source).exists():
-            try:
-                source = snapshot_download(
-                    source,
-                    allow_patterns=["config.json", "model.safetensors"],
-                    local_files_only=True,
-                )
-            except LocalEntryNotFoundError:
-                pass  # first use: let Parakeet download the model normally
-        self.model = from_pretrained(source)
+        self.model = from_pretrained(model or self.default_model)
 
     def transcribe(self, wav_path: str) -> str:
         return self.model.transcribe(wav_path).text.strip()
