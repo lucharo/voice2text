@@ -31,7 +31,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 - **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste.
 - **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
-- **In-process LLM cleanup** via mlx-lm (`Qwen3-4B-Instruct-2507`) — fixes punctuation, removes fillers. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
+- **In-process LLM cleanup** via mlx-lm (`Qwen2.5-1.5B-Instruct`) — fixes punctuation, removes fillers while using about 1.3 GB less model memory than the previous 4B default. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
 - **Optional one-file Swift menu** — native permissions, instant state, and quick links; no window or Xcode project.
@@ -133,7 +133,7 @@ save_history = true
 ### Cleanup engine
 
 Cleanup runs **in-process via [mlx-lm](https://github.com/ml-explore/mlx-lm)** by default
-(`Qwen3-4B-Instruct-2507`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
+(`Qwen2.5-1.5B-Instruct`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
 
 Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
 detects Ollama, or edit the config):
@@ -184,7 +184,7 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 | | default | why |
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
-| cleanup | `Qwen3-4B-Instruct-2507` (mlx-lm) | latest small instruct, non-thinking, no daemon |
+| cleanup | `Qwen2.5-1.5B-Instruct` (mlx-lm) | 831 MB active in the local cleanup benchmark; non-thinking, no daemon |
 
 > This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

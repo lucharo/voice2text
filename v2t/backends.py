@@ -73,7 +73,7 @@ PROMPTS = {
     ),
 }
 
-MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+MLX_CLEANUP_DEFAULT = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
 
 
@@ -166,6 +166,7 @@ _LABELS = {
     "parakeet-tdt-0.6b-v3": "parakeet-v3",
     "parakeet-tdt-0.6b-v2": "parakeet-v2",
     "whisper-large-v3-turbo": "whisper-turbo",
+    "Qwen2.5-1.5B-Instruct-4bit": "Qwen2.5-1.5B",
     "Qwen3-4B-Instruct-2507-4bit": "Qwen3-4B",
     "Qwen2.5-3B-Instruct-4bit": "Qwen2.5-3B",
     "qwen3:4b-instruct-2507": "qwen3:4b",
@@ -183,7 +184,10 @@ if __name__ == "__main__":
     assert set(STT) == {"parakeet", "whisper"}
     assert set(CLEANUP) == {"mlx", "ollama"}
     assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
-    assert short_model("mlx-community/Qwen3-4B-Instruct-2507-4bit") == "Qwen3-4B"
+    assert (
+        short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit")
+        == "Qwen2.5-1.5B"
+    )
     assert short_model("custom/unknown") == "unknown"
     assert (
         "filler" in PROMPTS["strict"]

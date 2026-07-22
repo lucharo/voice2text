@@ -240,8 +240,10 @@ class VoiceToText:
                     logger.warning("Falling back to raw transcription")
                     cleaned_text = raw_text
 
+            t0 = time.perf_counter()
             self.paste_to_cursor(cleaned_text)
-            logger.success("Pasted!")
+            paste_s = time.perf_counter() - t0
+            logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
             if self.cfg.save_history:
                 try:
@@ -259,6 +261,7 @@ class VoiceToText:
                             "mode": self.cfg.mode,
                             "stt_s": round(stt_s, 3),
                             "cleanup_s": round(cleanup_s, 3),
+                            "paste_s": round(paste_s, 3),
                             "raw": raw_text,
                             "clean": cleaned_text,
                         }

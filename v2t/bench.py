@@ -7,7 +7,7 @@ times reflect THAT machine — compare models within a run, not across machines.
 
     v2t bench                      # both tables, default models, samples via `say`
     v2t bench --cleanup            # cleanup table only
-    v2t bench --cleanup-models mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit ollama:qwen3:4b-instruct-2507
+    v2t bench --cleanup-models mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ STT_MODELS = [
     "whisper:mlx-community/whisper-large-v3-turbo",
 ]
 CLEANUP_MODELS = [
+    "mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit",
     "mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit",
-    "mlx:mlx-community/Qwen2.5-3B-Instruct-4bit",
 ]
 
 # (name, text) — `say` turns these into audio so the STT bench is self-contained.

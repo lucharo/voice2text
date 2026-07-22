@@ -26,6 +26,7 @@ just bench --stt-models \
   whisper:mlx-community/whisper-large-v3-turbo
 
 just bench --cleanup-models \
+  mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit \
   mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit \
   ollama:qwen3:4b-instruct-2507
 ```
@@ -42,8 +43,8 @@ to the grid.
 | STT (default) | `mlx-community/parakeet-tdt-0.6b-v3` | multilingual (EN/ES/FR/DE…), fastest on Apple Silicon |
 | STT (alt) | `mlx-community/parakeet-tdt-0.6b-v2` | English-only, slightly higher EN accuracy |
 | STT (fallback) | `mlx-community/whisper-large-v3-turbo` | the old default; best for rare languages/accents |
-| cleanup (default) | `mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit` | in-process, non-thinking, no daemon |
-| cleanup (alt) | `mlx:mlx-community/Qwen2.5-3B-Instruct-4bit` | smaller, non-thinking |
+| cleanup (default) | `mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit` | in-process, non-thinking; 831 MB active in the local benchmark |
+| cleanup (quality alt) | `mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit` | 4B previous default; higher memory |
 | cleanup (ollama) | `ollama:qwen3:4b-instruct-2507` | if you already run Ollama |
 
 > **Use a non-thinking model.** Hybrid Qwen3 tags emit `<think>…</think>` blocks that

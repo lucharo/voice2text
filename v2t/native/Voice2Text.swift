@@ -203,19 +203,25 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String) = switch phase {
-        case "permissions": ("🎙️🟠", "Checking permissions…")
-        case "starting", "loading-stt": ("🎙️🟠", "Loading transcription model…")
-        case "loading-cleanup": ("🎙️🟠", "Loading cleanup model…")
-        case "idle": ("🎙️🟢", "Ready")
-        case "recording": ("🎙️🔴", "Recording…")
-        case "transcribing": ("🎙️🟡", "Transcribing…")
-        case "cleaning": ("🎙️🟡", "Cleaning up…")
-        case "stopping": ("🎙️🟠", "Stopping…")
-        case "permission-error": ("🎙️⚠️", "Permissions required")
-        case "error": ("🎙️⚠️", "Could not start — open Log")
-        default: ("🎙️", "Off")
+        case "permissions": ("hourglass", "Checking permissions…")
+        case "starting", "loading-stt": ("hourglass", "Loading transcription model…")
+        case "loading-cleanup": ("hourglass", "Loading cleanup model…")
+        case "idle": ("waveform", "Ready")
+        case "recording": ("waveform.circle.fill", "Recording…")
+        case "transcribing": ("ellipsis.circle", "Transcribing…")
+        case "cleaning": ("ellipsis.circle", "Cleaning up…")
+        case "stopping": ("hourglass", "Stopping…")
+        case "permission-error": ("exclamationmark.triangle", "Permissions required")
+        case "error": ("exclamationmark.triangle", "Could not start — open Log")
+        default: ("waveform.slash", "Off")
         }
-        item.button?.title = presentation.0
+        let icon = NSImage(systemSymbolName: presentation.0, accessibilityDescription: presentation.1)
+            ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: presentation.1)
+        icon?.isTemplate = true
+        item.button?.image = icon
+        item.button?.imagePosition = .imageOnly
+        item.button?.title = ""
+        item.button?.toolTip = presentation.1
         menu.removeAllItems()
         add(presentation.1, enabled: false)
         if !stt.isEmpty && !cleanup.isEmpty {
