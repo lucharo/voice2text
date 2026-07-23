@@ -150,7 +150,7 @@ def bench_cleanup(specs: list[str], samples: list[str], repeat: int, url: str) -
         try:
             cleaner = backends.make_cleanup(engine, model, url)
             cleaner.cleanup("hi")  # warm / pull
-        except Exception as e:  # missing model/engine shouldn't abort the whole run
+        except (Exception, SystemExit) as e:  # one missing engine shouldn't abort the run
             print(f"    skipped ({e})")
             results[spec] = None
             continue
@@ -246,6 +246,12 @@ def write_results(body: str, out: Path | None) -> Path:
 
 
 def main(argv: list[str]) -> int:
+    def positive_int(value: str) -> int:
+        parsed = int(value)
+        if parsed < 1:
+            raise argparse.ArgumentTypeError("must be at least 1")
+        return parsed
+
     config.ensure_dirs()
     p = argparse.ArgumentParser(prog="v2t bench")
     p.add_argument("--stt", action="store_true", help="run the STT table only")
@@ -260,7 +266,7 @@ def main(argv: list[str]) -> int:
         help="engine:model specs (mlx:… or ollama:…)",
     )
     p.add_argument(
-        "--repeat", type=int, default=3, help="runs per cell, median reported"
+        "--repeat", type=positive_int, default=3, help="runs per cell, median reported"
     )
     p.add_argument(
         "--audio",

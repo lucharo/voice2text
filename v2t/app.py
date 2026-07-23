@@ -88,6 +88,7 @@ class VoiceToText:
         self._warned_mic = False
         self.jobs = queue.Queue()
         self.lifecycle_lock = threading.RLock()
+        self.shutdown_watcher = None
         self.instance_lock = None
         self.stopping = False
         cleanup_model = (
@@ -119,6 +120,17 @@ class VoiceToText:
 
     def _clear_status(self) -> None:
         config.clear_status()
+
+    def _start_shutdown_watcher(self) -> None:
+        def watch():
+            while not self.stopping:
+                time.sleep(0.01)
+            self._set_state("stopping")
+
+        self.shutdown_watcher = threading.Thread(
+            target=watch, name="v2t-shutdown-status", daemon=True
+        )
+        self.shutdown_watcher.start()
 
     def _close_stream(self) -> None:
         if self.stream is not None:
@@ -399,6 +411,7 @@ class VoiceToText:
         self.hotkey = _resolve_hotkey(self.cfg.hotkey)
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+        self._start_shutdown_watcher()
         try:
             self.warmup()
             self._set_state("idle")
@@ -437,6 +450,8 @@ class VoiceToText:
 
     def shutdown(self) -> None:
         self.stopping = True
+        if self.shutdown_watcher is not None:
+            self.shutdown_watcher.join()
         self._set_state("stopping")
         self.jobs.put(None)
         with self.lifecycle_lock:

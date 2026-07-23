@@ -188,13 +188,15 @@ class V2TSmokeTests(unittest.TestCase):
         voice.instance_lock = config.acquire_instance_lock()
         voice.processing = True
         voice._set_state("transcribing")
+        voice._start_shutdown_watcher()
 
         voice._handle_signal()
+        voice.shutdown_watcher.join(timeout=1)
 
         self.assertTrue(voice.stopping)
         self.assertEqual(config.running_pid(), os.getpid())
         voice._set_state("cleaning")
-        self.assertEqual(config.read_status()["state"], "transcribing")
+        self.assertEqual(config.read_status()["state"], "stopping")
         with self.assertRaises(queue.Empty):
             voice.jobs.get_nowait()
         with self.assertRaises(SystemExit):
@@ -555,6 +557,24 @@ class V2TSmokeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "token limit"):
             cleaner.cleanup("hello")
+
+    def test_cleanup_benchmark_skips_a_missing_engine(self):
+        with (
+            mock.patch.object(
+                backends, "make_cleanup", side_effect=SystemExit("missing dependency")
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            results = bench.bench_cleanup(["mlx:model"], ["sample"], 1, "")
+
+        self.assertIsNone(results["mlx:model"])
+
+    def test_benchmark_repeat_must_be_positive(self):
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            bench.main(["--repeat", "0"])
 
 
 if __name__ == "__main__":

@@ -232,6 +232,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         if externalEngine { add("Running from terminal", enabled: false) }
         else if phase == "permissions" || phase == "starting" { add("Starting…", enabled: false) }
+        else if phase == "stopping" { add("Stopping…", enabled: false) }
         else if engine == nil { add("Start v2t", action: #selector(start)) }
         else { add("Stop v2t", action: #selector(stop)) }
         menu.addItem(.separator())
