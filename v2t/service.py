@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import signal
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,21 @@ def service_pid() -> int | None:
 def engine_ready() -> bool:
     status = config.read_status()
     return bool(status and status.get("state") in READY_STATES)
+
+
+def owned_engine_pid(menu_pid: int) -> int | None:
+    """Return the live v2t engine only when it is a child of this menu process."""
+    engine_pid = config.running_pid()
+    if engine_pid is None:
+        return None
+    result = subprocess.run(
+        ["ps", "-o", "ppid=", "-p", str(engine_pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    parent = result.stdout.strip()
+    return engine_pid if parent.isdigit() and int(parent) == menu_pid else None
 
 
 def plist_data() -> dict:
@@ -157,12 +173,24 @@ def start() -> None:
 
 
 def stop() -> None:
-    if service_pid() is None:
+    menu_pid = service_pid()
+    if menu_pid is None:
         return
-    _launchctl("kill", "SIGTERM", target())
+    engine_pid = owned_engine_pid(menu_pid)
     deadline = time.monotonic() + STOP_TIMEOUT
+    if engine_pid is not None:
+        os.kill(engine_pid, signal.SIGTERM)
+        while time.monotonic() < deadline:
+            if config.running_pid() != engine_pid:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(
+                f"engine is still stopping; check {config.run_dir() / 'v2t.log'}"
+            )
+    _launchctl("kill", "SIGTERM", target())
     while time.monotonic() < deadline:
-        if service_pid() is None and config.running_pid() is None:
+        if service_pid() is None:
             return
         time.sleep(0.1)
     raise RuntimeError(f"service is still stopping; check {config.run_dir() / 'v2t.log'}")

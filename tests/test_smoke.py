@@ -552,6 +552,31 @@ class V2TSmokeTests(unittest.TestCase):
 
         launchctl.assert_called_once_with("kill", "SIGTERM", service.target())
 
+    def test_service_stop_waits_only_for_its_owned_engine(self):
+        with (
+            mock.patch.object(service, "service_pid", side_effect=[42, None]),
+            mock.patch.object(service, "owned_engine_pid", return_value=84),
+            mock.patch.object(config, "running_pid", side_effect=[84, None]),
+            mock.patch.object(service.os, "kill") as kill,
+            mock.patch.object(service, "_launchctl") as launchctl,
+            mock.patch.object(service.time, "sleep"),
+        ):
+            service.stop()
+
+        kill.assert_called_once_with(84, signal.SIGTERM)
+        launchctl.assert_called_once_with("kill", "SIGTERM", service.target())
+
+    def test_service_preserves_an_external_engine(self):
+        with (
+            mock.patch.object(service, "service_pid", side_effect=[42, None]),
+            mock.patch.object(service, "owned_engine_pid", return_value=None),
+            mock.patch.object(service.os, "kill") as kill,
+            mock.patch.object(service, "_launchctl"),
+        ):
+            service.stop()
+
+        kill.assert_not_called()
+
     def test_stop_reports_graceful_shutdown_honestly(self):
         output = io.StringIO()
         with (
