@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -86,6 +87,7 @@ class VoiceToText:
         self.was_playing = False
         self._warned_mic = False
         self.jobs = queue.Queue()
+        self.lifecycle_lock = threading.RLock()
         self.instance_lock = None
         self.stopping = False
         cleanup_model = (
@@ -143,56 +145,62 @@ class VoiceToText:
             self.frames.append(indata.copy())
 
     def start_recording(self):
-        if self.stopping or self.recording or self.processing:
-            return
-        self.frames = []
-        self.record_start = time.perf_counter()
-        try:
-            self.stream = sd.InputStream(
-                samplerate=self.cfg.sample_rate,
-                channels=1,
-                dtype="float32",
-                callback=self.audio_callback,
-            )
-            self.recording = True
-            self.stream.start()
-        except Exception as error:
-            self.recording = False
-            self._close_stream()
-            logger.error(f"Could not open the microphone: {error}")
-            self._set_state("error", f"Microphone unavailable: {error}")
-            if not self._warned_mic:
-                self._warned_mic = True
-                subprocess.run(["open", MIC_PANE], check=False)
-            return
+        with self.lifecycle_lock:
+            if self.stopping or self.recording or self.processing:
+                return
+            self.frames = []
+            self.record_start = time.perf_counter()
+            try:
+                self.stream = sd.InputStream(
+                    samplerate=self.cfg.sample_rate,
+                    channels=1,
+                    dtype="float32",
+                    callback=self.audio_callback,
+                )
+                self.recording = True
+                self.stream.start()
+            except Exception as error:
+                self.recording = False
+                self._close_stream()
+                logger.error(f"Could not open the microphone: {error}")
+                self._set_state("error", f"Microphone unavailable: {error}")
+                if not self._warned_mic:
+                    self._warned_mic = True
+                    subprocess.run(["open", MIC_PANE], check=False)
+                return
+            if self.stopping:
+                self.recording = False
+                self._close_stream()
+                return
 
-        if self.cfg.pause_music:
-            result = subprocess.run(
-                ["nowplaying-cli", "get", "playbackRate"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.was_playing = result.stdout.strip() == "1"
-            if self.was_playing:
-                subprocess.run(["nowplaying-cli", "pause"], check=False)
-        self._set_state("recording")
-        logger.info("Recording...")
+            if self.cfg.pause_music:
+                result = subprocess.run(
+                    ["nowplaying-cli", "get", "playbackRate"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.was_playing = result.stdout.strip() == "1"
+                if self.was_playing:
+                    subprocess.run(["nowplaying-cli", "pause"], check=False)
+            self._set_state("recording")
+            logger.info("Recording...")
 
     def stop_recording(self):
-        if not self.recording:
-            return
-        self.recording = False
-        duration = time.perf_counter() - self.record_start
-        self._close_stream()
-        logger.info(f"Stopped ({duration:.1f}s)")
-        if self.frames:
-            frames, self.frames = self.frames, []
-            self.processing = True
-            self.jobs.put((frames, duration))
-        else:
-            self._restore_media()
-            self._set_state("idle")
+        with self.lifecycle_lock:
+            if not self.recording:
+                return
+            self.recording = False
+            duration = time.perf_counter() - self.record_start
+            self._close_stream()
+            logger.info(f"Stopped ({duration:.1f}s)")
+            if self.frames:
+                frames, self.frames = self.frames, []
+                self.processing = True
+                self.jobs.put((frames, duration))
+            else:
+                self._restore_media()
+                self._set_state("idle")
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
         next_state, error_message, temp_path = "idle", "", None
@@ -431,9 +439,10 @@ class VoiceToText:
         self.stopping = True
         self._set_state("stopping")
         self.jobs.put(None)
-        self.recording = False
-        self._close_stream()
-        self._restore_media()
+        with self.lifecycle_lock:
+            self.recording = False
+            self._close_stream()
+            self._restore_media()
         self._clear_status()
         if self.instance_lock is not None:
             self.instance_lock.close()

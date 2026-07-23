@@ -120,13 +120,17 @@ def start() -> None:
             "v2t is already running outside the login service; stop it first"
         )
     _prepare_log()
-    if menu_pid is None:
+    engine_pid = config.running_pid()
+    restarting = menu_pid is not None and engine_pid is None
+    if menu_pid is None or restarting:
         config.clear_last_error()
-        if loaded():
+        if restarting:
+            _launchctl("kickstart", "-k", target())
+        elif loaded():
             _launchctl("kickstart", target())
         else:
             _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
-    seen_service = menu_pid is not None
+    seen_service = menu_pid is not None and not restarting
     deadline = time.monotonic() + START_TIMEOUT
     while time.monotonic() < deadline:
         if engine_ready():

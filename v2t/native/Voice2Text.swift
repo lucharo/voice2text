@@ -165,7 +165,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
                 live = true
                 status = value
                 externalEngine = engine == nil
-                phase = value["state"] as? String ?? phase
+                if phase != "stopping" {
+                    phase = value["state"] as? String ?? phase
+                }
             }
         }
         if !live && engine == nil && phase != "permission-error" && phase != "error" {

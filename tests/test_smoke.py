@@ -7,6 +7,7 @@ import io
 import os
 import plistlib
 import queue
+import signal
 import stat
 import sys
 import tempfile
@@ -225,6 +226,26 @@ class V2TSmokeTests(unittest.TestCase):
         input_stream.assert_not_called()
         stream.stop.assert_called_once()
         stream.close.assert_called_once()
+
+    def test_shutdown_wins_if_requested_while_the_stream_starts(self):
+        voice = app.VoiceToText(
+            config.Config(cleanup_enabled=False, pause_music=True)
+        )
+        stream = mock.Mock()
+        stream.start.side_effect = lambda: setattr(voice, "stopping", True)
+
+        with (
+            mock.patch.object(app.sd, "InputStream", return_value=stream),
+            mock.patch.object(app.subprocess, "run") as run,
+        ):
+            voice.start_recording()
+
+        self.assertFalse(voice.recording)
+        stream.stop.assert_called_once()
+        stream.close.assert_called_once()
+        self.assertNotIn(
+            ["nowplaying-cli", "pause"], [call.args[0] for call in run.call_args_list]
+        )
 
     def test_transcription_pipeline_pastes_cleanup_and_deletes_audio(self):
         voice = app.VoiceToText(config.Config(save_history=False))
@@ -458,17 +479,20 @@ class V2TSmokeTests(unittest.TestCase):
 
         launchctl.assert_not_called()
 
-    def test_service_start_rejects_a_menu_with_no_engine(self):
+    def test_service_start_restarts_a_launchd_menu_with_no_engine(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
         plist.touch()
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
-            mock.patch.object(config, "read_status", return_value=None),
-            mock.patch.object(config, "read_last_error", return_value="engine is off"),
-            self.assertRaisesRegex(RuntimeError, "engine is off"),
+            mock.patch.object(service, "engine_ready", side_effect=[False, True]),
+            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(config, "clear_last_error"),
+            mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
+
+        launchctl.assert_called_once_with("kickstart", "-k", service.target())
 
     def test_service_start_waits_until_models_are_ready(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
@@ -480,6 +504,7 @@ class V2TSmokeTests(unittest.TestCase):
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(config, "running_pid", return_value=84),
             mock.patch.object(config, "read_status", side_effect=statuses) as status,
         ):
             service.start()
@@ -504,6 +529,18 @@ class V2TSmokeTests(unittest.TestCase):
             service.start()
 
         clear_error.assert_called_once()
+
+    def test_stop_reports_graceful_shutdown_honestly(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(config, "running_pid", return_value=42),
+            mock.patch.object(cli.os, "kill") as kill,
+            contextlib.redirect_stdout(output),
+        ):
+            cli.cmd_stop([])
+
+        kill.assert_called_once_with(42, signal.SIGTERM)
+        self.assertEqual(output.getvalue(), "stopping v2t (pid 42)\n")
 
     def test_cleanup_refuses_to_return_a_capped_partial_result(self):
         cleaner = object.__new__(backends.MLXCleanup)

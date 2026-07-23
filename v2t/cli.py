@@ -232,7 +232,7 @@ def cmd_stop(argv: list[str]) -> int:
         print("not running")
         return 1
     os.kill(pid, signal.SIGTERM)
-    print(f"stopped v2t (pid {pid})")
+    print(f"stopping v2t (pid {pid})")
     return 0
 
 
