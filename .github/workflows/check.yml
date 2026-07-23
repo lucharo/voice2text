@@ -12,6 +12,7 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.12"
+      - run: sudo apt-get install -y libportaudio2
       - run: uv lock --check
       - run: uvx ruff check v2t tests
       - name: Mechanics smoke tests
