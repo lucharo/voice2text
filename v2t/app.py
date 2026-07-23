@@ -430,7 +430,9 @@ class VoiceToText:
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release
             ) as listener:
-                while listener.is_alive() and not self.stopping:
+                while listener.is_alive() and (
+                    not self.stopping or self.processing
+                ):
                     if not self.process_next(timeout=0.25):
                         break
                 if not self.stopping and not listener.is_alive():

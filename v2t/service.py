@@ -165,7 +165,8 @@ def start() -> None:
     if menu_pid is None or restarting:
         config.clear_last_error()
         if restarting:
-            _launchctl("kickstart", "-k", target())
+            stop()
+            _launchctl("kickstart", target())
         elif loaded():
             _launchctl("kickstart", target())
         else:

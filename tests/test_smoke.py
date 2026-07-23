@@ -217,6 +217,46 @@ class V2TSmokeTests(unittest.TestCase):
         voice.shutdown()
         self.assertIsNone(config.running_pid())
 
+    def test_run_drains_an_accepted_job_before_shutdown(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return True
+
+        pynput = types.ModuleType("pynput")
+        pynput.keyboard = types.SimpleNamespace(Listener=Listener)
+
+        def queue_then_stop():
+            voice.processing = True
+            voice.stopping = True
+            voice.jobs.put(([np.ones((8, 1), dtype=np.float32)], 1.0))
+
+        def finish_job(*_):
+            voice.processing = False
+
+        with (
+            mock.patch.dict(sys.modules, {"pynput": pynput}),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal"),
+            mock.patch.object(voice, "warmup", side_effect=queue_then_stop),
+            mock.patch.object(
+                voice, "process_audio", side_effect=finish_job
+            ) as process,
+        ):
+            voice.run()
+
+        process.assert_called_once()
+
     def test_shutdown_blocks_late_recording_and_closes_a_racing_stream(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         config.ensure_dirs()
@@ -503,11 +543,13 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(config, "running_pid", return_value=None),
             mock.patch.object(service, "owned_engine_pid", return_value=None),
             mock.patch.object(config, "clear_last_error"),
+            mock.patch.object(service, "stop") as stop,
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
 
-        launchctl.assert_called_once_with("kickstart", "-k", service.target())
+        stop.assert_called_once()
+        launchctl.assert_called_once_with("kickstart", service.target())
 
     def test_service_start_waits_for_a_prelock_child(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
