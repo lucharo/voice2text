@@ -179,7 +179,17 @@ def stop() -> None:
     engine_pid = owned_engine_pid(menu_pid)
     deadline = time.monotonic() + STOP_TIMEOUT
     if engine_pid is not None:
-        os.kill(engine_pid, signal.SIGTERM)
+        runtime = config.read_status()
+        already_stopping = bool(
+            runtime
+            and runtime.get("pid") == engine_pid
+            and runtime.get("state") == "stopping"
+        )
+        if not already_stopping:
+            try:
+                os.kill(engine_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         while time.monotonic() < deadline:
             if config.running_pid() != engine_pid:
                 break
