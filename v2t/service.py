@@ -158,8 +158,10 @@ def start() -> None:
             "v2t is already running outside the login service; stop it first"
         )
     _prepare_log()
-    engine_pid = config.running_pid()
-    restarting = menu_pid is not None and engine_pid is None
+    menu_engine_pid = (
+        owned_engine_pid(menu_pid) if menu_pid is not None else None
+    )
+    restarting = menu_pid is not None and menu_engine_pid is None
     if menu_pid is None or restarting:
         config.clear_last_error()
         if restarting:

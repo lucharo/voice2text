@@ -501,12 +501,28 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "service_pid", return_value=42),
             mock.patch.object(service, "engine_ready", side_effect=[False, True]),
             mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "owned_engine_pid", return_value=None),
             mock.patch.object(config, "clear_last_error"),
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
 
         launchctl.assert_called_once_with("kickstart", "-k", service.target())
+
+    def test_service_start_waits_for_a_prelock_child(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(service, "engine_ready", side_effect=[False, True]),
+            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "owned_engine_pid", return_value=84),
+            mock.patch.object(service, "_launchctl") as launchctl,
+        ):
+            service.start()
+
+        launchctl.assert_not_called()
 
     def test_service_start_waits_until_models_are_ready(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
@@ -519,6 +535,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
             mock.patch.object(config, "running_pid", return_value=84),
+            mock.patch.object(service, "owned_engine_pid", return_value=84),
             mock.patch.object(config, "read_status", side_effect=statuses) as status,
         ):
             service.start()
