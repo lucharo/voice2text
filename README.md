@@ -81,7 +81,7 @@ v2t --pause-music        # pause media while recording (needs nowplaying-cli)
 
 v2t setup                # guided config: pick models, detect Ollama
 v2t status               # running / idle (also used by the menu app)
-v2t stop                 # stop a running v2t
+v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
 v2t config               # show resolved config + paths  (--init writes a template)
 v2t menubar install      # optional: compile + open the tiny native menu app
 v2t service install      # optional: start that menu app at login

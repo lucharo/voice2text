@@ -447,8 +447,10 @@ class VoiceToText:
         finally:
             self.shutdown()
 
-    def _handle_signal(self, *_):
+    def _handle_signal(self, signum=None, _frame=None):
         if self.stopping:
+            if signum == signal.SIGINT:
+                raise SystemExit(0)
             return
         self.stopping = True
         if self.shutdown_write_fd is not None:

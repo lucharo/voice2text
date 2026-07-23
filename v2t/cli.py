@@ -227,13 +227,19 @@ def cmd_status(argv: list[str]) -> int:
 
 
 def cmd_stop(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="v2t stop")
+    parser.add_argument(
+        "--force", action="store_true", help="stop immediately instead of waiting"
+    )
+    args = parser.parse_args(argv)
     pid = config.running_pid()
     if pid is None:
         config.clear_status()
         print("not running")
         return 1
-    os.kill(pid, signal.SIGTERM)
-    print(f"stopping v2t (pid {pid})")
+    os.kill(pid, signal.SIGKILL if args.force else signal.SIGTERM)
+    action = "force-stopped" if args.force else "stopping"
+    print(f"{action} v2t (pid {pid})")
     return 0
 
 

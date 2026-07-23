@@ -190,7 +190,7 @@ class V2TSmokeTests(unittest.TestCase):
         voice._set_state("transcribing")
         voice._start_shutdown_watcher()
 
-        voice._handle_signal()
+        voice._handle_signal(signal.SIGTERM)
         voice.shutdown_watcher.join(timeout=1)
 
         self.assertTrue(voice.stopping)
@@ -199,8 +199,10 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(config.read_status()["state"], "stopping")
         with self.assertRaises(queue.Empty):
             voice.jobs.get_nowait()
-        voice._handle_signal()
+        voice._handle_signal(signal.SIGTERM)
         self.assertTrue(voice.stopping)
+        with self.assertRaises(SystemExit):
+            voice._handle_signal(signal.SIGINT)
 
         voice.shutdown()
         self.assertIsNone(config.running_pid())
@@ -545,18 +547,36 @@ class V2TSmokeTests(unittest.TestCase):
     def test_service_stop_waits_for_menu_and_engine_to_exit(self):
         with (
             mock.patch.object(service, "service_pid", side_effect=[42, None]),
-            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "owned_engine_pid", return_value=None),
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.stop()
 
         launchctl.assert_called_once_with("kill", "SIGTERM", service.target())
 
+    def test_service_finds_its_child_before_engine_status_exists(self):
+        with (
+            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(
+                service.subprocess,
+                "run",
+                return_value=mock.Mock(stdout="84\n", returncode=0),
+            ) as run,
+        ):
+            self.assertEqual(service.owned_engine_pid(42), 84)
+
+        run.assert_called_once_with(
+            ["pgrep", "-P", "42"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def test_service_stop_waits_only_for_its_owned_engine(self):
         with (
             mock.patch.object(service, "service_pid", side_effect=[42, None]),
             mock.patch.object(service, "owned_engine_pid", return_value=84),
-            mock.patch.object(config, "running_pid", side_effect=[84, None]),
+            mock.patch.object(service, "_pid_alive", side_effect=[True, False]),
             mock.patch.object(service.os, "kill") as kill,
             mock.patch.object(service, "_launchctl") as launchctl,
             mock.patch.object(service.time, "sleep"),
@@ -584,7 +604,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(
                 config, "read_status", return_value={"pid": 84, "state": "stopping"}
             ),
-            mock.patch.object(config, "running_pid", side_effect=[84, None]),
+            mock.patch.object(service, "_pid_alive", side_effect=[True, False]),
             mock.patch.object(service.os, "kill") as kill,
             mock.patch.object(service, "_launchctl"),
             mock.patch.object(service.time, "sleep"),
@@ -598,7 +618,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "service_pid", side_effect=[42, None]),
             mock.patch.object(service, "owned_engine_pid", return_value=84),
             mock.patch.object(config, "read_status", return_value=None),
-            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "_pid_alive", return_value=False),
             mock.patch.object(
                 service.os, "kill", side_effect=ProcessLookupError
             ),
@@ -617,6 +637,16 @@ class V2TSmokeTests(unittest.TestCase):
 
         kill.assert_called_once_with(42, signal.SIGTERM)
         self.assertEqual(output.getvalue(), "stopping v2t (pid 42)\n")
+
+    def test_force_stop_uses_sigkill(self):
+        with (
+            mock.patch.object(config, "running_pid", return_value=42),
+            mock.patch.object(cli.os, "kill") as kill,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cli.cmd_stop(["--force"])
+
+        kill.assert_called_once_with(42, signal.SIGKILL)
 
     def test_cleanup_modes_are_mutually_exclusive(self):
         with (

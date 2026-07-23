@@ -17,6 +17,7 @@ LABEL = menubar.BUNDLE_ID
 READY_STATES = {"idle", "recording", "transcribing", "cleaning"}
 START_TIMEOUT = 120
 STOP_TIMEOUT = 120
+FORCE_TIMEOUT = 5
 
 
 def plist_path() -> Path:
@@ -62,16 +63,36 @@ def engine_ready() -> bool:
 def owned_engine_pid(menu_pid: int) -> int | None:
     """Return the live v2t engine only when it is a child of this menu process."""
     engine_pid = config.running_pid()
-    if engine_pid is None:
-        return None
+    if engine_pid is not None:
+        result = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(engine_pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        parent = result.stdout.strip()
+        if parent.isdigit() and int(parent) == menu_pid:
+            return engine_pid
     result = subprocess.run(
-        ["ps", "-o", "ppid=", "-p", str(engine_pid)],
+        ["pgrep", "-P", str(menu_pid)],
         capture_output=True,
         text=True,
         check=False,
     )
-    parent = result.stdout.strip()
-    return engine_pid if parent.isdigit() and int(parent) == menu_pid else None
+    return next(
+        (int(line) for line in result.stdout.splitlines() if line.strip().isdigit()),
+        None,
+    )
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def plist_data() -> dict:
@@ -191,13 +212,21 @@ def stop() -> None:
             except ProcessLookupError:
                 pass
         while time.monotonic() < deadline:
-            if config.running_pid() != engine_pid:
+            if not _pid_alive(engine_pid):
                 break
             time.sleep(0.1)
         else:
-            raise RuntimeError(
-                f"engine is still stopping; check {config.run_dir() / 'v2t.log'}"
-            )
+            try:
+                os.kill(engine_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            force_deadline = time.monotonic() + FORCE_TIMEOUT
+            while time.monotonic() < force_deadline and _pid_alive(engine_pid):
+                time.sleep(0.1)
+            if _pid_alive(engine_pid):
+                raise RuntimeError(
+                    f"engine did not stop; check {config.run_dir() / 'v2t.log'}"
+                )
     _launchctl("kill", "SIGTERM", target())
     deadline = time.monotonic() + STOP_TIMEOUT
     while time.monotonic() < deadline:
