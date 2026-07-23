@@ -373,7 +373,7 @@ class V2TSmokeTests(unittest.TestCase):
         pasteboard = mock.Mock()
         pasteboard.pasteboardItems.return_value = []
         pasteboard.setString_forType_.return_value = True
-        pasteboard.changeCount.side_effect = [10, 11]
+        pasteboard.changeCount.side_effect = [9, 9, 10, 11]
         fake_appkit = types.SimpleNamespace(
             NSPasteboard=mock.Mock(
                 generalPasteboard=mock.Mock(return_value=pasteboard)
@@ -399,6 +399,36 @@ class V2TSmokeTests(unittest.TestCase):
 
         pasteboard.clearContents.assert_called_once()
         pasteboard.writeObjects_.assert_not_called()
+
+    def test_paste_aborts_before_clear_if_clipboard_snapshot_keeps_changing(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        pasteboard = mock.Mock()
+        pasteboard.pasteboardItems.return_value = []
+        pasteboard.changeCount.side_effect = [1, 2, 3, 4]
+        fake_appkit = types.SimpleNamespace(
+            NSPasteboard=mock.Mock(
+                generalPasteboard=mock.Mock(return_value=pasteboard)
+            ),
+            NSPasteboardItem=mock.Mock(),
+            NSPasteboardTypeString="public.utf8-plain-text",
+        )
+        fake_quartz = types.SimpleNamespace(
+            CGEventCreateKeyboardEvent=lambda *_args: object(),
+            CGEventPost=lambda *_args: None,
+            CGEventSetFlags=lambda *_args: None,
+            kCGEventFlagMaskCommand=1,
+            kCGHIDEventTap=0,
+        )
+
+        with (
+            mock.patch.dict(
+                sys.modules, {"AppKit": fake_appkit, "Quartz": fake_quartz}
+            ),
+            self.assertRaisesRegex(RuntimeError, "clipboard changed"),
+        ):
+            voice.paste_to_cursor("dictated")
+
+        pasteboard.clearContents.assert_not_called()
 
     def test_history_is_private_and_valid_jsonl(self):
         config.append_history({"raw": "hello", "clean": "Hello."})

@@ -324,6 +324,14 @@ class VoiceToText:
         self.process_audio(*job)
         return True
 
+    def _keep_running(self) -> bool:
+        with self.lifecycle_lock:
+            return (
+                not self.stopping
+                or self.finalizing_recording
+                or self.processing
+            )
+
     def paste_to_cursor(self, text: str) -> None:
         """Paste at the cursor, preserving every native pasteboard representation."""
         from AppKit import NSPasteboard, NSPasteboardItem, NSPasteboardTypeString
@@ -336,14 +344,22 @@ class VoiceToText:
         )
 
         pasteboard = NSPasteboard.generalPasteboard()
-        saved = []
-        for item in pasteboard.pasteboardItems() or []:
-            values = []
-            for kind in item.types():
-                data = item.dataForType_(kind)
-                if data is not None:
-                    values.append((kind, data))
-            saved.append(values)
+        saved = None
+        for _ in range(2):
+            snapshot_change = pasteboard.changeCount()
+            snapshot = []
+            for item in pasteboard.pasteboardItems() or []:
+                values = []
+                for kind in item.types():
+                    data = item.dataForType_(kind)
+                    if data is not None:
+                        values.append((kind, data))
+                snapshot.append(values)
+            if pasteboard.changeCount() == snapshot_change:
+                saved = snapshot
+                break
+        if saved is None:
+            raise RuntimeError("clipboard changed while preparing paste")
         dictated_change = None
         try:
             pasteboard.clearContents()
@@ -445,11 +461,7 @@ class VoiceToText:
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release
             ) as listener:
-                while listener.is_alive() and (
-                    not self.stopping
-                    or self.finalizing_recording
-                    or self.processing
-                ):
+                while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break
                 if not self.stopping and not listener.is_alive():
