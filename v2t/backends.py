@@ -79,7 +79,7 @@ OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
 
 class MLXCleanup:
     """In-process cleanup via mlx-lm — no daemon, no HTTP. The default. Pick a
-    non-thinking instruct model (the default Qwen3-Instruct-2507 doesn't think)."""
+    non-thinking instruct model (the default Qwen2.5-Instruct doesn't think)."""
 
     default_model = MLX_CLEANUP_DEFAULT
 

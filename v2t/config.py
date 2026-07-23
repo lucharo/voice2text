@@ -6,7 +6,7 @@ Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     run/status.json              live state for CLI and menu-bar clients
 
 Zero config works: the defaults below are the shipped behaviour
-(Parakeet + Qwen3, MLX, strict cleanup).
+(Parakeet + Qwen2.5, MLX, strict cleanup).
 """
 
 from __future__ import annotations

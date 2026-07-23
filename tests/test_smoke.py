@@ -190,10 +190,36 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertTrue(voice.stopping)
         self.assertEqual(config.running_pid(), os.getpid())
+        self.assertEqual(config.read_status()["state"], "stopping")
         self.assertIsNone(voice.jobs.get_nowait())
+        with self.assertRaises(SystemExit):
+            voice._handle_signal()
 
         voice.shutdown()
         self.assertIsNone(config.running_pid())
+
+    def test_signal_exits_promptly_when_no_transcription_is_active(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.instance_lock = config.acquire_instance_lock()
+
+        with self.assertRaises(SystemExit):
+            voice._handle_signal()
+
+        voice.shutdown()
+        self.assertIsNone(config.running_pid())
+
+    def test_shutdown_blocks_late_recording_and_closes_a_racing_stream(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.stopping = True
+        stream = voice.stream = mock.Mock()
+
+        with mock.patch.object(app.sd, "InputStream") as input_stream:
+            voice.start_recording()
+            voice.shutdown()
+
+        input_stream.assert_not_called()
+        stream.stop.assert_called_once()
+        stream.close.assert_called_once()
 
     def test_transcription_pipeline_pastes_cleanup_and_deletes_audio(self):
         voice = app.VoiceToText(config.Config(save_history=False))

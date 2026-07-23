@@ -100,8 +100,8 @@ class VoiceToText:
         }
 
     # --- live status for CLI and menu-bar clients --------------------------
-    # state: starting | idle | recording | transcribing | cleaning. Written on
-    # every transition (and the icon repainted) so actions get instant feedback.
+    # Written on every transition (and the icon repainted) so actions get
+    # immediate feedback, including loading, active work, errors, and shutdown.
     def _set_state(self, state: str, error: str = "") -> None:
         clean_error = " ".join(error.split())
         config.write_status(
@@ -141,7 +141,7 @@ class VoiceToText:
             self.frames.append(indata.copy())
 
     def start_recording(self):
-        if self.recording or self.processing:
+        if self.stopping or self.recording or self.processing:
             return
         self.frames = []
         self.record_start = time.perf_counter()
@@ -419,16 +419,30 @@ class VoiceToText:
 
     def _handle_signal(self, *_):
         if self.stopping:
-            return
-        logger.info("Finishing the active transcription before shutdown...")
+            logger.warning("Forcing shutdown...")
+            raise SystemExit(0)
+        logger.info(
+            "Finishing the active transcription before shutdown..."
+            if self.processing
+            else "Shutting down..."
+        )
         self.stopping = True
         self.recording = False
+        self._set_state("stopping")
         self.jobs.put(None)
         self._close_stream()
         self._restore_media()
+        if not self.processing:
+            raise SystemExit(0)
 
     def shutdown(self) -> None:
-        self._handle_signal()
+        if not self.stopping:
+            self.stopping = True
+            self._set_state("stopping")
+            self.jobs.put(None)
+        self.recording = False
+        self._close_stream()
+        self._restore_media()
         self._clear_status()
         if self.instance_lock is not None:
             self.instance_lock.close()

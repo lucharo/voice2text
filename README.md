@@ -43,7 +43,7 @@ as dependencies, with no daemon. The models download from Hugging Face on first 
 in the local cache:
 
 ```bash
-uv tool install voice2text   # Parakeet STT + in-process Qwen3 cleanup
+uv tool install voice2text   # Parakeet STT + in-process Qwen2.5 cleanup
 v2t setup                    # optional: pick models, detect Ollama, write config
 v2t
 ```
