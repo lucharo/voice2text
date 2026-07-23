@@ -199,8 +199,8 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(config.read_status()["state"], "stopping")
         with self.assertRaises(queue.Empty):
             voice.jobs.get_nowait()
-        with self.assertRaises(SystemExit):
-            voice._handle_signal()
+        voice._handle_signal()
+        self.assertTrue(voice.stopping)
 
         voice.shutdown()
         self.assertIsNone(config.running_pid())

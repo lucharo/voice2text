@@ -177,8 +177,8 @@ def stop() -> None:
     if menu_pid is None:
         return
     engine_pid = owned_engine_pid(menu_pid)
-    deadline = time.monotonic() + STOP_TIMEOUT
     if engine_pid is not None:
+        deadline = time.monotonic() + STOP_TIMEOUT
         runtime = config.read_status()
         already_stopping = bool(
             runtime
@@ -199,6 +199,7 @@ def stop() -> None:
                 f"engine is still stopping; check {config.run_dir() / 'v2t.log'}"
             )
     _launchctl("kill", "SIGTERM", target())
+    deadline = time.monotonic() + STOP_TIMEOUT
     while time.monotonic() < deadline:
         if service_pid() is None:
             return

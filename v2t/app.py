@@ -449,7 +449,7 @@ class VoiceToText:
 
     def _handle_signal(self, *_):
         if self.stopping:
-            raise SystemExit(0)
+            return
         self.stopping = True
         if self.shutdown_write_fd is not None:
             try:
