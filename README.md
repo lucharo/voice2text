@@ -155,7 +155,7 @@ v2t menubar install      # compile the bundled Swift file into ~/Applications/Vo
 
 The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
 or separate settings system. It exists because macOS only grants microphone access to a real app
-identity. The menu requests the three native grants, starts one long-running Python process, shows
+identity. The menu requests the two native grants, starts one long-running Python process, shows
 state immediately, and links to config, history, and log. Run `v2t` in a terminal instead if you do
 not want the menu.
 

@@ -554,6 +554,13 @@ class V2TSmokeTests(unittest.TestCase):
         kill.assert_called_once_with(42, signal.SIGTERM)
         self.assertEqual(output.getvalue(), "stopping v2t (pid 42)\n")
 
+    def test_cleanup_modes_are_mutually_exclusive(self):
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            cli.cmd_run(["--casual", "--strict"])
+
     def test_cleanup_refuses_to_return_a_capped_partial_result(self):
         cleaner = object.__new__(backends.MLXCleanup)
         cleaner.model = object()

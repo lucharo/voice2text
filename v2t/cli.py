@@ -37,12 +37,13 @@ def cmd_run(argv: list[str]) -> int:
         action="store_true",
         help="paste raw transcription, skip LLM cleanup",
     )
-    p.add_argument(
+    cleanup_mode = p.add_mutually_exclusive_group()
+    cleanup_mode.add_argument(
         "--casual",
         action="store_true",
         help="light cleanup (punctuation + fillers only)",
     )
-    p.add_argument(
+    cleanup_mode.add_argument(
         "--strict",
         action="store_true",
         help="full cleanup (restructures) — the default",

@@ -1,7 +1,7 @@
 # Cross-machine grid
 
 The rollup view: rows = machines, columns = models. Fill each cell by running
-`v2t bench` on that machine (it also writes a detailed `<date>-<host>.md` here).
+`just bench` on that machine (it also writes a detailed `<date>-<host>.md` here).
 Compare a column down the rows to see how a model scales with hardware.
 
 ## Speech-to-text — transcription time on the medium clip (RTF)

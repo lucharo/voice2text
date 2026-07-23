@@ -24,6 +24,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
     private var lockFD: Int32 = -1
     private var logHandle: FileHandle?
     private var rendered = ""
+    private var terminationPending = false
 
     private var home: URL {
         let value = Bundle.main.object(forInfoDictionaryKey: "V2THome") as? String
@@ -51,6 +52,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         logHandle?.closeFile()
         logHandle = nil
         if lockFD >= 0 { close(lockFD) }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let engine else { return .terminateNow }
+        terminationPending = true
+        phase = "stopping"
+        render()
+        engine.terminate()
+        return .terminateLater
     }
 
     private func acquireAppLock() -> Bool {
@@ -131,11 +141,17 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         }
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
-                self?.engine = nil
-                self?.logHandle?.closeFile()
-                self?.logHandle = nil
-                self?.phase = "off"
-                self?.refresh()
+                guard let self else { return }
+                let shouldQuit = self.terminationPending
+                self.engine = nil
+                self.logHandle?.closeFile()
+                self.logHandle = nil
+                self.phase = "off"
+                if shouldQuit {
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                } else {
+                    self.refresh()
+                }
             }
         }
         do {
