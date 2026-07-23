@@ -207,13 +207,13 @@ class V2TSmokeTests(unittest.TestCase):
         voice.shutdown()
         self.assertIsNone(config.running_pid())
 
-    def test_signal_exits_promptly_when_no_transcription_is_active(self):
+    def test_signal_requests_prompt_shutdown_when_no_transcription_is_active(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.instance_lock = config.acquire_instance_lock()
 
-        with self.assertRaises(SystemExit):
-            voice._handle_signal()
+        voice._handle_signal(signal.SIGTERM)
 
+        self.assertTrue(voice.stopping)
         voice.shutdown()
         self.assertIsNone(config.running_pid())
 
@@ -525,8 +525,9 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
             mock.patch.object(
-                config, "read_status", return_value={"pid": 42, "state": "idle"}
+                config, "read_status", return_value={"pid": 84, "state": "idle"}
             ),
+            mock.patch.object(service, "owned_engine_pid", return_value=84),
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
@@ -570,8 +571,8 @@ class V2TSmokeTests(unittest.TestCase):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
         plist.touch()
         statuses = [
-            {"pid": 42, "state": "loading-stt"},
-            {"pid": 42, "state": "idle"},
+            {"pid": 84, "state": "loading-stt"},
+            {"pid": 84, "state": "idle"},
         ]
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
@@ -584,12 +585,21 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(status.call_count, 2)
 
+    def test_service_does_not_accept_an_external_ready_engine(self):
+        with (
+            mock.patch.object(
+                config, "read_status", return_value={"pid": 84, "state": "idle"}
+            ),
+            mock.patch.object(service, "owned_engine_pid", return_value=None),
+        ):
+            self.assertFalse(service.engine_ready(42))
+
     def test_service_start_clears_a_stale_error_before_bootstrap(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
         plist.touch()
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
-            mock.patch.object(service, "service_pid", side_effect=[None, 42]),
+            mock.patch.object(service, "service_pid", side_effect=[None, 42, 42]),
             mock.patch.object(service.menubar, "running", return_value=False),
             mock.patch.object(config, "running_pid", return_value=None),
             mock.patch.object(service, "loaded", return_value=True),

@@ -460,8 +460,6 @@ class VoiceToText:
                 os.write(self.shutdown_write_fd, b"\0")
             except OSError:
                 pass
-        if not self.processing:
-            raise SystemExit(0)
 
     def shutdown(self) -> None:
         self.stopping = True

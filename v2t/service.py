@@ -55,9 +55,13 @@ def service_pid() -> int | None:
     return None
 
 
-def engine_ready() -> bool:
+def engine_ready(menu_pid: int | None = None) -> bool:
     status = config.read_status()
-    return bool(status and status.get("state") in READY_STATES)
+    if not status or status.get("state") not in READY_STATES:
+        return False
+    if menu_pid is None:
+        return True
+    return owned_engine_pid(menu_pid) == status.get("pid")
 
 
 def owned_engine_pid(menu_pid: int) -> int | None:
@@ -149,7 +153,7 @@ def start() -> None:
         raise SystemExit("service is not installed; run: v2t service install")
     menu_pid = service_pid()
     if menu_pid is not None:
-        if engine_ready():
+        if engine_ready(menu_pid):
             return
     elif menubar.running():
         raise SystemExit("quit Voice2Text before starting the login service")
@@ -174,11 +178,11 @@ def start() -> None:
     seen_service = menu_pid is not None and not restarting
     deadline = time.monotonic() + START_TIMEOUT
     while time.monotonic() < deadline:
-        if engine_ready():
+        current_service = service_pid()
+        if current_service is not None and engine_ready(current_service):
             return
         if error := config.read_last_error():
             raise RuntimeError(error)
-        current_service = service_pid()
         if current_service is not None:
             seen_service = True
         elif seen_service:
