@@ -340,13 +340,16 @@ class VoiceToText:
         for item in pasteboard.pasteboardItems() or []:
             values = []
             for kind in item.types():
-                if data := item.dataForType_(kind):
+                data = item.dataForType_(kind)
+                if data is not None:
                     values.append((kind, data))
             saved.append(values)
+        dictated_change = None
         try:
             pasteboard.clearContents()
             if not pasteboard.setString_forType_(text, NSPasteboardTypeString):
                 raise RuntimeError("could not write to the clipboard")
+            dictated_change = pasteboard.changeCount()
             down = CGEventCreateKeyboardEvent(None, 9, True)
             up = CGEventCreateKeyboardEvent(None, 9, False)
             CGEventSetFlags(down, kCGEventFlagMaskCommand)
@@ -356,15 +359,20 @@ class VoiceToText:
             # Give slower targets time to consume the synthetic paste before restoration.
             time.sleep(0.3)
         finally:
-            pasteboard.clearContents()
-            restored = []
-            for values in saved:
-                item = NSPasteboardItem.alloc().init()
-                for kind, data in values:
-                    item.setData_forType_(data, kind)
-                restored.append(item)
-            if restored:
-                pasteboard.writeObjects_(restored)
+            should_restore = (
+                dictated_change is None
+                or pasteboard.changeCount() == dictated_change
+            )
+            if should_restore:
+                pasteboard.clearContents()
+                restored = []
+                for values in saved:
+                    item = NSPasteboardItem.alloc().init()
+                    for kind, data in values:
+                        item.setData_forType_(data, kind)
+                    restored.append(item)
+                if restored:
+                    pasteboard.writeObjects_(restored)
 
     # --- run loop -----------------------------------------------------------
     def on_press(self, key):

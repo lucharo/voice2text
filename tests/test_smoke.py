@@ -330,7 +330,7 @@ class V2TSmokeTests(unittest.TestCase):
         original = mock.Mock()
         original.types.return_value = ["public.png", "public.utf8-plain-text"]
         original.dataForType_.side_effect = lambda kind: {
-            "public.png": b"png",
+            "public.png": b"",
             "public.utf8-plain-text": b"text",
         }[kind]
         pasteboard = mock.Mock()
@@ -364,9 +364,41 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args for call in restored_item.setData_forType_.call_args_list],
-            [(b"png", "public.png"), (b"text", "public.utf8-plain-text")],
+            [(b"", "public.png"), (b"text", "public.utf8-plain-text")],
         )
         pasteboard.writeObjects_.assert_called_once_with([restored_item])
+
+    def test_clipboard_is_not_restored_over_a_new_user_copy(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        pasteboard = mock.Mock()
+        pasteboard.pasteboardItems.return_value = []
+        pasteboard.setString_forType_.return_value = True
+        pasteboard.changeCount.side_effect = [10, 11]
+        fake_appkit = types.SimpleNamespace(
+            NSPasteboard=mock.Mock(
+                generalPasteboard=mock.Mock(return_value=pasteboard)
+            ),
+            NSPasteboardItem=mock.Mock(),
+            NSPasteboardTypeString="public.utf8-plain-text",
+        )
+        fake_quartz = types.SimpleNamespace(
+            CGEventCreateKeyboardEvent=lambda *_args: object(),
+            CGEventPost=lambda *_args: None,
+            CGEventSetFlags=lambda *_args: None,
+            kCGEventFlagMaskCommand=1,
+            kCGHIDEventTap=0,
+        )
+
+        with (
+            mock.patch.dict(
+                sys.modules, {"AppKit": fake_appkit, "Quartz": fake_quartz}
+            ),
+            mock.patch.object(app.time, "sleep"),
+        ):
+            voice.paste_to_cursor("dictated")
+
+        pasteboard.clearContents.assert_called_once()
+        pasteboard.writeObjects_.assert_not_called()
 
     def test_history_is_private_and_valid_jsonl(self):
         config.append_history({"raw": "hello", "clean": "Hello."})
