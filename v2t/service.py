@@ -121,6 +121,7 @@ def start() -> None:
         )
     _prepare_log()
     if menu_pid is None:
+        config.clear_last_error()
         if loaded():
             _launchctl("kickstart", target())
         else:

@@ -6,6 +6,7 @@ import contextlib
 import io
 import os
 import plistlib
+import queue
 import stat
 import sys
 import tempfile
@@ -185,13 +186,16 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.instance_lock = config.acquire_instance_lock()
         voice.processing = True
+        voice._set_state("transcribing")
 
         voice._handle_signal()
 
         self.assertTrue(voice.stopping)
         self.assertEqual(config.running_pid(), os.getpid())
-        self.assertEqual(config.read_status()["state"], "stopping")
-        self.assertIsNone(voice.jobs.get_nowait())
+        voice._set_state("cleaning")
+        self.assertEqual(config.read_status()["state"], "transcribing")
+        with self.assertRaises(queue.Empty):
+            voice.jobs.get_nowait()
         with self.assertRaises(SystemExit):
             voice._handle_signal()
 
@@ -210,6 +214,7 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_shutdown_blocks_late_recording_and_closes_a_racing_stream(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        config.ensure_dirs()
         voice.stopping = True
         stream = voice.stream = mock.Mock()
 
@@ -480,6 +485,25 @@ class V2TSmokeTests(unittest.TestCase):
             service.start()
 
         self.assertEqual(status.call_count, 2)
+
+    def test_service_start_clears_a_stale_error_before_bootstrap(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", side_effect=[None, 42]),
+            mock.patch.object(service.menubar, "running", return_value=False),
+            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "loaded", return_value=True),
+            mock.patch.object(service, "engine_ready", side_effect=[False, True]),
+            mock.patch.object(config, "clear_last_error") as clear_error,
+            mock.patch.object(config, "read_last_error", return_value=""),
+            mock.patch.object(service, "_launchctl"),
+            mock.patch.object(service.time, "sleep"),
+        ):
+            service.start()
+
+        clear_error.assert_called_once()
 
     def test_cleanup_refuses_to_return_a_capped_partial_result(self):
         cleaner = object.__new__(backends.MLXCleanup)

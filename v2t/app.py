@@ -103,6 +103,8 @@ class VoiceToText:
     # Written on every transition (and the icon repainted) so actions get
     # immediate feedback, including loading, active work, errors, and shutdown.
     def _set_state(self, state: str, error: str = "") -> None:
+        if self.stopping and state != "stopping":
+            return
         clean_error = " ".join(error.split())
         config.write_status(
             {
@@ -401,8 +403,9 @@ class VoiceToText:
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release
             ) as listener:
-                while listener.is_alive() and self.process_next(timeout=0.25):
-                    pass
+                while listener.is_alive() and not self.stopping:
+                    if not self.process_next(timeout=0.25):
+                        break
                 if not self.stopping and not listener.is_alive():
                     raise RuntimeError("global hotkey listener stopped unexpectedly")
         except KeyboardInterrupt:
@@ -419,27 +422,15 @@ class VoiceToText:
 
     def _handle_signal(self, *_):
         if self.stopping:
-            logger.warning("Forcing shutdown...")
             raise SystemExit(0)
-        logger.info(
-            "Finishing the active transcription before shutdown..."
-            if self.processing
-            else "Shutting down..."
-        )
         self.stopping = True
-        self.recording = False
-        self._set_state("stopping")
-        self.jobs.put(None)
-        self._close_stream()
-        self._restore_media()
         if not self.processing:
             raise SystemExit(0)
 
     def shutdown(self) -> None:
-        if not self.stopping:
-            self.stopping = True
-            self._set_state("stopping")
-            self.jobs.put(None)
+        self.stopping = True
+        self._set_state("stopping")
+        self.jobs.put(None)
         self.recording = False
         self._close_stream()
         self._restore_media()
