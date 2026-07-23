@@ -178,7 +178,7 @@ def cmd_setup(argv: list[str]) -> int:
     print(f"\nwrote {path}")
     if cleanup_enabled and engine == "ollama":
         print("next: ollama pull qwen3:4b-instruct-2507")
-    package = "voice2text[whisper]" if backend == "whisper" else "voice2text"
+    package = "'voice2text[whisper]'" if backend == "whisper" else "voice2text"
     print(f"run:  v2t   (install with: uv tool install {package})")
     return 0
 

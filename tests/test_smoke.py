@@ -373,6 +373,16 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
+    def test_setup_quotes_the_whisper_extra_for_zsh(self):
+        output = io.StringIO()
+        with (
+            mock.patch("builtins.input", side_effect=["2", "n"]),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.cmd_setup([])
+
+        self.assertIn("uv tool install 'voice2text[whisper]'", output.getvalue())
+
     def test_menubar_install_builds_a_grantable_native_app(self):
         destination = Path(self.tempdir.name) / "Voice2Text.app"
 

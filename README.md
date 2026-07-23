@@ -59,7 +59,7 @@ uv tool install 'voice2text[whisper]'   # adds the Whisper backend; select it in
 
 ```bash
 # quick try (fresh venv each run — slower startup)
-uvx voice2text
+uvx --from voice2text v2t
 
 # pip
 pip install voice2text && v2t

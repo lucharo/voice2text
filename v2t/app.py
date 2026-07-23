@@ -88,7 +88,10 @@ class VoiceToText:
         self._warned_mic = False
         self.jobs = queue.Queue()
         self.lifecycle_lock = threading.RLock()
+        self.status_lock = threading.Lock()
         self.shutdown_watcher = None
+        self.shutdown_read_fd = None
+        self.shutdown_write_fd = None
         self.instance_lock = None
         self.stopping = False
         cleanup_model = (
@@ -106,25 +109,28 @@ class VoiceToText:
     # Written on every transition (and the icon repainted) so actions get
     # immediate feedback, including loading, active work, errors, and shutdown.
     def _set_state(self, state: str, error: str = "") -> None:
-        if self.stopping and state != "stopping":
-            return
-        clean_error = " ".join(error.split())
-        config.write_status(
-            {
-                "pid": os.getpid(),
-                "state": state,
-                **self.status_details,
-                "error": clean_error,
-            }
-        )
+        with self.status_lock:
+            if self.stopping and state != "stopping":
+                return
+            clean_error = " ".join(error.split())
+            config.write_status(
+                {
+                    "pid": os.getpid(),
+                    "state": state,
+                    **self.status_details,
+                    "error": clean_error,
+                }
+            )
 
     def _clear_status(self) -> None:
-        config.clear_status()
+        with self.status_lock:
+            config.clear_status()
 
     def _start_shutdown_watcher(self) -> None:
+        self.shutdown_read_fd, self.shutdown_write_fd = os.pipe()
+
         def watch():
-            while not self.stopping:
-                time.sleep(0.01)
+            os.read(self.shutdown_read_fd, 1)
             self._set_state("stopping")
 
         self.shutdown_watcher = threading.Thread(
@@ -409,9 +415,9 @@ class VoiceToText:
         config.clear_last_error()
         config.ensure_dirs()
         self.hotkey = _resolve_hotkey(self.cfg.hotkey)
+        self._start_shutdown_watcher()
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
-        self._start_shutdown_watcher()
         try:
             self.warmup()
             self._set_state("idle")
@@ -445,20 +451,34 @@ class VoiceToText:
         if self.stopping:
             raise SystemExit(0)
         self.stopping = True
+        if self.shutdown_write_fd is not None:
+            try:
+                os.write(self.shutdown_write_fd, b"\0")
+            except OSError:
+                pass
         if not self.processing:
             raise SystemExit(0)
 
     def shutdown(self) -> None:
         self.stopping = True
+        if self.shutdown_write_fd is not None:
+            try:
+                os.write(self.shutdown_write_fd, b"\0")
+            except OSError:
+                pass
         if self.shutdown_watcher is not None:
             self.shutdown_watcher.join()
         self._set_state("stopping")
         self.jobs.put(None)
         with self.lifecycle_lock:
             self.recording = False
-            self._close_stream()
-            self._restore_media()
+        self._close_stream()
+        self._restore_media()
         self._clear_status()
+        for fd in (self.shutdown_read_fd, self.shutdown_write_fd):
+            if fd is not None:
+                os.close(fd)
+        self.shutdown_read_fd = self.shutdown_write_fd = None
         if self.instance_lock is not None:
             self.instance_lock.close()
             self.instance_lock = None
