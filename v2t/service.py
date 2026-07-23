@@ -13,6 +13,8 @@ from pathlib import Path
 from . import config, menubar
 
 LABEL = menubar.BUNDLE_ID
+READY_STATES = {"idle", "recording", "transcribing", "cleaning"}
+START_TIMEOUT = 120
 
 
 def plist_path() -> Path:
@@ -48,6 +50,11 @@ def service_pid() -> int | None:
         if key == "pid" and separator and value.isdigit():
             return int(value)
     return None
+
+
+def engine_ready() -> bool:
+    status = config.read_status()
+    return bool(status and status.get("state") in READY_STATES)
 
 
 def plist_data() -> dict:
@@ -102,33 +109,45 @@ def start() -> None:
     path = plist_path()
     if not path.exists():
         raise SystemExit("service is not installed; run: v2t service install")
-    if service_pid() is not None:
-        if config.running_pid() is not None:
+    menu_pid = service_pid()
+    if menu_pid is not None:
+        if engine_ready():
             return
-        if error := config.read_last_error():
-            raise RuntimeError(error)
-        raise RuntimeError("Voice2Text menu is running but the v2t engine is off")
-    if menubar.running():
+    elif menubar.running():
         raise SystemExit("quit Voice2Text before starting the login service")
-    if config.running_pid() is not None:
+    if menu_pid is None and config.running_pid() is not None:
         raise SystemExit(
             "v2t is already running outside the login service; stop it first"
         )
     _prepare_log()
-    if loaded():
-        _launchctl("kickstart", target())
-    else:
-        _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
-    deadline = time.monotonic() + 3
+    if menu_pid is None:
+        if loaded():
+            _launchctl("kickstart", target())
+        else:
+            _launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
+    seen_service = menu_pid is not None
+    deadline = time.monotonic() + START_TIMEOUT
     while time.monotonic() < deadline:
-        if config.running_pid() is not None:
+        if engine_ready():
             return
         if error := config.read_last_error():
             raise RuntimeError(error)
+        current_service = service_pid()
+        if current_service is not None:
+            seen_service = True
+        elif seen_service:
+            raise RuntimeError(
+                f"service stopped during startup; check {config.run_dir() / 'v2t.log'}"
+            )
         time.sleep(0.1)
-    if service_pid() is not None:
-        raise RuntimeError("Voice2Text menu started but the v2t engine is off")
-    raise RuntimeError(f"service did not start; check {config.run_dir() / 'v2t.log'}")
+    if not seen_service:
+        raise RuntimeError(
+            f"service did not start; check {config.run_dir() / 'v2t.log'}"
+        )
+    raise RuntimeError(
+        f"models did not become ready within {START_TIMEOUT}s; "
+        f"check {config.run_dir() / 'v2t.log'}"
+    )
 
 
 def stop() -> None:

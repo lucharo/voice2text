@@ -176,6 +176,25 @@ class V2TSmokeTests(unittest.TestCase):
 
         process.assert_called_once()
 
+    def test_empty_job_poll_keeps_the_hotkey_loop_alive(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+
+        self.assertTrue(voice.process_next(timeout=0))
+
+    def test_signal_waits_for_the_active_transcription_before_cleanup(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.instance_lock = config.acquire_instance_lock()
+        voice.processing = True
+
+        voice._handle_signal()
+
+        self.assertTrue(voice.stopping)
+        self.assertEqual(config.running_pid(), os.getpid())
+        self.assertIsNone(voice.jobs.get_nowait())
+
+        voice.shutdown()
+        self.assertIsNone(config.running_pid())
+
     def test_transcription_pipeline_pastes_cleanup_and_deletes_audio(self):
         voice = app.VoiceToText(config.Config(save_history=False))
         audio_path = None
@@ -399,7 +418,9 @@ class V2TSmokeTests(unittest.TestCase):
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
-            mock.patch.object(config, "running_pid", return_value=42),
+            mock.patch.object(
+                config, "read_status", return_value={"pid": 42, "state": "idle"}
+            ),
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
@@ -412,10 +433,27 @@ class V2TSmokeTests(unittest.TestCase):
         with (
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
-            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(config, "read_status", return_value=None),
+            mock.patch.object(config, "read_last_error", return_value="engine is off"),
             self.assertRaisesRegex(RuntimeError, "engine is off"),
         ):
             service.start()
+
+    def test_service_start_waits_until_models_are_ready(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        statuses = [
+            {"pid": 42, "state": "loading-stt"},
+            {"pid": 42, "state": "idle"},
+        ]
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(config, "read_status", side_effect=statuses) as status,
+        ):
+            service.start()
+
+        self.assertEqual(status.call_count, 2)
 
     def test_cleanup_refuses_to_return_a_capped_partial_result(self):
         cleaner = object.__new__(backends.MLXCleanup)

@@ -1,6 +1,6 @@
 # Lint with ruff
 lint:
-    uv run ruff check --fix v2t/ tests/
+    uv run ruff check v2t/ tests/
 
 # Fast checks; no models, microphone, or permissions needed
 check: lint

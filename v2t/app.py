@@ -279,9 +279,12 @@ class VoiceToText:
                 self._set_state(next_state, error_message)
             self.processing = False
 
-    def process_next(self) -> bool:
+    def process_next(self, timeout: float | None = None) -> bool:
         """Process one queued recording on the model-owning thread."""
-        job = self.jobs.get()
+        try:
+            job = self.jobs.get(timeout=timeout)
+        except queue.Empty:
+            return True
         if job is None:
             return False
         self.process_audio(*job)
@@ -385,6 +388,7 @@ class VoiceToText:
         config.ensure_dirs()
         self.hotkey = _resolve_hotkey(self.cfg.hotkey)
         signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
         try:
             self.warmup()
             self._set_state("idle")
@@ -396,9 +400,11 @@ class VoiceToText:
             )
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release
-            ):
-                while self.process_next():
+            ) as listener:
+                while listener.is_alive() and self.process_next(timeout=0.25):
                     pass
+                if not self.stopping and not listener.is_alive():
+                    raise RuntimeError("global hotkey listener stopped unexpectedly")
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         except SystemExit as error:
@@ -412,17 +418,17 @@ class VoiceToText:
             self.shutdown()
 
     def _handle_signal(self, *_):
-        self.shutdown()
-        raise SystemExit(0)
-
-    def shutdown(self) -> None:
         if self.stopping:
             return
+        logger.info("Finishing the active transcription before shutdown...")
         self.stopping = True
         self.recording = False
         self.jobs.put(None)
         self._close_stream()
         self._restore_media()
+
+    def shutdown(self) -> None:
+        self._handle_signal()
         self._clear_status()
         if self.instance_lock is not None:
             self.instance_lock.close()
