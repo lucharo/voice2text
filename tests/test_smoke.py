@@ -157,6 +157,9 @@ class V2TSmokeTests(unittest.TestCase):
         voice.record_start = app.time.perf_counter()
         voice.frames = [np.ones((2, 1), dtype=np.float32)]
         voice.stream = mock.Mock()
+        voice.stream.stop.side_effect = lambda: self.assertTrue(
+            voice.finalizing_recording
+        )
 
         with mock.patch.object(app.sd, "InputStream") as input_stream:
             voice.stop_recording()
@@ -210,12 +213,19 @@ class V2TSmokeTests(unittest.TestCase):
     def test_signal_requests_prompt_shutdown_when_no_transcription_is_active(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.instance_lock = config.acquire_instance_lock()
+        voice.startup_complete = True
 
         voice._handle_signal(signal.SIGTERM)
 
         self.assertTrue(voice.stopping)
         voice.shutdown()
         self.assertIsNone(config.running_pid())
+
+    def test_signal_interrupts_model_startup(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+
+        with self.assertRaises(SystemExit):
+            voice._handle_signal(signal.SIGTERM)
 
     def test_run_drains_an_accepted_job_before_shutdown(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -527,7 +537,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(
                 config, "read_status", return_value={"pid": 84, "state": "idle"}
             ),
-            mock.patch.object(service, "owned_engine_pid", return_value=84),
+            mock.patch.object(service, "_is_child", return_value=True),
             mock.patch.object(service, "_launchctl") as launchctl,
         ):
             service.start()
@@ -578,7 +588,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "plist_path", return_value=plist),
             mock.patch.object(service, "service_pid", return_value=42),
             mock.patch.object(config, "running_pid", return_value=84),
-            mock.patch.object(service, "owned_engine_pid", return_value=84),
+            mock.patch.object(service, "_is_child", return_value=True),
             mock.patch.object(config, "read_status", side_effect=statuses) as status,
         ):
             service.start()
@@ -590,9 +600,36 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(
                 config, "read_status", return_value={"pid": 84, "state": "idle"}
             ),
-            mock.patch.object(service, "owned_engine_pid", return_value=None),
+            mock.patch.object(service, "_is_child", return_value=False),
         ):
             self.assertFalse(service.engine_ready(42))
+
+    def test_service_start_rejects_an_external_engine(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(service, "engine_ready", return_value=False),
+            mock.patch.object(config, "running_pid", return_value=84),
+            mock.patch.object(service, "_is_child", return_value=False),
+        ):
+            with self.assertRaisesRegex(SystemExit, "outside the login service"):
+                service.start()
+
+    def test_service_status_reports_an_external_engine_honestly(self):
+        plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
+        plist.touch()
+        with (
+            mock.patch.object(service, "plist_path", return_value=plist),
+            mock.patch.object(service, "service_pid", return_value=42),
+            mock.patch.object(config, "running_pid", return_value=84),
+            mock.patch.object(service, "_is_child", return_value=False),
+        ):
+            self.assertEqual(
+                service.status(),
+                "menu running; v2t is running outside the login service",
+            )
 
     def test_service_start_clears_a_stale_error_before_bootstrap(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"

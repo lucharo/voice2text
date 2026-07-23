@@ -61,22 +61,26 @@ def engine_ready(menu_pid: int | None = None) -> bool:
         return False
     if menu_pid is None:
         return True
-    return owned_engine_pid(menu_pid) == status.get("pid")
+    engine_pid = status.get("pid")
+    return isinstance(engine_pid, int) and _is_child(engine_pid, menu_pid)
+
+
+def _is_child(pid: int, parent_pid: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-o", "ppid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    parent = result.stdout.strip()
+    return parent.isdigit() and int(parent) == parent_pid
 
 
 def owned_engine_pid(menu_pid: int) -> int | None:
     """Return the live v2t engine only when it is a child of this menu process."""
     engine_pid = config.running_pid()
-    if engine_pid is not None:
-        result = subprocess.run(
-            ["ps", "-o", "ppid=", "-p", str(engine_pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        parent = result.stdout.strip()
-        if parent.isdigit() and int(parent) == menu_pid:
-            return engine_pid
+    if engine_pid is not None and _is_child(engine_pid, menu_pid):
+        return engine_pid
     result = subprocess.run(
         ["pgrep", "-P", str(menu_pid)],
         capture_output=True,
@@ -155,6 +159,11 @@ def start() -> None:
     if menu_pid is not None:
         if engine_ready(menu_pid):
             return
+        engine_pid = config.running_pid()
+        if engine_pid is not None and not _is_child(engine_pid, menu_pid):
+            raise SystemExit(
+                "v2t is running outside the login service; stop it first"
+            )
     elif menubar.running():
         raise SystemExit("quit Voice2Text before starting the login service")
     if menu_pid is None and config.running_pid() is not None:
@@ -253,8 +262,14 @@ def uninstall() -> None:
 def status() -> str:
     if not plist_path().exists():
         return "not installed"
-    if service_pid() is not None:
-        return "running" if config.running_pid() is not None else "menu running; v2t off"
-    if config.running_pid() is not None:
+    menu_pid = service_pid()
+    engine_pid = config.running_pid()
+    if menu_pid is not None:
+        if engine_pid is not None and _is_child(engine_pid, menu_pid):
+            return "running"
+        if engine_pid is not None:
+            return "menu running; v2t is running outside the login service"
+        return "menu running; v2t off"
+    if engine_pid is not None:
         return "installed; v2t is running outside the login service"
     return "loaded" if loaded() else "installed but unloaded"

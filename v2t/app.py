@@ -94,6 +94,8 @@ class VoiceToText:
         self.shutdown_write_fd = None
         self.instance_lock = None
         self.stopping = False
+        self.finalizing_recording = False
+        self.startup_complete = False
         cleanup_model = (
             cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
         )
@@ -209,16 +211,20 @@ class VoiceToText:
             if not self.recording:
                 return
             self.recording = False
-            duration = time.perf_counter() - self.record_start
-            self._close_stream()
-            logger.info(f"Stopped ({duration:.1f}s)")
-            if self.frames:
-                frames, self.frames = self.frames, []
-                self.processing = True
-                self.jobs.put((frames, duration))
-            else:
-                self._restore_media()
-                self._set_state("idle")
+            self.finalizing_recording = True
+            try:
+                duration = time.perf_counter() - self.record_start
+                self._close_stream()
+                logger.info(f"Stopped ({duration:.1f}s)")
+                if self.frames:
+                    frames, self.frames = self.frames, []
+                    self.processing = True
+                    self.jobs.put((frames, duration))
+                else:
+                    self._restore_media()
+                    self._set_state("idle")
+            finally:
+                self.finalizing_recording = False
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
         next_state, error_message, temp_path = "idle", "", None
@@ -420,6 +426,7 @@ class VoiceToText:
         signal.signal(signal.SIGINT, self._handle_signal)
         try:
             self.warmup()
+            self.startup_complete = True
             self._set_state("idle")
             logger.info(f"Voice-to-Text — {self.cfg.backend} · {self.cfg.mode}")
             if self.cfg.pause_music:
@@ -431,7 +438,9 @@ class VoiceToText:
                 on_press=self.on_press, on_release=self.on_release
             ) as listener:
                 while listener.is_alive() and (
-                    not self.stopping or self.processing
+                    not self.stopping
+                    or self.finalizing_recording
+                    or self.processing
                 ):
                     if not self.process_next(timeout=0.25):
                         break
@@ -460,6 +469,12 @@ class VoiceToText:
                 os.write(self.shutdown_write_fd, b"\0")
             except OSError:
                 pass
+        if (
+            not self.startup_complete
+            and not self.finalizing_recording
+            and not self.processing
+        ):
+            raise SystemExit(0)
 
     def shutdown(self) -> None:
         self.stopping = True
