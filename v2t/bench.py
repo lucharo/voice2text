@@ -5,9 +5,9 @@ the ollama cleanup engine needs Ollama. Results are written under
 ~/.v2t/benchmarks/results/ so you can collect a grid across machines. Absolute
 times reflect THAT machine — compare models within a run, not across machines.
 
-    v2t bench                      # both tables, default models, samples via `say`
-    v2t bench --cleanup            # cleanup table only
-    v2t bench --cleanup-models mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit
+    just bench                     # both tables, default models, samples via `say`
+    just bench --cleanup           # cleanup table only
+    just bench --cleanup-models mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit
 """
 
 from __future__ import annotations

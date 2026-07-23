@@ -15,6 +15,7 @@ from . import config, menubar
 LABEL = menubar.BUNDLE_ID
 READY_STATES = {"idle", "recording", "transcribing", "cleaning"}
 START_TIMEOUT = 120
+STOP_TIMEOUT = 120
 
 
 def plist_path() -> Path:
@@ -156,8 +157,15 @@ def start() -> None:
 
 
 def stop() -> None:
-    if service_pid() is not None:
-        _launchctl("kill", "SIGTERM", target())
+    if service_pid() is None:
+        return
+    _launchctl("kill", "SIGTERM", target())
+    deadline = time.monotonic() + STOP_TIMEOUT
+    while time.monotonic() < deadline:
+        if service_pid() is None and config.running_pid() is None:
+            return
+        time.sleep(0.1)
+    raise RuntimeError(f"service is still stopping; check {config.run_dir() / 'v2t.log'}")
 
 
 def uninstall() -> None:

@@ -542,6 +542,16 @@ class V2TSmokeTests(unittest.TestCase):
 
         clear_error.assert_called_once()
 
+    def test_service_stop_waits_for_menu_and_engine_to_exit(self):
+        with (
+            mock.patch.object(service, "service_pid", side_effect=[42, None]),
+            mock.patch.object(config, "running_pid", return_value=None),
+            mock.patch.object(service, "_launchctl") as launchctl,
+        ):
+            service.stop()
+
+        launchctl.assert_called_once_with("kill", "SIGTERM", service.target())
+
     def test_stop_reports_graceful_shutdown_honestly(self):
         output = io.StringIO()
         with (
