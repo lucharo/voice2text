@@ -12,23 +12,24 @@ _Lower time / higher RTF is better. Needs Apple Silicon (MLX)._
 |---|--:|--:|--:|
 | Linux x86 (remote container) | n/a — no MLX | n/a — no MLX | n/a — no MLX |
 | MacBook (personal) — M1 Pro | 0.29s (36×) | 0.27s (40×) | 1.61s (7×) |
-| MacBook (work) | _todo_ | _todo_ | _todo_ |
+| MacBook (work) — M1 Max | 0.18s (57×) | 0.17s (61×) | 0.76s (14×) |
 
 ## Text cleanup — TTFT / total on the median sample
 
 _Lower is better. mlx engine needs Apple Silicon; ollama engine needs Ollama._
 
-| machine | mlx:Qwen3-4B-Instruct-2507-4bit | mlx:Qwen2.5-3B-Instruct-4bit | ollama:qwen3:4b-instruct-2507 |
-|---|--:|--:|--:|
-| Linux x86 (remote container) | n/a — no MLX | n/a — no MLX | _todo¹_ |
-| MacBook (personal) — M1 Pro | 0.55 / 0.97s | 0.30 / 0.51s | _not run_ |
-| MacBook (work) | _todo_ | _todo_ | _todo_ |
+| machine | mlx:Qwen3-4B-Instruct-2507-4bit | mlx:Qwen2.5-3B-Instruct-4bit (legacy) | mlx:Qwen2.5-1.5B-Instruct-4bit | ollama:qwen3:4b-instruct-2507 |
+|---|--:|--:|--:|--:|
+| Linux x86 (remote container) | n/a — no MLX | n/a — no MLX | n/a — no MLX | _todo¹_ |
+| MacBook (personal) — M1 Pro | 0.55 / 0.97s | 0.30 / 0.51s | _not run_ | _not run_ |
+| MacBook (work) — M1 Max | 0.28 / 0.50s | _not run_ | 0.12 / 0.19s | _not run_ |
 
 ¹ The default cleanup (mlx-lm) needs Apple Silicon. The remote Linux box can only
 run the `ollama:` column, and only once Ollama is installed — CPU x86 timings
 aren't representative of a Mac, so treat that cell as a sanity check, not a target.
 
-_Detailed per-run numbers: [`2026-06-16-Apple-M1-Pro.md`](2026-06-16-Apple-M1-Pro.md)._
+_Detailed per-run numbers: [`2026-06-16-Apple-M1-Pro.md`](2026-06-16-Apple-M1-Pro.md),
+[`2026-07-24-Apple-M1-Max.md`](2026-07-24-Apple-M1-Max.md)._
 
 ## Transcript quality (accuracy)
 
