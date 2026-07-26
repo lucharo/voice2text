@@ -112,10 +112,13 @@ def _step(label: str):
         yield
     finally:
         done.set()
+        elapsed = time.perf_counter() - start
         if ticker:
             ticker.join()
-            sys.stderr.write(f"\r  {label} {time.perf_counter() - start:5.1f}s\033[K\n")
+            sys.stderr.write(f"\r  {label} {elapsed:5.1f}s\033[K\n")
             sys.stderr.flush()
+        else:  # piped: no live line, so close the step with its timing
+            print(f"  {label} {elapsed:5.1f}s", file=sys.stderr)
 
 
 def _audio_seconds(path: Path) -> float:
