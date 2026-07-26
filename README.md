@@ -33,6 +33,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 - **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
 - **In-process LLM cleanup** via mlx-lm (`Qwen2.5-1.5B-Instruct`) — fixes punctuation, removes fillers while using about 1.3 GB less model memory than the previous 4B default. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
+- **File transcription** — `v2t transcribe memo.opus` runs the same local models over audio you already have (see [Transcribing files](#transcribing-files)).
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
 - **Optional one-file Swift menu** — native permissions, instant state, and quick links; no window or Xcode project.
 
@@ -79,6 +80,8 @@ v2t --no-cleanup         # paste raw transcription, skip the LLM
 v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
 
+v2t transcribe memo.opus # transcribe a file you already have (no microphone)
+
 v2t setup                # guided config: pick models, detect Ollama
 v2t status               # running / idle (also used by the menu app)
 v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
@@ -88,6 +91,22 @@ v2t service install      # optional: start that menu app at login
 ```
 
 Hold **Right Command** to record, release to transcribe and paste.
+
+### Transcribing files
+
+`v2t transcribe` points the same local models at audio already on disk — anything ffmpeg reads
+(`.opus`, `.m4a`, `.mp3`, video files too), no microphone or permissions involved.
+
+```bash
+v2t transcribe memo.opus              # prints the transcript, copies it to the clipboard
+v2t transcribe memo.opus > notes.txt  # redirected: clean text, no clipboard copy
+v2t transcribe *.m4a                  # several files, each under a `# filename` heading
+v2t transcribe --clean memo.opus      # add the LLM cleanup pass (--casual / --strict imply it)
+```
+
+Files transcribe **verbatim** by default: cleanup rewrites, and that is rarely what you want for
+someone else's voice note. Every step reports live elapsed time — a 3½-minute WhatsApp note takes
+about 11s with Parakeet on an M1 Max (~19× realtime).
 
 ### Strict vs Casual
 

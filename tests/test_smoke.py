@@ -816,6 +816,75 @@ class V2TSmokeTests(unittest.TestCase):
 
         kill.assert_called_once_with(42, signal.SIGKILL)
 
+    def _audio_file(self, name: str = "memo.opus") -> Path:
+        path = Path(self.tempdir.name) / name
+        path.write_bytes(b"not really audio; the backend is mocked")
+        return path
+
+    def _transcribe(self, argv: list[str], stt, cleaner=None) -> str:
+        """Run `v2t transcribe` with both backends mocked; returns stdout."""
+        output = io.StringIO()
+        with (
+            mock.patch.object(backends, "make_stt", return_value=stt),
+            mock.patch.object(
+                backends, "make_cleanup", return_value=cleaner
+            ) as make_cleanup,
+            mock.patch.object(cli, "_audio_seconds", return_value=10.0),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli.cmd_transcribe(argv), 0)
+        self.make_cleanup = make_cleanup
+        return output.getvalue()
+
+    def test_transcribe_is_verbatim_and_loads_no_cleaner_by_default(self):
+        path = self._audio_file()
+        stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
+
+        text = self._transcribe([str(path)], stt)
+
+        self.assertEqual(text, "hey um there\n")
+        stt.transcribe.assert_called_once_with(str(path))
+        self.make_cleanup.assert_not_called()
+
+    def test_transcribe_mode_flag_turns_the_cleanup_pass_on(self):
+        path = self._audio_file()
+        stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("Hey, there.", 0.1, 0.4)))
+
+        text = self._transcribe(["--casual", str(path)], stt, cleaner)
+
+        self.assertEqual(text, "Hey, there.\n")
+        cleaner.cleanup.assert_called_once_with("hey um there", "casual")
+
+    def test_transcribe_keeps_the_raw_text_when_cleanup_fails(self):
+        path = self._audio_file()
+        stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
+        cleaner = mock.Mock(cleanup=mock.Mock(side_effect=RuntimeError("no model")))
+
+        text = self._transcribe(["--clean", str(path)], stt, cleaner)
+
+        self.assertEqual(text, "hey um there\n")
+
+    def test_transcribe_labels_each_file_when_given_several(self):
+        first, second = self._audio_file("a.opus"), self._audio_file("b.m4a")
+        stt = mock.Mock(transcribe=mock.Mock(side_effect=["one", "two"]))
+
+        text = self._transcribe([str(first), str(second)], stt)
+
+        self.assertEqual(text, "# a.opus\none\n\n# b.m4a\ntwo\n")
+
+    def test_transcribe_rejects_a_missing_file_before_loading_a_model(self):
+        missing = str(Path(self.tempdir.name) / "gone.wav")
+
+        with (
+            mock.patch.object(backends, "make_stt") as make_stt,
+            self.assertRaises(SystemExit),
+        ):
+            cli.cmd_transcribe([missing])
+
+        make_stt.assert_not_called()
+
     def test_cleanup_modes_are_mutually_exclusive(self):
         with (
             contextlib.redirect_stderr(io.StringIO()),

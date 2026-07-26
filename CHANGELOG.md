@@ -19,7 +19,8 @@ This release turns v2t into a small, modular, MLX-first package.
 - **Private, lossless local data** — config/history/status use owner-only permissions, temporary audio is always removed, logs no longer include dictated text, and rich clipboard contents survive paste.
 - **Reproducible install and release path** — constrained scientific dependencies, bundled Swift source, clean sdists, smoke-test CI, and validated build/release commands.
 - **Contributor benchmark harness** — `just bench` writes a per-machine markdown grid (STT RTF + cleanup TTFT/total) with `engine:model` columns. Optional Whisper stays in the dev dependency group.
-- **New commands**: `v2t setup`, `v2t status`, `v2t stop`, `v2t service`, `v2t config`, `v2t menubar`.
+- **Transcribe files you already have** — `v2t transcribe memo.opus [more…]` runs the configured backend over anything ffmpeg reads, prints the transcript to stdout and copies it to the clipboard when interactive. Verbatim by default (`--clean` / `--casual` / `--strict` opt into the LLM pass), with live elapsed time per step and a realtime-factor summary.
+- **New commands**: `v2t transcribe`, `v2t setup`, `v2t status`, `v2t stop`, `v2t service`, `v2t config`, `v2t menubar`.
 
 ## 0.2.0
 

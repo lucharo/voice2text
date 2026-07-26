@@ -1,6 +1,7 @@
 """v2t command line.
 
 v2t                 run push-to-talk (default)
+v2t transcribe      transcribe existing audio files (no microphone)
 v2t setup           guided first-run config (pick models, detect Ollama)
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          live state line (off / starting / idle / recording / …)
@@ -14,7 +15,12 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import subprocess
 import sys
+import threading
+import time
+from contextlib import contextmanager
+from pathlib import Path
 
 from . import config
 
@@ -81,6 +87,181 @@ def cmd_run(argv: list[str]) -> int:
         app.check_and_request_permissions()
     app.VoiceToText(cfg).run()
     return 0
+
+
+@contextmanager
+def _step(label: str):
+    """A step that says what it is doing while it does it (design tenet: be communicative).
+
+    Live elapsed seconds on an interactive stderr, one plain line when piped.
+    """
+    start = time.perf_counter()
+    done = threading.Event()
+
+    def tick():
+        while not done.wait(0.1):
+            sys.stderr.write(f"\r  {label}… {time.perf_counter() - start:5.1f}s\033[K")
+            sys.stderr.flush()
+
+    ticker = threading.Thread(target=tick, daemon=True) if sys.stderr.isatty() else None
+    if ticker:
+        ticker.start()
+    else:
+        print(f"  {label}…", file=sys.stderr)
+    try:
+        yield
+    finally:
+        done.set()
+        if ticker:
+            ticker.join()
+            sys.stderr.write(f"\r  {label} {time.perf_counter() - start:5.1f}s\033[K\n")
+            sys.stderr.flush()
+
+
+def _audio_seconds(path: Path) -> float:
+    """Clip length via ffprobe (ships with the ffmpeg both backends decode with); 0 if unknown."""
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return float(probe.stdout.strip())
+    except (FileNotFoundError, ValueError):
+        return 0.0
+
+
+def _clock(seconds: float) -> str:
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
+    from . import backends
+
+    stt_label = backends.short_model(
+        cfg.stt_model or backends.STT[cfg.backend].default_model
+    )
+    cleanup_label = backends.short_model(
+        cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
+    )
+    banner = f"v2t transcribe · {stt_label}"
+    if clean:
+        banner += f" + {cleanup_label} ({cfg.mode})"
+    print(
+        f"{banner} · {len(paths)} file{'s' if len(paths) > 1 else ''}", file=sys.stderr
+    )
+
+    with _step(f"loading {stt_label}"):
+        stt = backends.make_stt(cfg.backend, cfg.stt_model)
+    cleaner = None
+    if clean:
+        with _step(f"loading {cleanup_label}"):
+            cleaner = backends.make_cleanup(
+                cfg.cleanup_engine, cfg.cleanup_model, cfg.ollama_url
+            )
+
+    chunks = []
+    for index, path in enumerate(paths, 1):
+        seconds = _audio_seconds(path)
+        prefix = f"[{index}/{len(paths)}] " if len(paths) > 1 else ""
+        length = f"  ({_clock(seconds)})" if seconds else ""
+        print(f"{prefix}{path.name}{length}", file=sys.stderr)
+
+        started = time.perf_counter()
+        with _step("transcribing"):
+            text = stt.transcribe(str(path))
+        if cleaner is not None and text:
+            with _step("cleaning up"):
+                try:
+                    text = cleaner.cleanup(text, cfg.mode)[0] or text
+                except Exception as error:  # a transcript in hand beats a failed run
+                    print(
+                        f"  cleanup failed ({error}) — keeping the raw text",
+                        file=sys.stderr,
+                    )
+        elapsed = time.perf_counter() - started
+        speed = f" · {seconds / elapsed:.0f}× realtime" if seconds and elapsed else ""
+        print(
+            f"  ✓ {len(text.split())} words in {elapsed:.1f}s{speed}", file=sys.stderr
+        )
+        chunks.append(f"# {path.name}\n{text}" if len(paths) > 1 else text)
+
+    out = "\n\n".join(chunks).strip()
+    print(out)
+    if sys.stdout.isatty() and _which("pbcopy"):
+        subprocess.run(["pbcopy"], input=out, text=True, check=False)
+        print(f"✓ copied to clipboard ({len(out.split())} words)", file=sys.stderr)
+    return 0
+
+
+def cmd_transcribe(argv: list[str]) -> int:
+    """Transcribe files on disk with the same local models — no microphone, no cloud."""
+    p = argparse.ArgumentParser(
+        prog="v2t transcribe",
+        description="transcribe audio files to text, fully on-device",
+    )
+    p.add_argument(
+        "files",
+        nargs="+",
+        metavar="AUDIO",
+        help="audio/video files (anything ffmpeg reads)",
+    )
+    p.add_argument("--config", help="path to a config.toml")
+    p.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        help="override transcription backend",
+    )
+    p.add_argument("--model", help="override STT model")
+    p.add_argument(
+        "--clean",
+        action="store_true",
+        help="run the LLM cleanup pass (off by default — files transcribe verbatim)",
+    )
+    cleanup_mode = p.add_mutually_exclusive_group()
+    cleanup_mode.add_argument(
+        "--casual",
+        action="store_true",
+        help="cleanup, punctuation + fillers only (implies --clean)",
+    )
+    cleanup_mode.add_argument(
+        "--strict",
+        action="store_true",
+        help="cleanup that also restructures (implies --clean)",
+    )
+    a = p.parse_args(argv)
+
+    if a.config:
+        os.environ["V2T_CONFIG"] = a.config
+    clean = a.clean or a.casual or a.strict
+    cfg = config.load(
+        {
+            "backend": a.backend,
+            "stt_model": a.model,
+            "cleanup_enabled": clean,
+            "mode": "casual" if a.casual else ("strict" if a.strict else None),
+        }
+    )
+
+    paths = [Path(f).expanduser() for f in a.files]
+    if missing := [str(path) for path in paths if not path.is_file()]:
+        raise SystemExit(f"v2t transcribe: no such file: {', '.join(missing)}")
+
+    try:
+        return _transcribe_files(cfg, paths, clean)
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 130
 
 
 def cmd_config(argv: list[str]) -> int:
@@ -295,6 +476,7 @@ def _which(name: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     table = {
+        "transcribe": cmd_transcribe,
         "setup": cmd_setup,
         "config": cmd_config,
         "status": cmd_status,
