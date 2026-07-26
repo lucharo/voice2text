@@ -12,3 +12,9 @@ dist/
 # Local agent handoff state
 .continues-handoff.md
 .omo/
+
+# Claude Code local state (keep the skill, drop the transients)
+.claude/worktrees/
+.claude/plans/
+.claude/specs/
+.claude/.DS_Store
