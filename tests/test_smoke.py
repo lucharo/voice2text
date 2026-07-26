@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import plistlib
 import queue
@@ -282,9 +283,7 @@ class V2TSmokeTests(unittest.TestCase):
         stream.close.assert_called_once()
 
     def test_shutdown_wins_if_requested_while_the_stream_starts(self):
-        voice = app.VoiceToText(
-            config.Config(cleanup_enabled=False, pause_music=True)
-        )
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, pause_music=True))
         stream = mock.Mock()
         stream.start.side_effect = lambda: setattr(voice, "stopping", True)
 
@@ -510,15 +509,11 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(menubar.sys, "platform", "darwin"),
             mock.patch.object(menubar, "signing_identity", return_value="-"),
             mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
-            mock.patch.dict(
-                os.environ, {"V2T_HOME": self.tempdir.name}, clear=True
-            ),
+            mock.patch.dict(os.environ, {"V2T_HOME": self.tempdir.name}, clear=True),
         ):
             installed = menubar.install()
 
-        info = plistlib.loads(
-            (installed / "Contents" / "Info.plist").read_bytes()
-        )
+        info = plistlib.loads((installed / "Contents" / "Info.plist").read_bytes())
         self.assertEqual(
             info,
             {
@@ -563,7 +558,9 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_launch_agent_keeps_one_warm_v2t_process(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
-        app_executable = Path(self.tempdir.name) / "Voice2Text.app/Contents/MacOS/Voice2Text"
+        app_executable = (
+            Path(self.tempdir.name) / "Voice2Text.app/Contents/MacOS/Voice2Text"
+        )
         app_executable.parent.mkdir(parents=True)
         app_executable.touch()
         with (
@@ -586,9 +583,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
         self.assertTrue(data["RunAtLoad"])
         self.assertNotIn("KeepAlive", data)
-        launchctl.assert_called_once_with(
-            "bootstrap", f"gui/{os.getuid()}", str(plist)
-        )
+        launchctl.assert_called_once_with("bootstrap", f"gui/{os.getuid()}", str(plist))
 
     def test_service_start_does_not_restart_a_healthy_process(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"
@@ -787,9 +782,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(service, "owned_engine_pid", return_value=84),
             mock.patch.object(config, "read_status", return_value=None),
             mock.patch.object(service, "_pid_alive", return_value=False),
-            mock.patch.object(
-                service.os, "kill", side_effect=ProcessLookupError
-            ),
+            mock.patch.object(service.os, "kill", side_effect=ProcessLookupError),
             mock.patch.object(service, "_launchctl"),
         ):
             service.stop()
@@ -850,7 +843,10 @@ class V2TSmokeTests(unittest.TestCase):
     def test_transcribe_mode_flag_turns_the_cleanup_pass_on(self):
         path = self._audio_file()
         stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
-        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("Hey, there.", 0.1, 0.4)))
+        cleaner = mock.Mock(
+            model_id="cleaner",
+            cleanup=mock.Mock(return_value=("Hey, there.", 0.1, 0.4)),
+        )
 
         text = self._transcribe(["--casual", str(path)], stt, cleaner)
 
@@ -860,7 +856,9 @@ class V2TSmokeTests(unittest.TestCase):
     def test_transcribe_keeps_the_raw_text_when_cleanup_fails(self):
         path = self._audio_file()
         stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
-        cleaner = mock.Mock(cleanup=mock.Mock(side_effect=RuntimeError("no model")))
+        cleaner = mock.Mock(
+            model_id="cleaner", cleanup=mock.Mock(side_effect=RuntimeError("no model"))
+        )
 
         text = self._transcribe(["--clean", str(path)], stt, cleaner)
 
@@ -873,6 +871,39 @@ class V2TSmokeTests(unittest.TestCase):
         text = self._transcribe([str(first), str(second)], stt)
 
         self.assertEqual(text, "# a.opus\none\n\n# b.m4a\ntwo\n")
+
+    def test_transcribe_records_each_file_in_history(self):
+        path = self._audio_file()
+        stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
+
+        self._transcribe([str(path)], stt)
+
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual(
+            record,
+            {
+                "ts": record["ts"],
+                "source": str(path),
+                "audio_s": 10.0,
+                "backend": "parakeet",
+                "model": backends.PARAKEET_DEFAULT,
+                "cleanup_engine": None,
+                "cleanup_model": None,
+                "mode": "strict",
+                "stt_s": record["stt_s"],
+                "cleanup_s": 0.0,
+                "raw": "hey um there",
+                "clean": "hey um there",
+            },
+        )
+
+    def test_transcribe_writes_no_history_when_the_user_turned_it_off(self):
+        config.write_config("[behavior]\nsave_history = false\n")
+        stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
+
+        self._transcribe([str(self._audio_file())], stt)
+
+        self.assertFalse(config.history_path().exists())
 
     def test_transcribe_rejects_a_missing_file_before_loading_a_model(self):
         missing = str(Path(self.tempdir.name) / "gone.wav")

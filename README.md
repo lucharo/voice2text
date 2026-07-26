@@ -106,7 +106,8 @@ v2t transcribe --clean memo.opus      # add the LLM cleanup pass (--casual / --s
 
 Files transcribe **verbatim** by default: cleanup rewrites, and that is rarely what you want for
 someone else's voice note. Every step reports live elapsed time — a 3½-minute WhatsApp note takes
-about 11s with Parakeet on an M1 Max (~19× realtime).
+about 11s with Parakeet on an M1 Max (~19× realtime). Each result is appended to the same
+[history](#config--v2t) as your dictations, with the file it came from (`save_history = false` to opt out).
 
 ### Strict vs Casual
 

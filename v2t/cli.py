@@ -179,28 +179,56 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
 
         started = time.perf_counter()
         with _step("transcribing"):
-            text = stt.transcribe(str(path))
-        if cleaner is not None and text:
+            raw = stt.transcribe(str(path))
+        stt_s = time.perf_counter() - started
+        text, cleanup_s = raw, 0.0
+        if cleaner is not None and raw:
+            started = time.perf_counter()
             with _step("cleaning up"):
                 try:
-                    text = cleaner.cleanup(text, cfg.mode)[0] or text
+                    text = cleaner.cleanup(raw, cfg.mode)[0] or raw
                 except Exception as error:  # a transcript in hand beats a failed run
                     print(
                         f"  cleanup failed ({error}) — keeping the raw text",
                         file=sys.stderr,
                     )
-        elapsed = time.perf_counter() - started
+            cleanup_s = time.perf_counter() - started
+        elapsed = stt_s + cleanup_s
         speed = f" · {seconds / elapsed:.0f}× realtime" if seconds and elapsed else ""
         print(
             f"  ✓ {len(text.split())} words in {elapsed:.1f}s{speed}", file=sys.stderr
         )
         chunks.append(f"# {path.name}\n{text}" if len(paths) > 1 else text)
 
+        if cfg.save_history:
+            try:
+                config.append_history(
+                    {
+                        "source": str(path),
+                        "audio_s": round(seconds, 2),
+                        "backend": cfg.backend,
+                        "model": cfg.stt_model
+                        or backends.STT[cfg.backend].default_model,
+                        "cleanup_engine": cfg.cleanup_engine if cleaner else None,
+                        "cleanup_model": cleaner.model_id if cleaner else None,
+                        "mode": cfg.mode,
+                        "stt_s": round(stt_s, 3),
+                        "cleanup_s": round(cleanup_s, 3),
+                        "raw": raw,
+                        "clean": text,
+                    }
+                )
+            except OSError as error:
+                print(f"  could not save history: {error}", file=sys.stderr)
+
     out = "\n\n".join(chunks).strip()
     print(out)
     if sys.stdout.isatty() and _which("pbcopy"):
-        subprocess.run(["pbcopy"], input=out, text=True, check=False)
-        print(f"✓ copied to clipboard ({len(out.split())} words)", file=sys.stderr)
+        copied = subprocess.run(["pbcopy"], input=out, text=True, check=False)
+        if copied.returncode == 0:
+            print(f"✓ copied to clipboard ({len(out.split())} words)", file=sys.stderr)
+        else:
+            print("  clipboard copy failed (pbcopy)", file=sys.stderr)
     return 0
 
 
