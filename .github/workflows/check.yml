@@ -14,7 +14,7 @@ jobs:
           python-version: "3.12"
       - run: sudo apt-get install -y libportaudio2
       - run: uv lock --check
-      - run: uvx ruff check v2t tests
+      - run: uv run ruff check v2t tests
       - name: Mechanics smoke tests
         run: >-
           uv run --no-project --python 3.12
