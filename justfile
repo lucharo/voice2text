@@ -19,9 +19,9 @@ build: check
     uv build
     uvx twine check dist/*
 
-# Publish to PyPI (reads ~/.pypirc)
+# Publish to PyPI (reads UV_PUBLISH_TOKEN from the environment)
 publish:
-    uvx twine upload dist/*
+    uv publish dist/*
 
 # Build and publish only from a clean checkout
 release:
