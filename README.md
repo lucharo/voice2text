@@ -208,3 +208,6 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 
 > This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.
+
+Contributor questions, including how releases are published, are covered in the
+[`FAQ`](docs/faq/README.md).
