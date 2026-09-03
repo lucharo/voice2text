@@ -13,7 +13,7 @@ struct Voice2TextApp {
     }
 }
 
-final class Voice2TextMenu: NSObject, NSApplicationDelegate {
+final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var engine: Process?
@@ -25,10 +25,28 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
     private var logHandle: FileHandle?
     private var rendered = ""
     private var terminationPending = false
+    private var lastTranscription: String?
 
+    // Info.plist bakes the installing user's paths. A bundle built and signed on
+    // another Mac (the only way to get a non-ad-hoc signature onto a managed
+    // machine with no signing identity) carries that other user's paths, so
+    // each one falls back to this user's standard locations when it is absent.
     private var home: URL {
-        let value = Bundle.main.object(forInfoDictionaryKey: "V2THome") as? String
-        return URL(fileURLWithPath: value ?? NSHomeDirectory() + "/.v2t")
+        if let value = Bundle.main.object(forInfoDictionaryKey: "V2THome") as? String,
+           FileManager.default.fileExists(atPath: (value as NSString).deletingLastPathComponent) {
+            return URL(fileURLWithPath: value)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory() + "/.v2t")
+    }
+
+    /// The Python that runs the engine: the baked interpreter, else this user's
+    /// `uv tool` install of voice2text, else nil (rendered as an error).
+    private var pythonExecutable: String? {
+        let candidates = [
+            Bundle.main.object(forInfoDictionaryKey: "V2TPythonExecutable") as? String,
+            NSHomeDirectory() + "/.local/share/uv/tools/voice2text/bin/python",
+        ]
+        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,6 +55,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
             return
         }
         item.menu = menu
+        menu.delegate = self
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -107,7 +126,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
     }
 
     private func launchEngine() {
-        guard let python = Bundle.main.object(forInfoDictionaryKey: "V2TPythonExecutable") as? String else {
+        guard let python = pythonExecutable else {
             phase = "error"
             render()
             return
@@ -121,7 +140,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         let toolBin = URL(fileURLWithPath: python).deletingLastPathComponent().path
         let inheritedPath = environment["PATH"] ?? "/usr/bin:/bin"
         environment["PATH"] = "\(toolBin):/opt/homebrew/bin:/usr/local/bin:\(inheritedPath)"
-        if let path = Bundle.main.object(forInfoDictionaryKey: "V2TConfig") as? String {
+        if let path = Bundle.main.object(forInfoDictionaryKey: "V2TConfig") as? String,
+           FileManager.default.fileExists(atPath: path) {
             environment["V2T_CONFIG"] = path
         }
         process.environment = environment
@@ -212,26 +232,30 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         return owner == String(pid)
     }
 
+    // The menu is rebuilt on every state change and every open. Layout, top to
+    // bottom: state (bold, with its symbol) and the models under it in small
+    // grey type; start/stop; the last transcription with a copy action; the two
+    // permission rows with coloured status dots; links; quit.
     private func render() {
         let microphone = microphoneGranted
         let accessibility = AXIsProcessTrusted()
         let stt = status["stt"] as? String ?? ""
         let cleanup = status["cleanup"] as? String ?? ""
-        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)"
+        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")"
         guard rendered != signature else { return }
         rendered = signature
-        let presentation: (String, String) = switch phase {
-        case "permissions": ("hourglass", "Checking permissions…")
-        case "starting", "loading-stt": ("hourglass", "Loading transcription model…")
-        case "loading-cleanup": ("hourglass", "Loading cleanup model…")
-        case "idle": ("waveform", "Ready")
-        case "recording": ("waveform.circle.fill", "Recording…")
-        case "transcribing": ("ellipsis.circle", "Transcribing…")
-        case "cleaning": ("ellipsis.circle", "Cleaning up…")
-        case "stopping": ("hourglass", "Stopping…")
-        case "permission-error": ("exclamationmark.triangle", "Permissions required")
-        case "error": ("exclamationmark.triangle", "Could not start — open Log")
-        default: ("waveform.slash", "Off")
+        let presentation: (String, String, NSColor?) = switch phase {
+        case "permissions": ("hourglass", "Checking permissions…", nil)
+        case "starting", "loading-stt": ("hourglass", "Loading transcription model…", nil)
+        case "loading-cleanup": ("hourglass", "Loading cleanup model…", nil)
+        case "idle": ("waveform", "Ready", nil)
+        case "recording": ("waveform.circle.fill", "Recording…", .systemRed)
+        case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
+        case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
+        case "stopping": ("hourglass", "Stopping…", nil)
+        case "permission-error": ("exclamationmark.triangle", "Permissions required", .systemOrange)
+        case "error": ("exclamationmark.triangle", "Could not start — open Log", .systemOrange)
+        default: ("waveform.slash", "Off", nil)
         }
         let icon = NSImage(systemSymbolName: presentation.0, accessibilityDescription: presentation.1)
             ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: presentation.1)
@@ -240,41 +264,116 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate {
         item.button?.imagePosition = .imageOnly
         item.button?.title = ""
         item.button?.toolTip = presentation.1
+        item.button?.contentTintColor = presentation.2
         menu.removeAllItems()
-        add(presentation.1, enabled: false)
+
+        let state = add(presentation.1, image: symbol(presentation.0, color: presentation.2), enabled: false)
+        state.attributedTitle = NSAttributedString(
+            string: presentation.1,
+            attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
+        )
         if !stt.isEmpty && !cleanup.isEmpty {
-            add("\(stt) · \(cleanup == "off" ? "no cleanup" : "clean: \(cleanup)")", enabled: false)
+            let models = "\(stt) · \(cleanup == "off" ? "no cleanup" : "clean: \(cleanup)")"
+            add(models, enabled: false).attributedTitle = secondary(models)
         }
         menu.addItem(.separator())
-        if externalEngine { add("Running from terminal", enabled: false) }
-        else if phase == "permissions" || phase == "starting" { add("Starting…", enabled: false) }
-        else if phase == "stopping" { add("Stopping…", enabled: false) }
-        else if engine == nil { add("Start v2t", action: #selector(start)) }
-        else { add("Stop v2t", action: #selector(stop)) }
+
+        if externalEngine { add("Running from terminal", image: symbol("terminal"), enabled: false) }
+        else if phase == "permissions" || phase == "starting" { add("Starting…", image: symbol("hourglass"), enabled: false) }
+        else if phase == "stopping" { add("Stopping…", image: symbol("hourglass"), enabled: false) }
+        else if engine == nil { add("Start v2t", action: #selector(start), image: symbol("play.fill"), key: "s") }
+        else { add("Stop v2t", action: #selector(stop), image: symbol("stop.fill"), key: "s") }
         menu.addItem(.separator())
-        add(permissionLabel("Microphone", microphone), action: #selector(openMicrophone))
-        add(permissionLabel("Accessibility", accessibility), action: #selector(openAccessibility))
+
+        if let last = lastTranscription {
+            add("Last transcription", enabled: false).attributedTitle = secondary("Last transcription")
+            let preview = add(excerpt(last), enabled: false)
+            preview.attributedTitle = NSAttributedString(string: excerpt(last), attributes: [.font: NSFont.menuFont(ofSize: 12)])
+            preview.toolTip = last
+            add("Copy Last Transcription", action: #selector(copyLast), image: symbol("doc.on.doc"), key: "c")
+            menu.addItem(.separator())
+        }
+
+        add(microphone ? "Microphone · Granted" : "Microphone · Click to grant",
+            action: #selector(openMicrophone), image: statusDot(microphone))
+        add(accessibility ? "Accessibility · Granted" : "Accessibility · Click to grant",
+            action: #selector(openAccessibility), image: statusDot(accessibility))
         menu.addItem(.separator())
-        add("Config", action: #selector(openConfig))
-        add("Transcription History", action: #selector(openHistory))
-        add("Log", action: #selector(openLog))
+
+        add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
+        add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
+        add("Log", action: #selector(openLog), image: symbol("doc.text"))
         menu.addItem(.separator())
-        add("Quit Voice2Text", action: #selector(quit))
+        add("Quit Voice2Text", action: #selector(quit), key: "q")
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        loadLastTranscription()
+        rendered = ""
+        render()
     }
 
     private var microphoneGranted: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    private func permissionLabel(_ name: String, _ granted: Bool) -> String {
-        "\(granted ? "✓" : "○") \(name) · \(granted ? "Granted" : "Click to grant")"
-    }
-
-    private func add(_ title: String, action: Selector? = nil, enabled: Bool = true) {
-        let row = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    @discardableResult
+    private func add(_ title: String, action: Selector? = nil, image: NSImage? = nil, key: String = "", enabled: Bool = true) -> NSMenuItem {
+        let row = NSMenuItem(title: title, action: action, keyEquivalent: key)
         row.target = self
+        row.image = image
         row.isEnabled = enabled
         menu.addItem(row)
+        return row
+    }
+
+    private func secondary(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
+            .font: NSFont.menuFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    }
+
+    private func symbol(_ name: String, color: NSColor? = nil) -> NSImage? {
+        var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        if let color { configuration = configuration.applying(.init(paletteColors: [color])) }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+        image?.isTemplate = color == nil
+        return image
+    }
+
+    private func statusDot(_ granted: Bool) -> NSImage? {
+        symbol(granted ? "checkmark.circle.fill" : "circle", color: granted ? .systemGreen : .systemOrange)
+    }
+
+    private func excerpt(_ text: String, limit: Int = 60) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return flat.count <= limit ? flat : String(flat.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// The `clean` text of the newest history record, read from the file's tail
+    /// so a long history stays cheap. Bytes are split on newlines before decoding
+    /// so a window boundary inside a multi-byte character cannot break the read.
+    private func loadLastTranscription() {
+        let url = home.appendingPathComponent("history/transcriptions.jsonl")
+        guard let handle = try? FileHandle(forReadingFrom: url) else { lastTranscription = nil; return }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let window: UInt64 = 64 * 1024
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd(),
+              let line = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true).last,
+              let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let clean = record["clean"] as? String, !clean.isEmpty
+        else { lastTranscription = nil; return }
+        lastTranscription = clean
+    }
+
+    @objc private func copyLast() {
+        guard let last = lastTranscription else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(last, forType: .string)
     }
 
     private func openPane(_ pane: String) {
