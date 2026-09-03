@@ -45,6 +45,10 @@ Anything ffmpeg reads works: `.wav`, `.m4a`, `.mp3`, `.opus`, and video files.
   command instead of looping or running parallel processes (it is GPU-bound either way).
 - **History.** Every result is appended to `~/.v2t/history/transcriptions.jsonl` with its source
   path, unless the user set `save_history = false` in `~/.v2t/config.toml`.
+- **Reading it back.** `v2t history` lists recent entries with timings, `v2t history <term>` searches
+  raw and clean text, `--json` re-emits records. Prefer it over opening the JSONL.
+- **Dictionary.** Names and jargon in `~/.v2t/dictionary.txt` are spelled exactly by the cleanup pass
+  (`--clean`) and `heard => written` lines are applied even without it; `v2t dictionary add <term>`.
 
 Long recordings can take a while — run them in the background rather than blocking, and read the
 summary line when they finish.

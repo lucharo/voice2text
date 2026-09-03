@@ -42,3 +42,43 @@ failure. During active use, `recording`, `transcribing`, and `cleaning` are heal
 
 _Created: 2026-08-29 · Updated: 2026-08-29 · Verified: 2026-08-29 · Scope/version: v0.3.0
 behaviour._
+
+## Why did the models take 45 seconds to load, and does v2t ever need the Hugging Face revision checks?
+
+**Short answer:** The weights load in about 2 s from the local cache. The rest was Hugging Face's
+revision check, one round trip per model file, which stalls on slow or SSL-intercepted networks.
+Measured on hotel Wi-Fi: Parakeet 45 s → 0.5 s and the cleanup model 19 s → 1.2 s with the checks
+off. v2t now turns them off whenever the model's snapshot is already in the cache, and never needs
+them at that point: a dictation tool has no reason to follow upstream weight updates on a warm start.
+The checks still run for a first download or a partial cache, where the network is genuinely needed.
+
+### Sources
+
+- [`load_cache_first`](../../v2t/backends.py) — flips `huggingface_hub.constants.HF_HUB_OFFLINE`
+  around the load when `cached_locally` finds a snapshot, and retries online on failure.
+- [Smoke tests](../../tests/test_smoke.py) — `test_cached_models_load_without_hub_revision_checks`
+  and `test_partial_cache_falls_back_to_an_online_load`.
+- [README startup time](../../README.md#startup-time) — the user-facing statement.
+
+_Created: 2026-09-04 · Updated: 2026-09-04 · Verified: 2026-09-04 (timings measured on an M4 Pro)._
+
+## Why does the login service need the menu app? Why can't the engine just run all the time?
+
+**Short answer:** Because macOS grants the microphone to an app identity, not to a bare process. The
+engine is a Python process; started from a terminal it borrows that terminal's Microphone and
+Accessibility grants, and started by `launchd` on its own it has no identity to be granted to, so
+the microphone is silently denied. `Voice2Text.app` exists to be that identity: it asks for the two
+permissions once, then starts and supervises one warm engine, and `v2t service install` launches the
+same bundle at login so both routes share one stable grant. On a managed Mac that blocks unsigned
+apps, the working alternative is a terminal window that stays open with `v2t` running; a Developer
+ID-signed and notarised bundle would restore the menu route there.
+
+### Sources
+
+- [Menu app source](../../v2t/native/Voice2Text.swift) — requests microphone and accessibility, then
+  launches the engine with `V2T_LAUNCH_CONTEXT=menubar`.
+- [LaunchAgent](../../v2t/service.py) — `ProgramArguments` runs the app bundle, not Python.
+- [README menu-bar section](../../README.md#optional-menu-bar-app) — permissions paragraph.
+
+_Created: 2026-09-04 · Updated: 2026-09-04 · Verified: 2026-09-04 · Scope: v0.3.x on macOS 26; the
+launchd-without-bundle path has not been re-tested on this macOS version._
