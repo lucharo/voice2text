@@ -3,6 +3,7 @@
 v2t                 run push-to-talk (default)
 v2t transcribe      transcribe existing audio files (no microphone)
 v2t setup           guided first-run config (pick models, detect Ollama)
+    v2t history         show or search past transcriptions
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          live state line (off / starting / idle / recording / …)
     v2t stop            stop a running v2t
@@ -295,6 +296,82 @@ def cmd_transcribe(argv: list[str]) -> int:
         return 130
 
 
+def _history_header(record: dict) -> str:
+    """One line of metadata: local time, audio length, step timings, source file."""
+    from datetime import datetime
+
+    try:
+        when = datetime.fromisoformat(record["ts"]).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (KeyError, TypeError, ValueError):
+        when = "unknown time"
+    parts = [when]
+    if audio := record.get("audio_s"):
+        parts.append(f"{_clock(audio)} audio")
+    if stt := record.get("stt_s"):
+        parts.append(f"stt {stt:.1f}s")
+    if cleanup := record.get("cleanup_s"):
+        parts.append(f"clean {cleanup:.1f}s")
+    if source := record.get("source"):
+        parts.append(Path(source).name)
+    return " · ".join(parts)
+
+
+def cmd_history(argv: list[str]) -> int:
+    """Read the transcription history back without opening the JSONL by hand."""
+    import json
+
+    p = argparse.ArgumentParser(
+        prog="v2t history", description="show or search past transcriptions"
+    )
+    p.add_argument(
+        "term", nargs="?", help="only entries whose raw or clean text contains this"
+    )
+    p.add_argument(
+        "-n",
+        "--last",
+        type=int,
+        default=10,
+        metavar="N",
+        help="how many recent entries to show (default 10; 0 = all)",
+    )
+    p.add_argument(
+        "--raw", action="store_true", help="also show the raw transcription"
+    )
+    p.add_argument(
+        "--json", action="store_true", help="print the matching JSONL records instead"
+    )
+    a = p.parse_args(argv)
+
+    records = config.read_history()
+    if a.term:
+        needle = a.term.lower()
+        records = [
+            r
+            for r in records
+            if needle in f"{r.get('raw', '')}\n{r.get('clean', '')}".lower()
+        ]
+    if a.last > 0:
+        records = records[-a.last :]
+    if not records:
+        what = f"no transcriptions match {a.term!r}" if a.term else "no transcriptions yet"
+        print(f"{what} ({config.history_path()})", file=sys.stderr)
+        return 1
+    if a.json:
+        for record in records:
+            print(json.dumps(record, ensure_ascii=False))
+        return 0
+    for index, record in enumerate(records):
+        if index:
+            print()
+        print(_history_header(record))
+        if a.raw:
+            print(f"  raw:   {record.get('raw', '')}")
+            print(f"  clean: {record.get('clean', '')}")
+        else:
+            print(f"  {record.get('clean', '')}")
+    return 0
+
+
 def cmd_config(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="v2t config")
     p.add_argument(
@@ -509,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     table = {
         "transcribe": cmd_transcribe,
         "setup": cmd_setup,
+        "history": cmd_history,
         "config": cmd_config,
         "status": cmd_status,
         "stop": cmd_stop,

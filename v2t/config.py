@@ -294,6 +294,24 @@ def append_history(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def read_history() -> list[dict]:
+    """Every history record, oldest first. Malformed lines are skipped, not fatal."""
+    path = history_path()
+    if not path.exists():
+        return []
+    records = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
 if __name__ == "__main__":
     # ponytail: one runnable check for the trust-boundary logic (paths + merge + io).
     import tempfile
@@ -321,6 +339,9 @@ if __name__ == "__main__":
         assert line["clean"] == "Hello." and line["ts"].endswith("+00:00"), (
             "history roundtrip"
         )
+        with history_path().open("a") as f:
+            f.write("not json\n")
+        assert [r["clean"] for r in read_history()] == ["Hello."], "skips bad lines"
 
         os.environ.pop("V2T_HOME")
         os.environ["XDG_CONFIG_HOME"] = d
