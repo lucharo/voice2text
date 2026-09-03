@@ -29,7 +29,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 ## What you get
 
-- **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste.
+- **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste. Double-tap for hands-free, tap again to stop.
 - **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
 - **In-process LLM cleanup** via mlx-lm (`Qwen2.5-1.5B-Instruct`) — fixes punctuation, removes fillers while using about 1.3 GB less model memory than the previous 4B default. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
@@ -74,8 +74,8 @@ uv sync --no-dev && uv run v2t
 ## Usage
 
 ```bash
-v2t                      # run push-to-talk (strict cleanup, parakeet)
-v2t --casual             # light cleanup (punctuation + fillers only)
+v2t                      # run push-to-talk (casual cleanup, parakeet)
+v2t --strict             # heavier cleanup: restructures, drops false starts
 v2t --no-cleanup         # paste raw transcription, skip the LLM
 v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
@@ -91,7 +91,9 @@ v2t menubar install      # optional: compile + open the tiny native menu app
 v2t service install      # optional: start that menu app at login
 ```
 
-Hold **Right Command** to record, release to transcribe and paste.
+Hold **Right Command** to record, release to transcribe and paste. For longer dictations,
+**double-tap** Right Command: it keeps recording hands-free until you tap it once more, like Wispr
+Flow's double-Escape. A single short tap does nothing.
 
 ### Transcribing files
 
@@ -117,7 +119,9 @@ about 11s with Parakeet on an M1 Max (~19× realtime). Each result is appended t
 | "Hey um I'll see you tomorrow at 9 actually no make it 10" | "Hey, I'll see you tomorrow at 10." | "Hey, I'll see you tomorrow at 9, actually no, make it 10." |
 | "So basically I was thinking we could um you know maybe try the other approach" | "I was thinking we could try the other approach." | "So basically, I was thinking we could maybe try the other approach." |
 
-**Strict** (default) removes fillers, restructures for clarity. **Casual** only adds punctuation and removes "um/uh", keeping your phrasing.
+**Casual** (default) only adds punctuation and removes "um/uh", keeping your phrasing. **Strict** also removes fillers and restructures for clarity; it is the opinionated mode, and with a small model it can over-edit, which is why it is no longer the default.
+
+Either way, long dictations are cleaned in sentence-aligned chunks of about 120 words, and any chunk whose cleaned length drifts outside 75–130% of the raw chunk (60–130% in strict) is pasted raw instead. Cleanup may punctuate; it may not drop or invent content.
 
 Both modes send the model a short system prompt plus these worked examples as prior turns, so even a
 small model treats your dictation as text to clean rather than a question to answer.
@@ -159,7 +163,7 @@ model = ""             # blank = backend default
 enabled = true
 engine = "mlx"         # mlx (in-process via mlx-lm) | ollama
 model = ""             # blank = engine default
-mode = "strict"        # strict | casual
+mode = "casual"        # casual | strict
 
 [hotkey]
 key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
@@ -232,7 +236,7 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 | | default | why |
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
-| cleanup | `Qwen2.5-1.5B-Instruct` (mlx-lm) | 831 MB active in the local cleanup benchmark; non-thinking, no daemon |
+| cleanup | `Qwen2.5-1.5B-Instruct` (mlx-lm), casual | 831 MB active in the local cleanup benchmark; non-thinking, no daemon |
 | cleanup (quality) | `Qwen3.5-4B-4bit` (mlx-lm) | opt-in via config; better instruction following, ~2.3 GB |
 
 > This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,

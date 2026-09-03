@@ -54,7 +54,11 @@ def signing_identity() -> str:
     )
     identities = re.findall(r'"([^"]+)"', result.stdout)
     return next(
-        (identity for identity in identities if identity.startswith("Apple Development:")),
+        (
+            identity
+            for identity in identities
+            if identity.startswith("Apple Development:")
+        ),
         "-",
     )
 
@@ -68,9 +72,10 @@ def install() -> Path:
     destination = app_path()
     destination.parent.mkdir(parents=True, exist_ok=True)
     source = files("v2t").joinpath("native", "Voice2Text.swift")
-    with as_file(source) as source_path, tempfile.TemporaryDirectory(
-        dir=destination.parent
-    ) as temporary:
+    with (
+        as_file(source) as source_path,
+        tempfile.TemporaryDirectory(dir=destination.parent) as temporary,
+    ):
         bundle = Path(temporary) / APP_NAME
         contents = bundle / "Contents"
         executable = contents / "MacOS" / "Voice2Text"

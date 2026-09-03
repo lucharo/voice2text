@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Casual is the default cleanup mode.** Measured over 206 real dictations, strict mode with the 1.5B model kept a median 72% of the words: it was summarising. Casual only punctuates and drops fillers. `--strict` remains available.
+- **Cleanup is chunked and length-guarded.** Long transcripts are cleaned in sentence-aligned chunks of ~120 words; any chunk whose cleaned length leaves 75–130% of the raw chunk (60–130% in strict) or hits its token limit is pasted raw, and the log says how many. No more looping on long dictations.
+- **Double-tap for hands-free recording.** Two quick taps of the hotkey latch the recorder on; the next tap stops it and transcribes. Holding still works. A single short tap is ignored.
 - **Cleanup prompt rebuilt as system prompt + worked examples** — three (raw, clean) demonstrations per mode are sent as prior turns, and the rules now say the dictation is text to clean, never a message to answer. Same contract for both engines: mlx-lm renders the chat template with `enable_thinking=False` (safe for hybrid Qwen3 models, ignored by others) and Ollama uses `/api/chat` at temperature 0.
 - **`v2t history`** — read the JSONL back: last N entries with timings, `v2t history <term>` searches raw and clean text, `--raw` shows both, `--json` re-emits records for `jq`.
 - **Menu-bar app refresh** — bold state row with its symbol, models in small secondary type, SF Symbol icons on every action, green/orange permission dots, a red status icon while recording, and a *Last transcription* preview with **Copy Last Transcription**.

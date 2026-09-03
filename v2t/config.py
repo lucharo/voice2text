@@ -6,7 +6,7 @@ Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     run/status.json              live state for CLI and menu-bar clients
 
 Zero config works: the defaults below are the shipped behaviour
-(Parakeet + Qwen2.5, MLX, strict cleanup).
+(Parakeet + Qwen2.5, MLX, casual cleanup).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class Config:
     cleanup_enabled: bool = True
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
     cleanup_model: str = ""  # blank = the engine's own default
-    mode: str = "strict"  # strict | casual
+    mode: str = "casual"  # casual (default) | strict
     hotkey: str = "cmd_r"
     sample_rate: int = 16000
     pause_music: bool = False
@@ -247,7 +247,7 @@ model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper
 enabled = true
 engine = "mlx"         # mlx (in-process via mlx-lm, default) | ollama
 model = ""             # blank = engine default (Qwen2.5-1.5B-Instruct-4bit / qwen3:4b-instruct-2507)
-mode = "strict"        # strict (restructures) | casual (punctuation + fillers only)
+mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)
 
 [hotkey]
 key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         assert home() == Path(d), "V2T_HOME must win"
         assert load().backend == "parakeet", "default backend"
         assert load({"mode": "casual"}).mode == "casual", "override wins"
-        assert load({"mode": None}).mode == "strict", "None override ignored"
+        assert load({"mode": None}).mode == "casual", "None override ignored"
 
         p = write_default()
         assert p.exists() and "qwen3" in p.read_text(), "template written"

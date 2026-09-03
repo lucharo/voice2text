@@ -889,7 +889,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "model": backends.PARAKEET_DEFAULT,
                 "cleanup_engine": None,
                 "cleanup_model": None,
-                "mode": "strict",
+                "mode": "casual",
                 "stt_s": record["stt_s"],
                 "cleanup_s": 0.0,
                 "raw": "hey um there",
@@ -923,19 +923,153 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_run(["--casual", "--strict"])
 
-    def test_cleanup_refuses_to_return_a_capped_partial_result(self):
+    def _mlx_cleaner(self, replies):
+        """An MLXCleanup with the model mocked: each call streams the next reply."""
         cleaner = object.__new__(backends.MLXCleanup)
         cleaner.model = object()
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
-        cleaner.tokenizer.encode.return_value = list(range(10))
-        response = type("Response", (), {"text": "x"})
-        cleaner._stream = lambda *_args, **kwargs: (
-            response() for _ in range(kwargs["max_tokens"])
+        cleaner.tokenizer.encode.side_effect = lambda text: text.split()
+        cleaner.last_stats = {}
+        queue_ = list(replies)
+        response = type("Response", (), {"text": ""})
+
+        def stream(*_args, **kwargs):
+            reply = queue_.pop(0)
+            if reply is None:  # loop forever: emit max_tokens single tokens
+                for _ in range(kwargs["max_tokens"]):
+                    yield response()
+                return
+            for piece in reply.split(" "):
+                r = response()
+                r.text = piece + " "
+                yield r
+
+        cleaner._stream = stream
+        return cleaner
+
+    def test_cleanup_keeps_the_raw_chunk_when_the_model_hits_its_token_limit(self):
+        cleaner = self._mlx_cleaner([None])
+
+        text, _ttft, _total = cleaner.cleanup("hello um there friend", "casual")
+
+        self.assertEqual(text, "hello um there friend")
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 1})
+
+    def test_cleanup_keeps_the_raw_chunk_when_the_output_length_drifts(self):
+        raw = "so um I think we should ship the migration on friday and watch the error rates"
+        cleaner = self._mlx_cleaner(["Ship it Friday."])
+
+        text, _ttft, _total = cleaner.cleanup(raw, "casual")
+
+        self.assertEqual(text, raw)
+        self.assertEqual(cleaner.last_stats["guarded"], 1)
+
+    def test_cleanup_accepts_a_faithful_rewrite(self):
+        raw = "so um I think we should ship the migration on friday"
+        cleaner = self._mlx_cleaner(
+            ["So, I think we should ship the migration on Friday."]
         )
 
-        with self.assertRaisesRegex(RuntimeError, "token limit"):
-            cleaner.cleanup("hello")
+        text, ttft, total = cleaner.cleanup(raw, "casual")
+
+        self.assertEqual(text, "So, I think we should ship the migration on Friday.")
+        self.assertIsNotNone(ttft)
+        self.assertGreaterEqual(total, ttft)
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0})
+
+    def test_long_dictations_are_cleaned_in_sentence_chunks(self):
+        sentences = [f"Sentence number {i} has exactly seven words." for i in range(40)]
+        raw = " ".join(sentences)
+        chunks = backends.chunk_text(raw)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(" ".join(chunks), raw, "chunking is lossless")
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk.split()), backends.CHUNK_WORDS)
+            self.assertTrue(chunk.endswith("."), "chunks end on sentence boundaries")
+
+        cleaner = self._mlx_cleaner([chunk for chunk in chunks])
+        text, _ttft, _total = cleaner.cleanup(raw, "casual")
+        self.assertEqual(text, raw)
+        self.assertEqual(cleaner.last_stats["chunks"], len(chunks))
+
+    def test_unpunctuated_run_on_speech_is_still_chunked(self):
+        raw = " ".join(["word"] * 300)
+
+        chunks = backends.chunk_text(raw)
+
+        self.assertEqual([len(c.split()) for c in chunks], [120, 120, 60])
+
+    def _tapper(self):
+        """A VoiceToText whose audio stream is mocked, plus a helper to tap the hotkey."""
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.hotkey = "HOTKEY"
+        stream = mock.patch.object(app.sd, "InputStream")
+        self.addCleanup(stream.stop)
+        stream.start()
+        clock = mock.patch.object(app.time, "perf_counter")
+        self.addCleanup(clock.stop)
+        now = clock.start()
+        now.return_value = 100.0
+
+        def press_release(at: float, held: float):
+            now.return_value = at
+            voice.on_press("HOTKEY")
+            voice.frames = [np.ones((8, 1), dtype=np.float32)]
+            now.return_value = at + held
+            voice.on_release("HOTKEY")
+
+        return voice, press_release
+
+    def test_a_short_tap_is_discarded_not_transcribed(self):
+        voice, tap = self._tapper()
+
+        tap(at=100.0, held=0.1)
+
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.processing)
+        self.assertTrue(voice.jobs.empty())
+        self.assertEqual(config.read_status()["state"], "idle")
+
+    def test_a_double_tap_records_hands_free_until_the_next_tap(self):
+        voice, tap = self._tapper()
+
+        tap(at=100.0, held=0.1)
+        tap(at=100.3, held=0.1)
+
+        self.assertTrue(voice.latched)
+        self.assertTrue(voice.recording, "still recording after the second release")
+        self.assertEqual(config.read_status()["state"], "recording")
+
+        tap(at=110.0, held=0.1)
+
+        self.assertFalse(voice.latched)
+        self.assertFalse(voice.recording)
+        self.assertTrue(voice.processing)
+        _frames, duration = voice.jobs.get_nowait()
+        self.assertGreater(duration, 9.0)
+
+    def test_two_taps_far_apart_do_not_latch(self):
+        voice, tap = self._tapper()
+
+        tap(at=100.0, held=0.1)
+        tap(at=101.0, held=0.1)
+
+        self.assertFalse(voice.latched)
+        self.assertFalse(voice.recording)
+        self.assertTrue(voice.jobs.empty())
+
+    def test_holding_the_hotkey_still_transcribes_on_release(self):
+        voice, tap = self._tapper()
+
+        tap(at=100.0, held=2.0)
+
+        self.assertFalse(voice.latched)
+        self.assertTrue(voice.processing)
+        self.assertFalse(voice.jobs.empty())
 
     def test_cleanup_prompt_is_a_system_message_with_examples_then_the_text(self):
         messages = backends.cleanup_messages("raw words", "casual")
@@ -947,9 +1081,7 @@ class V2TSmokeTests(unittest.TestCase):
             ["user", "assistant"] * len(backends.EXAMPLES["casual"]),
         )
         self.assertEqual(messages[-1], {"role": "user", "content": "raw words"})
-        self.assertNotIn(
-            "raw words", "".join(m["content"] for m in messages[:-1])
-        )
+        self.assertNotIn("raw words", "".join(m["content"] for m in messages[:-1]))
 
     def test_mlx_cleanup_sends_the_chat_messages_in_non_thinking_mode(self):
         cleaner = object.__new__(backends.MLXCleanup)
@@ -984,7 +1116,7 @@ class V2TSmokeTests(unittest.TestCase):
             backends.urllib.request, "urlopen", return_value=stream
         ) as urlopen:
             text, ttft, _total = backends.OllamaCleanup("m", "http://o").cleanup(
-                "hello um there", "casual"
+                "hello there", "casual"
             )
 
         request = urlopen.call_args.args[0]
@@ -996,9 +1128,9 @@ class V2TSmokeTests(unittest.TestCase):
             body,
             {
                 "model": "m",
-                "messages": backends.cleanup_messages("hello um there", "casual"),
+                "messages": backends.cleanup_messages("hello there", "casual"),
                 "stream": True,
-                "options": {"temperature": 0},
+                "options": {"temperature": 0, "num_predict": 68},
             },
         )
 
@@ -1031,7 +1163,12 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             [line.strip() for line in out.splitlines() if line.startswith("  ")],
-            ["raw:   um entry 10", "clean: Entry 10.", "raw:   um entry 11", "clean: Entry 11."],
+            [
+                "raw:   um entry 10",
+                "clean: Entry 10.",
+                "raw:   um entry 11",
+                "clean: Entry 11.",
+            ],
         )
 
     def test_history_command_searches_raw_and_clean_text(self):

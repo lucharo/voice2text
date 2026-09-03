@@ -8,6 +8,7 @@ mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 
@@ -136,7 +137,93 @@ MLX_CLEANUP_QUALITY = "mlx-community/Qwen3.5-4B-4bit"  # non-thinking by default
 OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
 
 
-class MLXCleanup:
+# Long dictations go through the model in sentence-aligned chunks of about this
+# many words. Small models stay faithful on a paragraph and drift, summarise or
+# loop on a page; chunking also bounds the damage of any one bad generation.
+CHUNK_WORDS = 120
+
+# A chunk whose cleaned word count falls outside these bounds relative to the
+# raw chunk is replaced by the raw chunk. Cleanup may punctuate and drop
+# fillers; it may not drop content or invent it. Measured 2026-09-03 over 206
+# real dictations: strict + Qwen2.5-1.5B kept a median 72% of the words and
+# under 60% on more than a quarter of clips, i.e. it was summarising.
+LENGTH_GUARD = {"strict": (0.6, 1.3), "casual": (0.75, 1.3)}
+
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+_WORDS = re.compile(r"\S+")
+
+
+def chunk_text(text: str, max_words: int = CHUNK_WORDS) -> list[str]:
+    """Split on sentence ends into chunks of at most ~max_words words; a single
+    sentence longer than that is split on word boundaries instead."""
+    chunks: list[str] = []
+    current: list[str] = []
+    count = 0
+    for sentence in _SENTENCE_END.split(text.strip()):
+        words = _WORDS.findall(sentence)
+        if not words:
+            continue
+        if len(words) > max_words:
+            if current:
+                chunks.append(" ".join(current))
+                current, count = [], 0
+            for start in range(0, len(words), max_words):
+                chunks.append(" ".join(words[start : start + max_words]))
+            continue
+        if count + len(words) > max_words and current:
+            chunks.append(" ".join(current))
+            current, count = [], 0
+        current.append(sentence.strip())
+        count += len(words)
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def within_length_guard(raw: str, clean: str, mode: str) -> bool:
+    low, high = LENGTH_GUARD[mode]
+    raw_words = len(_WORDS.findall(raw))
+    clean_words = len(_WORDS.findall(clean))
+    if raw_words == 0:
+        return clean_words == 0
+    return low <= clean_words / raw_words <= high
+
+
+class _ChunkedCleanup:
+    """Shared driver: chunk, generate per chunk, guard length, keep raw on failure.
+
+    Subclasses implement `_generate(chunk, mode) -> (text, ttft_s, hit_limit)`.
+    `cleanup` keeps the (text, ttft, total) contract the app, CLI and bench use;
+    `last_stats` says how many chunks were guarded or hit their limit.
+    """
+
+    model_id: str
+    last_stats: dict
+
+    def _generate(self, chunk: str, mode: str) -> tuple[str, float | None, bool]:
+        raise NotImplementedError
+
+    def cleanup(self, text: str, mode: str = "casual"):
+        t0, ttft, parts = time.perf_counter(), None, []
+        stats = {"chunks": 0, "guarded": 0, "limited": 0}
+        for chunk in chunk_text(text):
+            stats["chunks"] += 1
+            clean, chunk_ttft, limited = self._generate(chunk, mode)
+            if ttft is None and chunk_ttft is not None:
+                ttft = chunk_ttft
+            clean = clean.strip()
+            if limited:
+                stats["limited"] += 1
+                clean = chunk
+            elif not clean or not within_length_guard(chunk, clean, mode):
+                stats["guarded"] += 1
+                clean = chunk
+            parts.append(clean)
+        self.last_stats = stats
+        return " ".join(parts).strip(), ttft, time.perf_counter() - t0
+
+
+class MLXCleanup(_ChunkedCleanup):
     """In-process cleanup via mlx-lm — no daemon, no HTTP. The default. Pick a
     non-thinking instruct model (the default Qwen2.5-Instruct doesn't think)."""
 
@@ -152,16 +239,19 @@ class MLXCleanup:
         self._stream = stream_generate
         self.model_id = model or self.default_model
         self.model, self.tokenizer = load(self.model_id)
+        self.last_stats = {}
 
-    def cleanup(self, text: str, mode: str = "strict"):
+    def _generate(self, chunk: str, mode: str):
         # enable_thinking=False keeps hybrid Qwen3-family templates in
         # non-thinking mode; templates without the switch ignore it.
         prompt = self.tokenizer.apply_chat_template(
-            cleanup_messages(text, mode),
+            cleanup_messages(chunk, mode),
             add_generation_prompt=True,
             enable_thinking=False,
         )
-        max_tokens = min(max(400, len(self.tokenizer.encode(text)) + 128), 4096)
+        # Cleaned text is about as long as the input; a model still going at
+        # 1.5× the input plus slack is looping, so stop it there.
+        max_tokens = int(len(self.tokenizer.encode(chunk)) * 1.5) + 64
         t0, ttft, parts = time.perf_counter(), None, []
         for resp in self._stream(
             self.model, self.tokenizer, prompt, max_tokens=max_tokens
@@ -169,14 +259,10 @@ class MLXCleanup:
             if ttft is None:
                 ttft = time.perf_counter() - t0
             parts.append(resp.text)
-        if len(parts) >= max_tokens:
-            raise RuntimeError(
-                "cleanup hit its token limit; using the raw transcription"
-            )
-        return "".join(parts).strip(), ttft, time.perf_counter() - t0
+        return "".join(parts), ttft, len(parts) >= max_tokens
 
 
-class OllamaCleanup:
+class OllamaCleanup(_ChunkedCleanup):
     """Cleanup via a running Ollama server — for people who already use it."""
 
     default_model = OLLAMA_CLEANUP_DEFAULT
@@ -184,37 +270,41 @@ class OllamaCleanup:
     def __init__(self, model: str = "", url: str = "http://localhost:11434"):
         self.model_id = model or self.default_model
         self.url = url
+        self.timeout = 60
+        self.last_stats = {}
 
-    def cleanup(self, text: str, mode: str = "strict", timeout: int = 60):
+    def _generate(self, chunk: str, mode: str):
+        max_tokens = int(len(_WORDS.findall(chunk)) * 2) + 64
         req = urllib.request.Request(
             f"{self.url}/api/chat",
             data=json.dumps(
                 {
                     "model": self.model_id,
-                    "messages": cleanup_messages(text, mode),
+                    "messages": cleanup_messages(chunk, mode),
                     "stream": True,
-                    "options": {"temperature": 0},
+                    "options": {"temperature": 0, "num_predict": max_tokens},
                 }
             ).encode(),
             headers={"Content-Type": "application/json"},
         )
-        t0, ttft, parts = time.perf_counter(), None, []
+        t0, ttft, parts, limited = time.perf_counter(), None, [], False
         with urllib.request.urlopen(
-            req, timeout=timeout
+            req, timeout=self.timeout
         ) as r:  # needs a running ollama server
             for line in r:
                 if not line.strip():
                     continue
-                chunk = json.loads(line)
-                if piece := chunk.get("message", {}).get("content", ""):
+                data = json.loads(line)
+                if piece := data.get("message", {}).get("content", ""):
                     if ttft is None:
                         ttft = time.perf_counter() - t0
                     parts.append(piece)
-                if chunk.get("error"):
-                    raise RuntimeError(chunk["error"])
-                if chunk.get("done"):
+                if data.get("error"):
+                    raise RuntimeError(data["error"])
+                if data.get("done"):
+                    limited = data.get("done_reason") == "length"
                     break
-        return "".join(parts).strip(), ttft, time.perf_counter() - t0
+        return "".join(parts), ttft, limited
 
 
 CLEANUP = {"mlx": MLXCleanup, "ollama": OllamaCleanup}
@@ -253,10 +343,7 @@ if __name__ == "__main__":
     assert set(STT) == {"parakeet", "whisper"}
     assert set(CLEANUP) == {"mlx", "ollama"}
     assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
-    assert (
-        short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit")
-        == "Qwen2.5-1.5B"
-    )
+    assert short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit") == "Qwen2.5-1.5B"
     assert short_model("custom/unknown") == "unknown"
     assert (
         "filler" in PROMPTS["strict"]

@@ -48,12 +48,12 @@ def cmd_run(argv: list[str]) -> int:
     cleanup_mode.add_argument(
         "--casual",
         action="store_true",
-        help="light cleanup (punctuation + fillers only)",
+        help="light cleanup (punctuation + fillers only) — the default",
     )
     cleanup_mode.add_argument(
         "--strict",
         action="store_true",
-        help="full cleanup (restructures) — the default",
+        help="full cleanup (restructures, removes false starts)",
     )
     p.add_argument(
         "--pause-music",
@@ -301,7 +301,9 @@ def _history_header(record: dict) -> str:
     from datetime import datetime
 
     try:
-        when = datetime.fromisoformat(record["ts"]).astimezone().strftime("%Y-%m-%d %H:%M")
+        when = (
+            datetime.fromisoformat(record["ts"]).astimezone().strftime("%Y-%m-%d %H:%M")
+        )
     except (KeyError, TypeError, ValueError):
         when = "unknown time"
     parts = [when]
@@ -334,9 +336,7 @@ def cmd_history(argv: list[str]) -> int:
         metavar="N",
         help="how many recent entries to show (default 10; 0 = all)",
     )
-    p.add_argument(
-        "--raw", action="store_true", help="also show the raw transcription"
-    )
+    p.add_argument("--raw", action="store_true", help="also show the raw transcription")
     p.add_argument(
         "--json", action="store_true", help="print the matching JSONL records instead"
     )
@@ -353,7 +353,9 @@ def cmd_history(argv: list[str]) -> int:
     if a.last > 0:
         records = records[-a.last :]
     if not records:
-        what = f"no transcriptions match {a.term!r}" if a.term else "no transcriptions yet"
+        what = (
+            f"no transcriptions match {a.term!r}" if a.term else "no transcriptions yet"
+        )
         print(f"{what} ({config.history_path()})", file=sys.stderr)
         return 1
     if a.json:
@@ -408,7 +410,7 @@ model = ""
 enabled = {enabled}
 engine = "{engine}"
 model = ""
-mode = "strict"
+mode = "casual"
 """
 
 

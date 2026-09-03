@@ -152,7 +152,10 @@ def bench_cleanup(specs: list[str], samples: list[str], repeat: int, url: str) -
         try:
             cleaner = backends.make_cleanup(engine, model, url)
             cleaner.cleanup("hi")  # warm / pull
-        except (Exception, SystemExit) as e:  # one missing engine shouldn't abort the run
+        except (
+            Exception,
+            SystemExit,
+        ) as e:  # one missing engine shouldn't abort the run
             print(f"    skipped ({e})")
             results[spec] = None
             continue

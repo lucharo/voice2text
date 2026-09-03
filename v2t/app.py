@@ -96,6 +96,9 @@ class VoiceToText:
         self.stopping = False
         self.finalizing_recording = False
         self.startup_complete = False
+        self.latched = False  # hands-free recording after a double-tap
+        self.press_at = 0.0
+        self.last_tap_at = 0.0
         cleanup_model = (
             cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
         )
@@ -269,6 +272,13 @@ class VoiceToText:
                     logger.info(
                         f"Cleaned {len(cleaned_text)} characters ({cleanup_s:.2f}s)"
                     )
+                    stats = getattr(self.cleaner, "last_stats", {})
+                    if stats.get("guarded") or stats.get("limited"):
+                        logger.warning(
+                            f"Cleanup kept raw text for {stats.get('guarded', 0)} chunk(s) "
+                            f"that changed length too much and {stats.get('limited', 0)} "
+                            f"that hit the token limit (of {stats.get('chunks', 0)})"
+                        )
                 except Exception as e:
                     logger.error(f"LLM cleanup failed: {e}")
                     logger.warning("Falling back to raw transcription")
@@ -326,11 +336,7 @@ class VoiceToText:
 
     def _keep_running(self) -> bool:
         with self.lifecycle_lock:
-            return (
-                not self.stopping
-                or self.finalizing_recording
-                or self.processing
-            )
+            return not self.stopping or self.finalizing_recording or self.processing
 
     def paste_to_cursor(self, text: str) -> None:
         """Paste at the cursor, preserving every native pasteboard representation."""
@@ -376,8 +382,7 @@ class VoiceToText:
             time.sleep(0.3)
         finally:
             should_restore = (
-                dictated_change is None
-                or pasteboard.changeCount() == dictated_change
+                dictated_change is None or pasteboard.changeCount() == dictated_change
             )
             if should_restore:
                 pasteboard.clearContents()
@@ -391,13 +396,50 @@ class VoiceToText:
                     pasteboard.writeObjects_(restored)
 
     # --- run loop -----------------------------------------------------------
+    # --- hotkey: hold to talk, or double-tap for hands-free -----------------
+    # A press shorter than TAP_S is a tap and never transcribes (nothing said in
+    # 0.3s is a dictation). Two taps within DOUBLE_TAP_S latch the recorder on;
+    # the next tap stops it and transcribes. A long hold still works as before.
+    TAP_S = 0.3
+    DOUBLE_TAP_S = 0.5
+
     def on_press(self, key):
-        if key == self.hotkey:
-            self.start_recording()
+        if key != self.hotkey or self.latched:
+            return
+        self.press_at = time.perf_counter()
+        self.start_recording()
 
     def on_release(self, key):
-        if key == self.hotkey:
+        if key != self.hotkey:
+            return
+        now = time.perf_counter()
+        if self.latched:
+            self.latched = False
             self.stop_recording()
+            return
+        if now - self.press_at >= self.TAP_S:
+            self.stop_recording()
+            return
+        self.cancel_recording()
+        if now - self.last_tap_at < self.DOUBLE_TAP_S:
+            self.last_tap_at = 0.0
+            self.start_recording()
+            self.latched = self.recording
+            if self.latched:
+                logger.info("Recording hands-free — tap the hotkey again to stop")
+        else:
+            self.last_tap_at = now
+
+    def cancel_recording(self):
+        """Drop an in-progress recording without transcribing it."""
+        with self.lifecycle_lock:
+            if not self.recording:
+                return
+            self.recording = False
+            self.frames = []
+            self._close_stream()
+            self._restore_media()
+            self._set_state("idle")
 
     def warmup(self):
         logger.info("Loading transcription model...")
@@ -456,7 +498,8 @@ class VoiceToText:
             if self.cfg.pause_music:
                 logger.info("Pause Music — on")
             logger.info(
-                f"Hold {self.cfg.hotkey} to record, release to transcribe and paste. Ctrl+C to quit."
+                f"Hold {self.cfg.hotkey} to record, release to transcribe and paste; "
+                f"double-tap it for hands-free, tap again to stop. Ctrl+C to quit."
             )
             with keyboard.Listener(
                 on_press=self.on_press, on_release=self.on_release

@@ -161,9 +161,7 @@ def start() -> None:
             return
         engine_pid = config.running_pid()
         if engine_pid is not None and not _is_child(engine_pid, menu_pid):
-            raise SystemExit(
-                "v2t is running outside the login service; stop it first"
-            )
+            raise SystemExit("v2t is running outside the login service; stop it first")
     elif menubar.running():
         raise SystemExit("quit Voice2Text before starting the login service")
     if menu_pid is None and config.running_pid() is not None:
@@ -171,9 +169,7 @@ def start() -> None:
             "v2t is already running outside the login service; stop it first"
         )
     _prepare_log()
-    menu_engine_pid = (
-        owned_engine_pid(menu_pid) if menu_pid is not None else None
-    )
+    menu_engine_pid = owned_engine_pid(menu_pid) if menu_pid is not None else None
     restarting = menu_pid is not None and menu_engine_pid is None
     if menu_pid is None or restarting:
         config.clear_last_error()
@@ -249,7 +245,9 @@ def stop() -> None:
         if service_pid() is None:
             return
         time.sleep(0.1)
-    raise RuntimeError(f"service is still stopping; check {config.run_dir() / 'v2t.log'}")
+    raise RuntimeError(
+        f"service is still stopping; check {config.run_dir() / 'v2t.log'}"
+    )
 
 
 def uninstall() -> None:
