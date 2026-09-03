@@ -294,6 +294,70 @@ def append_history(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def dictionary_path() -> Path:
+    return home() / "dictionary.txt"
+
+
+DICTIONARY_HEADER = """\
+# v2t dictionary — one entry per line. Two kinds:
+#   Term                 a name, product or jargon the recogniser gets wrong;
+#                        the cleanup model is told to spell it exactly like this
+#   heard => written     an exact replacement applied after cleanup (case-insensitive)
+# Lines starting with # are ignored. `v2t dictionary import-wispr` merges Wispr Flow's.
+"""
+
+
+def read_dictionary() -> tuple[list[str], list[tuple[str, str]]]:
+    """(terms, replacements) from dictionary.txt; missing file means both empty."""
+    path = dictionary_path()
+    if not path.exists():
+        return [], []
+    terms: list[str] = []
+    replacements: list[tuple[str, str]] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=>" in line:
+            heard, _, written = line.partition("=>")
+            if heard.strip() and written.strip():
+                replacements.append((heard.strip(), written.strip()))
+        else:
+            terms.append(line)
+    return terms, replacements
+
+
+def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> Path:
+    """Rewrite dictionary.txt privately: terms first, then replacements, deduped."""
+    path = dictionary_path()
+    _config_parent(path)
+    seen: set[str] = set()
+    lines = [DICTIONARY_HEADER]
+    for term in terms:
+        if term.lower() not in seen:
+            seen.add(term.lower())
+            lines.append(term)
+    for heard, written in replacements:
+        key = f"{heard.lower()} => {written.lower()}"
+        if key not in seen:
+            seen.add(key)
+            lines.append(f"{heard} => {written}")
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+    return path
+
+
+def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Whole-word, case-insensitive `heard => written` substitutions."""
+    import re
+
+    for heard, written in replacements:
+        text = re.sub(
+            rf"(?<!\w){re.escape(heard)}(?!\w)", written, text, flags=re.IGNORECASE
+        )
+    return text
+
+
 def read_history() -> list[dict]:
     """Every history record, oldest first. Malformed lines are skipped, not fatal."""
     path = history_path()

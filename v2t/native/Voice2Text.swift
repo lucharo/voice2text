@@ -302,6 +302,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
+        add("Dictionary", action: #selector(openDictionary), image: symbol("character.book.closed"))
         add("Log", action: #selector(openLog), image: symbol("doc.text"))
         menu.addItem(.separator())
         add("Quit Voice2Text", action: #selector(quit), key: "q")
@@ -401,6 +402,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openConfig() { NSWorkspace.shared.open(home) }
     @objc private func openHistory() { NSWorkspace.shared.open(home.appendingPathComponent("history")) }
+    @objc private func openDictionary() {
+        let url = home.appendingPathComponent("dictionary.txt")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: Data(), attributes: [.posixPermissions: 0o600])
+        }
+        NSWorkspace.shared.open(url)
+    }
     @objc private func openLog() { NSWorkspace.shared.open(home.appendingPathComponent("run/v2t.log")) }
     @objc private func quit() { NSApp.terminate(nil) }
 }

@@ -11,9 +11,53 @@ import json
 import re
 import time
 import urllib.request
+from pathlib import Path
+from typing import Callable, Iterable, TypeVar
+
+T = TypeVar("T")
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
+
+
+def cached_locally(repo_id: str) -> bool:
+    """True when the Hugging Face cache already holds a snapshot of this model."""
+    try:
+        from huggingface_hub import constants
+    except ImportError:
+        return False
+    snapshots = (
+        Path(constants.HF_HUB_CACHE)
+        / f"models--{repo_id.replace('/', '--')}"
+        / "snapshots"
+    )
+    if not snapshots.is_dir():
+        return False
+    return any(p.is_dir() and any(p.iterdir()) for p in snapshots.iterdir())
+
+
+def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
+    """Run `loader` without Hugging Face revision checks when the model is cached.
+
+    Those checks are a round trip per file; on a slow or blocked network they
+    turned a 0.5s Parakeet load into 45s and a 1.2s Qwen load into 19s
+    (measured 2026-09-03 on hotel Wi-Fi). Offline loading of a partial cache
+    fails, so that case falls back to the normal online path.
+    """
+    if not cached_locally(repo_id):
+        return loader()
+    from huggingface_hub import constants
+
+    if constants.HF_HUB_OFFLINE:
+        return loader()
+    constants.HF_HUB_OFFLINE = True
+    try:
+        return loader()
+    except Exception:  # partial snapshot: let the hub finish it online
+        constants.HF_HUB_OFFLINE = False
+        return loader()
+    finally:
+        constants.HF_HUB_OFFLINE = False
 
 
 class ParakeetSTT:
@@ -26,7 +70,8 @@ class ParakeetSTT:
             raise SystemExit(
                 "parakeet-mlx missing — reinstall voice2text (Apple Silicon only)."
             ) from e
-        self.model = from_pretrained(model or self.default_model)
+        repo = model or self.default_model
+        self.model = load_cache_first(repo, lambda: from_pretrained(repo))
 
     def transcribe(self, wav_path: str) -> str:
         return self.model.transcribe(wav_path).text.strip()
@@ -46,9 +91,14 @@ class WhisperSTT:
         self.model = model or self.default_model
 
     def transcribe(self, wav_path: str) -> str:
-        return self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model)[
-            "text"
-        ].strip()
+        # mlx-whisper resolves the repo on every call (and caches the weights
+        # in-process), so the cache-first guard belongs here rather than in init.
+        return load_cache_first(
+            self.model,
+            lambda: self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model)[
+                "text"
+            ].strip(),
+        )
 
 
 STT = {"parakeet": ParakeetSTT, "whisper": WhisperSTT}
@@ -122,9 +172,24 @@ EXAMPLES = {
 }
 
 
-def cleanup_messages(text: str, mode: str = "strict") -> list[dict]:
-    """Chat messages for one cleanup call: system prompt, examples, then the text."""
-    messages = [{"role": "system", "content": PROMPTS[mode]}]
+def cleanup_messages(
+    text: str, mode: str = "strict", vocabulary: Iterable[str] = ()
+) -> list[dict]:
+    """Chat messages for one cleanup call: system prompt, examples, then the text.
+
+    `vocabulary` is the user's dictionary (names, products, jargon): the one
+    thing a text-only cleanup pass can fix that the recogniser gets wrong.
+    """
+    system = PROMPTS[mode]
+    terms = [t.strip() for t in vocabulary if t and t.strip()]
+    if terms:
+        system += (
+            " The speaker often uses these names and terms; when the transcription "
+            "has a similar-sounding word, write the term exactly as spelled here: "
+            + ", ".join(terms)
+            + "."
+        )
+    messages = [{"role": "system", "content": system}]
     for raw, clean in EXAMPLES[mode]:
         messages.append({"role": "user", "content": raw})
         messages.append({"role": "assistant", "content": clean})
@@ -199,9 +264,13 @@ class _ChunkedCleanup:
 
     model_id: str
     last_stats: dict
+    vocabulary: tuple[str, ...] = ()  # set from the user's dictionary at startup
 
     def _generate(self, chunk: str, mode: str) -> tuple[str, float | None, bool]:
         raise NotImplementedError
+
+    def _messages(self, chunk: str, mode: str) -> list[dict]:
+        return cleanup_messages(chunk, mode, self.vocabulary)
 
     def cleanup(self, text: str, mode: str = "casual"):
         t0, ttft, parts = time.perf_counter(), None, []
@@ -238,14 +307,16 @@ class MLXCleanup(_ChunkedCleanup):
             ) from e
         self._stream = stream_generate
         self.model_id = model or self.default_model
-        self.model, self.tokenizer = load(self.model_id)
+        self.model, self.tokenizer = load_cache_first(
+            self.model_id, lambda: load(self.model_id)
+        )
         self.last_stats = {}
 
     def _generate(self, chunk: str, mode: str):
         # enable_thinking=False keeps hybrid Qwen3-family templates in
         # non-thinking mode; templates without the switch ignore it.
         prompt = self.tokenizer.apply_chat_template(
-            cleanup_messages(chunk, mode),
+            self._messages(chunk, mode),
             add_generation_prompt=True,
             enable_thinking=False,
         )
@@ -280,7 +351,7 @@ class OllamaCleanup(_ChunkedCleanup):
             data=json.dumps(
                 {
                     "model": self.model_id,
-                    "messages": cleanup_messages(chunk, mode),
+                    "messages": self._messages(chunk, mode),
                     "stream": True,
                     "options": {"temperature": 0, "num_predict": max_tokens},
                 }

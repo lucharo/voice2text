@@ -99,6 +99,8 @@ class VoiceToText:
         self.latched = False  # hands-free recording after a double-tap
         self.press_at = 0.0
         self.last_tap_at = 0.0
+        self.vocabulary: list[str] = []  # loaded from dictionary.txt in warmup()
+        self.replacements: list[tuple[str, str]] = []
         cleanup_model = (
             cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
         )
@@ -283,6 +285,7 @@ class VoiceToText:
                     logger.error(f"LLM cleanup failed: {e}")
                     logger.warning("Falling back to raw transcription")
                     cleaned_text = raw_text
+            cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
             t0 = time.perf_counter()
             self.paste_to_cursor(cleaned_text)
@@ -442,6 +445,11 @@ class VoiceToText:
             self._set_state("idle")
 
     def warmup(self):
+        self.vocabulary, self.replacements = config.read_dictionary()
+        if self.vocabulary or self.replacements:
+            logger.info(
+                f"Dictionary: {len(self.vocabulary)} terms, {len(self.replacements)} replacements"
+            )
         logger.info("Loading transcription model...")
         self._set_state("loading-stt")
         t0 = time.perf_counter()
@@ -466,6 +474,7 @@ class VoiceToText:
             self.cleaner = backends.make_cleanup(
                 self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
             )
+            self.cleaner.vocabulary = tuple(self.vocabulary)
             try:
                 self.cleaner.cleanup("hi", self.cfg.mode)
                 logger.success(

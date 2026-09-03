@@ -4,6 +4,7 @@ v2t                 run push-to-talk (default)
 v2t transcribe      transcribe existing audio files (no microphone)
 v2t setup           guided first-run config (pick models, detect Ollama)
     v2t history         show or search past transcriptions
+    v2t dictionary      names and jargon to spell right (add / import-wispr)
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          live state line (off / starting / idle / recording / …)
     v2t stop            stop a running v2t
@@ -165,6 +166,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
         f"{banner} · {len(paths)} file{'s' if len(paths) > 1 else ''}", file=sys.stderr
     )
 
+    vocabulary, replacements = config.read_dictionary()
     with _step(f"loading {stt_label}"):
         stt = backends.make_stt(cfg.backend, cfg.stt_model)
     cleaner = None
@@ -173,6 +175,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
             cleaner = backends.make_cleanup(
                 cfg.cleanup_engine, cfg.cleanup_model, cfg.ollama_url
             )
+            cleaner.vocabulary = tuple(vocabulary)
 
     chunks = []
     for index, path in enumerate(paths, 1):
@@ -197,6 +200,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
                         file=sys.stderr,
                     )
             cleanup_s = time.perf_counter() - started
+        text = config.apply_replacements(text, replacements)
         elapsed = stt_s + cleanup_s
         speed = f" · {seconds / elapsed:.0f}× realtime" if seconds and elapsed else ""
         print(
@@ -371,6 +375,88 @@ def cmd_history(argv: list[str]) -> int:
             print(f"  clean: {record.get('clean', '')}")
         else:
             print(f"  {record.get('clean', '')}")
+    return 0
+
+
+WISPR_FLOW_DB = Path.home() / "Library/Application Support/Wispr Flow/flow.sqlite"
+
+
+def import_wispr_dictionary(db: Path) -> tuple[list[str], list[tuple[str, str]]]:
+    """Live entries from Wispr Flow's local `Dictionary` table, read-only."""
+    import sqlite3
+
+    if not db.exists():
+        raise SystemExit(f"Wispr Flow database not found: {db}")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        rows = con.execute(
+            "select phrase, replacement from Dictionary "
+            "where isDeleted = 0 order by frequencyUsed desc, phrase"
+        ).fetchall()
+    finally:
+        con.close()
+    terms, replacements = [], []
+    for phrase, replacement in rows:
+        phrase = (phrase or "").strip()
+        replacement = (replacement or "").strip()
+        if not phrase:
+            continue
+        if replacement and replacement != phrase:
+            replacements.append((phrase, replacement))
+        else:
+            terms.append(phrase)
+    return terms, replacements
+
+
+def cmd_dictionary(argv: list[str]) -> int:
+    """Names and jargon the recogniser gets wrong: shown to the cleanup model,
+    plus exact `heard => written` replacements applied after it."""
+    p = argparse.ArgumentParser(
+        prog="v2t dictionary", description="manage ~/.v2t/dictionary.txt"
+    )
+    sub = p.add_subparsers(dest="action")
+    sub.add_parser("show", help="list terms and replacements (default)")
+    add = sub.add_parser("add", help="add a term, or `heard => written`")
+    add.add_argument("entry", nargs="+")
+    wispr = sub.add_parser(
+        "import-wispr", help="merge Wispr Flow's dictionary from its local database"
+    )
+    wispr.add_argument("--db", type=Path, default=WISPR_FLOW_DB)
+    a = p.parse_args(argv)
+
+    terms, replacements = config.read_dictionary()
+    if a.action == "add":
+        entry = " ".join(a.entry).strip()
+        if "=>" in entry:
+            heard, _, written = entry.partition("=>")
+            replacements.append((heard.strip(), written.strip()))
+        else:
+            terms.append(entry)
+        path = config.write_dictionary(terms, replacements)
+        print(f"added to {path}")
+        return 0
+    if a.action == "import-wispr":
+        new_terms, new_replacements = import_wispr_dictionary(a.db.expanduser())
+        before = len(terms) + len(replacements)
+        path = config.write_dictionary(
+            terms + new_terms, replacements + new_replacements
+        )
+        terms, replacements = config.read_dictionary()
+        print(
+            f"imported {len(terms) + len(replacements) - before} new entries from Wispr Flow "
+            f"({len(terms)} terms, {len(replacements)} replacements in {path})"
+        )
+        return 0
+    if not terms and not replacements:
+        print(
+            f"empty — add with `v2t dictionary add <term>` or edit {config.dictionary_path()}",
+            file=sys.stderr,
+        )
+        return 1
+    for term in terms:
+        print(term)
+    for heard, written in replacements:
+        print(f"{heard} => {written}")
     return 0
 
 
@@ -589,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
         "transcribe": cmd_transcribe,
         "setup": cmd_setup,
         "history": cmd_history,
+        "dictionary": cmd_dictionary,
         "config": cmd_config,
         "status": cmd_status,
         "stop": cmd_stop,

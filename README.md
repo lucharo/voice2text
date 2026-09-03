@@ -84,6 +84,7 @@ v2t transcribe memo.opus # transcribe a file you already have (no microphone)
 
 v2t setup                # guided config: pick models, detect Ollama
 v2t history              # last 10 transcriptions; `v2t history <term>` searches, --raw, --json
+v2t dictionary           # names/jargon to spell right; `add`, `import-wispr`
 v2t status               # running / idle (also used by the menu app)
 v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
 v2t config               # show resolved config + paths  (--init writes a template)
@@ -140,6 +141,26 @@ v2t history --json -n 0     # every record as JSONL, for jq and friends
 
 The menu-bar app shows the last transcription too, with a **Copy Last Transcription** action for
 when the paste landed in the wrong window.
+
+### Dictionary
+
+Names, products and jargon the recogniser gets wrong go in `~/.v2t/dictionary.txt`, one per line.
+Plain terms are shown to the cleanup model, which is told to spell them exactly like that when it
+sees a similar-sounding word. `heard => written` lines are exact, case-insensitive replacements
+applied after cleanup (and with `--no-cleanup`), so they work even with the LLM off.
+
+```bash
+v2t dictionary                       # list
+v2t dictionary add Parakeet          # a term
+v2t dictionary add "whisper flow => Wispr Flow"
+v2t dictionary import-wispr          # merge Wispr Flow's dictionary from its local database
+```
+
+### Startup time
+
+Both models load from the Hugging Face cache without contacting the hub once they are there, so a
+warm start is about 2 s. On a slow or blocked network the hub's revision checks alone used to cost
+45 s for Parakeet and 19 s for the cleanup model; the first download still needs a connection.
 
 ## Config — `~/.v2t/`
 

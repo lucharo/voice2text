@@ -1197,6 +1197,115 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("no transcriptions yet", err)
 
+    def test_dictionary_terms_reach_the_prompt_and_replacements_the_text(self):
+        config.write_dictionary(
+            ["Parakeet", "Zscaler"], [("whisper flow", "Wispr Flow")]
+        )
+
+        terms, replacements = config.read_dictionary()
+        self.assertEqual(terms, ["Parakeet", "Zscaler"])
+        self.assertEqual(replacements, [("whisper flow", "Wispr Flow")])
+        self.assertEqual(stat.S_IMODE(config.dictionary_path().stat().st_mode), 0o600)
+
+        system = backends.cleanup_messages("x", "casual", terms)[0]["content"]
+        self.assertIn("Parakeet, Zscaler", system)
+        self.assertNotIn("Parakeet", backends.cleanup_messages("x")[0]["content"])
+
+        self.assertEqual(
+            config.apply_replacements(
+                "I used Whisper Flow and whisperflow", replacements
+            ),
+            "I used Wispr Flow and whisperflow",
+        )
+
+    def test_dictionary_rewrite_dedupes_case_insensitively_and_keeps_comments_out(self):
+        config.write_dictionary(["Orx", "orx", "GSK"], [("a", "b"), ("A", "B")])
+
+        terms, replacements = config.read_dictionary()
+
+        self.assertEqual((terms, replacements), (["Orx", "GSK"], [("a", "b")]))
+        self.assertTrue(
+            config.dictionary_path().read_text().startswith("# v2t dictionary")
+        )
+
+    def test_dictionary_import_merges_wispr_entries_read_only(self):
+        import sqlite3
+
+        db = Path(self.tempdir.name) / "flow.sqlite"
+        con = sqlite3.connect(db)
+        con.execute(
+            "create table Dictionary (phrase text, replacement text, isDeleted int, frequencyUsed int)"
+        )
+        con.executemany(
+            "insert into Dictionary values (?, ?, ?, ?)",
+            [
+                ("Parakeet", None, 0, 5),
+                ("gsk", "GSK", 0, 9),
+                ("Deleted", None, 1, 1),
+                ("Same", "same", 0, 0),
+            ],
+        )
+        con.commit()
+        con.close()
+        config.write_dictionary(["Existing"], [])
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.cmd_dictionary(["import-wispr", "--db", str(db)])
+
+        terms, replacements = config.read_dictionary()
+        self.assertEqual(code, 0)
+        self.assertEqual(terms, ["Existing", "Parakeet"])
+        self.assertEqual(replacements, [("gsk", "GSK"), ("Same", "same")])
+        self.assertIn("imported 3 new entries", out.getvalue())
+
+    def test_cached_models_load_without_hub_revision_checks(self):
+        import types
+
+        cache = Path(self.tempdir.name) / "hub"
+        snapshot = cache / "models--org--cached" / "snapshots" / "abc"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(cache), HF_HUB_OFFLINE=False)
+        seen = []
+
+        def loader():
+            seen.append(constants.HF_HUB_OFFLINE)
+            return "model"
+
+        with mock.patch.dict(
+            sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}
+        ):
+            self.assertEqual(backends.load_cache_first("org/cached", loader), "model")
+            self.assertEqual(backends.load_cache_first("org/missing", loader), "model")
+
+        self.assertEqual(seen, [True, False], "offline only when the snapshot exists")
+        self.assertFalse(constants.HF_HUB_OFFLINE, "flag restored afterwards")
+
+    def test_partial_cache_falls_back_to_an_online_load(self):
+        import types
+
+        cache = Path(self.tempdir.name) / "hub"
+        snapshot = cache / "models--org--partial" / "snapshots" / "abc"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(cache), HF_HUB_OFFLINE=False)
+        attempts = []
+
+        def loader():
+            attempts.append(constants.HF_HUB_OFFLINE)
+            if constants.HF_HUB_OFFLINE:
+                raise OSError("weights not in cache")
+            return "model"
+
+        with mock.patch.dict(
+            sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}
+        ):
+            self.assertEqual(backends.load_cache_first("org/partial", loader), "model")
+
+        self.assertEqual(attempts, [True, False])
+        self.assertFalse(constants.HF_HUB_OFFLINE)
+
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (
             mock.patch.object(
