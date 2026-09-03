@@ -344,7 +344,7 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
     if path.exists():  # keep the user's own comments; the header is re-emitted
         header_lines = set(DICTIONARY_HEADER.splitlines())
         for line in path.read_text().splitlines():
-            if line.startswith("#") and line not in header_lines:
+            if line.lstrip().startswith("#") and line not in header_lines:
                 lines.append(line)
     for term in terms:
         if term.lower() not in seen:

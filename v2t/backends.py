@@ -77,6 +77,17 @@ class ParakeetSTT:
         return self.model.transcribe(wav_path).text.strip()
 
 
+def _complete_snapshot(path: str) -> str:
+    """A snapshot directory that actually contains weights, else OSError
+    (which load_cache_first turns into an online retry)."""
+    folder = Path(path)
+    if not any(
+        (folder / name).exists() for name in ("weights.safetensors", "weights.npz")
+    ):
+        raise FileNotFoundError(f"no weights in {path}")
+    return path
+
+
 class WhisperSTT:
     default_model = WHISPER_DEFAULT
 
@@ -92,10 +103,15 @@ class WhisperSTT:
         self._mlx_whisper = mlx_whisper
         self.model = model or self.default_model
         # Resolve the weights once here, so transcribe() is pure inference and
-        # the cache-first retry can never re-run a failed transcription.
-        self.model_path = load_cache_first(
-            self.model, lambda: snapshot_download(self.model)
-        )
+        # the cache-first retry can never re-run a failed transcription. A local
+        # directory is used as-is; a repo id resolves to its snapshot, which must
+        # already hold the weights or the loader raises and retries online.
+        if Path(self.model).is_dir():
+            self.model_path = self.model
+        else:
+            self.model_path = load_cache_first(
+                self.model, lambda: _complete_snapshot(snapshot_download(self.model))
+            )
 
     def transcribe(self, wav_path: str) -> str:
         return self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model_path)[

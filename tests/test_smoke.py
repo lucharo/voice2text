@@ -1257,11 +1257,14 @@ class V2TSmokeTests(unittest.TestCase):
     ):
         import types
 
+        weights = Path(self.tempdir.name) / "snap"
+        weights.mkdir()
+        (weights / "weights.safetensors").write_bytes(b"w")
         whisper = types.SimpleNamespace(
             transcribe=mock.Mock(return_value={"text": " hi there "})
         )
         hub = types.SimpleNamespace(
-            snapshot_download=mock.Mock(return_value="/cache/whisper"),
+            snapshot_download=mock.Mock(return_value=str(weights)),
             constants=types.SimpleNamespace(
                 HF_HUB_CACHE=self.tempdir.name, HF_HUB_OFFLINE=False
             ),
@@ -1275,8 +1278,56 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(text, "hi there")
         hub.snapshot_download.assert_called_once_with(backends.WHISPER_DEFAULT)
         whisper.transcribe.assert_called_once_with(
-            "a.wav", path_or_hf_repo="/cache/whisper"
+            "a.wav", path_or_hf_repo=str(weights)
         )
+
+    def test_whisper_uses_a_local_model_directory_as_is(self):
+        import types
+
+        local = Path(self.tempdir.name) / "whisper-local"
+        local.mkdir()
+        whisper = types.SimpleNamespace(
+            transcribe=mock.Mock(return_value={"text": "ok"})
+        )
+        hub = types.SimpleNamespace(snapshot_download=mock.Mock())
+        with mock.patch.dict(
+            sys.modules, {"mlx_whisper": whisper, "huggingface_hub": hub}
+        ):
+            stt = backends.WhisperSTT(str(local))
+            stt.transcribe("a.wav")
+
+        hub.snapshot_download.assert_not_called()
+        whisper.transcribe.assert_called_once_with("a.wav", path_or_hf_repo=str(local))
+
+    def test_whisper_snapshot_without_weights_is_retried_online(self):
+        import types
+
+        cache = Path(self.tempdir.name) / "hub"
+        snapshot = cache / "models--org--w" / "snapshots" / "abc"
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(cache), HF_HUB_OFFLINE=False)
+        seen = []
+
+        def snapshot_download(_repo):
+            seen.append(constants.HF_HUB_OFFLINE)
+            if not constants.HF_HUB_OFFLINE:
+                (snapshot / "weights.safetensors").write_bytes(b"w")
+            return str(snapshot)
+
+        hub = types.SimpleNamespace(
+            snapshot_download=snapshot_download, constants=constants
+        )
+        whisper = types.SimpleNamespace(
+            transcribe=mock.Mock(return_value={"text": "ok"})
+        )
+        with mock.patch.dict(
+            sys.modules, {"mlx_whisper": whisper, "huggingface_hub": hub}
+        ):
+            stt = backends.WhisperSTT("org/w")
+
+        self.assertEqual(seen, [True, False], "offline first, then online to finish")
+        self.assertEqual(stt.model_path, str(snapshot))
 
     def test_dictionary_rewrite_dedupes_case_insensitively_and_keeps_comments_out(self):
         config.write_dictionary(["Orx", "orx", "GSK"], [("a", "b"), ("A", "B")])
