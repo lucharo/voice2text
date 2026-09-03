@@ -31,7 +31,7 @@ STT_MODELS = [
 ]
 CLEANUP_MODELS = [
     "mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-    "mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit",
+    "mlx:mlx-community/Qwen3.5-4B-4bit",
 ]
 
 # (name, text) — `say` turns these into audio so the STT bench is self-contained.
@@ -54,11 +54,13 @@ SAY_SAMPLES = [
     ),
 ]
 
-# Filler-laden raw transcriptions for the cleanup table.
+# Filler-laden raw transcriptions for the cleanup table. Deliberately different
+# from the few-shot examples in backends.EXAMPLES, so the bench never times a
+# demonstration the model has already been shown.
 CLEANUP_SAMPLES = [
-    "Hey um I'll see you tomorrow at 9 actually no make it 10",
-    "So basically I was thinking we could um you know maybe try the other approach",
+    "ok so um can we move the standup to to 10 30 tomorrow no wait 11 is better",
     "yeah so the the thing is like we need to ship this by friday otherwise uh it slips again",
+    "right um what I'd say is basically the migration went fine except uh the read replica lagged for like an hour",
 ]
 
 
