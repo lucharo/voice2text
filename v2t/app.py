@@ -99,8 +99,9 @@ class VoiceToText:
         self.latched = False  # hands-free recording after a double-tap
         self.press_at = 0.0
         self.last_tap_at = 0.0
-        self.vocabulary: list[str] = []  # loaded from dictionary.txt in warmup()
+        self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
         self.replacements: list[tuple[str, str]] = []
+        self.dictionary_mtime = -1.0
         cleanup_model = (
             cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
         )
@@ -253,6 +254,7 @@ class VoiceToText:
                 temp_path = f.name
 
             logger.info("Transcribing...")
+            self.refresh_dictionary()
             t0 = time.perf_counter()
             raw_text = self.stt.transcribe(temp_path)
             stt_s = time.perf_counter() - t0
@@ -444,12 +446,21 @@ class VoiceToText:
             self._restore_media()
             self._set_state("idle")
 
-    def warmup(self):
+    def refresh_dictionary(self) -> None:
+        """Re-read dictionary.txt when it changed, so edits apply without a restart."""
+        mtime = config.dictionary_mtime()
+        if mtime == self.dictionary_mtime:
+            return
+        self.dictionary_mtime = mtime
         self.vocabulary, self.replacements = config.read_dictionary()
-        if self.vocabulary or self.replacements:
-            logger.info(
-                f"Dictionary: {len(self.vocabulary)} terms, {len(self.replacements)} replacements"
-            )
+        if self.cleaner is not None:
+            self.cleaner.vocabulary = tuple(self.vocabulary)
+        logger.info(
+            f"Dictionary: {len(self.vocabulary)} terms, {len(self.replacements)} replacements"
+        )
+
+    def warmup(self):
+        self.refresh_dictionary()
         logger.info("Loading transcription model...")
         self._set_state("loading-stt")
         t0 = time.perf_counter()

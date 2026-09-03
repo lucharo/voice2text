@@ -1218,6 +1218,66 @@ class V2TSmokeTests(unittest.TestCase):
             "I used Wispr Flow and whisperflow",
         )
 
+    def test_replacements_are_literal_even_with_backslashes(self):
+        text = config.apply_replacements(
+            "path is c drive", [("c drive", r"C:\drive\1"), ("path", r"\g<0>")]
+        )
+
+        self.assertEqual(text, r"\g<0> is C:\drive\1")
+
+    def test_dictionary_rewrite_keeps_user_comments(self):
+        config.write_dictionary(["Alpha"], [])
+        path = config.dictionary_path()
+        path.write_text(path.read_text() + "# team names below\nBeta\n")
+
+        config.write_dictionary(*config.read_dictionary())
+
+        body = path.read_text()
+        self.assertIn("# team names below", body)
+        self.assertEqual(body.count("# v2t dictionary"), 1, "header emitted once")
+        self.assertEqual(config.read_dictionary(), (["Alpha", "Beta"], []))
+
+    def test_dictionary_edits_apply_without_a_restart(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.cleaner = mock.Mock(vocabulary=())
+        config.write_dictionary(["Alpha"], [("a", "b")])
+
+        voice.refresh_dictionary()
+        self.assertEqual(voice.cleaner.vocabulary, ("Alpha",))
+
+        config.write_dictionary(["Alpha", "Gamma"], [("a", "b")])
+        os.utime(config.dictionary_path(), (1, 2_000_000_000))  # force a new mtime
+        voice.refresh_dictionary()
+
+        self.assertEqual(voice.cleaner.vocabulary, ("Alpha", "Gamma"))
+        self.assertEqual(voice.replacements, [("a", "b")])
+
+    def test_whisper_resolves_its_weights_once_and_transcribes_from_the_local_path(
+        self,
+    ):
+        import types
+
+        whisper = types.SimpleNamespace(
+            transcribe=mock.Mock(return_value={"text": " hi there "})
+        )
+        hub = types.SimpleNamespace(
+            snapshot_download=mock.Mock(return_value="/cache/whisper"),
+            constants=types.SimpleNamespace(
+                HF_HUB_CACHE=self.tempdir.name, HF_HUB_OFFLINE=False
+            ),
+        )
+        with mock.patch.dict(
+            sys.modules, {"mlx_whisper": whisper, "huggingface_hub": hub}
+        ):
+            stt = backends.WhisperSTT()
+            text = stt.transcribe("a.wav")
+
+        self.assertEqual(text, "hi there")
+        hub.snapshot_download.assert_called_once_with(backends.WHISPER_DEFAULT)
+        whisper.transcribe.assert_called_once_with(
+            "a.wav", path_or_hf_repo="/cache/whisper"
+        )
+
     def test_dictionary_rewrite_dedupes_case_insensitively_and_keeps_comments_out(self):
         config.write_dictionary(["Orx", "orx", "GSK"], [("a", "b"), ("A", "B")])
 

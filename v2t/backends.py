@@ -53,7 +53,7 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     constants.HF_HUB_OFFLINE = True
     try:
         return loader()
-    except Exception:  # partial snapshot: let the hub finish it online
+    except OSError:  # hub cache errors subclass OSError: let it finish online
         constants.HF_HUB_OFFLINE = False
         return loader()
     finally:
@@ -87,18 +87,20 @@ class WhisperSTT:
             raise SystemExit(
                 "whisper backend needs: uv tool install 'voice2text[whisper]'"
             ) from e
+        from huggingface_hub import snapshot_download
+
         self._mlx_whisper = mlx_whisper
         self.model = model or self.default_model
+        # Resolve the weights once here, so transcribe() is pure inference and
+        # the cache-first retry can never re-run a failed transcription.
+        self.model_path = load_cache_first(
+            self.model, lambda: snapshot_download(self.model)
+        )
 
     def transcribe(self, wav_path: str) -> str:
-        # mlx-whisper resolves the repo on every call (and caches the weights
-        # in-process), so the cache-first guard belongs here rather than in init.
-        return load_cache_first(
-            self.model,
-            lambda: self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model)[
-                "text"
-            ].strip(),
-        )
+        return self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model_path)[
+            "text"
+        ].strip()
 
 
 STT = {"parakeet": ParakeetSTT, "whisper": WhisperSTT}

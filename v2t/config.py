@@ -307,6 +307,14 @@ DICTIONARY_HEADER = """\
 """
 
 
+def dictionary_mtime() -> float:
+    """Modification time of dictionary.txt, or 0 when absent (cheap change check)."""
+    try:
+        return dictionary_path().stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def read_dictionary() -> tuple[list[str], list[tuple[str, str]]]:
     """(terms, replacements) from dictionary.txt; missing file means both empty."""
     path = dictionary_path()
@@ -333,6 +341,11 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
     _config_parent(path)
     seen: set[str] = set()
     lines = [DICTIONARY_HEADER]
+    if path.exists():  # keep the user's own comments; the header is re-emitted
+        header_lines = set(DICTIONARY_HEADER.splitlines())
+        for line in path.read_text().splitlines():
+            if line.startswith("#") and line not in header_lines:
+                lines.append(line)
     for term in terms:
         if term.lower() not in seen:
             seen.add(term.lower())
@@ -353,7 +366,10 @@ def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
 
     for heard, written in replacements:
         text = re.sub(
-            rf"(?<!\w){re.escape(heard)}(?!\w)", written, text, flags=re.IGNORECASE
+            rf"(?<!\w){re.escape(heard)}(?!\w)",
+            lambda _match, written=written: written,  # literal: no \1 or \g<> parsing
+            text,
+            flags=re.IGNORECASE,
         )
     return text
 
