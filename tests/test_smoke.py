@@ -937,6 +937,129 @@ class V2TSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "token limit"):
             cleaner.cleanup("hello")
 
+    def test_cleanup_prompt_is_a_system_message_with_examples_then_the_text(self):
+        messages = backends.cleanup_messages("raw words", "casual")
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[0]["content"], backends.PROMPTS["casual"])
+        self.assertEqual(
+            [m["role"] for m in messages[1:-1]],
+            ["user", "assistant"] * len(backends.EXAMPLES["casual"]),
+        )
+        self.assertEqual(messages[-1], {"role": "user", "content": "raw words"})
+        self.assertNotIn(
+            "raw words", "".join(m["content"] for m in messages[:-1])
+        )
+
+    def test_mlx_cleanup_sends_the_chat_messages_in_non_thinking_mode(self):
+        cleaner = object.__new__(backends.MLXCleanup)
+        cleaner.model = object()
+        cleaner.tokenizer = mock.Mock()
+        cleaner.tokenizer.apply_chat_template.return_value = "prompt"
+        cleaner.tokenizer.encode.return_value = [1, 2, 3]
+        response = type("Response", (), {"text": "Hello, there."})
+        cleaner._stream = lambda *_args, **_kwargs: iter([response()])
+
+        text, ttft, total = cleaner.cleanup("hello um there", "strict")
+
+        self.assertEqual(text, "Hello, there.")
+        self.assertIsNotNone(ttft)
+        self.assertGreaterEqual(total, ttft)
+        cleaner.tokenizer.apply_chat_template.assert_called_once_with(
+            backends.cleanup_messages("hello um there", "strict"),
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+
+    def test_ollama_cleanup_uses_the_chat_api_with_the_same_messages(self):
+        lines = [
+            json.dumps({"message": {"role": "assistant", "content": "Hello, "}}),
+            json.dumps({"message": {"role": "assistant", "content": "there."}}),
+            json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}),
+        ]
+        stream = mock.MagicMock()
+        stream.__enter__.return_value = iter(line.encode() + b"\n" for line in lines)
+
+        with mock.patch.object(
+            backends.urllib.request, "urlopen", return_value=stream
+        ) as urlopen:
+            text, ttft, _total = backends.OllamaCleanup("m", "http://o").cleanup(
+                "hello um there", "casual"
+            )
+
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data)
+        self.assertEqual(text, "Hello, there.")
+        self.assertIsNotNone(ttft)
+        self.assertEqual(request.full_url, "http://o/api/chat")
+        self.assertEqual(
+            body,
+            {
+                "model": "m",
+                "messages": backends.cleanup_messages("hello um there", "casual"),
+                "stream": True,
+                "options": {"temperature": 0},
+            },
+        )
+
+    def _history_output(self, argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.cmd_history(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_history_command_lists_recent_entries_oldest_first(self):
+        for index in range(12):
+            config.append_history(
+                {
+                    "audio_s": 7.2,
+                    "stt_s": 0.5,
+                    "cleanup_s": 0.2,
+                    "raw": f"um entry {index}",
+                    "clean": f"Entry {index}.",
+                }
+            )
+
+        code, out, _err = self._history_output([])
+        cleans = [line.strip() for line in out.splitlines() if line.startswith("  ")]
+
+        self.assertEqual(code, 0)
+        self.assertEqual(cleans, [f"Entry {i}." for i in range(2, 12)])
+        self.assertIn("0:07 audio · stt 0.5s · clean 0.2s", out)
+
+        code, out, _err = self._history_output(["-n", "2", "--raw"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [line.strip() for line in out.splitlines() if line.startswith("  ")],
+            ["raw:   um entry 10", "clean: Entry 10.", "raw:   um entry 11", "clean: Entry 11."],
+        )
+
+    def test_history_command_searches_raw_and_clean_text(self):
+        config.append_history({"raw": "buy milk um", "clean": "Buy milk."})
+        config.append_history({"raw": "call mum", "clean": "Call Mum."})
+        config.append_history({"source": "/tmp/memo.opus", "raw": "hi", "clean": "Hi."})
+
+        code, out, _err = self._history_output(["MUM"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip().splitlines()[-1].strip(), "Call Mum.")
+
+        code, out, _err = self._history_output(["milk", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["clean"], "Buy milk.")
+
+        code, out, _err = self._history_output(["memo"])
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("no transcriptions match 'memo'", _err)
+
+        code, _out, _err = self._history_output(["opus"])
+        self.assertEqual(code, 1, "source path is metadata, not searched text")
+
+    def test_history_command_reports_an_empty_history(self):
+        code, out, err = self._history_output([])
+
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("no transcriptions yet", err)
+
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (
             mock.patch.object(

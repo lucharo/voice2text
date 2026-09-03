@@ -83,6 +83,7 @@ v2t --pause-music        # pause media while recording (needs nowplaying-cli)
 v2t transcribe memo.opus # transcribe a file you already have (no microphone)
 
 v2t setup                # guided config: pick models, detect Ollama
+v2t history              # last 10 transcriptions; `v2t history <term>` searches, --raw, --json
 v2t status               # running / idle (also used by the menu app)
 v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
 v2t config               # show resolved config + paths  (--init writes a template)
@@ -117,6 +118,24 @@ about 11s with Parakeet on an M1 Max (~19× realtime). Each result is appended t
 | "So basically I was thinking we could um you know maybe try the other approach" | "I was thinking we could try the other approach." | "So basically, I was thinking we could maybe try the other approach." |
 
 **Strict** (default) removes fillers, restructures for clarity. **Casual** only adds punctuation and removes "um/uh", keeping your phrasing.
+
+Both modes send the model a short system prompt plus these worked examples as prior turns, so even a
+small model treats your dictation as text to clean rather than a question to answer.
+
+### History
+
+Every dictation and file transcription is appended to `~/.v2t/history/transcriptions.jsonl`
+(raw text, cleaned text, models, timings). Read it back without opening the file:
+
+```bash
+v2t history                 # the last 10, oldest first, with timings
+v2t history -n 3 --raw      # show the raw transcription next to the cleaned one
+v2t history standup         # entries whose raw or clean text mentions "standup"
+v2t history --json -n 0     # every record as JSONL, for jq and friends
+```
+
+The menu-bar app shows the last transcription too, with a **Copy Last Transcription** action for
+when the paste landed in the wrong window.
 
 ## Config — `~/.v2t/`
 
@@ -155,6 +174,14 @@ save_history = true
 Cleanup runs **in-process via [mlx-lm](https://github.com/ml-explore/mlx-lm)** by default
 (`Qwen2.5-1.5B-Instruct`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
 
+Have memory to spare (24 GB+)? The Qwen3.5 small models follow the cleanup rules more reliably and
+are non-thinking by default; the 4B one costs roughly half a second per dictation on an M1 Max:
+
+```toml
+[cleanup]
+model = "mlx-community/Qwen3.5-4B-4bit"   # or Qwen3.5-2B-4bit; downloads on next launch
+```
+
 Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
 detects Ollama, or edit the config):
 
@@ -176,8 +203,9 @@ v2t menubar install      # compile the bundled Swift file into ~/Applications/Vo
 The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
 or separate settings system. It exists because macOS only grants microphone access to a real app
 identity. The menu requests the two native grants, starts one long-running Python process, shows
-state immediately, and links to config, history, and log. Run `v2t` in a terminal instead if you do
-not want the menu.
+state immediately (the icon turns red while recording), previews the last transcription with a
+copy action, and links to config, history, and log. Run `v2t` in a terminal instead if you do not
+want the menu.
 
 **Start v2t** loads Parakeet and the cleanup model once, then keeps them warm for every
 transcription. To start the same menu app at login, install the optional per-user LaunchAgent:
@@ -205,6 +233,7 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
 | cleanup | `Qwen2.5-1.5B-Instruct` (mlx-lm) | 831 MB active in the local cleanup benchmark; non-thinking, no daemon |
+| cleanup (quality) | `Qwen3.5-4B-4bit` (mlx-lm) | opt-in via config; better instruction following, ~2.3 GB |
 
 > This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

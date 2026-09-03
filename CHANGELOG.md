@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Cleanup prompt rebuilt as system prompt + worked examples** — three (raw, clean) demonstrations per mode are sent as prior turns, and the rules now say the dictation is text to clean, never a message to answer. Same contract for both engines: mlx-lm renders the chat template with `enable_thinking=False` (safe for hybrid Qwen3 models, ignored by others) and Ollama uses `/api/chat` at temperature 0.
+- **`v2t history`** — read the JSONL back: last N entries with timings, `v2t history <term>` searches raw and clean text, `--raw` shows both, `--json` re-emits records for `jq`.
+- **Menu-bar app refresh** — bold state row with its symbol, models in small secondary type, SF Symbol icons on every action, green/orange permission dots, a red status icon while recording, and a *Last transcription* preview with **Copy Last Transcription**.
+- **Qwen3.5 as the documented quality upgrade** — `mlx-community/Qwen3.5-4B-4bit` (non-thinking by default) replaces Qwen3-4B in the benchmark defaults and the README; the shipped default stays Qwen2.5-1.5B. Benchmark cleanup samples no longer overlap the few-shot examples.
+
 ## 0.3.0
 
 The single-file proof-of-concept is preserved at the [`nano`](https://github.com/lucharo/voice2text/releases/tag/nano) tag.

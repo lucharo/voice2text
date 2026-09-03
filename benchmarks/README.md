@@ -27,7 +27,7 @@ just bench --stt-models \
 
 just bench --cleanup-models \
   mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit \
-  mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit \
+  mlx:mlx-community/Qwen3.5-4B-4bit \
   ollama:qwen3:4b-instruct-2507
 ```
 
@@ -44,12 +44,16 @@ to the grid.
 | STT (alt) | `mlx-community/parakeet-tdt-0.6b-v2` | English-only, slightly higher EN accuracy |
 | STT (fallback) | `mlx-community/whisper-large-v3-turbo` | the old default; best for rare languages/accents |
 | cleanup (default) | `mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit` | in-process, non-thinking; 831 MB active in the local benchmark |
-| cleanup (quality alt) | `mlx:mlx-community/Qwen3-4B-Instruct-2507-4bit` | 4B previous default; higher memory |
+| cleanup (quality alt) | `mlx:mlx-community/Qwen3.5-4B-4bit` | non-thinking by default; better instruction following, ~2.3 GB |
 | cleanup (ollama) | `ollama:qwen3:4b-instruct-2507` | if you already run Ollama |
 
 > **Use a non-thinking model.** Hybrid Qwen3 tags emit `<think>…</think>` blocks that
-> add latency and pollute the output; the `-instruct-2507` and Qwen2.5-Instruct
-> models above don't think.
+> add latency and pollute the output; Qwen2.5-Instruct, the `-instruct-2507` tags and the
+> Qwen3.5 small models (non-thinking by default) don't. The mlx engine also renders the
+> template with `enable_thinking=False`.
+>
+> The cleanup samples are deliberately different from the few-shot examples the prompt
+> ships with, so the table never times a demonstration the model has already seen.
 
 ## Method
 
