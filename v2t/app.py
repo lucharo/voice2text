@@ -43,15 +43,20 @@ def _resolve_hotkey(name: str):
     return keys[name]
 
 
-def check_and_request_permissions() -> None:
-    """Fail early with the exact macOS permission panes that still need a grant."""
+def check_and_request_permissions() -> bool:
+    """Fail early with the exact macOS permission panes that still need a grant.
+
+    Returns True when Microphone access was granted just now. CoreAudio was
+    already initialised in this process before the grant landed, so the caller
+    must re-exec before the microphone can actually be opened (issue #7).
+    """
     logger.info("Checking permissions...")
     states = permissions.statuses()
+    newly_granted = False
     if states["microphone"] == "not-requested":
         logger.info("Requesting Microphone permission...")
-        states["microphone"] = (
-            "granted" if permissions.request_microphone() else "denied"
-        )
+        newly_granted = permissions.request_microphone()
+        states["microphone"] = "granted" if newly_granted else "denied"
     checks = [
         ("Microphone", states["microphone"] == "granted", "Privacy_Microphone"),
         (
@@ -71,6 +76,7 @@ def check_and_request_permissions() -> None:
             subprocess.run(["open", f"{security}?{pane}"], check=False)
         raise SystemExit(1)
     logger.success("Permissions OK")
+    return newly_granted
 
 
 class VoiceToText:
@@ -189,7 +195,11 @@ class VoiceToText:
                 self.recording = False
                 self._close_stream()
                 logger.error(f"Could not open the microphone: {error}")
-                self._set_state("error", f"Microphone unavailable: {error}")
+                self._set_state(
+                    "error",
+                    f"Microphone unavailable: {error}. "
+                    "If you just granted Microphone permission, restart v2t.",
+                )
                 if not self._warned_mic:
                     self._warned_mic = True
                     subprocess.run(["open", MIC_PANE], check=False)

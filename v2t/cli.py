@@ -86,9 +86,25 @@ def cmd_run(argv: list[str]) -> int:
         )
         cfg.pause_music = False
     if os.environ.get("V2T_LAUNCH_CONTEXT") != "menubar":
-        app.check_and_request_permissions()
+        if app.check_and_request_permissions():
+            _restart_after_microphone_grant()
     app.VoiceToText(cfg).run()
     return 0
+
+
+def _restart_after_microphone_grant() -> None:
+    """Replace this process so audio initialises with the grant that just landed.
+
+    Guarded by V2T_RESTARTED so a grant that still fails cannot loop.
+    """
+    if os.environ.get("V2T_RESTARTED"):
+        return
+    from loguru import logger
+
+    logger.info("Microphone permission granted; restarting v2t so audio can use it...")
+    env = dict(os.environ, V2T_RESTARTED="1")
+    # sys.orig_argv keeps the real interpreter invocation (console script or -m v2t).
+    os.execve(sys.executable, list(sys.orig_argv), env)
 
 
 @contextmanager

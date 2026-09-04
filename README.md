@@ -244,6 +244,11 @@ v2t service uninstall
 The service starts the same `Voice2Text.app` bundle, so manual and login launches share one stable
 permission identity. The engine lock still prevents duplicate Python processes.
 
+The bundle is signed with hardened runtime (plus the audio-input entitlement) using a
+`Developer ID Application` identity when the keychain has one, otherwise the Apple Development
+identity, otherwise ad-hoc. It is built on the Mac that runs it, so no notarisation is involved;
+shipping a prebuilt, notarised bundle is a separate piece of work.
+
 **Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
 terminal launch uses your terminal's grants. The menu app requests its own grants and
 shows their live state as flat rows; click a missing row to open the exact Settings pane.
