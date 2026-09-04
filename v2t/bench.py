@@ -7,7 +7,7 @@ times reflect THAT machine — compare models within a run, not across machines.
 
     just bench                     # both tables, default models, samples via `say`
     just bench --cleanup           # cleanup table only
-    just bench --cleanup-models mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit
+    just bench --cleanup-models mlx:mlx-community/Qwen3.5-2B-4bit
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ STT_MODELS = [
     "whisper:mlx-community/whisper-large-v3-turbo",
 ]
 CLEANUP_MODELS = [
+    "mlx:mlx-community/Qwen3.5-2B-4bit",
+    "mlx:mlx-community/Qwen3.5-0.8B-4bit",
     "mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-    "mlx:mlx-community/Qwen3.5-4B-4bit",
 ]
 
 # (name, text) — `say` turns these into audio so the STT bench is self-contained.

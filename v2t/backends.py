@@ -215,7 +215,11 @@ def cleanup_messages(
     return messages
 
 
-MLX_CLEANUP_DEFAULT = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+# Default measured 2026-09-04 over 208 real dictations (casual mode): Qwen3.5-2B kept
+# 98% of the words (p10 93%) at 1.17s median cleanup; Qwen2.5-1.5B kept 92% at 0.85s,
+# Qwen3.5-0.8B 96% at 0.61s, Qwen3.5-4B 96% at 2.21s. Non-thinking by default.
+MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3.5-2B-4bit"
+MLX_CLEANUP_FAST = "mlx-community/Qwen3.5-0.8B-4bit"  # 96% kept, fastest
 MLX_CLEANUP_QUALITY = "mlx-community/Qwen3.5-4B-4bit"  # non-thinking by default
 OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
 
