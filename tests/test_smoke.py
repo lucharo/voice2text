@@ -127,7 +127,7 @@ class V2TSmokeTests(unittest.TestCase):
             execve.assert_called_once()
             executable, argv, env = execve.call_args.args
             self.assertEqual(executable, sys.executable)
-            self.assertEqual(argv, [sys.executable, *sys.argv])
+            self.assertEqual(argv, list(sys.orig_argv))
             self.assertEqual(env["V2T_RESTARTED"], "1")
 
             execve.reset_mock()

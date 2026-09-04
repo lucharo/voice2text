@@ -103,7 +103,8 @@ def _restart_after_microphone_grant() -> None:
 
     logger.info("Microphone permission granted; restarting v2t so audio can use it...")
     env = dict(os.environ, V2T_RESTARTED="1")
-    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+    # sys.orig_argv keeps the real interpreter invocation (console script or -m v2t).
+    os.execve(sys.executable, list(sys.orig_argv), env)
 
 
 @contextmanager
