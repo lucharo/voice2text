@@ -46,21 +46,26 @@ def running() -> bool:
 
 
 def signing_identity() -> str:
-    """Use a stable local development identity when one is already available."""
+    """Prefer a Developer ID identity (runs on any Mac), then a local development one."""
     result = subprocess.run(
         ["security", "find-identity", "-v", "-p", "codesigning"],
         capture_output=True,
         text=True,
     )
     identities = re.findall(r'"([^"]+)"', result.stdout)
-    return next(
-        (
-            identity
-            for identity in identities
-            if identity.startswith("Apple Development:")
-        ),
-        "-",
-    )
+    for prefix in ("Developer ID Application:", "Apple Development:"):
+        for identity in identities:
+            if identity.startswith(prefix):
+                return identity
+    return "-"
+
+
+def signing_flags(identity: str) -> list[str]:
+    """Hardened runtime always; a secure timestamp when the signature is Developer ID."""
+    flags = ["--options", "runtime"]
+    if identity.startswith("Developer ID Application:"):
+        flags.append("--timestamp")
+    return flags
 
 
 def install() -> Path:
@@ -117,13 +122,14 @@ def install() -> Path:
             check=True,
         )
         executable.chmod(0o755)
+        identity = signing_identity()
         subprocess.run(
             [
                 "codesign",
                 "--force",
-                "--deep",
+                *signing_flags(identity),
                 "--sign",
-                signing_identity(),
+                identity,
                 str(bundle),
             ],
             check=True,

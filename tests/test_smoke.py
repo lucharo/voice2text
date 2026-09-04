@@ -90,9 +90,50 @@ class V2TSmokeTests(unittest.TestCase):
                 app.permissions, "request_microphone", return_value=True
             ) as request,
         ):
-            app.check_and_request_permissions()
+            newly_granted = app.check_and_request_permissions()
 
         request.assert_called_once_with()
+        self.assertTrue(newly_granted)
+
+    def test_permission_check_reports_no_new_grant_when_already_granted(self):
+        with (
+            mock.patch.object(
+                app.permissions,
+                "statuses",
+                return_value={
+                    "microphone": "granted",
+                    "accessibility": "granted",
+                },
+            ),
+            mock.patch.object(app.permissions, "request_microphone") as request,
+        ):
+            self.assertFalse(app.check_and_request_permissions())
+
+        request.assert_not_called()
+
+    def test_run_restarts_once_after_a_fresh_microphone_grant(self):
+        started = mock.Mock()
+        with (
+            mock.patch.object(cli, "_which", return_value=None),
+            mock.patch.dict(
+                os.environ, {"V2T_LAUNCH_CONTEXT": "terminal"}, clear=False
+            ),
+            mock.patch.object(app, "check_and_request_permissions", return_value=True),
+            mock.patch.object(app, "VoiceToText", return_value=started),
+            mock.patch.object(cli.os, "execve") as execve,
+        ):
+            os.environ.pop("V2T_RESTARTED", None)
+            cli.cmd_run([])
+            execve.assert_called_once()
+            executable, argv, env = execve.call_args.args
+            self.assertEqual(executable, sys.executable)
+            self.assertEqual(argv, [sys.executable, *sys.argv])
+            self.assertEqual(env["V2T_RESTARTED"], "1")
+
+            execve.reset_mock()
+            with mock.patch.dict(os.environ, {"V2T_RESTARTED": "1"}, clear=False):
+                cli.cmd_run([])
+            execve.assert_not_called()
 
     def test_permission_statuses_use_native_macos_checks(self):
         application_services = types.SimpleNamespace(
@@ -555,6 +596,30 @@ class V2TSmokeTests(unittest.TestCase):
                 menubar.signing_identity(),
                 "Apple Development: Developer (TEAMID)",
             )
+        self.assertEqual(
+            menubar.signing_flags("Apple Development: Developer (TEAMID)"),
+            ["--options", "runtime"],
+        )
+
+    def test_menubar_prefers_developer_id_over_development_signature(self):
+        output = """\
+  1) ABCDEF \"Apple Development: Developer (TEAMID)\"
+  2) 123456 \"Developer ID Application: Developer (TEAMID)\"
+     2 valid identities found
+"""
+        with mock.patch.object(
+            menubar.subprocess,
+            "run",
+            return_value=mock.Mock(stdout=output),
+        ):
+            self.assertEqual(
+                menubar.signing_identity(),
+                "Developer ID Application: Developer (TEAMID)",
+            )
+        self.assertEqual(
+            menubar.signing_flags("Developer ID Application: Developer (TEAMID)"),
+            ["--options", "runtime", "--timestamp"],
+        )
 
     def test_launch_agent_keeps_one_warm_v2t_process(self):
         plist = Path(self.tempdir.name) / "com.lucharo.voice2text.plist"

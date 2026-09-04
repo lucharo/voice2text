@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Microphone permission works on first run.** When the startup check has just been granted Microphone access, `v2t` restarts itself once so CoreAudio initialises with the grant, instead of failing every push-to-talk until a manual restart (#7). The microphone error now says to restart if the grant is fresh.
+- **Menu app signing prefers Developer ID.** `v2t menubar install` signs `Voice2Text.app` with a Developer ID Application identity when the keychain has one (hardened runtime, secure timestamp), falling back to Apple Development, so the same bundle can run on other Macs.
 - **Warm starts no longer wait for the network.** Models already in the Hugging Face cache load with hub revision checks off (45 s → 0.5 s for Parakeet, 19 s → 1.2 s for the cleanup model on hotel Wi-Fi); a partial cache still falls back to an online load.
 - **`v2t dictionary`** — `~/.v2t/dictionary.txt` holds names and jargon the cleanup model must spell exactly, plus `heard => written` replacements applied after cleanup. `v2t dictionary import-wispr` merges Wispr Flow's dictionary from its local database. The menu app links to the file.
 - **Casual is the default cleanup mode.** Measured over 206 real dictations, strict mode with the 1.5B model kept a median 72% of the words: it was summarising. Casual only punctuates and drops fillers. `--strict` remains available.
