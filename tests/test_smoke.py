@@ -540,7 +540,10 @@ class V2TSmokeTests(unittest.TestCase):
     def test_menubar_install_builds_a_grantable_native_app(self):
         destination = Path(self.tempdir.name) / "Voice2Text.app"
 
+        commands = []
+
         def compile_app(command, **_kwargs):
+            commands.append(command)
             if command[0] == "xcrun":
                 Path(command[command.index("-o") + 1]).touch(mode=0o755)
             return mock.Mock(returncode=0)
@@ -580,6 +583,25 @@ class V2TSmokeTests(unittest.TestCase):
             ),
             0o755,
         )
+
+        codesign = next(command for command in commands if command[0] == "codesign")
+        entitlements = codesign[codesign.index("--entitlements") + 1]
+        self.assertTrue(entitlements.endswith("Voice2Text.entitlements.plist"))
+        self.assertEqual(
+            [item for item in codesign if item != entitlements][:-1],
+            [
+                "codesign",
+                "--force",
+                "--options",
+                "runtime",
+                "--entitlements",
+                "--sign",
+                "-",
+            ],
+        )
+        self.assertTrue(
+            codesign[-1].endswith("/Voice2Text.app")
+        )  # staged bundle, moved after signing
 
     def test_menubar_prefers_a_stable_apple_development_signature(self):
         output = """\

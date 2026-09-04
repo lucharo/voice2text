@@ -61,7 +61,8 @@ def signing_identity() -> str:
 
 
 def signing_flags(identity: str) -> list[str]:
-    """Hardened runtime always; a secure timestamp when the signature is Developer ID."""
+    """Hardened runtime always (the audio-input entitlement is passed separately);
+    a secure timestamp when the signature is Developer ID."""
     flags = ["--options", "runtime"]
     if identity.startswith("Developer ID Application:"):
         flags.append("--timestamp")
@@ -77,8 +78,10 @@ def install() -> Path:
     destination = app_path()
     destination.parent.mkdir(parents=True, exist_ok=True)
     source = files("v2t").joinpath("native", "Voice2Text.swift")
+    entitlements = files("v2t").joinpath("native", "Voice2Text.entitlements.plist")
     with (
         as_file(source) as source_path,
+        as_file(entitlements) as entitlements_path,
         tempfile.TemporaryDirectory(dir=destination.parent) as temporary,
     ):
         bundle = Path(temporary) / APP_NAME
@@ -128,6 +131,8 @@ def install() -> Path:
                 "codesign",
                 "--force",
                 *signing_flags(identity),
+                "--entitlements",
+                str(entitlements_path),
                 "--sign",
                 identity,
                 str(bundle),
