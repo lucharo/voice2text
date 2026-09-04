@@ -31,7 +31,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 
 - **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste. Double-tap for hands-free, tap again to stop.
 - **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
-- **In-process LLM cleanup** via mlx-lm (`Qwen2.5-1.5B-Instruct`) — fixes punctuation, removes fillers while using about 1.3 GB less model memory than the previous 4B default. No Ollama, no daemon. Strict or casual. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
+- **In-process LLM cleanup** via mlx-lm (`Qwen3.5-2B`) — punctuation and fillers, keeping 98% of your words on a 208-dictation benchmark. No Ollama, no daemon. Casual or strict. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
 - **File transcription** — `v2t transcribe memo.opus` runs the same local models over audio you already have (see [Transcribing files](#transcribing-files)).
 - **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
@@ -44,7 +44,7 @@ as dependencies, with no daemon. The models download from Hugging Face on first 
 in the local cache:
 
 ```bash
-uv tool install voice2text   # Parakeet STT + in-process Qwen2.5 cleanup
+uv tool install voice2text   # Parakeet STT + in-process Qwen3.5 cleanup
 v2t setup                    # optional: pick models, detect Ollama, write config
 v2t
 ```
@@ -197,15 +197,18 @@ save_history = true
 ### Cleanup engine
 
 Cleanup runs **in-process via [mlx-lm](https://github.com/ml-explore/mlx-lm)** by default
-(`Qwen2.5-1.5B-Instruct`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
+(`Qwen3.5-2B-4bit`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
 
-Have memory to spare (24 GB+)? The Qwen3.5 small models follow the cleanup rules more reliably and
-are non-thinking by default; the 4B one costs roughly half a second per dictation on an M1 Max:
+Measured over 208 real dictations in casual mode (M4 Pro; the ordering holds on slower chips):
 
-```toml
-[cleanup]
-model = "mlx-community/Qwen3.5-4B-4bit"   # or Qwen3.5-2B-4bit; downloads on next launch
-```
+| cleanup model | words kept (median / p10) | median cleanup time | note |
+|---|--:|--:|---|
+| `Qwen3.5-0.8B-4bit` | 96% / 86% | 0.61 s | fastest |
+| `Qwen2.5-1.5B-Instruct-4bit` | 92% / 82% | 0.85 s | previous default |
+| **`Qwen3.5-2B-4bit`** | **98% / 93%** | 1.17 s | default |
+| `Qwen3.5-4B-4bit` | 96% / 90% | 2.21 s | not worth the wait |
+
+Pick another with `[cleanup] model = "mlx-community/…"`; it downloads on the next launch.
 
 Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
 detects Ollama, or edit the config):
@@ -257,8 +260,8 @@ not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defau
 | | default | why |
 |---|---|---|
 | transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
-| cleanup | `Qwen2.5-1.5B-Instruct` (mlx-lm), casual | 831 MB active in the local cleanup benchmark; non-thinking, no daemon |
-| cleanup (quality) | `Qwen3.5-4B-4bit` (mlx-lm) | opt-in via config; better instruction following, ~2.3 GB |
+| cleanup | `Qwen3.5-2B-4bit` (mlx-lm), casual | most faithful small model on real dictations; non-thinking, no daemon, ~1.6 GB |
+| cleanup (fast) | `Qwen3.5-0.8B-4bit` (mlx-lm) | opt-in via config; half the time, 96% of words kept, ~0.6 GB |
 
 > This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
 > `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.

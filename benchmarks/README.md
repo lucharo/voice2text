@@ -26,7 +26,7 @@ just bench --stt-models \
   whisper:mlx-community/whisper-large-v3-turbo
 
 just bench --cleanup-models \
-  mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit \
+  mlx:mlx-community/Qwen3.5-2B-4bit \
   mlx:mlx-community/Qwen3.5-4B-4bit \
   ollama:qwen3:4b-instruct-2507
 ```
@@ -43,7 +43,9 @@ to the grid.
 | STT (default) | `mlx-community/parakeet-tdt-0.6b-v3` | multilingual (EN/ES/FR/DE…), fastest on Apple Silicon |
 | STT (alt) | `mlx-community/parakeet-tdt-0.6b-v2` | English-only, slightly higher EN accuracy |
 | STT (fallback) | `mlx-community/whisper-large-v3-turbo` | the old default; best for rare languages/accents |
-| cleanup (default) | `mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit` | in-process, non-thinking; 831 MB active in the local benchmark |
+| cleanup (default) | `mlx:mlx-community/Qwen3.5-2B-4bit` | in-process, non-thinking; 98% of words kept on real dictations |
+| cleanup (fast) | `mlx:mlx-community/Qwen3.5-0.8B-4bit` | half the time of the 2B, 96% of words kept |
+| cleanup (previous default) | `mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit` | 92% of words kept |
 | cleanup (quality alt) | `mlx:mlx-community/Qwen3.5-4B-4bit` | non-thinking by default; better instruction following, ~2.3 GB |
 | cleanup (ollama) | `ollama:qwen3:4b-instruct-2507` | if you already run Ollama |
 

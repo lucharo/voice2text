@@ -246,7 +246,7 @@ model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper
 [cleanup]
 enabled = true
 engine = "mlx"         # mlx (in-process via mlx-lm, default) | ollama
-model = ""             # blank = engine default (Qwen2.5-1.5B-Instruct-4bit / qwen3:4b-instruct-2507)
+model = ""             # blank = engine default (Qwen3.5-2B-4bit / qwen3:4b-instruct-2507)
 mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)
 
 [hotkey]
