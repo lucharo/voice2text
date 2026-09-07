@@ -215,6 +215,21 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.recording)
         stream.start.assert_called_once()
 
+    def test_recording_still_initialises_audio_when_release_fails(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+
+        with (
+            mock.patch.object(app.sd, "_terminate", side_effect=RuntimeError("gone")),
+            mock.patch.object(app.sd, "_initialize") as initialize,
+            mock.patch.object(app.sd, "InputStream", return_value=mock.Mock()),
+        ):
+            voice.start_recording()
+
+        initialize.assert_called_once()
+        self.assertTrue(voice.recording)
+
     def test_recording_cannot_restart_before_processing_begins(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.recording = True

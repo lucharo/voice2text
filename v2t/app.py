@@ -188,9 +188,10 @@ class VoiceToText:
         """
         try:
             sd._terminate()
-            sd._initialize()
         except Exception as error:
-            logger.warning(f"Could not refresh audio devices: {error}")
+            # Already torn down by an earlier failed refresh; still re-init.
+            logger.warning(f"Could not release audio devices: {error}")
+        sd._initialize()
 
     def start_recording(self):
         with self.lifecycle_lock:
