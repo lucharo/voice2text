@@ -29,6 +29,9 @@ uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py \
   --cleanup-model mlx-community/Qwen3.5-2B-4bit --mode casual --tag 2b-casual
 # then compare tagged cells in one table
 uv run python utils/wisprflow_benchmarking_profiling/compare_cells.py 08b-casual 15b-casual 2b-casual 4b-casual
+# streaming: also push each clip through Parakeet's transcribe_stream as the app does while
+# the hotkey is held; reports streamed-vs-whole-file disagreement and the latency left after release
+uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --streaming --no-cleanup --chunk-s 5 --tag stream-5s
 ```
 
 Run cells one at a time (a shell loop, detached with `nohup`), never two models at once: they share

@@ -13,6 +13,10 @@ markdown report contains numbers and clip ids only, never transcript text.
     uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --limit 20 # smoke run
     uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --no-cleanup
     uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --whisper  # 3rd opinion, if cached
+    uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --streaming --no-cleanup --tag stream
+        # also feed each clip through Parakeet's streaming path, as the app does while
+        # the hotkey is held (--chunk-s sets the push size), and report how the streamed
+        # text disagrees with whole-file decoding plus the latency left after release
 
 Ground truth caveat: Wispr's `asrText` / `formattedText` are NOT truth — they
 are the thing being compared. The report calls the metric *disagreement*, not
@@ -31,6 +35,8 @@ import sys
 import time
 from datetime import date
 from pathlib import Path
+
+import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -177,8 +183,52 @@ def export_clips(con: sqlite3.Connection, out: Path, limit: int | None) -> list[
 # --- v2t -----------------------------------------------------------------------
 
 
+def stream_clip(stt, wav: str, chunk_s: float) -> dict:
+    """Feed one clip through the streaming recogniser the way the app does.
+
+    The audio goes in `chunk_s` pieces through the same ChunkFeeder; the last
+    piece is whatever is left when the "hotkey" is released, so its push time
+    is the end-of-speech latency (time from the last audio to the final text).
+    """
+    import mlx.core as mx
+    from parakeet_mlx.audio import load_audio
+
+    audio = np.array(load_audio(Path(wav), stt.sample_rate, mx.float32))
+    pushes: list[float] = []
+    stream = stt.stream()
+
+    def sink(chunk: np.ndarray) -> None:
+        t0 = time.perf_counter()
+        stream.feed(chunk)
+        pushes.append((time.perf_counter() - t0) * 1000)
+
+    feeder = backends.ChunkFeeder(sink, stt.sample_rate, chunk_s)
+    try:
+        step = feeder.chunk_samples
+        for start in range(0, len(audio), step):
+            feeder.push(audio[start : start + step])
+        feeder.flush()
+    finally:
+        text = stream.close()
+    return {
+        "stream_raw": text,
+        "stream_words": len(words(text)),
+        "stream_chunks": feeder.chunks,
+        "stream_eos_ms": pushes[-1] if pushes else 0.0,
+        "stream_push_p50_ms": statistics.median(pushes) if pushes else 0.0,
+        "stream_push_max_ms": max(pushes) if pushes else 0.0,
+        "stream_busy_ms": sum(pushes),
+    }
+
+
 def run_v2t(
-    clips: list[dict], cleanup: bool, whisper: bool, mode: str, cleanup_model: str = ""
+    clips: list[dict],
+    cleanup: bool,
+    whisper: bool,
+    mode: str,
+    cleanup_model: str = "",
+    streaming: bool = False,
+    chunk_s: float = backends.STREAM_CHUNK_S,
 ) -> None:
     print(f"loading parakeet ({backends.PARAKEET_DEFAULT})…", flush=True)
     t0 = time.perf_counter()
@@ -208,6 +258,8 @@ def run_v2t(
     # warm the shapes once so the first clip is not paying compile time
     if clips:
         stt.transcribe(clips[0]["wav"])
+        if streaming:
+            stream_clip(stt, clips[0]["wav"], chunk_s)
 
     for index, clip in enumerate(clips, 1):
         t0 = time.perf_counter()
@@ -228,6 +280,14 @@ def run_v2t(
             clip["cleanup_stats"] = dict(getattr(cleaner, "last_stats", {}))
             clip["cleanup_mode"] = mode
         clip["v2t_total_ms"] = clip["v2t_stt_ms"] + (clip["v2t_cleanup_ms"] or 0)
+        if streaming:
+            clip.update(stream_clip(stt, clip["wav"], chunk_s))
+            clip["stream_chunk_s"] = chunk_s
+            clip["dis_stream_vs_whole"] = wer(raw, clip["stream_raw"])
+            clip["dis_stream_vs_wispr_asr"] = wer(clip["wispr_asr"], clip["stream_raw"])
+            clip["stream_words_ratio"] = (
+                clip["stream_words"] / clip["v2t_words"] if clip["v2t_words"] else None
+            )
         if whisper_stt is not None:
             t0 = time.perf_counter()
             clip["whisper_raw"] = whisper_stt.transcribe(clip["wav"])
@@ -251,11 +311,17 @@ def run_v2t(
                 clip["wispr_asr"], clip["whisper_raw"]
             )
         speed = (clip["duration_s"] or 0) / max(clip["v2t_total_ms"] / 1000, 1e-6)
+        streamed = (
+            f"  stream eos {clip['stream_eos_ms'] / 1000:.2f}s "
+            f"vs whole {clip['dis_stream_vs_whole']:.2f}"
+            if streaming
+            else ""
+        )
         print(
             f"[{index}/{len(clips)}] {clip['duration_s'] or 0:5.1f}s audio  "
             f"v2t {clip['v2t_total_ms'] / 1000:5.2f}s ({speed:4.0f}×)  "
             f"wispr {fmt_ms(clip['wispr_e2e_ms']):>6}  "
-            f"disagree {clip['dis_raw_vs_wispr_asr']:.2f}",
+            f"disagree {clip['dis_raw_vs_wispr_asr']:.2f}{streamed}",
             flush=True,
         )
 
@@ -388,6 +454,8 @@ def report(
             dis_row("v2t raw vs Whisper", "dis_raw_vs_whisper"),
             dis_row("Whisper vs Wispr ASR", "dis_whisper_vs_wispr_asr"),
         ]
+    if any("stream_raw" in c for c in clips):
+        lines += streaming_section(clips, head)
     worst = sorted(clips, key=lambda c: c["dis_raw_vs_wispr_asr"], reverse=True)[:10]
     lines += [
         "",
@@ -409,6 +477,93 @@ def report(
     return "\n".join(lines) + "\n"
 
 
+def streaming_section(clips: list[dict], head: str) -> list[str]:
+    """Streamed decoding against whole-file decoding: what is left to do after
+    release, and how far the two transcripts are apart. Numbers only."""
+    streamed = [c for c in clips if "stream_raw" in c]
+    chunk_s = streamed[0]["stream_chunk_s"]
+    buckets = {"<15s": [], "15–60s": [], ">60s": []}
+    for c in streamed:
+        d = c["duration_s"] or 0
+        buckets["<15s" if d < 15 else "15–60s" if d < 60 else ">60s"].append(c)
+
+    def dis(key: str, subset: list[dict]) -> str:
+        values = [c[key] for c in subset if key in c]
+        if not values:
+            return "| – | – | – |"
+        p = percentiles(values)
+        return f"| {p['p50']:.3f} | {p['p90']:.3f} | {sum(v > 0.25 for v in values)} |"
+
+    ratios = [c["stream_words_ratio"] for c in streamed if c.get("stream_words_ratio")]
+    fewer = sum(1 for r in ratios if r < 1)
+    behind = [c for c in streamed if c["stream_push_max_ms"] > chunk_s * 1000]
+    lines = [
+        "",
+        f"## Streaming while recording ({chunk_s:g} s pushes, Parakeet `transcribe_stream`)",
+        "",
+        "_The app can feed the recogniser while the hotkey is held; on release only the last "
+        "push is left. Whole-file decoding costs ~11 ms per second of audio after release; "
+        "streaming costs one push, whatever the length._",
+        "",
+        "### Latency after release",
+        "",
+        head,
+        _row("whole-file decode", percentiles([c["v2t_stt_ms"] for c in streamed])),
+        _row(
+            "streamed: last push", percentiles([c["stream_eos_ms"] for c in streamed])
+        ),
+        _row(
+            "streamed: slowest push",
+            percentiles([c["stream_push_max_ms"] for c in streamed]),
+        ),
+        *(
+            _row(
+                f"whole-file, audio {b}", percentiles([c["v2t_stt_ms"] for c in subset])
+            )
+            for b, subset in buckets.items()
+            if subset
+        ),
+        *(
+            _row(
+                f"streamed last push, audio {b}",
+                percentiles([c["stream_eos_ms"] for c in subset]),
+            )
+            for b, subset in buckets.items()
+            if subset
+        ),
+        "",
+        f"GPU time spent while recording: median "
+        f"{statistics.median(c['stream_busy_ms'] / max((c['duration_s'] or 0) * 1000, 1) for c in streamed):.0%} "
+        f"of the recording. Pushes slower than the {chunk_s:g} s they cover (recogniser fell "
+        f"behind): {len(behind)} clips.",
+        "",
+        "### Disagreement",
+        "",
+        "| comparison | median | p90 | clips over 0.25 |",
+        "|---|--:|--:|--:|",
+        f"| streamed vs whole-file, all {dis('dis_stream_vs_whole', streamed)}",
+        *(
+            f"| streamed vs whole-file, audio {b} {dis('dis_stream_vs_whole', subset)}"
+            for b, subset in buckets.items()
+            if subset
+        ),
+        f"| whole-file vs Wispr ASR {dis('dis_raw_vs_wispr_asr', streamed)}",
+        f"| streamed vs Wispr ASR {dis('dis_stream_vs_wispr_asr', streamed)}",
+        "",
+        "Words in the streamed text as a share of the whole-file text: median "
+        + (
+            f"{statistics.median(ratios):.3f}, p10 {sorted(ratios)[int(round(0.1 * (len(ratios) - 1)))]:.3f}; "
+            f"streamed has fewer words on {fewer} of {len(ratios)} clips."
+            if ratios
+            else "–."
+        ),
+        "",
+        "Neither transcript is ground truth. The two Wispr rows are the fair test: streaming is "
+        "no worse than whole-file decoding when its distance to a third system matches.",
+    ]
+    return lines
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--db", type=Path, default=WISPR_DB)
@@ -422,6 +577,17 @@ def main(argv: list[str]) -> int:
     )
     p.add_argument(
         "--tag", default="", help="suffix for results/report filenames, e.g. 4b-casual"
+    )
+    p.add_argument(
+        "--streaming",
+        action="store_true",
+        help="also decode each clip through Parakeet's streaming path, as the app does while recording",
+    )
+    p.add_argument(
+        "--chunk-s",
+        type=float,
+        default=backends.STREAM_CHUNK_S,
+        help=f"seconds of audio per streaming push (default {backends.STREAM_CHUNK_S:g}, the app's)",
     )
     a = p.parse_args(argv)
 
@@ -440,6 +606,8 @@ def main(argv: list[str]) -> int:
         whisper=a.whisper,
         mode=a.mode,
         cleanup_model=a.cleanup_model,
+        streaming=a.streaming,
+        chunk_s=a.chunk_s,
     )
 
     suffix = f"-{a.tag}" if a.tag else ""
