@@ -179,6 +179,7 @@ Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HO
 [transcription]
 backend = "parakeet"   # parakeet (MLX) | whisper
 model = ""             # blank = backend default
+streaming = true       # transcribe while the hotkey is held (parakeet only; whisper decodes on release)
 
 [cleanup]
 enabled = true
