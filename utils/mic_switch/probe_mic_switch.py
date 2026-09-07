@@ -133,9 +133,9 @@ def main() -> int:
         print("default input is in use by another app (a call?) — refusing to switch")
         return 1
     portaudio_view("before switch")
-    set_default_input(target)
-    time.sleep(0.5)
     try:
+        set_default_input(target)
+        time.sleep(0.5)
         print("system default now:", device_name(default_input()))
         portaudio_view("after switch, no refresh")
         sd._terminate()
