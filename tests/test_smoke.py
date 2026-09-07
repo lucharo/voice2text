@@ -193,6 +193,28 @@ class V2TSmokeTests(unittest.TestCase):
             "idle\tparakeet-v3\toff\tcasual\t\n",
         )
 
+    def test_recording_refreshes_the_device_list_before_opening_the_mic(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        calls = mock.Mock()
+        stream = mock.Mock()
+
+        with (
+            mock.patch.object(app.sd, "_terminate", calls.terminate),
+            mock.patch.object(app.sd, "_initialize", calls.initialize),
+            mock.patch.object(app.sd, "InputStream", calls.open, create=True),
+        ):
+            calls.open.return_value = stream
+            voice.start_recording()
+
+        self.assertEqual(
+            [name for name, _, _ in calls.mock_calls][:3],
+            ["terminate", "initialize", "open"],
+        )
+        self.assertTrue(voice.recording)
+        stream.start.assert_called_once()
+
     def test_recording_cannot_restart_before_processing_begins(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.recording = True

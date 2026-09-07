@@ -176,6 +176,22 @@ class VoiceToText:
         if self.recording:
             self.frames.append(indata.copy())
 
+    def _refresh_audio_devices(self) -> None:
+        """Re-read the device list so the stream follows the current default mic.
+
+        PortAudio snapshots devices once at init. Plugging or unplugging a
+        headset, a Bluetooth profile switch during a call, or changing the
+        input in System Settings leaves that snapshot pointing at a stale or
+        missing device, and every open then fails with a PaMacCore
+        ``Invalid Property Value`` until the process restarts. No stream is
+        open here, so a re-init costs a few milliseconds.
+        """
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception as error:
+            logger.warning(f"Could not refresh audio devices: {error}")
+
     def start_recording(self):
         with self.lifecycle_lock:
             if self.stopping or self.recording or self.processing:
@@ -183,6 +199,7 @@ class VoiceToText:
             self.frames = []
             self.record_start = time.perf_counter()
             try:
+                self._refresh_audio_devices()
                 self.stream = sd.InputStream(
                     samplerate=self.cfg.sample_rate,
                     channels=1,
