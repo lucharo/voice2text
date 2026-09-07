@@ -74,6 +74,11 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
 STREAM_CHUNK_S = 5.0
 STREAM_CONTEXT = (256, 256)
 STREAM_DEPTH = 1
+# Streamed text differs from whole-file decoding (local attention, per-push
+# normalisation), and whole-file decoding costs ~11 ms per second of audio, so
+# under this many seconds it is about as quick as the last push and the app
+# takes it, giving exactly today's text; above, the streamed text wins seconds.
+STREAM_TAKEOVER_S = 60.0
 
 
 class ChunkFeeder:

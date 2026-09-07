@@ -494,6 +494,11 @@ def streaming_section(clips: list[dict], head: str) -> list[str]:
         p = percentiles(values)
         return f"| {p['p50']:.3f} | {p['p90']:.3f} | {sum(v > 0.25 for v in values)} |"
 
+    takeover = backends.STREAM_TAKEOVER_S
+    shipped_ms = [
+        c["stream_eos_ms"] if (c["duration_s"] or 0) >= takeover else c["v2t_stt_ms"]
+        for c in streamed
+    ]
     ratios = [c["stream_words_ratio"] for c in streamed if c.get("stream_words_ratio")]
     fewer = sum(1 for r in ratios if r < 1)
     behind = [c for c in streamed if c["stream_push_max_ms"] > chunk_s * 1000]
@@ -515,6 +520,10 @@ def streaming_section(clips: list[dict], head: str) -> list[str]:
         _row(
             "streamed: slowest push",
             percentiles([c["stream_push_max_ms"] for c in streamed]),
+        ),
+        _row(
+            f"as shipped (whole-file under {takeover:.0f}s, streamed above)",
+            percentiles(shipped_ms),
         ),
         *(
             _row(
@@ -559,7 +568,10 @@ def streaming_section(clips: list[dict], head: str) -> list[str]:
         ),
         "",
         "Neither transcript is ground truth. The two Wispr rows are the fair test: streaming is "
-        "no worse than whole-file decoding when its distance to a third system matches.",
+        "no worse than whole-file decoding when its distance to a third system matches. "
+        f"As shipped, the app takes the streamed text only from {takeover:.0f} s of audio up "
+        f"({sum(1 for c in streamed if (c['duration_s'] or 0) >= takeover)} of {len(streamed)} clips here); "
+        "shorter recordings are decoded whole-file on release, so their text is unchanged.",
     ]
     return lines
 

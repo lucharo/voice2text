@@ -471,6 +471,7 @@ class V2TSmokeTests(unittest.TestCase):
             voice.audio_callback(
                 np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
             )
+            voice.record_start -= backends.STREAM_TAKEOVER_S  # a long dictation
             with mock.patch.object(voice, "paste_to_cursor") as paste:
                 voice.stop_recording()
                 worker.join(timeout=5)
@@ -492,6 +493,36 @@ class V2TSmokeTests(unittest.TestCase):
         record = json.loads(config.history_path().read_text().splitlines()[-1])
         self.assertEqual((record["raw"], record["streamed"]), ("final words", True))
         self.assertLess(record["stt_s"], 1.0)
+
+    def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        order: list[str] = []
+        stream.close.side_effect = lambda: order.append("close") or "streamed words"
+        voice.stt.transcribe = mock.Mock(
+            side_effect=lambda path: order.append("whole") or "whole-file words"
+        )
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk + 8000, 1), 0.5, dtype=np.float32), chunk + 8000, None, None
+        )
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()  # a few milliseconds long: under the takeover
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(feeds, [chunk + 8000], "the remainder was never flushed")
+        self.assertEqual(order, ["close", "whole"], "stream released before decoding")
+        paste.assert_called_once_with("whole-file words")
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual(
+            (record["raw"], record["streamed"]), ("whole-file words", False)
+        )
 
     def test_a_cancelled_streaming_recording_never_opens_the_recogniser(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

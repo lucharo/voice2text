@@ -321,7 +321,7 @@ class VoiceToText:
                 self.finalizing_recording = False
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
-        next_state, error_message, temp_path = "idle", "", None
+        next_state, error_message = "idle", ""
         try:
             self._set_state("transcribing")
             audio = np.concatenate(frames, axis=0)
@@ -335,16 +335,10 @@ class VoiceToText:
                     subprocess.run(["open", MIC_PANE], check=False)
                 next_state = "error"
                 return
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                wavfile.write(
-                    f.name, self.cfg.sample_rate, (audio * 32767).astype(np.int16)
-                )
-                temp_path = f.name
-
             logger.info("Transcribing...")
             self.refresh_dictionary()
             t0 = time.perf_counter()
-            raw_text = self.stt.transcribe(temp_path)
+            raw_text = self._transcribe_whole(audio)
             stt_s = time.perf_counter() - t0
             logger.info(f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s)")
             if not raw_text:
@@ -356,20 +350,32 @@ class VoiceToText:
             next_state, error_message = "error", f"{type(error).__name__}: {error}"
             logger.exception(f"Transcription failed: {error}")
         finally:
-            if temp_path:
-                Path(temp_path).unlink(missing_ok=True)
             self._restore_media()
             if not self.stopping:
                 self._set_state(next_state, error_message)
             self.processing = False
+
+    def _transcribe_whole(self, audio: np.ndarray) -> str:
+        """Whole-file decoding of one recording, through a temporary WAV."""
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            wavfile.write(
+                f.name, self.cfg.sample_rate, (audio * 32767).astype(np.int16)
+            )
+            temp_path = f.name
+        try:
+            return self.stt.transcribe(temp_path)
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
 
     def process_live(self, live: LiveTranscription) -> None:
         """Transcribe a recording while it is still going, then deliver it.
 
         Runs on the processing thread. New frames go into the streaming
         recogniser every STREAM_CHUNK_S seconds of audio and the partial text
-        goes to the log and the menu bar; once the hotkey thread calls `finish`
-        only the remainder is left to decode.
+        goes to the log and the menu bar. Once the hotkey thread calls `finish`,
+        a recording longer than STREAM_TAKEOVER_S takes the streamed text (only
+        the remainder is left to decode); a shorter one is decoded whole-file,
+        which costs about the same there and gives the reference text.
         """
         next_state, error_message, stream = "idle", "", None
         try:
@@ -396,11 +402,16 @@ class VoiceToText:
             if live.cancelled:
                 return
             self._set_state("transcribing")
-            feeder.flush()
-            raw_text = stream.close()
+            streamed = live.duration >= backends.STREAM_TAKEOVER_S
+            if streamed:
+                feeder.flush()
+                raw_text = stream.close()
+            else:
+                stream.close()  # first: it holds the model in streaming attention
+                raw_text = self._transcribe_whole(np.concatenate(live.frames, axis=0))
             stream = None
             stt_s = time.perf_counter() - live.stopped_at
-            if feeder.sent_samples == 0:
+            if not live.frames:
                 return
             if peak < 1e-4:  # dead silence == no mic access, not a quiet room
                 error_message = "No audio captured. Check Microphone permission, then restart the launching app."
@@ -412,12 +423,16 @@ class VoiceToText:
                 return
             logger.info(
                 f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s after release, "
-                f"{feeder.chunks} chunks while recording)"
+                + (
+                    f"{feeder.chunks} chunks while recording)"
+                    if streamed
+                    else f"whole-file: under {backends.STREAM_TAKEOVER_S:.0f}s)"
+                )
             )
             if not raw_text:
                 logger.warning("No speech detected")
                 return
-            self._deliver(raw_text, live.duration, stt_s, streamed=True)
+            self._deliver(raw_text, live.duration, stt_s, streamed=streamed)
         except Exception as error:
             next_state, error_message = "error", f"{type(error).__name__}: {error}"
             logger.exception(f"Transcription failed: {error}")
