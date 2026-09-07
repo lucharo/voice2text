@@ -32,7 +32,14 @@ def q(values: list[float], p: float) -> float:
 def summarise(tag: str) -> dict:
     path = OUT_DIR / f"results-{tag}.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    cleaned = [r for r in rows if r.get("v2t_cleanup_ms") and words(r["v2t_raw"]) > 20]
+    failed = [
+        r for r in rows if (r.get("v2t_clean") or "").startswith("<cleanup failed")
+    ]
+    cleaned = [
+        r
+        for r in rows
+        if r.get("v2t_cleanup_ms") and words(r["v2t_raw"]) > 20 and r not in failed
+    ]
     kept = [words(r["v2t_clean"]) / words(r["v2t_raw"]) for r in cleaned]
     per_word = [r["v2t_cleanup_ms"] / words(r["v2t_raw"]) for r in cleaned]
     latency = [r["v2t_cleanup_ms"] for r in cleaned]
@@ -43,6 +50,7 @@ def summarise(tag: str) -> dict:
     return {
         "tag": tag,
         "clips": len(cleaned),
+        "failed": len(failed),
         "p50_ms": q(latency, 0.5),
         "p90_ms": q(latency, 0.9),
         "ms_per_word": statistics.median(per_word),
@@ -61,21 +69,22 @@ def main(tags: list[str]) -> int:
         return 2
     cells = [summarise(t) for t in tags]
     head = (
-        "| cell | clips | cleanup p50 | p90 | ms/word | words kept p50 | p10 | "
-        "<75% | >130% | vs Wispr fmt p50 | p90 |"
+        "| cell | clips | failed | cleanup p50 | p90 | ms/word | words kept p50 | p10 | "
+        "clips <75% kept | >130% | vs Wispr fmt p50 | p90 |"
     )
     print(head)
-    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     for c in cells:
         print(
-            f"| {c['tag']} | {c['clips']} | {c['p50_ms'] / 1000:.2f}s | {c['p90_ms'] / 1000:.2f}s "
+            f"| {c['tag']} | {c['clips']} | {c['failed']} | {c['p50_ms'] / 1000:.2f}s | {c['p90_ms'] / 1000:.2f}s "
             f"| {c['ms_per_word']:.1f} | {c['kept_median']:.2f} | {c['kept_p10']:.2f} "
             f"| {c['under_0_75']} | {c['over_1_3']} | {c['dis_median']:.3f} | {c['dis_p90']:.3f} |"
         )
     print(
-        "\n_words kept = cleaned words / raw words per clip (chunks the guard pasted raw count as kept). "
-        "<75% and >130% are clips outside the casual guard band after guarding; a non-zero count "
-        "means the guard fired per chunk while the whole clip still drifted._"
+        "\n_words kept = cleaned words / raw words per whole clip, after any per-chunk guarding. "
+        "The <75% and >130% columns are fixed retention thresholds for comparing cells, not counts "
+        "of guard or token-limit activations; those live in each row's `cleanup_stats` when the run "
+        "recorded them. `failed` rows (cleanup raised) are excluded from every other column._"
     )
     return 0
 

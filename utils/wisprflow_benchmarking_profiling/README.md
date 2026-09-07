@@ -44,8 +44,8 @@ disagreement), and `<date>-report[-<tag>].md` (numbers and clip ids only, safe t
   here on the same machine. Compare distributions, not means.
 - **Disagreement is not error.** Wispr's transcripts are the comparator, not ground truth: they
   are sometimes cut short, sometimes rewritten. A high disagreement says "listen to this one".
-- **Listening shortlist**: `afplay <wav>`, then read both texts from `results.jsonl`. Ten clips
-  judged by ear tell you more than 200 numbers.
+- **Listening shortlist**: `afplay <wav>`, then read both texts from the `results[-<tag>].jsonl`
+  the report names. Ten clips judged by ear tell you more than 200 numbers.
 - `--whisper` adds `mlx-community/whisper-large-v3-turbo` as a third system when it is already in
   the Hugging Face cache (the script never downloads). Clips where Parakeet and Whisper agree and
   Wispr differs are the strongest evidence against Wispr; three-way splits are yours to judge.

@@ -225,6 +225,8 @@ def run_v2t(
                 clean = f"<cleanup failed: {error}>"
             clip["v2t_cleanup_ms"] = (time.perf_counter() - t0) * 1000
             clip["v2t_clean"] = clean
+            clip["cleanup_stats"] = dict(getattr(cleaner, "last_stats", {}))
+            clip["cleanup_mode"] = mode
         clip["v2t_total_ms"] = clip["v2t_stt_ms"] + (clip["v2t_cleanup_ms"] or 0)
         if whisper_stt is not None:
             t0 = time.perf_counter()
@@ -277,6 +279,7 @@ def report(
     whisper: bool,
     cleanup_label: str = "",
     mode: str = "",
+    results_name: str = "results.jsonl",
 ) -> str:
     head = "| | n | p50 | p90 | p99 | mean |\n|---|--:|--:|--:|--:|--:|"
     lines = [
@@ -391,7 +394,7 @@ def report(
         "## Listening shortlist",
         "",
         "The ten clips where Parakeet and Wispr disagree most. Play one with "
-        "`afplay <wav>` and read both transcripts from `results.jsonl` to decide who was right.",
+        f"`afplay <wav>` and read both transcripts from `{results_name}` to decide who was right.",
         "",
         "| clip | audio | words wispr/v2t | disagreement | wispr cut? | wav |",
         "|---|--:|--:|--:|:-:|---|",
@@ -401,7 +404,7 @@ def report(
             for c in worst
         ),
         "",
-        "_Per-clip texts and timings: `results.jsonl` next to this report (owner-only)._",
+        f"_Per-clip texts and timings: `{results_name}` next to this report (owner-only)._",
     ]
     return "\n".join(lines) + "\n"
 
@@ -412,7 +415,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--out", type=Path, default=OUT_DIR)
     p.add_argument("--limit", type=int, help="newest N clips only (smoke run)")
     p.add_argument("--no-cleanup", action="store_true", help="Parakeet only")
-    p.add_argument("--mode", choices=["strict", "casual"], default="strict")
+    p.add_argument("--mode", choices=["strict", "casual"], default="casual")
     p.add_argument("--whisper", action="store_true", help="add Whisper turbo if cached")
     p.add_argument(
         "--cleanup-model", default="", help="mlx cleanup model (default: v2t default)"
@@ -453,6 +456,7 @@ def main(argv: list[str]) -> int:
         if a.no_cleanup
         else backends.short_model(a.cleanup_model or backends.MLX_CLEANUP_DEFAULT),
         mode=a.mode,
+        results_name=results.name,
     )
     report_path = out / f"{date.today()}-report{suffix}.md"
     report_path.write_text(text)
