@@ -515,7 +515,12 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(backend="whisper", cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt = mock.Mock(spec=["transcribe", "streaming"], streaming=False)
+        # Same capture rate as Parakeet, so only the missing streaming path decides.
+        voice.stt = mock.Mock(
+            spec=["transcribe", "streaming", "sample_rate"],
+            streaming=False,
+            sample_rate=16000,
+        )
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
