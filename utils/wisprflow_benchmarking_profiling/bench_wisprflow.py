@@ -177,16 +177,21 @@ def export_clips(con: sqlite3.Connection, out: Path, limit: int | None) -> list[
 # --- v2t -----------------------------------------------------------------------
 
 
-def run_v2t(clips: list[dict], cleanup: bool, whisper: bool, mode: str) -> None:
+def run_v2t(
+    clips: list[dict], cleanup: bool, whisper: bool, mode: str, cleanup_model: str = ""
+) -> None:
     print(f"loading parakeet ({backends.PARAKEET_DEFAULT})…", flush=True)
     t0 = time.perf_counter()
     stt = backends.make_stt("parakeet")
     print(f"  {time.perf_counter() - t0:.1f}s", flush=True)
     cleaner = None
     if cleanup:
-        print(f"loading cleanup ({backends.MLX_CLEANUP_DEFAULT})…", flush=True)
+        print(
+            f"loading cleanup ({cleanup_model or backends.MLX_CLEANUP_DEFAULT})…",
+            flush=True,
+        )
         t0 = time.perf_counter()
-        cleaner = backends.make_cleanup("mlx")
+        cleaner = backends.make_cleanup("mlx", cleanup_model)
         cleaner.cleanup("warm up", mode)
         print(f"  {time.perf_counter() - t0:.1f}s", flush=True)
     whisper_stt = None
@@ -220,6 +225,8 @@ def run_v2t(clips: list[dict], cleanup: bool, whisper: bool, mode: str) -> None:
                 clean = f"<cleanup failed: {error}>"
             clip["v2t_cleanup_ms"] = (time.perf_counter() - t0) * 1000
             clip["v2t_clean"] = clean
+            clip["cleanup_stats"] = dict(getattr(cleaner, "last_stats", {}))
+            clip["cleanup_mode"] = mode
         clip["v2t_total_ms"] = clip["v2t_stt_ms"] + (clip["v2t_cleanup_ms"] or 0)
         if whisper_stt is not None:
             t0 = time.perf_counter()
@@ -265,10 +272,19 @@ def _row(label: str, p: dict) -> str:
     )
 
 
-def report(profile: dict, clips: list[dict], cleanup: bool, whisper: bool) -> str:
+def report(
+    profile: dict,
+    clips: list[dict],
+    cleanup: bool,
+    whisper: bool,
+    cleanup_label: str = "",
+    mode: str = "",
+    results_name: str = "results.jsonl",
+) -> str:
     head = "| | n | p50 | p90 | p99 | mean |\n|---|--:|--:|--:|--:|--:|"
     lines = [
-        f"# v2t vs Wispr Flow — {date.today()}",
+        f"# v2t vs Wispr Flow — {date.today()}"
+        + (f" — cleanup {cleanup_label} ({mode})" if cleanup_label else ""),
         "",
         "_Same audio, your own dictations. Wispr numbers come from its local `History` table; "
         'v2t numbers are measured here. "Disagreement" is word-level edit distance between two '
@@ -378,7 +394,7 @@ def report(profile: dict, clips: list[dict], cleanup: bool, whisper: bool) -> st
         "## Listening shortlist",
         "",
         "The ten clips where Parakeet and Wispr disagree most. Play one with "
-        "`afplay <wav>` and read both transcripts from `results.jsonl` to decide who was right.",
+        f"`afplay <wav>` and read both transcripts from `{results_name}` to decide who was right.",
         "",
         "| clip | audio | words wispr/v2t | disagreement | wispr cut? | wav |",
         "|---|--:|--:|--:|:-:|---|",
@@ -388,7 +404,7 @@ def report(profile: dict, clips: list[dict], cleanup: bool, whisper: bool) -> st
             for c in worst
         ),
         "",
-        "_Per-clip texts and timings: `results.jsonl` next to this report (owner-only)._",
+        f"_Per-clip texts and timings: `{results_name}` next to this report (owner-only)._",
     ]
     return "\n".join(lines) + "\n"
 
@@ -399,8 +415,14 @@ def main(argv: list[str]) -> int:
     p.add_argument("--out", type=Path, default=OUT_DIR)
     p.add_argument("--limit", type=int, help="newest N clips only (smoke run)")
     p.add_argument("--no-cleanup", action="store_true", help="Parakeet only")
-    p.add_argument("--mode", choices=["strict", "casual"], default="strict")
+    p.add_argument("--mode", choices=["strict", "casual"], default="casual")
     p.add_argument("--whisper", action="store_true", help="add Whisper turbo if cached")
+    p.add_argument(
+        "--cleanup-model", default="", help="mlx cleanup model (default: v2t default)"
+    )
+    p.add_argument(
+        "--tag", default="", help="suffix for results/report filenames, e.g. 4b-casual"
+    )
     a = p.parse_args(argv)
 
     out = private_dir(a.out.expanduser())
@@ -412,14 +434,31 @@ def main(argv: list[str]) -> int:
         raise SystemExit("no Wispr Flow rows with stored audio")
     print(f"{len(clips)} clips exported to {out / 'audio'}")
 
-    run_v2t(clips, cleanup=not a.no_cleanup, whisper=a.whisper, mode=a.mode)
+    run_v2t(
+        clips,
+        cleanup=not a.no_cleanup,
+        whisper=a.whisper,
+        mode=a.mode,
+        cleanup_model=a.cleanup_model,
+    )
 
-    results = out / "results.jsonl"
+    suffix = f"-{a.tag}" if a.tag else ""
+    results = out / f"results{suffix}.jsonl"
     with open(os.open(results, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         for clip in clips:
             f.write(json.dumps(clip, ensure_ascii=False) + "\n")
-    text = report(profile, clips, cleanup=not a.no_cleanup, whisper=a.whisper)
-    report_path = out / f"{date.today()}-report.md"
+    text = report(
+        profile,
+        clips,
+        cleanup=not a.no_cleanup,
+        whisper=a.whisper,
+        cleanup_label=""
+        if a.no_cleanup
+        else backends.short_model(a.cleanup_model or backends.MLX_CLEANUP_DEFAULT),
+        mode=a.mode,
+        results_name=results.name,
+    )
+    report_path = out / f"{date.today()}-report{suffix}.md"
     report_path.write_text(text)
     report_path.chmod(0o600)
     print(f"\nwrote {report_path}\n")

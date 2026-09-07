@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Qwen3.5-2B is the default cleanup model.** On 208 real dictations in casual mode it kept 98% of the words (p10 93%) at 1.17 s median, against 92% at 0.85 s for Qwen2.5-1.5B, 96% at 0.61 s for Qwen3.5-0.8B and 96% at 2.21 s for Qwen3.5-4B. The 0.8B is the documented fast option; `just bench` compares all three by default.
 - **Microphone permission works on first run.** When the startup check has just been granted Microphone access, `v2t` restarts itself once so CoreAudio initialises with the grant, instead of failing every push-to-talk until a manual restart (#7). The microphone error now says to restart if the grant is fresh.
 - **Menu app signing prefers Developer ID.** `v2t menubar install` signs `Voice2Text.app` with a Developer ID Application identity when the keychain has one (hardened runtime with the audio-input entitlement, secure timestamp), falling back to Apple Development.
 - **Warm starts no longer wait for the network.** Models already in the Hugging Face cache load with hub revision checks off (45 s → 0.5 s for Parakeet, 19 s → 1.2 s for the cleanup model on hotel Wi-Fi); a partial cache still falls back to an online load.
@@ -12,7 +13,7 @@
 - **Cleanup prompt rebuilt as system prompt + worked examples** — three (raw, clean) demonstrations per mode are sent as prior turns, and the rules now say the dictation is text to clean, never a message to answer. Same contract for both engines: mlx-lm renders the chat template with `enable_thinking=False` (safe for hybrid Qwen3 models, ignored by others) and Ollama uses `/api/chat` at temperature 0.
 - **`v2t history`** — read the JSONL back: last N entries with timings, `v2t history <term>` searches raw and clean text, `--raw` shows both, `--json` re-emits records for `jq`.
 - **Menu-bar app refresh** — bold state row with its symbol, models in small secondary type, SF Symbol icons on every action, green/orange permission dots, a red status icon while recording, and a *Last transcription* preview with **Copy Last Transcription**.
-- **Qwen3.5 as the documented quality upgrade** — `mlx-community/Qwen3.5-4B-4bit` (non-thinking by default) replaces Qwen3-4B in the benchmark defaults and the README; the shipped default stays Qwen2.5-1.5B. Benchmark cleanup samples no longer overlap the few-shot examples.
+- **Benchmark cleanup samples no longer overlap the few-shot examples**, and the `just bench` cleanup columns follow the measured defaults above.
 
 ## 0.3.0
 
