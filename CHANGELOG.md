@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Recording follows the current microphone.** PortAudio's device list is re-read before every recording, so switching input in System Settings, plugging or unplugging a headset, or a Bluetooth profile change during a call no longer leaves `v2t` recording from the old device or failing with `Invalid Property Value` until restart (#14).
 - **Qwen3.5-2B is the default cleanup model.** On 208 real dictations in casual mode it kept 98% of the words (p10 93%) at 1.17 s median, against 92% at 0.85 s for Qwen2.5-1.5B, 96% at 0.61 s for Qwen3.5-0.8B and 96% at 2.21 s for Qwen3.5-4B. The 0.8B is the documented fast option; `just bench` compares all three by default.
 - **Microphone permission works on first run.** When the startup check has just been granted Microphone access, `v2t` restarts itself once so CoreAudio initialises with the grant, instead of failing every push-to-talk until a manual restart (#7). The microphone error now says to restart if the grant is fresh.
 - **Menu app signing prefers Developer ID.** `v2t menubar install` signs `Voice2Text.app` with a Developer ID Application identity when the keychain has one (hardened runtime with the audio-input entitlement, secure timestamp), falling back to Apple Development.
