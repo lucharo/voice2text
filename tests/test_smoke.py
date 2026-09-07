@@ -510,13 +510,16 @@ class V2TSmokeTests(unittest.TestCase):
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
         voice.audio_callback(
-            np.full((chunk + 8000, 1), 0.5, dtype=np.float32), chunk + 8000, None, None
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.audio_callback(
+            np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
         )
         with mock.patch.object(voice, "paste_to_cursor") as paste:
             voice.stop_recording()  # a few milliseconds long: under the takeover
             self.assertTrue(voice.process_next(timeout=0))
 
-        self.assertEqual(feeds, [chunk + 8000], "the remainder was never flushed")
+        self.assertEqual(feeds, [chunk], "the 8000-sample remainder was never flushed")
         self.assertEqual(order, ["close", "whole"], "stream released before decoding")
         paste.assert_called_once_with("whole-file words")
         record = json.loads(config.history_path().read_text().splitlines()[-1])
