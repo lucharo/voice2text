@@ -421,6 +421,32 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(sent[0].tolist(), [1.0] * 30 + [2.0] * 30)
         self.assertEqual((feeder.sent_samples, feeder.chunks), (70, 2))
 
+    def test_parakeet_stream_pads_a_push_shorter_than_one_hop(self):
+        pushed: list[int] = []
+        stream = mock.MagicMock()
+        stream.add_audio.side_effect = lambda audio: pushed.append(len(audio))
+        stream.result.text = " heard "
+        model = mock.Mock()
+        model.preprocessor_config.hop_length = 160
+        model.transcribe_stream.return_value = stream
+        fake_mx = types.SimpleNamespace(array=np.asarray)
+
+        with mock.patch.dict(
+            sys.modules, {"mlx": mock.Mock(core=fake_mx), "mlx.core": fake_mx}
+        ):
+            live = backends.ParakeetStream(model)
+        text = live.feed(np.ones(100, dtype=np.float32))
+        live.feed(np.ones(300, dtype=np.float32))
+        final = live.close()
+        live.close()
+
+        self.assertEqual(
+            pushed, [160, 300], "sub-hop push padded to one hop, others as-is"
+        )
+        self.assertEqual((text, final), ("heard", "heard"))
+        stream.__enter__.assert_called_once()
+        stream.__exit__.assert_called_once()
+
     def _streaming_stt(
         self, feeds: list, partial: str = "so far", final: str = "final words"
     ):

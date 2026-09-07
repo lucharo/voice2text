@@ -138,6 +138,11 @@ class ParakeetStream:
         import mlx.core as mx
 
         self._mx = mx
+        # parakeet-mlx computes the log-mel of each push on its own, and a push
+        # shorter than one hop (10 ms) yields an empty spectrogram that crashes
+        # Metal with a negative allocation. Such a push only happens as the last
+        # remainder on release; padding it with silence up to one hop is harmless.
+        self._min_samples = int(model.preprocessor_config.hop_length)
         self._stream = model.transcribe_stream(
             context_size=STREAM_CONTEXT, depth=STREAM_DEPTH
         )
@@ -146,7 +151,10 @@ class ParakeetStream:
 
     def feed(self, audio: np.ndarray) -> str:
         """Push 1-D float32 audio at the model's sample rate; returns the partial text."""
-        self._stream.add_audio(self._mx.array(np.asarray(audio, dtype=np.float32)))
+        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if pcm.size < self._min_samples:
+            pcm = np.pad(pcm, (0, self._min_samples - pcm.size))
+        self._stream.add_audio(self._mx.array(pcm))
         self.text = self._stream.result.text.strip()
         return self.text
 
