@@ -45,6 +45,9 @@ Anything ffmpeg reads works: `.wav`, `.m4a`, `.mp3`, `.opus`, and video files.
   command instead of looping or running parallel processes (it is GPU-bound either way).
 - **History.** Every result is appended to `~/.v2t/history/transcriptions.jsonl` with its source
   path, unless the user set `save_history = false` in `~/.v2t/config.toml`.
+- **Recovering a cut dictation.** The app keeps the last hotkey recording's audio at
+  `~/.v2t/run/last-recording.wav` (replaced each time; `keep_last_audio = false` turns it off), so
+  `v2t transcribe ~/.v2t/run/last-recording.wav` redoes a dictation that came out short.
 - **Reading it back.** `v2t history` lists recent entries with timings, `v2t history <term>` searches
   raw and clean text, `--json` re-emits records. Prefer it over opening the JSONL.
 - **Dictionary.** Names and jargon in `~/.v2t/dictionary.txt` guide the cleanup pass (`--clean`) towards

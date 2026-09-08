@@ -423,9 +423,11 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(kept.stat().st_mode & 0o777, 0o600)
         self.assertFalse(kept.with_suffix(".wav.tmp").exists())
 
-    def test_keep_last_audio_off_writes_no_wav(self):
+    def test_keep_last_audio_off_writes_no_wav_and_removes_an_old_one(self):
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
+        config.ensure_dirs()
+        config.last_audio_path().write_bytes(b"stale")
         self._process_ones(
             config.Config(cleanup_enabled=False, keep_last_audio=False), 8
         )
@@ -685,6 +687,30 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
+
+    def test_the_whole_file_fallback_after_a_failed_push_keeps_the_audio_too(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+        stream.feed.side_effect = RuntimeError("metal out of memory")
+        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.record_start -= backends.STREAM_TAKEOVER_S
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()  # released before the worker fed anything
+            self.assertTrue(
+                voice.process_next(timeout=0)
+            )  # the push fails after release
+
+        paste.assert_called_once_with("whole-file words")
+        self.assertEqual(wavfile.read(config.last_audio_path())[1].shape, (chunk,))
 
     def test_partials_reach_the_status_file_but_never_the_log(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
