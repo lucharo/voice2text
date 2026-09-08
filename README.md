@@ -79,7 +79,7 @@ v2t --strict             # heavier cleanup: restructures, drops false starts
 v2t --no-cleanup         # paste raw transcription, skip the LLM
 v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
-v2t --no-streaming       # decode after release instead of while the hotkey is held
+v2t --streaming-mode off # decode after release instead of while the hotkey is held
 
 v2t transcribe memo.opus # transcribe a file you already have (no microphone)
 
@@ -180,7 +180,7 @@ Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HO
 [transcription]
 backend = "parakeet"   # parakeet (MLX) | whisper
 model = ""             # blank = backend default
-streaming = true       # transcribe while the hotkey is held; long dictations paste right on release (parakeet only)
+streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 
 [cleanup]
 enabled = true

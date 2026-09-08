@@ -601,34 +601,37 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertFalse(voice.can_stream())
 
-    def test_streaming_switch_is_read_from_config(self):
-        config.write_config("[transcription]\nstreaming = false\n")
+    def test_streaming_mode_is_read_from_config_and_validated(self):
+        config.write_config('[transcription]\nstreaming_mode = "off"\n')
 
-        self.assertFalse(config.load().streaming)
-        self.assertTrue(config.Config().streaming)
+        self.assertEqual(config.load().streaming_mode, "off")
+        self.assertEqual(config.Config().streaming_mode, "hacky")
+        config.write_config('[transcription]\nstreaming_mode = "clean"\n')
+        with self.assertRaises(SystemExit):
+            config.load()
 
-    def test_streaming_flags_override_the_config(self):
-        config.write_config("[transcription]\nstreaming = false\n")
-        seen: list[bool] = []
+    def test_streaming_mode_flag_overrides_the_config(self):
+        config.write_config('[transcription]\nstreaming_mode = "off"\n')
+        seen: list[str] = []
 
         def voice(cfg):
-            seen.append(cfg.streaming)
+            seen.append(cfg.streaming_mode)
             return types.SimpleNamespace(run=lambda: None)
 
         with (
             mock.patch.object(app, "check_and_request_permissions", return_value=False),
             mock.patch.object(app, "VoiceToText", side_effect=voice),
         ):
-            cli.cmd_run(["--streaming"])
+            cli.cmd_run(["--streaming-mode", "hacky"])
             cli.cmd_run([])
-            cli.cmd_run(["--no-streaming"])
+            cli.cmd_run(["--streaming-mode=off"])
 
-        self.assertEqual(seen, [True, False, False])
+        self.assertEqual(seen, ["hacky", "off", "off"])
         with (
             contextlib.redirect_stderr(io.StringIO()),
             self.assertRaises(SystemExit),
         ):
-            cli.cmd_run(["--streaming", "--no-streaming"])
+            cli.cmd_run(["--streaming-mode", "clean"])
 
     def test_clipboard_is_restored_when_paste_fails(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

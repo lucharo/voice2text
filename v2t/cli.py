@@ -61,16 +61,11 @@ def cmd_run(argv: list[str]) -> int:
         action="store_true",
         help="pause media while recording (needs nowplaying-cli)",
     )
-    streaming = p.add_mutually_exclusive_group()
-    streaming.add_argument(
-        "--streaming",
-        action="store_true",
-        help="transcribe while the hotkey is held (parakeet only) — the default",
-    )
-    streaming.add_argument(
-        "--no-streaming",
-        action="store_true",
-        help="decode the whole recording after release, as before",
+    p.add_argument(
+        "--streaming-mode",
+        choices=["off", "hacky"],
+        help="hacky (default): transcribe while the hotkey is held with Parakeet's "
+        "local-attention stream; off: decode after release",
     )
     a = p.parse_args(argv)
 
@@ -84,7 +79,7 @@ def cmd_run(argv: list[str]) -> int:
         "cleanup_enabled": False if a.no_cleanup else None,
         "mode": "casual" if a.casual else ("strict" if a.strict else None),
         "pause_music": True if a.pause_music else None,
-        "streaming": True if a.streaming else (False if a.no_streaming else None),
+        "streaming_mode": a.streaming_mode,
     }
     cfg = config.load(overrides)
 

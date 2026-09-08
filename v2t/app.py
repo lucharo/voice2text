@@ -284,13 +284,13 @@ class VoiceToText:
     def can_stream(self) -> bool:
         """Whether recordings are transcribed while they happen.
 
-        Needs the config switch, a backend with a streaming path (Parakeet;
+        Needs a streaming mode, a backend with a streaming path (Parakeet;
         Whisper has none and keeps the whole-file path), and a capture rate the
         model accepts as-is, since streamed audio is not resampled.
         """
         stt = self.stt
         return bool(
-            self.cfg.streaming
+            self.cfg.streaming_mode != "off"
             and getattr(stt, "streaming", False)
             and getattr(stt, "sample_rate", None) == self.cfg.sample_rate
         )
@@ -672,8 +672,10 @@ class VoiceToText:
             Path(temp_path).unlink(missing_ok=True)
         logger.success(f"{self.cfg.backend} ready ({time.perf_counter() - t0:.1f}s)")
         if self.can_stream():
-            logger.info("Streaming — transcribing while the hotkey is held")
-        elif self.cfg.streaming:
+            logger.info(
+                f"Streaming ({self.cfg.streaming_mode}) — transcribing while the hotkey is held"
+            )
+        elif self.cfg.streaming_mode != "off":
             logger.info(
                 f"Streaming off: {self.cfg.backend} has no streaming path"
                 if not getattr(self.stt, "streaming", False)
