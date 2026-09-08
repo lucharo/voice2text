@@ -121,6 +121,16 @@ class ChunkFeeder:
         self._send()
         return True
 
+    def take(self) -> np.ndarray:
+        """Hand back the buffered remainder (possibly empty) without sending it."""
+        chunk = (
+            np.concatenate(self.pending)
+            if self.pending
+            else np.zeros(0, dtype=np.float32)
+        )
+        self.pending, self.pending_samples = [], 0
+        return chunk
+
     def _send(self) -> None:
         chunk = np.concatenate(self.pending)
         self.pending, self.pending_samples = [], 0
@@ -143,6 +153,13 @@ class ParakeetStream:
         # Metal with a negative allocation. Such a push only happens as the last
         # remainder on release; padding it with silence up to one hop is harmless.
         self._min_samples = int(model.preprocessor_config.hop_length)
+        # It also holds back a partial hop and any mel frames short of a whole
+        # subsampling block, and drops both on exit: up to ~90 ms of the end.
+        # `finish` pushes that much silence after the last audio to flush them.
+        self._tail_pad = int(
+            model.preprocessor_config.hop_length
+            * model.encoder_config.subsampling_factor
+        )
         self._stream = model.transcribe_stream(
             context_size=STREAM_CONTEXT, depth=STREAM_DEPTH
         )
@@ -157,6 +174,16 @@ class ParakeetStream:
         self._stream.add_audio(self._mx.array(pcm))
         self.text = self._stream.result.text.strip()
         return self.text
+
+    def finish(self, audio: np.ndarray | None = None) -> str:
+        """Push the last audio (the remainder on release, possibly empty) plus the
+        silence that flushes the recogniser's buffered tail, then close."""
+        tail = np.asarray(() if audio is None else audio, dtype=np.float32).reshape(-1)
+        if self._stream is not None:
+            self.feed(
+                np.concatenate([tail, np.zeros(self._tail_pad, dtype=np.float32)])
+            )
+        return self.close()
 
     def close(self) -> str:
         """Release the streaming context; returns the final text. Safe to repeat."""

@@ -417,6 +417,12 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             (first, second, third, flushed, again), (False, True, False, True, False)
         )
+        feeder.push(np.ones(7, dtype=np.float32))
+        remainder = feeder.take()
+        self.assertEqual((remainder.shape, feeder.take().shape), ((7,), (0,)))
+        self.assertEqual(
+            len(sent), 2, "take() hands the remainder back, never sends it"
+        )
         self.assertEqual([chunk.shape for chunk in sent], [(60,), (10,)])
         self.assertEqual(sent[0].tolist(), [1.0] * 30 + [2.0] * 30)
         self.assertEqual((feeder.sent_samples, feeder.chunks), (70, 2))
@@ -428,6 +434,7 @@ class V2TSmokeTests(unittest.TestCase):
         stream.result.text = " heard "
         model = mock.Mock()
         model.preprocessor_config.hop_length = 160
+        model.encoder_config.subsampling_factor = 8
         model.transcribe_stream.return_value = stream
         fake_mx = types.SimpleNamespace(array=np.asarray)
 
@@ -437,11 +444,13 @@ class V2TSmokeTests(unittest.TestCase):
             live = backends.ParakeetStream(model)
         text = live.feed(np.ones(100, dtype=np.float32))
         live.feed(np.ones(300, dtype=np.float32))
-        final = live.close()
+        final = live.finish(np.ones(50, dtype=np.float32))
         live.close()
 
         self.assertEqual(
-            pushed, [160, 300], "sub-hop push padded to one hop, others as-is"
+            pushed,
+            [160, 300, 50 + 1280],
+            "sub-hop push padded to one hop; finish adds one subsampling block of silence",
         )
         self.assertEqual((text, final), ("heard", "heard"))
         stream.__enter__.assert_called_once()
@@ -463,8 +472,14 @@ class V2TSmokeTests(unittest.TestCase):
             stream.closed = True
             return final
 
+        def finish(audio=None):
+            if audio is not None and np.asarray(audio).size:
+                stream.feed(np.asarray(audio))  # via the mock, so overrides apply
+            return stream.close()
+
         stream.feed.side_effect = feed
         stream.close.side_effect = close
+        stream.finish.side_effect = finish
         stream.closed = False
         return mock.Mock(
             streaming=True, sample_rate=16000, stream=mock.Mock(return_value=stream)
@@ -635,6 +650,23 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
+
+    def test_partials_reach_the_status_file_but_never_the_log(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        lines: list[str] = []
+        sink = app.logger.add(
+            lambda message: lines.append(str(message)), format="{message}"
+        )
+        self.addCleanup(app.logger.remove, sink)
+
+        voice._show_partial("hello secret words", 16000 * 5)
+
+        self.assertEqual(
+            [line.strip() for line in lines], ["Heard so far: 3 words in 5s"]
+        )
+        self.assertEqual(config.read_status()["partial"], "hello secret words")
 
     def test_a_cancelled_streaming_job_does_not_touch_the_next_recording(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

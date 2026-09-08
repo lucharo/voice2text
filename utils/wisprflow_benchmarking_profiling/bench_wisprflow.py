@@ -211,8 +211,7 @@ def stream_clip(stt, wav: str, chunk_s: float) -> dict:
         for start in range(0, len(audio), step):
             feeder.push(audio[start : start + step])
         t_release = time.perf_counter()
-        feeder.flush()
-        text = stream.close()
+        text = stream.finish(feeder.take())
         stream = None
         eos_ms = (time.perf_counter() - t_release) * 1000
     finally:

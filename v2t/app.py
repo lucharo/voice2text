@@ -406,8 +406,7 @@ class VoiceToText:
             self._set_state("transcribing")
             streamed = live.duration >= backends.STREAM_TAKEOVER_S
             if streamed:
-                feeder.flush()
-                raw_text = stream.close()
+                raw_text = stream.finish(feeder.take())
             else:
                 stream.close()  # first: it holds the model in streaming attention
                 raw_text = self._transcribe_whole(np.concatenate(live.frames, axis=0))
@@ -490,10 +489,11 @@ class VoiceToText:
                 self.processing = False
 
     def _show_partial(self, text: str, samples: int) -> None:
+        # The log never carries dictated text (0.3.0 guarantee); the tail goes
+        # only to the owner-only status file, for the menu-bar tooltip.
         words = len(text.split())
         logger.info(
             f"Heard so far: {words} words in {samples / self.cfg.sample_rate:.0f}s"
-            + (f" …{_tail(text)}" if text else "")
         )
         self._set_state("recording", partial=text)
 
