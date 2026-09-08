@@ -325,6 +325,7 @@ class VoiceToText:
         try:
             self._set_state("transcribing")
             audio = np.concatenate(frames, axis=0)
+            self._keep_audio(audio)
             if (
                 float(np.abs(audio).max()) < 1e-4
             ):  # dead silence == no mic access, not a quiet room
@@ -354,6 +355,28 @@ class VoiceToText:
             if not self.stopping:
                 self._set_state(next_state, error_message)
             self.processing = False
+
+    def _keep_audio(self, audio: np.ndarray) -> None:
+        """Keep this recording's audio as run/last-recording.wav (owner-only, replaced
+        every time) so a dictation that came out cut can be transcribed again with
+        `v2t transcribe`. Never fatal: the transcription matters more than the copy."""
+        path = config.last_audio_path()
+        if not self.cfg.keep_last_audio:
+            path.unlink(
+                missing_ok=True
+            )  # retention off: keep nothing from before either
+            return
+        temp_path = path.with_suffix(".wav.tmp")
+        try:
+            config.ensure_dirs()
+            wavfile.write(
+                temp_path, self.cfg.sample_rate, (audio * 32767).astype(np.int16)
+            )
+            temp_path.chmod(0o600)
+            os.replace(temp_path, path)
+        except Exception as error:
+            logger.warning(f"Could not keep the recording's audio: {error}")
+            temp_path.unlink(missing_ok=True)
 
     def _transcribe_whole(self, audio: np.ndarray) -> str:
         """Whole-file decoding of one recording, through a temporary WAV."""
@@ -406,12 +429,14 @@ class VoiceToText:
             if not live.frames:  # the microphone delivered nothing: back to idle
                 return
             self._set_state("transcribing")
+            audio = np.concatenate(live.frames, axis=0)
+            self._keep_audio(audio)
             streamed = live.duration >= backends.STREAM_TAKEOVER_S
             if streamed:
                 raw_text = stream.finish(feeder.take())
             else:
                 stream.close()  # first: it holds the model in streaming attention
-                raw_text = self._transcribe_whole(np.concatenate(live.frames, axis=0))
+                raw_text = self._transcribe_whole(audio)
             stream = None
             stt_s = time.perf_counter() - live.stopped_at
             if peak < 1e-4:  # dead silence == no mic access, not a quiet room
@@ -455,9 +480,9 @@ class VoiceToText:
                     if stream is not None:
                         stream.close()
                         stream = None
-                    raw_text = self._transcribe_whole(
-                        np.concatenate(live.frames, axis=0)
-                    )
+                    audio = np.concatenate(live.frames, axis=0)
+                    self._keep_audio(audio)  # a push may have failed before the keep
+                    raw_text = self._transcribe_whole(audio)
                     stt_s = time.perf_counter() - live.stopped_at
                     logger.info(
                         f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s after release, whole-file fallback)"

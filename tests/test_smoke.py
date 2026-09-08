@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+from scipy.io import wavfile
 
 from v2t import app, backends, bench, cli, config, menubar, permissions, service
 
@@ -400,6 +401,37 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("Clean words.")
         self.assertIsNotNone(audio_path)
         self.assertFalse(Path(audio_path).exists())
+
+    def _process_ones(self, cfg: config.Config, samples: int) -> None:
+        voice = app.VoiceToText(cfg)
+        voice.stt = mock.Mock(transcribe=lambda path: "raw words")
+        voice.processing = True
+        with mock.patch.object(voice, "paste_to_cursor"):
+            voice.process_audio([np.ones((samples, 1), dtype=np.float32)], 1.0)
+
+    def test_the_last_recording_is_kept_as_a_private_wav(self):
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        self._process_ones(config.Config(cleanup_enabled=False), 8)
+        self._process_ones(config.Config(cleanup_enabled=False), 24)  # replaces it
+
+        kept = config.last_audio_path()
+        rate, pcm = wavfile.read(kept)
+        self.assertEqual(
+            (rate, pcm.shape, pcm.dtype), (16000, (24,), np.dtype("int16"))
+        )
+        self.assertEqual(kept.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(kept.with_suffix(".wav.tmp").exists())
+
+    def test_keep_last_audio_off_writes_no_wav_and_removes_an_old_one(self):
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        config.ensure_dirs()
+        config.last_audio_path().write_bytes(b"stale")
+        self._process_ones(
+            config.Config(cleanup_enabled=False, keep_last_audio=False), 8
+        )
+        self.assertFalse(config.last_audio_path().exists())
         self.assertEqual(config.read_status()["state"], "idle")
 
     def test_chunk_feeder_sends_whole_chunks_and_flushes_the_rest(self):
@@ -505,10 +537,10 @@ class V2TSmokeTests(unittest.TestCase):
                 np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
             )
             for _ in range(50):
-                if feeds:
+                partial_status = config.read_status() or {}
+                if "words" in partial_status:  # written after the first feed
                     break
                 app.time.sleep(0.05)
-            partial_status = config.read_status()
             voice.audio_callback(
                 np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
             )
@@ -536,6 +568,9 @@ class V2TSmokeTests(unittest.TestCase):
         record = json.loads(config.history_path().read_text().splitlines()[-1])
         self.assertEqual((record["raw"], record["streamed"]), ("final words", True))
         self.assertLess(record["stt_s"], 1.0)
+        self.assertEqual(
+            wavfile.read(config.last_audio_path())[1].shape, (chunk + 8000,)
+        )  # the streamed recording's audio is kept too
 
     def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -652,6 +687,30 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
+
+    def test_the_whole_file_fallback_after_a_failed_push_keeps_the_audio_too(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+        stream.feed.side_effect = RuntimeError("metal out of memory")
+        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.record_start -= backends.STREAM_TAKEOVER_S
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()  # released before the worker fed anything
+            self.assertTrue(
+                voice.process_next(timeout=0)
+            )  # the push fails after release
+
+        paste.assert_called_once_with("whole-file words")
+        self.assertEqual(wavfile.read(config.last_audio_path())[1].shape, (chunk,))
 
     def test_partials_reach_the_status_file_but_never_the_log(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

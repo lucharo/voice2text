@@ -172,6 +172,7 @@ Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HO
   config.toml                    # all settings (v2t config --init to create)
   history/transcriptions.jsonl   # every transcription + metadata (toggle in config)
   run/                           # private runtime status + log
+  run/last-recording.wav         # the last dictation's audio, replaced every time (toggle in config)
 ```
 
 `config.toml` (every key optional — these are the defaults):
@@ -194,6 +195,7 @@ key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
 [behavior]
 pause_music = false
 save_history = true
+keep_last_audio = true # run/last-recording.wav; `v2t transcribe ~/.v2t/run/last-recording.wav` redoes a cut dictation
 ```
 
 ### Cleanup engine
