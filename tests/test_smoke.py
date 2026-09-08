@@ -523,6 +523,8 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             feeds, [chunk, 8000], "one chunk while held, the remainder on release"
         )
+        stream.finish.assert_called_once()  # the release push also flushes the tail
+        self.assertEqual(stream.finish.call_args.args[0].size, 8000)
         self.assertEqual(
             {k: partial_status[k] for k in ("state", "words", "partial")},
             {"state": "recording", "words": 2, "partial": "so far"},
