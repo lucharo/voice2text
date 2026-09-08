@@ -378,6 +378,7 @@ class VoiceToText:
         which costs about the same there and gives the reference text.
         """
         next_state, error_message, stream = "idle", "", None
+        handed_back = False  # streaming broke while held: release decodes whole-file
         try:
             if live.cancelled:
                 return
@@ -434,18 +435,33 @@ class VoiceToText:
                 return
             self._deliver(raw_text, live.duration, stt_s, streamed=streamed)
         except Exception as error:
-            next_state, error_message = "error", f"{type(error).__name__}: {error}"
-            logger.exception(f"Transcription failed: {error}")
+            with self.lifecycle_lock:
+                if not live.done.is_set() and self.live is live:
+                    # Still recording: detach so stop_recording queues the frames
+                    # for whole-file decoding instead of finishing a dead job.
+                    self.live = None
+                    handed_back = True
+            if handed_back:
+                logger.warning(
+                    f"Streaming failed ({error}); this recording is decoded after release"
+                )
+            else:
+                next_state, error_message = "error", f"{type(error).__name__}: {error}"
+                logger.exception(f"Transcription failed: {error}")
         finally:
             if stream is not None:
                 try:
                     stream.close()
                 except Exception as error:
                     logger.warning(f"Could not close the streaming recogniser: {error}")
-            self._restore_media()
-            if not self.stopping:
-                self._set_state(next_state, error_message)
-            self.processing = False
+            # Only a job that reached release here owns the idle/error transition:
+            # a cancelled one was cleaned up by cancel_recording (a new recording
+            # may already be running), a handed-back one is still recording.
+            if live.done.is_set() and not live.cancelled and not handed_back:
+                self._restore_media()
+                if not self.stopping:
+                    self._set_state(next_state, error_message)
+                self.processing = False
 
     def _show_partial(self, text: str, samples: int) -> None:
         words = len(text.split())

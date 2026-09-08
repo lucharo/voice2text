@@ -571,6 +571,49 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.processing)
         self.assertEqual(config.read_status()["state"], "idle")
 
+    def test_a_streaming_failure_while_held_falls_back_to_whole_file_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(
+            streaming=True,
+            sample_rate=16000,
+            stream=mock.Mock(side_effect=RuntimeError("metal out of memory")),
+        )
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            self.assertTrue(voice.process_next(timeout=0))  # the stream fails to open
+            self.assertIsNone(voice.live, "dead job detached from the recording")
+            self.assertTrue(voice.recording)
+            self.assertEqual(config.read_status()["state"], "recording")
+            voice.audio_callback(np.ones((8, 1), dtype=np.float32), 8, None, None)
+            voice.stop_recording()
+
+        self.assertTrue(voice.processing)
+        frames, _duration = voice.jobs.get_nowait()
+        self.assertEqual(
+            len(frames), 1, "release queued the frames for whole-file decoding"
+        )
+
+    def test_a_cancelled_streaming_job_does_not_touch_the_next_recording(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, _stream = self._streaming_stt([])
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            voice.cancel_recording()  # first tap of a double-tap
+            voice.start_recording()  # second tap: hands-free recording begins
+            stale = voice.jobs.get_nowait()
+            self.assertTrue(stale.cancelled)
+            voice.process_live(stale)
+
+        self.assertTrue(voice.recording)
+        self.assertEqual(config.read_status()["state"], "recording")
+        self.assertFalse(voice.processing)
+
     def test_whisper_backend_keeps_the_whole_file_path(self):
         voice = app.VoiceToText(config.Config(backend="whisper", cleanup_enabled=False))
         lock = config.acquire_instance_lock()

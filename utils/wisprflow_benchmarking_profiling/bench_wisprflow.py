@@ -499,7 +499,11 @@ def streaming_section(clips: list[dict], head: str) -> list[str]:
         c["stream_eos_ms"] if (c["duration_s"] or 0) >= takeover else c["v2t_stt_ms"]
         for c in streamed
     ]
-    ratios = [c["stream_words_ratio"] for c in streamed if c.get("stream_words_ratio")]
+    ratios = [
+        c["stream_words_ratio"]
+        for c in streamed
+        if c.get("stream_words_ratio") is not None  # 0.0 (nothing streamed) counts
+    ]
     fewer = sum(1 for r in ratios if r < 1)
     behind = [c for c in streamed if c["stream_push_max_ms"] > chunk_s * 1000]
     lines = [
