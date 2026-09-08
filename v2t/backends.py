@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
+import numpy as np
+
 T = TypeVar("T")
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
@@ -60,8 +62,140 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
         constants.HF_HUB_OFFLINE = False
 
 
+# Streaming: Parakeet can decode the recording while the hotkey is still held,
+# so on release only the last few seconds are left to transcribe. Each push
+# re-encodes STREAM_CONTEXT[0] frames (80 ms each, ~20 s) of left context and
+# re-decodes the STREAM_CONTEXT[1] * STREAM_DEPTH frames that are not final yet,
+# so a push costs ~0.3 s on an M4 Pro whatever its length. Audio is pushed
+# every STREAM_CHUNK_S seconds: the streaming path normalises the log-mel
+# features per push, so short pushes decode worse (measured 2026-09-07, 10
+# clips: 1 s pushes disagreed with whole-file decoding by 0.19 of the words at
+# the median, 5 s pushes by 0.07) while the end-of-speech latency is the same.
+STREAM_CHUNK_S = 5.0
+STREAM_CONTEXT = (256, 256)
+STREAM_DEPTH = 1
+# Streamed text differs from whole-file decoding (local attention, per-push
+# normalisation), and whole-file decoding costs ~11 ms per second of audio, so
+# under this many seconds it is about as quick as the last push and the app
+# takes it, giving exactly today's text; above, the streamed text wins seconds.
+STREAM_TAKEOVER_S = 60.0
+
+
+class ChunkFeeder:
+    """Gather audio frames and hand them on in chunks of at least `chunk_s` seconds.
+
+    `push(frame)` buffers; once the buffer holds a chunk it goes to `sink` as one
+    1-D float32 array and the buffer empties. `flush()` sends whatever is left,
+    however short. Pure numpy, shared by the app and the benchmark.
+    """
+
+    def __init__(
+        self,
+        sink: Callable[[np.ndarray], object],
+        sample_rate: int,
+        chunk_s: float = STREAM_CHUNK_S,
+    ):
+        self.sink = sink
+        self.chunk_samples = max(1, int(sample_rate * chunk_s))
+        self.pending: list[np.ndarray] = []
+        self.pending_samples = 0
+        self.sent_samples = 0
+        self.chunks = 0
+
+    def push(self, frame: np.ndarray) -> bool:
+        """Buffer one frame; True when that completed a chunk and it was sent."""
+        flat = np.asarray(frame, dtype=np.float32).reshape(-1)
+        if flat.size == 0:
+            return False
+        self.pending.append(flat)
+        self.pending_samples += flat.size
+        if self.pending_samples < self.chunk_samples:
+            return False
+        self._send()
+        return True
+
+    def flush(self) -> bool:
+        """Send the remainder, if any; True when something was sent."""
+        if not self.pending_samples:
+            return False
+        self._send()
+        return True
+
+    def take(self) -> np.ndarray:
+        """Hand back the buffered remainder (possibly empty) without sending it."""
+        chunk = (
+            np.concatenate(self.pending)
+            if self.pending
+            else np.zeros(0, dtype=np.float32)
+        )
+        self.pending, self.pending_samples = [], 0
+        return chunk
+
+    def _send(self) -> None:
+        chunk = np.concatenate(self.pending)
+        self.pending, self.pending_samples = [], 0
+        self.sent_samples += chunk.size
+        self.chunks += 1
+        self.sink(chunk)
+
+
+class ParakeetStream:
+    """One live Parakeet transcription: feed audio as it arrives, read the partial
+    text, then close. Opening switches the shared model to local attention and
+    closing switches it back, so hold at most one at a time and always close."""
+
+    def __init__(self, model):
+        import mlx.core as mx
+
+        self._mx = mx
+        # parakeet-mlx computes the log-mel of each push on its own, and a push
+        # shorter than one hop (10 ms) yields an empty spectrogram that crashes
+        # Metal with a negative allocation. Such a push only happens as the last
+        # remainder on release; padding it with silence up to one hop is harmless.
+        self._min_samples = int(model.preprocessor_config.hop_length)
+        # It also holds back a partial hop and any mel frames short of a whole
+        # subsampling block, and drops both on exit: up to ~90 ms of the end.
+        # `finish` pushes that much silence after the last audio to flush them.
+        self._tail_pad = int(
+            model.preprocessor_config.hop_length
+            * model.encoder_config.subsampling_factor
+        )
+        self._stream = model.transcribe_stream(
+            context_size=STREAM_CONTEXT, depth=STREAM_DEPTH
+        )
+        self._stream.__enter__()
+        self.text = ""
+
+    def feed(self, audio: np.ndarray) -> str:
+        """Push 1-D float32 audio at the model's sample rate; returns the partial text."""
+        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if pcm.size < self._min_samples:
+            pcm = np.pad(pcm, (0, self._min_samples - pcm.size))
+        self._stream.add_audio(self._mx.array(pcm))
+        self.text = self._stream.result.text.strip()
+        return self.text
+
+    def finish(self, audio: np.ndarray | None = None) -> str:
+        """Push the last audio (the remainder on release, possibly empty) plus the
+        silence that flushes the recogniser's buffered tail, then close."""
+        tail = np.asarray(() if audio is None else audio, dtype=np.float32).reshape(-1)
+        if self._stream is not None:
+            self.feed(
+                np.concatenate([tail, np.zeros(self._tail_pad, dtype=np.float32)])
+            )
+        return self.close()
+
+    def close(self) -> str:
+        """Release the streaming context; returns the final text. Safe to repeat."""
+        if self._stream is not None:
+            stream, self._stream = self._stream, None
+            stream.__exit__(None, None, None)
+        return self.text
+
+
 class ParakeetSTT:
     default_model = PARAKEET_DEFAULT
+    streaming = True
 
     def __init__(self, model: str = ""):
         try:
@@ -73,8 +207,16 @@ class ParakeetSTT:
         repo = model or self.default_model
         self.model = load_cache_first(repo, lambda: from_pretrained(repo))
 
+    @property
+    def sample_rate(self) -> int:
+        """The rate streamed audio must arrive at (whole-file decoding resamples)."""
+        return int(self.model.preprocessor_config.sample_rate)
+
     def transcribe(self, wav_path: str) -> str:
         return self.model.transcribe(wav_path).text.strip()
+
+    def stream(self) -> ParakeetStream:
+        return ParakeetStream(self.model)
 
 
 def _complete_snapshot(path: str) -> str:
@@ -90,6 +232,7 @@ def _complete_snapshot(path: str) -> str:
 
 class WhisperSTT:
     default_model = WHISPER_DEFAULT
+    streaming = False  # mlx-whisper decodes whole files only
 
     def __init__(self, model: str = ""):
         try:
@@ -435,6 +578,14 @@ if __name__ == "__main__":
     # ponytail: pure-logic checks only; live model calls are covered by `v2t bench`.
     assert set(STT) == {"parakeet", "whisper"}
     assert set(CLEANUP) == {"mlx", "ollama"}
+    assert ParakeetSTT.streaming and not WhisperSTT.streaming
+    sent: list[int] = []
+    feeder = ChunkFeeder(lambda chunk: sent.append(chunk.size), 10, chunk_s=1.0)
+    assert (
+        not feeder.push(np.zeros((6, 1))) and feeder.push(np.zeros(6)) and sent == [12]
+    )
+    assert feeder.flush() is False and feeder.push(np.zeros(3)) is False
+    assert feeder.flush() and sent == [12, 3] and feeder.sent_samples == 15
     assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
     assert short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit") == "Qwen2.5-1.5B"
     assert short_model("custom/unknown") == "unknown"

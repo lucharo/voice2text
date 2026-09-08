@@ -25,6 +25,7 @@ from pathlib import Path
 class Config:
     backend: str = "parakeet"  # parakeet | whisper
     stt_model: str = ""  # blank = the backend's own default
+    streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
     cleanup_enabled: bool = True
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
     cleanup_model: str = ""  # blank = the engine's own default
@@ -182,7 +183,11 @@ def read_status() -> dict | None:
 
 # TOML section -> Config field. Flat dataclass, sectioned file: friendlier to edit.
 _SECTIONS = {
-    "transcription": {"backend": "backend", "model": "stt_model"},
+    "transcription": {
+        "backend": "backend",
+        "model": "stt_model",
+        "streaming_mode": "streaming_mode",
+    },
     "cleanup": {
         "enabled": "cleanup_enabled",
         "engine": "cleanup_engine",
@@ -218,6 +223,7 @@ def _validate(cfg: Config) -> None:
         "backend": {"parakeet", "whisper"},
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
+        "streaming_mode": {"off", "hacky"},
         "hotkey": {"cmd_r", "cmd_l", "alt_r", "alt_l", "ctrl_r", "ctrl_l"},
     }
     for field, allowed in choices.items():
@@ -242,6 +248,7 @@ DEFAULT_TOML = """\
 [transcription]
 backend = "parakeet"   # parakeet (default, MLX) | whisper (needs voice2text[whisper])
 model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper-large-v3-turbo)
+streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 
 [cleanup]
 enabled = true

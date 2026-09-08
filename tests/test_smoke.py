@@ -402,6 +402,374 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(Path(audio_path).exists())
         self.assertEqual(config.read_status()["state"], "idle")
 
+    def test_chunk_feeder_sends_whole_chunks_and_flushes_the_rest(self):
+        sent = []
+        feeder = backends.ChunkFeeder(
+            lambda chunk: sent.append(chunk), sample_rate=100, chunk_s=0.5
+        )
+
+        first = feeder.push(np.ones((30, 1), dtype=np.float32))
+        second = feeder.push(np.full(30, 2.0, dtype=np.float32))
+        third = feeder.push(np.zeros(10, dtype=np.float32))
+        flushed = feeder.flush()
+        again = feeder.flush()
+
+        self.assertEqual(
+            (first, second, third, flushed, again), (False, True, False, True, False)
+        )
+        feeder.push(np.ones(7, dtype=np.float32))
+        remainder = feeder.take()
+        self.assertEqual((remainder.shape, feeder.take().shape), ((7,), (0,)))
+        self.assertEqual(
+            len(sent), 2, "take() hands the remainder back, never sends it"
+        )
+        self.assertEqual([chunk.shape for chunk in sent], [(60,), (10,)])
+        self.assertEqual(sent[0].tolist(), [1.0] * 30 + [2.0] * 30)
+        self.assertEqual((feeder.sent_samples, feeder.chunks), (70, 2))
+
+    def test_parakeet_stream_pads_a_push_shorter_than_one_hop(self):
+        pushed: list[int] = []
+        stream = mock.MagicMock()
+        stream.add_audio.side_effect = lambda audio: pushed.append(len(audio))
+        stream.result.text = " heard "
+        model = mock.Mock()
+        model.preprocessor_config.hop_length = 160
+        model.encoder_config.subsampling_factor = 8
+        model.transcribe_stream.return_value = stream
+        fake_mx = types.SimpleNamespace(array=np.asarray)
+
+        with mock.patch.dict(
+            sys.modules, {"mlx": mock.Mock(core=fake_mx), "mlx.core": fake_mx}
+        ):
+            live = backends.ParakeetStream(model)
+        text = live.feed(np.ones(100, dtype=np.float32))
+        live.feed(np.ones(300, dtype=np.float32))
+        final = live.finish(np.ones(50, dtype=np.float32))
+        live.close()
+
+        self.assertEqual(
+            pushed,
+            [160, 300, 50 + 1280],
+            "sub-hop push padded to one hop; finish adds one subsampling block of silence",
+        )
+        self.assertEqual((text, final), ("heard", "heard"))
+        stream.__enter__.assert_called_once()
+        stream.__exit__.assert_called_once()
+
+    def _streaming_stt(
+        self, feeds: list, partial: str = "so far", final: str = "final words"
+    ):
+        """An STT with Parakeet's streaming surface: stream() -> feed()/text/close()."""
+        stream = mock.Mock()
+        stream.text = ""
+
+        def feed(chunk):
+            feeds.append(chunk.size)
+            stream.text = partial
+            return partial
+
+        def close():
+            stream.closed = True
+            return final
+
+        def finish(audio=None):
+            if audio is not None and np.asarray(audio).size:
+                stream.feed(np.asarray(audio))  # via the mock, so overrides apply
+            return stream.close()
+
+        stream.feed.side_effect = feed
+        stream.close.side_effect = close
+        stream.finish.side_effect = finish
+        stream.closed = False
+        return mock.Mock(
+            streaming=True, sample_rate=16000, stream=mock.Mock(return_value=stream)
+        ), stream
+
+    def test_streaming_feeds_the_recording_while_held_and_finalises_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        self.assertTrue(voice.can_stream())
+        self.assertIsNotNone(voice.live)
+        worker = app.threading.Thread(target=voice.process_next)
+        worker.start()
+        self.addCleanup(worker.join)
+        try:
+            voice.audio_callback(
+                np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+            )
+            for _ in range(50):
+                if feeds:
+                    break
+                app.time.sleep(0.05)
+            partial_status = config.read_status()
+            voice.audio_callback(
+                np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
+            )
+            voice.record_start -= backends.STREAM_TAKEOVER_S  # a long dictation
+            with mock.patch.object(voice, "paste_to_cursor") as paste:
+                voice.stop_recording()
+                worker.join(timeout=5)
+        finally:
+            voice.live = None
+
+        self.assertFalse(worker.is_alive(), "processing thread finished after release")
+        self.assertEqual(
+            feeds, [chunk, 8000], "one chunk while held, the remainder on release"
+        )
+        stream.finish.assert_called_once()  # the release push also flushes the tail
+        self.assertEqual(stream.finish.call_args.args[0].size, 8000)
+        self.assertEqual(
+            {k: partial_status[k] for k in ("state", "words", "partial")},
+            {"state": "recording", "words": 2, "partial": "so far"},
+        )
+        self.assertTrue(stream.closed)
+        paste.assert_called_once_with("final words")
+        self.assertFalse(voice.processing)
+        self.assertEqual(config.read_status()["state"], "idle")
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual((record["raw"], record["streamed"]), ("final words", True))
+        self.assertLess(record["stt_s"], 1.0)
+
+    def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        order: list[str] = []
+        stream.close.side_effect = lambda: order.append("close") or "streamed words"
+        voice.stt.transcribe = mock.Mock(
+            side_effect=lambda path: order.append("whole") or "whole-file words"
+        )
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.audio_callback(
+            np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
+        )
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()  # a few milliseconds long: under the takeover
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(feeds, [chunk], "the 8000-sample remainder was never flushed")
+        self.assertEqual(order, ["close", "whole"], "stream released before decoding")
+        paste.assert_called_once_with("whole-file words")
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual(
+            (record["raw"], record["streamed"]), ("whole-file words", False)
+        )
+
+    def test_a_cancelled_streaming_recording_never_opens_the_recogniser(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            voice.cancel_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertIsNone(voice.live)
+        voice.stt.stream.assert_not_called()
+        paste.assert_not_called()
+        self.assertFalse(voice.processing)
+        self.assertEqual(config.read_status()["state"], "idle")
+
+    def test_a_streaming_failure_while_held_falls_back_to_whole_file_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(
+            streaming=True,
+            sample_rate=16000,
+            stream=mock.Mock(side_effect=RuntimeError("metal out of memory")),
+        )
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            self.assertTrue(voice.process_next(timeout=0))  # the stream fails to open
+            self.assertIsNone(voice.live, "dead job detached from the recording")
+            self.assertTrue(voice.recording)
+            self.assertEqual(config.read_status()["state"], "recording")
+            voice.audio_callback(np.ones((8, 1), dtype=np.float32), 8, None, None)
+            voice.stop_recording()
+
+        self.assertTrue(voice.processing)
+        frames, _duration = voice.jobs.get_nowait()
+        self.assertEqual(
+            len(frames), 1, "release queued the frames for whole-file decoding"
+        )
+
+    def test_a_streaming_failure_at_release_decodes_the_recording_whole_file(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        original_feed = stream.feed.side_effect
+
+        def feed(chunk):
+            if feeds:  # the final push, the remainder flushed on release
+                raise RuntimeError("metal out of memory")
+            return original_feed(chunk)
+
+        stream.feed.side_effect = feed
+        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.audio_callback(
+            np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
+        )
+        voice.record_start -= backends.STREAM_TAKEOVER_S  # long: streamed text wanted
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(feeds, [chunk], "the flush raised")
+        self.assertTrue(stream.closed, "stream released before the fallback decode")
+        paste.assert_called_once_with("whole-file words")
+        self.assertEqual(config.read_status()["state"], "idle")
+        self.assertFalse(voice.processing)
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual(
+            (record["raw"], record["streamed"]), ("whole-file words", False)
+        )
+
+    def test_partials_reach_the_status_file_but_never_the_log(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        lines: list[str] = []
+        sink = app.logger.add(
+            lambda message: lines.append(str(message)), format="{message}"
+        )
+        self.addCleanup(app.logger.remove, sink)
+
+        voice._show_partial("hello secret words", 16000 * 5)
+
+        self.assertEqual(
+            [line.strip() for line in lines], ["Heard so far: 3 words in 5s"]
+        )
+        self.assertEqual(config.read_status()["partial"], "hello secret words")
+
+    def test_a_streamed_recording_with_no_audio_returns_to_idle(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+        voice.stt.transcribe = mock.Mock()
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            voice.record_start -= 1.0  # held, but the device produced no frames
+            voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(config.read_status()["state"], "idle")
+        self.assertFalse(voice.processing)
+        self.assertTrue(stream.closed)
+        voice.stt.transcribe.assert_not_called()
+        paste.assert_not_called()
+
+    def test_a_cancelled_streaming_job_does_not_touch_the_next_recording(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, _stream = self._streaming_stt([])
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            voice.cancel_recording()  # first tap of a double-tap
+            voice.start_recording()  # second tap: hands-free recording begins
+            stale = voice.jobs.get_nowait()
+            self.assertTrue(stale.cancelled)
+            voice.process_live(stale)
+
+        self.assertTrue(voice.recording)
+        self.assertEqual(config.read_status()["state"], "recording")
+        self.assertFalse(voice.processing)
+
+    def test_whisper_backend_keeps_the_whole_file_path(self):
+        voice = app.VoiceToText(config.Config(backend="whisper", cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        # Same capture rate as Parakeet, so only the missing streaming path decides.
+        voice.stt = mock.Mock(
+            spec=["transcribe", "streaming", "sample_rate"],
+            streaming=False,
+            sample_rate=16000,
+        )
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            self.assertIsNone(voice.live)
+            voice.frames = [np.ones((8, 1), dtype=np.float32)]
+            voice.stop_recording()
+        with mock.patch.object(voice, "process_audio") as process:
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertFalse(voice.can_stream())
+        frames, duration = process.call_args.args
+        self.assertEqual(len(frames), 1)
+        self.assertGreaterEqual(duration, 0)
+
+    def test_streaming_is_off_when_the_capture_rate_is_not_the_models(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, sample_rate=48000))
+        voice.stt, _stream = self._streaming_stt([])
+
+        self.assertFalse(voice.can_stream())
+
+    def test_streaming_mode_is_read_from_config_and_validated(self):
+        config.write_config('[transcription]\nstreaming_mode = "off"\n')
+
+        self.assertEqual(config.load().streaming_mode, "off")
+        self.assertEqual(config.Config().streaming_mode, "hacky")
+        config.write_config('[transcription]\nstreaming_mode = "clean"\n')
+        with self.assertRaises(SystemExit):
+            config.load()
+
+    def test_streaming_mode_flag_overrides_the_config(self):
+        config.write_config('[transcription]\nstreaming_mode = "off"\n')
+        seen: list[str] = []
+
+        def voice(cfg):
+            seen.append(cfg.streaming_mode)
+            return types.SimpleNamespace(run=lambda: None)
+
+        with (
+            mock.patch.object(app, "check_and_request_permissions", return_value=False),
+            mock.patch.object(app, "VoiceToText", side_effect=voice),
+        ):
+            cli.cmd_run(["--streaming-mode", "hacky"])
+            cli.cmd_run([])
+            cli.cmd_run(["--streaming-mode=off"])
+
+        self.assertEqual(seen, ["hacky", "off", "off"])
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            cli.cmd_run(["--streaming-mode", "clean"])
+
     def test_clipboard_is_restored_when_paste_fails(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         original = mock.Mock()

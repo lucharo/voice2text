@@ -12,7 +12,7 @@ dependencies = [
     "pynput",
     "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
     "loguru",
-    "parakeet-mlx",
+    "parakeet-mlx>=0.5.2",  # transcribe_stream + the config attributes streaming reads
     "mlx-lm",
 ]
 

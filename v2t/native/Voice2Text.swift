@@ -241,7 +241,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let accessibility = AXIsProcessTrusted()
         let stt = status["stt"] as? String ?? ""
         let cleanup = status["cleanup"] as? String ?? ""
-        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")"
+        // While recording with the streaming recogniser, the engine reports how
+        // much it has heard so far: a word count and the tail of the text.
+        let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
+        let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
+        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -249,7 +253,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "starting", "loading-stt": ("hourglass", "Loading transcription model…", nil)
         case "loading-cleanup": ("hourglass", "Loading cleanup model…", nil)
         case "idle": ("waveform", "Ready", nil)
-        case "recording": ("waveform.circle.fill", "Recording…", .systemRed)
+        case "recording": ("waveform.circle.fill", heardWords > 0 ? "Recording… \(heardWords) words" : "Recording…", .systemRed)
         case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
         case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
         case "stopping": ("hourglass", "Stopping…", nil)
@@ -263,7 +267,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.image = icon
         item.button?.imagePosition = .imageOnly
         item.button?.title = ""
-        item.button?.toolTip = presentation.1
+        item.button?.toolTip = heardTail.isEmpty ? presentation.1 : "\(presentation.1)\n…\(heardTail)"
         item.button?.contentTintColor = presentation.2
         menu.removeAllItems()
 
