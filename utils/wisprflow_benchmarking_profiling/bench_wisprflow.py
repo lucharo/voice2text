@@ -203,18 +203,26 @@ def stream_clip(stt, wav: str, chunk_s: float) -> dict:
         pushes.append((time.perf_counter() - t0) * 1000)
 
     feeder = backends.ChunkFeeder(sink, stt.sample_rate, chunk_s)
+    # Everything up to the last full chunk happens while the "hotkey" is held;
+    # what follows is the release sequence the app runs: flush the remainder (if
+    # any) and close the stream. Time exactly that as the end-of-speech latency.
     try:
         step = feeder.chunk_samples
         for start in range(0, len(audio), step):
             feeder.push(audio[start : start + step])
+        t_release = time.perf_counter()
         feeder.flush()
-    finally:
         text = stream.close()
+        stream = None
+        eos_ms = (time.perf_counter() - t_release) * 1000
+    finally:
+        if stream is not None:
+            text = stream.close()
     return {
         "stream_raw": text,
         "stream_words": len(words(text)),
         "stream_chunks": feeder.chunks,
-        "stream_eos_ms": pushes[-1] if pushes else 0.0,
+        "stream_eos_ms": eos_ms,
         "stream_push_p50_ms": statistics.median(pushes) if pushes else 0.0,
         "stream_push_max_ms": max(pushes) if pushes else 0.0,
         "stream_busy_ms": sum(pushes),

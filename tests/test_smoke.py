@@ -596,6 +596,46 @@ class V2TSmokeTests(unittest.TestCase):
             len(frames), 1, "release queued the frames for whole-file decoding"
         )
 
+    def test_a_streaming_failure_at_release_decodes_the_recording_whole_file(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        original_feed = stream.feed.side_effect
+
+        def feed(chunk):
+            if feeds:  # the final push, the remainder flushed on release
+                raise RuntimeError("metal out of memory")
+            return original_feed(chunk)
+
+        stream.feed.side_effect = feed
+        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        voice.audio_callback(
+            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+        )
+        voice.audio_callback(
+            np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
+        )
+        voice.record_start -= backends.STREAM_TAKEOVER_S  # long: streamed text wanted
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(feeds, [chunk], "the flush raised")
+        self.assertTrue(stream.closed, "stream released before the fallback decode")
+        paste.assert_called_once_with("whole-file words")
+        self.assertEqual(config.read_status()["state"], "idle")
+        self.assertFalse(voice.processing)
+        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        self.assertEqual(
+            (record["raw"], record["streamed"]), ("whole-file words", False)
+        )
+
     def test_a_cancelled_streaming_job_does_not_touch_the_next_recording(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()

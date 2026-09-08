@@ -379,6 +379,7 @@ class VoiceToText:
         """
         next_state, error_message, stream = "idle", "", None
         handed_back = False  # streaming broke while held: release decodes whole-file
+        raw_text = None  # set once some decoder produced the text
         try:
             if live.cancelled:
                 return
@@ -445,6 +446,31 @@ class VoiceToText:
                 logger.warning(
                     f"Streaming failed ({error}); this recording is decoded after release"
                 )
+            elif raw_text is None and live.done.is_set() and not live.cancelled:
+                # Streaming broke at release (final push, flush or close): the
+                # audio is all still here, so decode it whole-file instead.
+                logger.warning(
+                    f"Streaming failed at release ({error}); decoding whole-file"
+                )
+                try:
+                    if stream is not None:
+                        stream.close()
+                        stream = None
+                    raw_text = self._transcribe_whole(
+                        np.concatenate(live.frames, axis=0)
+                    )
+                    stt_s = time.perf_counter() - live.stopped_at
+                    logger.info(
+                        f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s after release, whole-file fallback)"
+                    )
+                    if raw_text:
+                        self._deliver(raw_text, live.duration, stt_s, streamed=False)
+                    else:
+                        logger.warning("No speech detected")
+                except Exception as fallback_error:
+                    next_state = "error"
+                    error_message = f"{type(fallback_error).__name__}: {fallback_error}"
+                    logger.exception(f"Transcription failed: {fallback_error}")
             else:
                 next_state, error_message = "error", f"{type(error).__name__}: {error}"
                 logger.exception(f"Transcription failed: {error}")
