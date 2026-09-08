@@ -403,6 +403,8 @@ class VoiceToText:
                 live.done.wait(0.1)
             if live.cancelled:
                 return
+            if not live.frames:  # the microphone delivered nothing: back to idle
+                return
             self._set_state("transcribing")
             streamed = live.duration >= backends.STREAM_TAKEOVER_S
             if streamed:
@@ -412,8 +414,6 @@ class VoiceToText:
                 raw_text = self._transcribe_whole(np.concatenate(live.frames, axis=0))
             stream = None
             stt_s = time.perf_counter() - live.stopped_at
-            if not live.frames:
-                return
             if peak < 1e-4:  # dead silence == no mic access, not a quiet room
                 error_message = "No audio captured. Check Microphone permission, then restart the launching app."
                 logger.error(error_message)

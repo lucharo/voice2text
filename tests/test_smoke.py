@@ -670,6 +670,26 @@ class V2TSmokeTests(unittest.TestCase):
         )
         self.assertEqual(config.read_status()["partial"], "hello secret words")
 
+    def test_a_streamed_recording_with_no_audio_returns_to_idle(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+        voice.stt.transcribe = mock.Mock()
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+            voice.record_start -= 1.0  # held, but the device produced no frames
+            voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            self.assertTrue(voice.process_next(timeout=0))
+
+        self.assertEqual(config.read_status()["state"], "idle")
+        self.assertFalse(voice.processing)
+        self.assertTrue(stream.closed)
+        voice.stt.transcribe.assert_not_called()
+        paste.assert_not_called()
+
     def test_a_cancelled_streaming_job_does_not_touch_the_next_recording(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
