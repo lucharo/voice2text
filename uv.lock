@@ -2504,7 +2504,7 @@ requires-dist = [
     { name = "mlx-lm" },
     { name = "mlx-whisper", marker = "extra == 'whisper'" },
     { name = "numpy", specifier = "<2.4" },
-    { name = "parakeet-mlx" },
+    { name = "parakeet-mlx", specifier = ">=0.5.2" },
     { name = "pynput" },
     { name = "pyobjc-framework-avfoundation", marker = "sys_platform == 'darwin'" },
     { name = "scipy" },
