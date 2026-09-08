@@ -34,6 +34,7 @@ class Config:
     sample_rate: int = 16000
     pause_music: bool = False
     save_history: bool = True
+    keep_last_audio: bool = True  # run/last-recording.wav, overwritten each time
     ollama_url: str = "http://localhost:11434"
 
 
@@ -60,6 +61,11 @@ def history_path() -> Path:
 
 def run_dir() -> Path:
     return home() / "run"
+
+
+def last_audio_path() -> Path:
+    """The most recent recording's audio, kept so a cut transcription can be redone."""
+    return run_dir() / "last-recording.wav"
 
 
 def _private_dir(path: Path) -> Path:
@@ -196,7 +202,11 @@ _SECTIONS = {
     },
     "hotkey": {"key": "hotkey"},
     "audio": {"sample_rate": "sample_rate"},
-    "behavior": {"pause_music": "pause_music", "save_history": "save_history"},
+    "behavior": {
+        "pause_music": "pause_music",
+        "save_history": "save_history",
+        "keep_last_audio": "keep_last_audio",
+    },
     "ollama": {"url": "ollama_url"},
 }
 
@@ -234,7 +244,7 @@ def _validate(cfg: Config) -> None:
             )
     if not isinstance(cfg.sample_rate, int) or cfg.sample_rate <= 0:
         raise SystemExit("audio.sample_rate must be a positive integer")
-    for field in ("cleanup_enabled", "pause_music", "save_history"):
+    for field in ("cleanup_enabled", "pause_music", "save_history", "keep_last_audio"):
         if not isinstance(getattr(cfg, field), bool):
             raise SystemExit(f"{field} must be true or false")
     for field in ("stt_model", "cleanup_model", "ollama_url"):
@@ -265,6 +275,7 @@ sample_rate = 16000
 [behavior]
 pause_music = false
 save_history = true    # append every transcription to history/transcriptions.jsonl
+keep_last_audio = true # keep the last recording's audio at run/last-recording.wav (v2t transcribe it if a dictation came out cut)
 
 [ollama]
 url = "http://localhost:11434"

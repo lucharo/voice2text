@@ -499,6 +499,7 @@ def cmd_config(argv: list[str]) -> int:
         f"config:  {config.config_path()}{'' if config.config_path().exists() else '  (using defaults; v2t config --init to create)'}"
     )
     print(f"history: {config.history_path()}")
+    print(f"audio:   {config.last_audio_path()}  (last recording, if keep_last_audio)")
     if not a.path:
         from dataclasses import asdict
 
