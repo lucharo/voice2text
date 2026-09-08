@@ -79,6 +79,7 @@ v2t --strict             # heavier cleanup: restructures, drops false starts
 v2t --no-cleanup         # paste raw transcription, skip the LLM
 v2t --backend whisper    # use the whisper backend for this run
 v2t --pause-music        # pause media while recording (needs nowplaying-cli)
+v2t --no-streaming       # decode after release instead of while the hotkey is held
 
 v2t transcribe memo.opus # transcribe a file you already have (no microphone)
 
