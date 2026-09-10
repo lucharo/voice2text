@@ -1788,6 +1788,39 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(body.count("# v2t dictionary"), 1, "header emitted once")
         self.assertEqual(config.read_dictionary(), (["Alpha", "Beta"], []))
 
+    def test_dictionary_apply_rewrites_a_transcript_and_reports_what_fired(self):
+        config.write_dictionary(
+            ["Parakeet"], [("Alpha Kive", "alphaXiv"), ("Gorel", "org-rl")]
+        )
+        transcript = Path(self.tempdir.name) / "raw.txt"
+        transcript.write_text("Look at the Alpha Kive post, then alpha kive again.\n")
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.cmd_dictionary(["apply", str(transcript)])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.getvalue(), "Look at the alphaXiv post, then alphaXiv again.\n"
+        )
+        self.assertEqual(
+            err.getvalue(), "1 of 2 replacements fired: Alpha Kive => alphaXiv\n"
+        )
+
+    def test_dictionary_apply_reads_stdin_when_no_file_is_given(self):
+        config.write_dictionary([], [("whisper flow", "Wispr Flow")])
+
+        out = io.StringIO()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO("I use whisper flow daily")),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = cli.cmd_dictionary(["apply"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "I use Wispr Flow daily")
+
     def test_dictionary_edits_apply_without_a_restart(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.cleaner = mock.Mock(vocabulary=())

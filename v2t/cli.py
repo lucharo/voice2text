@@ -4,7 +4,7 @@ v2t                 run push-to-talk (default)
 v2t transcribe      transcribe existing audio files (no microphone)
 v2t setup           guided first-run config (pick models, detect Ollama)
     v2t history         show or search past transcriptions
-    v2t dictionary      names and jargon to spell right (add / import-wispr)
+    v2t dictionary      names and jargon to spell right (add / import-wispr / apply)
     v2t config          show resolved config + paths   (--init to write a template)
     v2t status          live state line (off / starting / idle / recording / …)
     v2t stop            stop a running v2t
@@ -445,9 +445,29 @@ def cmd_dictionary(argv: list[str]) -> int:
         "import-wispr", help="merge Wispr Flow's dictionary from its local database"
     )
     wispr.add_argument("--db", type=Path, default=WISPR_FLOW_DB)
+    check = sub.add_parser(
+        "apply",
+        help="run the replacements over a transcript (file or stdin) and say which fired",
+    )
+    check.add_argument("file", nargs="?", type=Path, help="text file; stdin when omitted")
     a = p.parse_args(argv)
 
     terms, replacements = config.read_dictionary()
+    if a.action == "apply":
+        text = a.file.read_text() if a.file else sys.stdin.read()
+        fired: list[str] = []
+        for heard, written in replacements:  # in file order, like the real pass
+            rewritten = config.apply_replacements(text, [(heard, written)])
+            if rewritten != text:
+                fired.append(f"{heard} => {written}")
+            text = rewritten
+        sys.stdout.write(text)
+        print(
+            f"{len(fired)} of {len(replacements)} replacements fired"
+            + (": " + ", ".join(fired) if fired else ""),
+            file=sys.stderr,
+        )
+        return 0
     if a.action == "add":
         entry = " ".join(a.entry).strip()
         if "=>" in entry:

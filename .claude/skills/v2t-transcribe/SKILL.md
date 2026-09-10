@@ -52,7 +52,8 @@ Anything ffmpeg reads works: `.wav`, `.m4a`, `.mp3`, `.opus`, and video files.
   raw and clean text, `--json` re-emits records. Prefer it over opening the JSONL.
 - **Dictionary.** Names and jargon in `~/.v2t/dictionary.txt` guide the cleanup pass (`--clean`) towards
   the right spelling; only `heard => written` lines are deterministic, and those apply even without
-  cleanup. `v2t dictionary add <term>`.
+  cleanup. `v2t dictionary add <term>`. To turn a transcript's mishearings into entries and prove
+  they fire, follow the `v2t-dictionary` skill next to this one.
 
 Long recordings can take a while — run them in the background rather than blocking, and read the
 summary line when they finish.
