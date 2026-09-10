@@ -1807,6 +1807,19 @@ class V2TSmokeTests(unittest.TestCase):
             err.getvalue(), "1 of 2 replacements fired: Alpha Kive => alphaXiv\n"
         )
 
+    def test_dictionary_apply_reports_a_missing_file_instead_of_raising(self):
+        config.write_dictionary([], [("a", "b")])
+
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cli.cmd_dictionary(["apply", "~/definitely-missing-transcript.txt"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            err.getvalue(),
+            f"no such file: {Path.home() / 'definitely-missing-transcript.txt'}\n",
+        )
+
     def test_dictionary_apply_reads_stdin_when_no_file_is_given(self):
         config.write_dictionary([], [("whisper flow", "Wispr Flow")])
 

@@ -454,6 +454,11 @@ def cmd_dictionary(argv: list[str]) -> int:
 
     terms, replacements = config.read_dictionary()
     if a.action == "apply":
+        if a.file is not None:
+            a.file = a.file.expanduser()
+            if not a.file.is_file():
+                print(f"no such file: {a.file}", file=sys.stderr)
+                return 1
         text = a.file.read_text() if a.file else sys.stdin.read()
         fired: list[str] = []
         for heard, written in replacements:  # in file order, like the real pass
