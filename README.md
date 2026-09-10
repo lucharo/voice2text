@@ -155,7 +155,11 @@ v2t dictionary                       # list
 v2t dictionary add Parakeet          # a term
 v2t dictionary add "whisper flow => Wispr Flow"
 v2t dictionary import-wispr          # merge Wispr Flow's dictionary from its local database
+v2t dictionary apply transcript.txt  # run the replacements over a transcript; stderr says which fired
 ```
+
+`apply` reads stdin when no file is given, so a new `heard => written` line can be proven against
+the raw text that prompted it before the next dictation.
 
 ### Startup time
 
