@@ -54,7 +54,8 @@ a hint, and every term rides along in every cleanup call, so the list stays lean
    stdout is the raw text with the replacements applied; stderr names the entries that fired.
    Done when every replacement added in step 4 is in that list. A term cannot be checked this
    way; it shows only in the next cleanup pass. When the audio is still around
-   (`~/.v2t/run/last-recording.wav` is the most recent dictation), `v2t transcribe` it and grep.
+   (`~/.v2t/run/last-recording.wav` is the most recent dictation), `v2t transcribe --clean` it with the
+   mode the dictation used (`--casual` is the default) and grep; terms only show through cleanup.
 6. **Report** the entries added, the pairs skipped and why, and any spelling you had to ask
    about.
 
