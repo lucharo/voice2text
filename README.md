@@ -93,9 +93,14 @@ v2t menubar install      # optional: compile + open the tiny native menu app
 v2t service install      # optional: start that menu app at login
 ```
 
-Hold **Right Command** to record, release to transcribe and paste. For longer dictations,
-**double-tap** Right Command: it keeps recording hands-free until you tap it once more, like Wispr
-Flow's double-Escape. A single short tap does nothing.
+Hold **Fn** (the 🌐 key, bottom-left) to record, release to transcribe and paste. The microphone
+opens on the press, but nothing shows until the key has been down for half a second, so a short
+tap or a shortcut that happens to include the key (Fn+arrow) leaves no trace. For longer
+dictations, **double-tap** Fn: it keeps recording hands-free until you tap it once more, like Wispr
+Flow's double-Escape. `key = "cmd_r"` under `[hotkey]` brings back Right Command.
+
+For Fn to be free, System Settings → Keyboard → *Press 🌐 key to* must be **Do Nothing**
+(`defaults write com.apple.HIToolbox AppleFnUsageType -int 0`); `v2t` warns in the log otherwise.
 
 ### Transcribing files
 
@@ -194,7 +199,7 @@ model = ""             # blank = engine default
 mode = "casual"        # casual | strict
 
 [hotkey]
-key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
+key = "fn"             # fn (the 🌐 key, bottom-left) | cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
 
 [behavior]
 pause_music = false

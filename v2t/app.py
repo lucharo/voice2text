@@ -25,12 +25,15 @@ from .config import Config
 
 
 MIC_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+FN_VK = 0x3F  # kVK_Function: the Fn / Globe key, bottom-left on Apple keyboards
+GLOBE_KEY_FIX = "defaults write com.apple.HIToolbox AppleFnUsageType -int 0"
 
 
 def _resolve_hotkey(name: str):
     from pynput import keyboard
 
     keys = {
+        "fn": keyboard.KeyCode.from_vk(FN_VK),
         "cmd_r": keyboard.Key.cmd_r,
         "cmd_l": keyboard.Key.cmd_l,
         "alt_r": keyboard.Key.alt_r,
@@ -41,6 +44,49 @@ def _resolve_hotkey(name: str):
     if name not in keys:
         raise SystemExit(f"unknown hotkey {name!r}; choose: {', '.join(keys)}")
     return keys[name]
+
+
+def _listener(on_press, on_release):
+    """pynput's global listener, taught the Fn key.
+
+    Fn arrives as a flags-changed event like the other modifiers, but pynput
+    has no flag on record for it, so it would report every Fn event as a
+    release. Its flag is kCGEventFlagMaskSecondaryFn.
+    """
+    from pynput import keyboard
+    from Quartz import kCGEventFlagMaskSecondaryFn
+
+    class Listener(keyboard.Listener):
+        _MODIFIER_FLAGS = {
+            **keyboard.Listener._MODIFIER_FLAGS,
+            keyboard.KeyCode.from_vk(FN_VK): kCGEventFlagMaskSecondaryFn,
+        }
+
+    return Listener(on_press=on_press, on_release=on_release)
+
+
+def globe_key_warning() -> str:
+    """Why a tap of Fn may still do something else, or '' when the key is free.
+
+    System Settings → Keyboard → "Press 🌐 key to" opens the emoji picker or
+    switches input source on a tap unless it is "Do Nothing"
+    (AppleFnUsageType 0, which is not written until the setting is changed).
+    """
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "com.apple.HIToolbox", "AppleFnUsageType"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # no `defaults`: not macOS, nothing to warn about
+        return ""
+    if result.returncode == 0 and result.stdout.strip() == "0":
+        return ""
+    return (
+        'System Settings → Keyboard → "Press 🌐 key to" is not "Do Nothing", so a tap '
+        f"of Fn may also open the emoji picker or switch input source. Fix: {GLOBE_KEY_FIX}"
+    )
 
 
 def _tail(text: str, limit: int = 80) -> str:
@@ -139,6 +185,9 @@ class VoiceToText:
         self.finalizing_recording = False
         self.startup_complete = False
         self.latched = False  # hands-free recording after a double-tap
+        self.shown = False  # the recording is past the hold threshold and visible
+        self.chorded = False  # the hotkey was part of a shortcut, not a dictation
+        self.hold_timer: threading.Timer | None = None
         self.press_at = 0.0
         self.last_tap_at = 0.0
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
@@ -231,11 +280,18 @@ class VoiceToText:
             logger.warning(f"Could not release audio devices: {error}")
         sd._initialize()
 
-    def start_recording(self):
+    def start_recording(self, show: bool = True):
+        """Open the microphone; with `show` the recording is also made visible.
+
+        A held hotkey opens the microphone at once so no speech is lost, but
+        stays invisible until `_show_recording` (nothing in the status file or
+        log, no music paused, no streaming), so a tap or a chord leaves no trace.
+        """
         with self.lifecycle_lock:
             if self.stopping or self.recording or self.processing:
                 return
             self.frames = []
+            self.shown = False
             self.record_start = time.perf_counter()
             try:
                 self._refresh_audio_devices()
@@ -264,7 +320,14 @@ class VoiceToText:
                 self.recording = False
                 self._close_stream()
                 return
+            if show:
+                self._show_recording()
 
+    def _show_recording(self) -> None:
+        with self.lifecycle_lock:
+            if not self.recording or self.shown:
+                return
+            self.shown = True
             if self.cfg.pause_music:
                 result = subprocess.run(
                     ["nowplaying-cli", "get", "playbackRate"],
@@ -297,6 +360,7 @@ class VoiceToText:
 
     def stop_recording(self):
         with self.lifecycle_lock:
+            self._cancel_hold_timer()
             if not self.recording:
                 return
             self.recording = False
@@ -659,17 +723,30 @@ class VoiceToText:
 
     # --- run loop -----------------------------------------------------------
     # --- hotkey: hold to talk, or double-tap for hands-free -----------------
-    # A press shorter than TAP_S is a tap and never transcribes (nothing said in
-    # 0.3s is a dictation). Two taps within DOUBLE_TAP_S latch the recorder on;
-    # the next tap stops it and transcribes. A long hold still works as before.
-    TAP_S = 0.3
+    # The microphone opens on press, but the recording only shows once the key
+    # has been down for HOLD_S. A shorter press is a tap and is dropped without
+    # a trace (nothing said in 0.5 s is a dictation); a press joined by another
+    # key before then (Fn+arrow, Cmd+Enter) is a chord and is dropped at once,
+    # and does not count as a tap. Two taps within DOUBLE_TAP_S latch the
+    # recorder on; the next tap stops it and transcribes.
+    HOLD_S = 0.5
     DOUBLE_TAP_S = 0.5
 
     def on_press(self, key):
-        if key != self.hotkey or self.latched:
+        if key != self.hotkey:
+            if self.recording and not self.shown and not self.latched:
+                self.chorded = True
+                self.cancel_recording()
+            return
+        if self.latched:
             return
         self.press_at = time.perf_counter()
-        self.start_recording()
+        self.chorded = False
+        self.start_recording(show=False)
+        if self.recording:
+            self.hold_timer = threading.Timer(self.HOLD_S, self._show_recording)
+            self.hold_timer.daemon = True
+            self.hold_timer.start()
 
     def on_release(self, key):
         if key != self.hotkey:
@@ -679,7 +756,10 @@ class VoiceToText:
             self.latched = False
             self.stop_recording()
             return
-        if now - self.press_at >= self.TAP_S:
+        if self.chorded:
+            self.chorded = False
+            return
+        if now - self.press_at >= self.HOLD_S:
             self.stop_recording()
             return
         self.cancel_recording()
@@ -692,9 +772,15 @@ class VoiceToText:
         else:
             self.last_tap_at = now
 
+    def _cancel_hold_timer(self) -> None:
+        if self.hold_timer is not None:
+            self.hold_timer.cancel()
+            self.hold_timer = None
+
     def cancel_recording(self):
         """Drop an in-progress recording without transcribing it."""
         with self.lifecycle_lock:
+            self._cancel_hold_timer()
             if not self.recording:
                 return
             self.recording = False
@@ -767,8 +853,6 @@ class VoiceToText:
                 )
 
     def run(self):
-        from pynput import keyboard
-
         try:
             self.instance_lock = config.acquire_instance_lock()
         except BlockingIOError:
@@ -791,9 +875,9 @@ class VoiceToText:
                 f"Hold {self.cfg.hotkey} to record, release to transcribe and paste; "
                 f"double-tap it for hands-free, tap again to stop. Ctrl+C to quit."
             )
-            with keyboard.Listener(
-                on_press=self.on_press, on_release=self.on_release
-            ) as listener:
+            if self.cfg.hotkey == "fn" and (warning := globe_key_warning()):
+                logger.warning(warning)
+            with _listener(self.on_press, self.on_release) as listener:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break
@@ -841,6 +925,7 @@ class VoiceToText:
         self._set_state("stopping")
         self.jobs.put(None)
         with self.lifecycle_lock:
+            self._cancel_hold_timer()
             self.recording = False
             if self.live is not None:
                 live, self.live = self.live, None
