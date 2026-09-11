@@ -54,6 +54,7 @@ comes prebuilt, signed with Developer ID and notarised, so it also installs on a
 signing identity, such as a managed work laptop:
 
 ```bash
+brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text   # Homebrew 6 loads no third-party tap it has not been told to trust
 brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
 brew install --cask voice2text   # /Applications/Voice2Text.app; the engine above stays separate
 ```
@@ -261,6 +262,7 @@ reasoning. The defaults don't.
 ## Optional menu-bar app
 
 ```bash
+brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text
 brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
 brew install --cask voice2text   # prebuilt, notarised: /Applications/Voice2Text.app
 v2t menubar install              # or compile it here into ~/Applications/Voice2Text.app

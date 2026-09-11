@@ -1,5 +1,7 @@
 # Homebrew cask for the notarised Voice2Text menu-bar app. The repository is
-# public, so the zip is a plain GitHub Release download:
+# public, so the zip is a plain GitHub Release download. Homebrew 6 loads no
+# third-party tap it has not been told to trust, hence the first line:
+#   brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text
 #   brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
 #   brew install --cask voice2text
 # The app is only the native shell; the engine is `uv tool install voice2text`.

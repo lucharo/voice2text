@@ -158,8 +158,9 @@ _Created: 2026-09-11 · Verified: 2026-09-11 (a 62 s headset recording with `lou
 
 ## How do I get the menu app onto a Mac that has no Apple signing identity, such as a managed work laptop?
 
-**Short answer:** Install the prebuilt one. `brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git` then
-`brew install --cask voice2text` puts a `Voice2Text.app` signed with a Developer ID Application
+**Short answer:** Install the prebuilt one. `brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text`
+(Homebrew 6 refuses to load a third-party tap it has not been told to trust), then `brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git` and
+`brew install --cask voice2text` put a `Voice2Text.app` signed with a Developer ID Application
 certificate (team `7V3HZUL435`), notarised by Apple and stapled, into `/Applications`; Gatekeeper
 accepts it with no certificate on the installing Mac. The engine is still `uv tool install
 voice2text`: the shell carries no user paths and finds `~/.v2t` and that interpreter at launch,

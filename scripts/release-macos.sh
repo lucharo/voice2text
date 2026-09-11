@@ -201,6 +201,7 @@ if [[ "$publish" == true ]]; then
   zip_sha="$(shasum -a 256 "$final_zip" | awk '{ print $1 }')"
   update_cask "Casks/$cask_token.rb" "$version" "$zip_sha"
   echo "Published $tag; Casks/$cask_token.rb now points at it. Commit it, then:"
+  echo "  brew trust --tap lucharo/$cask_token && brew trust --cask lucharo/$cask_token/$cask_token"
   echo "  brew tap lucharo/$cask_token https://github.com/$gh_repo.git && brew install --cask $cask_token"
 fi
 
