@@ -34,7 +34,7 @@ enough now that the basics fit in a small Python package on consumer hardware.
 - **In-process LLM cleanup** via mlx-lm (`Qwen3.5-2B`) — punctuation and fillers, keeping 98% of your words on a 208-dictation benchmark. No Ollama, no daemon. Casual or strict. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
 - **Pastes at cursor**, restoring your previous clipboard.
 - **File transcription** — `v2t transcribe memo.opus` runs the same local models over audio you already have (see [Transcribing files](#transcribing-files)).
-- **One config file** at `~/.v2t/config.toml`, plus a JSONL **history** of every transcription.
+- **One config file** at `~/.v2t/config.toml`, plus a SQLite **history** of every transcription: text, timings, and which microphone at what level.
 - **Optional one-file Swift menu** — native permissions, instant state, and quick links; no window or Xcode project.
 
 ## Install
@@ -135,15 +135,27 @@ small model treats your dictation as text to clean rather than a question to ans
 
 ### History
 
-Every dictation and file transcription is appended to `~/.v2t/history/transcriptions.jsonl`
-(raw text, cleaned text, models, timings). Read it back without opening the file:
+Every dictation and file transcription is one row in `~/.v2t/history/history.sqlite`, table
+`transcriptions`: raw and cleaned text, models and timings, how it was triggered (hold, latched,
+file), the input device it was recorded from, its level (`rms`, `peak`, `zero_frac`, and
+`loud_frac`, the share of the recording with speech-level sound), cleanup chunk stats, dictionary
+replacements fired, and the outcome. Failed dictations are rows too (`outcome = 'error: …'`), so a
+dead microphone shows up next to the device that produced it. Read it back without opening the
+database:
 
 ```bash
 v2t history                 # the last 10, oldest first, with timings
 v2t history -n 3 --raw      # show the raw transcription next to the cleaned one
 v2t history standup         # entries whose raw or clean text mentions "standup"
-v2t history --json -n 0     # every record as JSONL, for jq and friends
+v2t history --json -n 0     # every row as JSON lines, for jq and friends
+sqlite3 ~/.v2t/history/history.sqlite "select ts, device, loud_frac, outcome from transcriptions order by id desc limit 5"
 ```
+
+A pre-existing `transcriptions.jsonl` is imported into the database the first time it is opened,
+and lines an older, still-running v2t appends afterwards are picked up on the next open; the file
+itself is left alone. When a dictation carries almost no speech-level sound (a Bluetooth headset whose
+link never opened, a virtual device), the text is still pasted, but the log, a macOS notification
+and the `warning` field of `v2t status` name the device and the level.
 
 The menu-bar app shows the last transcription too, with a **Copy Last Transcription** action for
 when the paste landed in the wrong window.
@@ -179,7 +191,7 @@ Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HO
 ```
 ~/.v2t/
   config.toml                    # all settings (v2t config --init to create)
-  history/transcriptions.jsonl   # every transcription + metadata (toggle in config)
+  history/history.sqlite         # every transcription + metadata, one row each (toggle in config)
   run/                           # private runtime status + log
   run/last-recording.wav         # the last dictation's audio, replaced every time (toggle in config)
 ```

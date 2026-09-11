@@ -27,6 +27,8 @@ from .config import Config
 MIC_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 FN_VK = 0x3F  # kVK_Function: the Fn / Globe key, bottom-left on Apple keyboards
 GLOBE_KEY_FIX = "defaults write com.apple.HIToolbox AppleFnUsageType -int 0"
+LOUD_RMS = 0.01  # a 100 ms frame above this holds speech-level sound (full scale 1)
+SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
 def _resolve_hotkey(name: str):
@@ -87,6 +89,76 @@ def globe_key_warning() -> str:
         'System Settings → Keyboard → "Press 🌐 key to" is not "Do Nothing", so a tap '
         f"of Fn may also open the emoji picker or switch input source. Fix: {GLOBE_KEY_FIX}"
     )
+
+
+def audio_levels(audio: np.ndarray, sample_rate: int) -> dict:
+    """Level facts about one recording, for its history row and the input warning.
+
+    `loud_frac` is the share of 100 ms frames inside a run of three or more
+    whose RMS is above LOUD_RMS: speech, not a click or the pop of a Bluetooth
+    link opening. A dictation into a working microphone sits well above 0.1; a
+    dead Bluetooth or virtual input gives about 0.
+    """
+    x = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if x.size == 0:
+        return {"rms": 0.0, "peak": 0.0, "zero_frac": 1.0, "loud_frac": 0.0}
+    frame = max(1, sample_rate // 10)
+    frames = x[: x.size // frame * frame].reshape(-1, frame)
+    loud = 0.0
+    if len(frames):
+        above = np.sqrt((frames**2).mean(axis=1)) > LOUD_RMS
+        in_run = np.zeros(len(above), dtype=bool)
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], above.astype(int), [0]))))
+        for start, stop in zip(edges[::2], edges[1::2]):  # each run of loud frames
+            if stop - start >= 3:
+                in_run[start:stop] = True
+        loud = float(in_run.mean())
+    return {
+        "rms": round(float(np.sqrt((x**2).mean())), 5),
+        "peak": round(float(np.abs(x).max()), 4),
+        "zero_frac": round(float((x == 0).mean()), 4),
+        "loud_frac": round(loud, 4),
+    }
+
+
+def level_warning(levels: dict, audio_s: float, device: str | None) -> str:
+    """Why this recording probably did not carry the speech, or ''."""
+    if audio_s < 1.0 or levels["peak"] < 1e-4 or levels["loud_frac"] >= 0.02:
+        return ""
+    where = f" from {device}" if device else ""
+    return (
+        f"Near-silent audio{where}: speech-level sound in "
+        f"{levels['loud_frac']:.0%} of {audio_s:.0f}s (peak {levels['peak']:.2f}). "
+        "Check System Settings → Sound → Input."
+    )
+
+
+def _default_input_name() -> str | None:
+    """The input device a recording started now would use."""
+    try:
+        return str(sd.query_devices(kind="input")["name"])
+    except Exception:
+        return None
+
+
+def _notify(title: str, text: str) -> None:
+    """A macOS notification, best effort (Notification Center may be muted)."""
+
+    def quote(value: str) -> str:
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f"display notification {quote(text)} with title {quote(title)}",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:  # no osascript: not macOS
+        pass
 
 
 def _tail(text: str, limit: int = 80) -> str:
@@ -185,6 +257,9 @@ class VoiceToText:
         self.finalizing_recording = False
         self.startup_complete = False
         self.latched = False  # hands-free recording after a double-tap
+        self.trigger = "hold"  # hold | latched: how the current recording started
+        self.input_device: str | None = None  # device the current recording uses
+        self.warning = ""  # about the last dictation, shown until the next one
         self.shown = False  # the recording is past the hold threshold and visible
         self.chorded = False  # the hotkey was part of a shortcut, not a dictation
         self.hold_timer: threading.Timer | None = None
@@ -217,6 +292,7 @@ class VoiceToText:
                 "state": state,
                 **self.status_details,
                 "error": clean_error,
+                "warning": self.warning,
             }
             if partial:  # what the streaming recogniser has heard so far
                 status["words"] = len(partial.split())
@@ -295,6 +371,7 @@ class VoiceToText:
             self.record_start = time.perf_counter()
             try:
                 self._refresh_audio_devices()
+                self.input_device = _default_input_name()
                 self.stream = sd.InputStream(
                     samplerate=self.cfg.sample_rate,
                     channels=1,
@@ -328,6 +405,7 @@ class VoiceToText:
             if not self.recording or self.shown:
                 return
             self.shown = True
+            self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
                 result = subprocess.run(
                     ["nowplaying-cli", "get", "playbackRate"],
@@ -385,19 +463,14 @@ class VoiceToText:
                 self.finalizing_recording = False
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
-        next_state, error_message = "idle", ""
+        next_state, error_message, levels = "idle", "", None
         try:
             self._set_state("transcribing")
             audio = np.concatenate(frames, axis=0)
             self._keep_audio(audio)
-            if (
-                float(np.abs(audio).max()) < 1e-4
-            ):  # dead silence == no mic access, not a quiet room
-                error_message = "No audio captured. Check Microphone permission, then restart the launching app."
-                logger.error(error_message)
-                if not self._warned_mic:
-                    self._warned_mic = True
-                    subprocess.run(["open", MIC_PANE], check=False)
+            levels = audio_levels(audio, self.cfg.sample_rate)
+            if levels["peak"] < 1e-4:  # dead silence == no mic access, not a quiet room
+                error_message = self._no_audio(audio_s, levels)
                 next_state = "error"
                 return
             logger.info("Transcribing...")
@@ -407,18 +480,74 @@ class VoiceToText:
             stt_s = time.perf_counter() - t0
             logger.info(f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s)")
             if not raw_text:
-                logger.warning("No speech detected")
+                self._no_speech(audio_s, levels, stt_s)
                 return
 
-            self._deliver(raw_text, audio_s, stt_s, streamed=False)
+            self._deliver(raw_text, audio_s, stt_s, streamed=False, levels=levels)
         except Exception as error:
             next_state, error_message = "error", f"{type(error).__name__}: {error}"
             logger.exception(f"Transcription failed: {error}")
+            if levels is not None:  # the audio was there: keep the failure on record
+                self._record(audio_s, levels, outcome=f"error: {error_message}")
         finally:
             self._restore_media()
             if not self.stopping:
                 self._set_state(next_state, error_message)
             self.processing = False
+
+    def _no_audio(self, audio_s: float, levels: dict) -> str:
+        """The dead-input error: log it, open the Microphone pane once, record it."""
+        message = "No audio captured. Check Microphone permission, then restart the launching app."
+        logger.error(message)
+        if not self._warned_mic:
+            self._warned_mic = True
+            subprocess.run(["open", MIC_PANE], check=False)
+        self._record(audio_s, levels, outcome="error: no audio captured")
+        return message
+
+    def _no_speech(self, audio_s: float, levels: dict, stt_s: float) -> None:
+        logger.warning("No speech detected")
+        warning = self._warn_about_level(levels, audio_s)
+        self._record(
+            audio_s,
+            levels,
+            level_warning=warning or None,
+            outcome="error: no speech detected",
+            stt_s=round(stt_s, 3),
+        )
+
+    def _warn_about_level(self, levels: dict, audio_s: float) -> str:
+        """Publish the near-silent warning (log, notification, status) and return it.
+
+        The warning names the device so a dead headset link is caught before
+        the next dictation; whatever text there was is still pasted.
+        """
+        warning = level_warning(levels, audio_s, self.input_device) if levels else ""
+        if warning:
+            logger.warning(warning)
+            self.warning = warning  # status.json, until the next recording
+            _notify("v2t: check your microphone", warning)
+        return warning
+
+    def _record(self, audio_s: float, levels: dict, **fields) -> None:
+        """One history row for the current recording, if history is on."""
+        if not self.cfg.save_history:
+            return
+        try:
+            config.append_history(
+                {
+                    "trigger": self.trigger,
+                    "device": self.input_device,
+                    "sample_rate": self.cfg.sample_rate,
+                    "audio_s": round(audio_s, 2),
+                    **levels,
+                    "backend": self.cfg.backend,
+                    "model": self.stt_model,
+                    **fields,
+                }
+            )
+        except OSError as error:
+            logger.warning(f"Could not save transcription history: {error}")
 
     def _keep_audio(self, audio: np.ndarray) -> None:
         """Keep this recording's audio as run/last-recording.wav (owner-only, replaced
@@ -467,13 +596,13 @@ class VoiceToText:
         next_state, error_message, stream = "idle", "", None
         handed_back = False  # streaming broke while held: release decodes whole-file
         raw_text = None  # set once some decoder produced the text
+        levels = None  # set once the recording's audio is in hand
         try:
             if live.cancelled:
                 return
             self.refresh_dictionary()
             stream = self.stt.stream()
             feeder = backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
-            peak = 0.0
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
@@ -481,7 +610,6 @@ class VoiceToText:
                 pushed = False
                 for frame in live.frames[live.fed :]:
                     live.fed += 1
-                    peak = max(peak, float(np.abs(frame).max()))
                     pushed = feeder.push(frame) or pushed
                 if pushed and not live.done.is_set():  # after release: no more partials
                     self._show_partial(stream.text, feeder.sent_samples)
@@ -495,6 +623,7 @@ class VoiceToText:
             self._set_state("transcribing")
             audio = np.concatenate(live.frames, axis=0)
             self._keep_audio(audio)
+            levels = audio_levels(audio, self.cfg.sample_rate)
             streamed = live.duration >= backends.STREAM_TAKEOVER_S
             if streamed:
                 raw_text = stream.finish(feeder.take())
@@ -503,12 +632,8 @@ class VoiceToText:
                 raw_text = self._transcribe_whole(audio)
             stream = None
             stt_s = time.perf_counter() - live.stopped_at
-            if peak < 1e-4:  # dead silence == no mic access, not a quiet room
-                error_message = "No audio captured. Check Microphone permission, then restart the launching app."
-                logger.error(error_message)
-                if not self._warned_mic:
-                    self._warned_mic = True
-                    subprocess.run(["open", MIC_PANE], check=False)
+            if levels["peak"] < 1e-4:  # dead silence == no mic access, not a quiet room
+                error_message = self._no_audio(live.duration, levels)
                 next_state = "error"
                 return
             logger.info(
@@ -520,9 +645,11 @@ class VoiceToText:
                 )
             )
             if not raw_text:
-                logger.warning("No speech detected")
+                self._no_speech(live.duration, levels, stt_s)
                 return
-            self._deliver(raw_text, live.duration, stt_s, streamed=streamed)
+            self._deliver(
+                raw_text, live.duration, stt_s, streamed=streamed, levels=levels
+            )
         except Exception as error:
             with self.lifecycle_lock:
                 if not live.done.is_set() and self.live is live:
@@ -546,15 +673,22 @@ class VoiceToText:
                         stream = None
                     audio = np.concatenate(live.frames, axis=0)
                     self._keep_audio(audio)  # a push may have failed before the keep
+                    levels = audio_levels(audio, self.cfg.sample_rate)
                     raw_text = self._transcribe_whole(audio)
                     stt_s = time.perf_counter() - live.stopped_at
                     logger.info(
                         f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s after release, whole-file fallback)"
                     )
                     if raw_text:
-                        self._deliver(raw_text, live.duration, stt_s, streamed=False)
+                        self._deliver(
+                            raw_text,
+                            live.duration,
+                            stt_s,
+                            streamed=False,
+                            levels=levels,
+                        )
                     else:
-                        logger.warning("No speech detected")
+                        self._no_speech(live.duration, levels, stt_s)
                 except Exception as fallback_error:
                     next_state = "error"
                     error_message = f"{type(fallback_error).__name__}: {fallback_error}"
@@ -562,6 +696,8 @@ class VoiceToText:
             else:
                 next_state, error_message = "error", f"{type(error).__name__}: {error}"
                 logger.exception(f"Transcription failed: {error}")
+            if next_state == "error" and levels is not None:
+                self._record(live.duration, levels, outcome=f"error: {error_message}")
         finally:
             if stream is not None:
                 try:
@@ -587,10 +723,16 @@ class VoiceToText:
         self._set_state("recording", partial=text)
 
     def _deliver(
-        self, raw_text: str, audio_s: float, stt_s: float, streamed: bool
+        self,
+        raw_text: str,
+        audio_s: float,
+        stt_s: float,
+        streamed: bool,
+        levels: dict | None = None,
     ) -> None:
         """Clean up, paste and record one transcription. Raises on failure."""
-        cleaned_text, cleanup_s = raw_text, 0.0
+        levels = levels or {}
+        cleaned_text, cleanup_s, stats = raw_text, 0.0, {}
         if self.cleaner is not None:
             self._set_state("cleaning")
             logger.info("Cleaning up...")
@@ -603,7 +745,9 @@ class VoiceToText:
                 logger.info(
                     f"Cleaned {len(cleaned_text)} characters ({cleanup_s:.2f}s)"
                 )
-                stats = getattr(self.cleaner, "last_stats", {})
+                stats = getattr(self.cleaner, "last_stats", None)
+                if not isinstance(stats, dict):  # engines without chunk stats
+                    stats = {}
                 if stats.get("guarded") or stats.get("limited"):
                     logger.warning(
                         f"Cleanup kept raw text for {stats.get('guarded', 0)} chunk(s) "
@@ -614,6 +758,7 @@ class VoiceToText:
                 logger.error(f"LLM cleanup failed: {e}")
                 logger.warning("Falling back to raw transcription")
                 cleaned_text = raw_text
+        fired = config.replacements_fired(cleaned_text, self.replacements)
         cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
         t0 = time.perf_counter()
@@ -621,30 +766,26 @@ class VoiceToText:
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
-        if self.cfg.save_history:
-            try:
-                config.append_history(
-                    {
-                        "audio_s": round(audio_s, 2),
-                        "backend": self.cfg.backend,
-                        "model": self.stt_model,
-                        "cleanup_engine": self.cfg.cleanup_engine
-                        if self.cleaner
-                        else None,
-                        "cleanup_model": self.cleaner.model_id
-                        if self.cleaner
-                        else None,
-                        "mode": self.cfg.mode,
-                        "stt_s": round(stt_s, 3),
-                        "cleanup_s": round(cleanup_s, 3),
-                        "paste_s": round(paste_s, 3),
-                        "raw": raw_text,
-                        "clean": cleaned_text,
-                        "streamed": streamed,
-                    }
-                )
-            except OSError as error:
-                logger.warning(f"Could not save transcription history: {error}")
+        warning = self._warn_about_level(levels, audio_s)
+        self._record(
+            audio_s,
+            levels,
+            level_warning=warning or None,
+            streamed=streamed,
+            stt_s=round(stt_s, 3),
+            cleanup_engine=self.cfg.cleanup_engine if self.cleaner else None,
+            cleanup_model=self.cleaner.model_id if self.cleaner else None,
+            mode=self.cfg.mode,
+            cleanup_chunks=stats.get("chunks"),
+            cleanup_guarded=stats.get("guarded"),
+            cleanup_limited=stats.get("limited"),
+            cleanup_s=round(cleanup_s, 3),
+            replacements=len(fired),
+            paste_s=round(paste_s, 3),
+            raw=raw_text,
+            clean=cleaned_text,
+            outcome="pasted",
+        )
 
     def process_next(self, timeout: float | None = None) -> bool:
         """Process one queued recording on the model-owning thread."""
@@ -742,6 +883,7 @@ class VoiceToText:
             return
         self.press_at = time.perf_counter()
         self.chorded = False
+        self.trigger = "hold"
         self.start_recording(show=False)
         if self.recording:
             self.hold_timer = threading.Timer(self.HOLD_S, self._show_recording)
@@ -765,6 +907,7 @@ class VoiceToText:
         self.cancel_recording()
         if now - self.last_tap_at < self.DOUBLE_TAP_S:
             self.last_tap_at = 0.0
+            self.trigger = "latched"
             self.start_recording()
             self.latched = self.recording
             if self.latched:

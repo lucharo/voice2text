@@ -223,6 +223,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
                         file=sys.stderr,
                     )
             cleanup_s = time.perf_counter() - started
+        fired = config.replacements_fired(text, replacements)
         text = config.apply_replacements(text, replacements)
         elapsed = stt_s + cleanup_s
         speed = f" · {seconds / elapsed:.0f}× realtime" if seconds and elapsed else ""
@@ -235,6 +236,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
             try:
                 config.append_history(
                     {
+                        "trigger": "file",
                         "source": str(path),
                         "audio_s": round(seconds, 2),
                         "backend": cfg.backend,
@@ -245,8 +247,10 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
                         "mode": cfg.mode,
                         "stt_s": round(stt_s, 3),
                         "cleanup_s": round(cleanup_s, 3),
+                        "replacements": len(fired),
                         "raw": raw,
                         "clean": text,
+                        "outcome": "printed",
                     }
                 )
             except OSError as error:
@@ -346,7 +350,7 @@ def _history_header(record: dict) -> str:
 
 
 def cmd_history(argv: list[str]) -> int:
-    """Read the transcription history back without opening the JSONL by hand."""
+    """Read the transcription history back without opening the database by hand."""
     import json
 
     p = argparse.ArgumentParser(
@@ -365,7 +369,7 @@ def cmd_history(argv: list[str]) -> int:
     )
     p.add_argument("--raw", action="store_true", help="also show the raw transcription")
     p.add_argument(
-        "--json", action="store_true", help="print the matching JSONL records instead"
+        "--json", action="store_true", help="print the matching rows as JSON lines"
     )
     a = p.parse_args(argv)
 
@@ -449,7 +453,9 @@ def cmd_dictionary(argv: list[str]) -> int:
         "apply",
         help="run the replacements over a transcript (file or stdin) and say which fired",
     )
-    check.add_argument("file", nargs="?", type=Path, help="text file; stdin when omitted")
+    check.add_argument(
+        "file", nargs="?", type=Path, help="text file; stdin when omitted"
+    )
     a = p.parse_args(argv)
 
     terms, replacements = config.read_dictionary()
@@ -460,12 +466,8 @@ def cmd_dictionary(argv: list[str]) -> int:
                 print(f"no such file: {a.file}", file=sys.stderr)
                 return 1
         text = a.file.read_text() if a.file else sys.stdin.read()
-        fired: list[str] = []
-        for heard, written in replacements:  # in file order, like the real pass
-            rewritten = config.apply_replacements(text, [(heard, written)])
-            if rewritten != text:
-                fired.append(f"{heard} => {written}")
-            text = rewritten
+        fired = config.replacements_fired(text, replacements)
+        text = config.apply_replacements(text, replacements)
         sys.stdout.write(text)
         print(
             f"{len(fired)} of {len(replacements)} replacements fired"
@@ -611,17 +613,19 @@ def cmd_setup(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    """Runtime state, models, mode, and any launch error."""
+    """Runtime state, models, mode, any launch error, and the last dictation's warning."""
     from . import backends
 
     s = config.read_status()
+    warning = ""
     if s:
-        state, stt, cleanup, mode, error = (
+        state, stt, cleanup, mode, error, warning = (
             s["state"],
             s["stt"],
             s["cleanup"],
             s["mode"],
             s.get("error", ""),
+            s.get("warning", ""),
         )
     else:
         cfg = config.load()
@@ -646,6 +650,7 @@ def cmd_status(argv: list[str]) -> int:
             cleanup,
             mode,
             error,
+            warning,
         )
     ]
     print("\t".join(fields))

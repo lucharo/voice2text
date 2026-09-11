@@ -2,7 +2,7 @@
 
 Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     config.toml                  user settings
-    history/transcriptions.jsonl every transcription + metadata
+    history/history.sqlite       every transcription + metadata, one row each
     run/status.json              live state for CLI and menu-bar clients
 
 Zero config works: the defaults below are the shipped behaviour
@@ -14,6 +14,8 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import socket
+import sqlite3
 import tempfile
 import tomllib
 from dataclasses import dataclass
@@ -56,6 +58,12 @@ def config_path() -> Path:
 
 
 def history_path() -> Path:
+    """The SQLite history: one row per dictation or file transcription."""
+    return home() / "history" / "history.sqlite"
+
+
+def legacy_history_path() -> Path:
+    """The JSONL history written before the database; imported into it once."""
     return home() / "history" / "transcriptions.jsonl"
 
 
@@ -274,7 +282,7 @@ sample_rate = 16000
 
 [behavior]
 pause_music = false
-save_history = true    # append every transcription to history/transcriptions.jsonl
+save_history = true    # one row per transcription in history/history.sqlite
 keep_last_audio = true # keep the last recording's audio at run/last-recording.wav (v2t transcribe it if a dictation came out cut)
 
 [ollama]
@@ -301,15 +309,167 @@ def write_config(text: str, path: Path | None = None) -> Path:
     return path
 
 
-def append_history(record: dict) -> None:
-    """Append one private JSONL record."""
+# --- history: one big table, one row per dictation or file transcription ----
+# The tuple is the whole schema. A new column is appended here and added to an
+# existing database on its next open; booleans are 0/1; `extra` holds, as JSON,
+# whatever a writer sent that has no column yet.
+HISTORY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("ts", "TEXT NOT NULL"),  # UTC, ISO 8601
+    ("trigger", "TEXT"),  # hold | latched | file
+    ("source", "TEXT"),  # the audio file, for `v2t transcribe`
+    ("device", "TEXT"),  # input device the recording came from
+    ("sample_rate", "INTEGER"),
+    ("audio_s", "REAL"),
+    ("rms", "REAL"),  # level over the whole recording, full scale = 1
+    ("peak", "REAL"),
+    ("zero_frac", "REAL"),  # share of exactly-zero samples (a dead input)
+    ("loud_frac", "REAL"),  # share of 100 ms frames with speech-level sound
+    ("level_warning", "TEXT"),  # what the user was warned about, if anything
+    ("backend", "TEXT"),
+    ("model", "TEXT"),
+    ("streamed", "INTEGER"),
+    ("stt_s", "REAL"),
+    ("cleanup_engine", "TEXT"),
+    ("cleanup_model", "TEXT"),
+    ("mode", "TEXT"),
+    ("cleanup_chunks", "INTEGER"),
+    ("cleanup_guarded", "INTEGER"),  # chunks pasted raw: length changed too much
+    ("cleanup_limited", "INTEGER"),  # chunks pasted raw: hit the token limit
+    ("cleanup_s", "REAL"),
+    ("replacements", "INTEGER"),  # dictionary replacements that fired
+    ("paste_s", "REAL"),
+    ("raw", "TEXT"),
+    ("clean", "TEXT"),
+    ("outcome", "TEXT"),  # pasted | printed | error: <reason>
+    ("host", "TEXT"),
+    ("version", "TEXT"),
+    ("extra", "TEXT"),  # JSON
+)
+HISTORY_BOOLS = frozenset({"streamed"})
+
+
+def _history_db() -> sqlite3.Connection:
+    """The history database, created (and the old JSONL imported) on first use."""
     path = history_path()
     _private_dir(path.parent)
-    record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **record}
-    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    con = sqlite3.connect(path)
+    path.chmod(0o600)  # journal files inherit the database's mode
+    con.row_factory = sqlite3.Row
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS transcriptions (id INTEGER PRIMARY KEY, "
+        + ", ".join(f"{name} {kind}" for name, kind in HISTORY_COLUMNS)
+        + ")"
+    )
+    con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    present = {row["name"] for row in con.execute("PRAGMA table_info(transcriptions)")}
+    for name, kind in HISTORY_COLUMNS:
+        if name not in present:  # a column added since this database was made
+            kind = kind.replace(" NOT NULL", "")
+            con.execute(f"ALTER TABLE transcriptions ADD COLUMN {name} {kind}")
+    con.commit()
+    _import_legacy_history(con)
+    return con
+
+
+def _import_legacy_history(con: sqlite3.Connection) -> int:
+    """Rows the pre-database JSONL has gained since the last open. The file is left alone.
+
+    `meta.legacy_offset` is how many bytes of it are in the database. A v2t
+    from before the database keeps appending to the file until it is
+    restarted, so every open imports the complete lines past the offset. The
+    rows and the new offset land in one write transaction: a crash midway
+    leaves nothing behind and the next open imports again, and a second
+    process opening at the same time waits for the lock and finds the offset.
+    """
+    path = legacy_history_path()
+    marker = "SELECT value FROM meta WHERE key = 'legacy_offset'"
+    row = con.execute(marker).fetchone()
+    done = int(row[0]) if row else 0
+    if not path.exists() or path.stat().st_size <= done:
+        return 0
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        row = con.execute(marker).fetchone()
+        done = int(row[0]) if row else 0
+        with path.open("rb") as f:
+            f.seek(done)
+            data = f.read()
+        complete = data.rfind(b"\n") + 1  # a line still being written waits
+        count = 0
+        for line in data[:complete].decode("utf-8", "replace").splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict) or not record.get("ts"):
+                continue
+            record.setdefault("trigger", "file" if record.get("source") else "hold")
+            record.setdefault(
+                "outcome", "printed" if record.get("source") else "pasted"
+            )
+            _insert_history(con, record)
+            count += 1
+        con.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_offset', ?)",
+            (str(done + complete),),
+        )
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    return count
+
+
+def _insert_history(con: sqlite3.Connection, record: dict) -> None:
+    known = [name for name, _kind in HISTORY_COLUMNS]
+    row = {name: record[name] for name in known if name in record}
+    extra = {k: v for k, v in record.items() if k not in known and k != "id"}
+    if extra:
+        row["extra"] = json.dumps(extra, ensure_ascii=False)
+    for name in HISTORY_BOOLS:
+        if row.get(name) is not None:
+            row[name] = int(bool(row[name]))
+    names = list(row)
+    con.execute(
+        f"INSERT INTO transcriptions ({', '.join(names)}) "
+        f"VALUES ({', '.join('?' * len(names))})",
+        [row[name] for name in names],
+    )
+
+
+def append_history(record: dict) -> None:
+    """Add one row. `ts`, `host` and `version` are filled in when absent.
+
+    Storage trouble surfaces as OSError, like the file it replaced.
+    """
+    from . import __version__
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "host": socket.gethostname(),
+        "version": __version__,
+        **record,
+    }
+    try:
+        con = _history_db()
+        try:
+            _insert_history(con, record)
+            con.commit()
+        finally:
+            con.close()
+    except sqlite3.Error as error:
+        raise OSError(f"history database: {error}") from error
+
+
+def replacements_fired(text: str, replacements: list[tuple[str, str]]) -> list[str]:
+    """The `heard => written` entries that change `text`, applied in file order."""
+    fired = []
+    for heard, written in replacements:
+        rewritten = apply_replacements(text, [(heard, written)])
+        if rewritten != text:
+            fired.append(f"{heard} => {written}")
+        text = rewritten
+    return fired
 
 
 def dictionary_path() -> Path:
@@ -393,20 +553,23 @@ def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
 
 
 def read_history() -> list[dict]:
-    """Every history record, oldest first. Malformed lines are skipped, not fatal."""
-    path = history_path()
-    if not path.exists():
+    """Every row, oldest first, without its empty columns."""
+    if not history_path().exists() and not legacy_history_path().exists():
         return []
+    con = _history_db()
+    try:
+        rows = con.execute("SELECT * FROM transcriptions ORDER BY id").fetchall()
+    finally:
+        con.close()
     records = []
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict):
-            records.append(record)
+    for row in rows:
+        record = {key: row[key] for key in row.keys() if row[key] is not None}
+        for name in HISTORY_BOOLS:
+            if name in record:
+                record[name] = bool(record[name])
+        if "extra" in record:
+            record = {**json.loads(record.pop("extra")), **record}
+        records.append(record)
     return records
 
 
@@ -432,14 +595,17 @@ if __name__ == "__main__":
         # config.toml round-trips through the loader
         assert load().cleanup_engine == "mlx", "toml parsed"
 
-        append_history({"raw": "héllo", "clean": "Hello."})
-        line = json.loads(history_path().read_text().splitlines()[-1])
-        assert line["clean"] == "Hello." and line["ts"].endswith("+00:00"), (
-            "history roundtrip"
+        legacy_history_path().parent.mkdir(parents=True, exist_ok=True)
+        legacy_history_path().write_text(
+            '{"ts": "2026-01-01T00:00:00+00:00", "raw": "old", "clean": "Old."}\n'
+            "not json\n"
         )
-        with history_path().open("a") as f:
-            f.write("not json\n")
-        assert [r["clean"] for r in read_history()] == ["Hello."], "skips bad lines"
+        append_history({"raw": "héllo", "clean": "Hello.", "streamed": True})
+        rows = read_history()
+        assert [r["clean"] for r in rows] == ["Old.", "Hello."], "import, then append"
+        assert rows[0]["trigger"] == "hold" and rows[1]["streamed"] is True
+        assert rows[1]["ts"].endswith("+00:00") and rows[1]["version"], "filled in"
+        assert read_history() == rows, "nothing new in the file: nothing imported"
 
         os.environ.pop("V2T_HOME")
         os.environ["XDG_CONFIG_HOME"] = d

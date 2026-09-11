@@ -129,3 +129,29 @@ re-encoding the last 30 s every second.
   [PR #17](https://github.com/lucharo/voice2text/pull/17) — the measurements behind the numbers.
 
 _Created: 2026-09-08 · Verified: 2026-09-08._
+
+## A dictation came out as noise. Which microphone did v2t record from, and was it live?
+
+**Short answer:** Look at the dictation's history row: `sqlite3 ~/.v2t/history/history.sqlite
+"select ts, device, audio_s, loud_frac, peak, outcome from transcriptions order by id desc limit 5"`.
+`device` is the macOS default input at the moment the recording started, and `loud_frac` is the
+share of the recording with speech-level sound (a real dictation reads well above 0.1; a dead
+input reads about 0, often with a `peak` near 1.0 from the pop of a Bluetooth link opening). When
+`loud_frac` is under 2%, v2t already told you at the time: the text was pasted, but the log, a
+macOS notification and the `warning` field of `v2t status` named the device and the level. The
+usual cause is a Bluetooth headset whose hands-free (HFP) microphone link another app holds, Teams
+in particular. Check System Settings → Sound → Input while speaking; if the meter does not move,
+pick another input there. The last recording's audio is kept at `~/.v2t/run/last-recording.wav`
+for `v2t transcribe`.
+
+### Sources
+
+- [Level measurement](../../v2t/app.py) — `audio_levels` and `level_warning` define `loud_frac`
+  (100 ms frames above RMS 0.01, in runs of three or more, so a click does not count) and the 2%
+  threshold; `_default_input_name` records the device.
+- [History schema](../../v2t/config.py) — `HISTORY_COLUMNS` lists every column, including
+  `device`, `rms`, `peak`, `zero_frac`, `loud_frac`, `level_warning` and `outcome`.
+- [README history](../../README.md) — the same query and the warning's three surfaces.
+
+_Created: 2026-09-11 · Verified: 2026-09-11 (a 62 s headset recording with `loud_frac` 0.0 and a
+1.0 peak at 1.6 s; the built-in microphone read as `loud_frac` above 0.9 in tests)._
