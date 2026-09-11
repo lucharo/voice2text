@@ -18,3 +18,4 @@ dist/
 .claude/plans/
 .claude/specs/
 .claude/.DS_Store
+build/

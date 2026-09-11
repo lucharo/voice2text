@@ -678,16 +678,36 @@ def cmd_menubar(argv: list[str]) -> int:
     from . import menubar
 
     parser = argparse.ArgumentParser(
-        prog="v2t menubar", description="install or open the optional menu-bar app"
+        prog="v2t menubar",
+        description="install or open the optional menu-bar app; "
+        "build compiles a portable bundle for the release script",
     )
     parser.add_argument(
-        "action", nargs="?", choices=["install", "open"], default="install"
+        "action", nargs="?", choices=["install", "open", "build"], default="install"
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        help="build only: the directory (or .app path) to write Voice2Text.app to",
+    )
+    parser.add_argument(
+        "--identity",
+        help="build only: codesign identity (default: the best one in the keychain)",
     )
     args = parser.parse_args(argv)
     if args.action == "install":
         path = menubar.install()
         print(f"installed {path}")
-        menubar.open_app()
+        menubar.open_app(path)
+    elif args.action == "build":
+        if not args.path:
+            parser.error("build needs a destination: v2t menubar build DIR")
+        destination = Path(args.path).expanduser()
+        if destination.suffix != ".app":
+            destination = destination / menubar.APP_NAME
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        path = menubar.build(destination, bake_paths=False, identity=args.identity)
+        print(f"built {path}")
     else:
         menubar.open_app()
     return 0

@@ -23,6 +23,10 @@ build: check
 publish:
     uv publish dist/*
 
+# Sign, notarise and staple the menu app for other Macs; --publish uploads it and rewrites the cask
+release-macos *args:
+    scripts/release-macos.sh {{args}}
+
 # Build and publish only from a clean checkout
 release:
     @test -z "$(git status --porcelain --untracked-files=all)" || (echo "working tree must be clean"; exit 1)
