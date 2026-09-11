@@ -35,6 +35,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         # No test may post a real notification (tiny synthetic clips read as
         # near-silent); the tests about notifications patch this again.
+        self.real_notify = app._notify
         notify = mock.patch.object(app, "_notify")
         notify.start()
         self.addCleanup(notify.stop)
@@ -1093,7 +1094,7 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_notifications_go_through_osascript_with_quotes_escaped(self):
         with mock.patch.object(app.subprocess, "run") as run:
-            app._notify('v2t: "check"', 'peak 1.00 from "LABLABLA"')
+            self.real_notify('v2t: "check"', 'peak 1.00 from "LABLABLA"')
 
         argv = run.call_args.args[0]
         self.assertEqual(argv[:2], ["osascript", "-e"])
