@@ -72,12 +72,15 @@ def globe_key_warning() -> str:
     switches input source on a tap unless it is "Do Nothing"
     (AppleFnUsageType 0, which is not written until the setting is changed).
     """
-    result = subprocess.run(
-        ["defaults", "read", "com.apple.HIToolbox", "AppleFnUsageType"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "com.apple.HIToolbox", "AppleFnUsageType"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # no `defaults`: not macOS, nothing to warn about
+        return ""
     if result.returncode == 0 and result.stdout.strip() == "0":
         return ""
     return (

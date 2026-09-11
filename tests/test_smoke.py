@@ -1709,6 +1709,11 @@ class V2TSmokeTests(unittest.TestCase):
         with mock.patch.object(app.subprocess, "run", side_effect=run_default):
             self.assertIn(app.GLOBE_KEY_FIX, app.globe_key_warning())
 
+        with mock.patch.object(
+            app.subprocess, "run", side_effect=FileNotFoundError("defaults")
+        ):
+            self.assertEqual(app.globe_key_warning(), "", "not macOS: no warning")
+
     def test_a_double_tap_records_hands_free_until_the_next_tap(self):
         voice, tap = self._tapper()
 
