@@ -49,6 +49,15 @@ v2t setup                    # optional: pick models, detect Ollama, write confi
 v2t
 ```
 
+The optional menu-bar app (the identity that holds the Microphone and Accessibility grants)
+comes prebuilt, signed with Developer ID and notarised, so it also installs on a Mac with no Apple
+signing identity, such as a managed work laptop:
+
+```bash
+brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
+brew install --cask voice2text   # /Applications/Voice2Text.app; the engine above stays separate
+```
+
 Prefer Whisper for transcription? Add the extra (quote the brackets — zsh treats them as globs):
 
 ```bash
@@ -89,7 +98,7 @@ v2t dictionary           # names/jargon to spell right; `add`, `import-wispr`
 v2t status               # running / idle (also used by the menu app)
 v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
 v2t config               # show resolved config + paths  (--init writes a template)
-v2t menubar install      # optional: compile + open the tiny native menu app
+v2t menubar install      # optional: compile + open the tiny native menu app (or brew install --cask voice2text)
 v2t service install      # optional: start that menu app at login
 ```
 
@@ -252,7 +261,9 @@ reasoning. The defaults don't.
 ## Optional menu-bar app
 
 ```bash
-v2t menubar install      # compile the bundled Swift file into ~/Applications/Voice2Text.app
+brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
+brew install --cask voice2text   # prebuilt, notarised: /Applications/Voice2Text.app
+v2t menubar install              # or compile it here into ~/Applications/Voice2Text.app
 ```
 
 The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
@@ -274,10 +285,15 @@ v2t service uninstall
 The service starts the same `Voice2Text.app` bundle, so manual and login launches share one stable
 permission identity. The engine lock still prevents duplicate Python processes.
 
-The bundle is signed with hardened runtime (plus the audio-input entitlement) using a
-`Developer ID Application` identity when the keychain has one, otherwise the Apple Development
-identity, otherwise ad-hoc. It is built on the Mac that runs it, so no notarisation is involved;
-shipping a prebuilt, notarised bundle is a separate piece of work.
+Both routes produce the same bundle, signed with hardened runtime plus the audio-input
+entitlement. The cask ships a build signed with a `Developer ID Application` certificate and
+notarised by Apple, which is what a Mac with no signing identity of its own needs; it carries no
+user paths and finds `~/.v2t` and the `uv tool install voice2text` interpreter at launch, and its
+menu says "v2t is not installed" with the one command to run when it cannot. `v2t menubar install`
+compiles the same source on this Mac with the best identity in the keychain (Developer ID, then
+Apple Development, then ad-hoc). When both copies exist, `v2t menubar open` and the login service
+prefer the one in `/Applications`. Releasing the cask is `just release-macos --publish` on a Mac
+with the Developer ID certificates (see `scripts/release-macos.sh`).
 
 **Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
 terminal launch uses your terminal's grants. The menu app requests its own grants and

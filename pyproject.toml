@@ -1,6 +1,6 @@
 [project]
 name = "voice2text"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local, MLX-first voice-to-text with LLM cleanup"
 readme = "README.md"
 license = "GPL-2.0-only"

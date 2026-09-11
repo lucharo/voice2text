@@ -155,3 +155,28 @@ for `v2t transcribe`.
 
 _Created: 2026-09-11 · Verified: 2026-09-11 (a 62 s headset recording with `loud_frac` 0.0 and a
 1.0 peak at 1.6 s; the built-in microphone read as `loud_frac` above 0.9 in tests)._
+
+## How do I get the menu app onto a Mac that has no Apple signing identity, such as a managed work laptop?
+
+**Short answer:** Install the prebuilt one. `brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git` then
+`brew install --cask voice2text` puts a `Voice2Text.app` signed with a Developer ID Application
+certificate (team `7V3HZUL435`), notarised by Apple and stapled, into `/Applications`; Gatekeeper
+accepts it with no certificate on the installing Mac. The engine is still `uv tool install
+voice2text`: the shell carries no user paths and finds `~/.v2t` and that interpreter at launch,
+and its menu says "v2t is not installed" with the command to run when it cannot. `v2t menubar
+install` still compiles a local copy into `~/Applications` when a signing identity is available,
+and `v2t menubar open` and the login service prefer the `/Applications` copy when both exist. If
+endpoint security refuses the notarised app too, the block is on the publisher team, which only the
+device administrator can allow-list.
+
+### Sources
+
+- [Release script](../../scripts/release-macos.sh) — `v2t menubar build` for the portable bundle,
+  then notarise, staple, verify, upload to the GitHub Release and rewrite the cask.
+- [Cask](../../Casks/voice2text.rb) — served straight from the GitHub Release; the repository is
+  public, so no token is involved.
+- [Swift shell](../../v2t/native/Voice2Text.swift) — the launch-time fallback to `~/.v2t` and the
+  `uv tool` interpreter when nothing is baked into Info.plist.
+
+_Verified: 2026-09-11 · Scope: v0.4.0. Allow-listing the team on a managed Mac is outside this
+repository._

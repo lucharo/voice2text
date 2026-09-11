@@ -1305,7 +1305,7 @@ class V2TSmokeTests(unittest.TestCase):
             return mock.Mock(returncode=0)
 
         with (
-            mock.patch.object(menubar, "app_path", return_value=destination),
+            mock.patch.object(menubar, "user_app_path", return_value=destination),
             mock.patch.object(menubar.sys, "platform", "darwin"),
             mock.patch.object(menubar, "signing_identity", return_value="-"),
             mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
@@ -1313,6 +1313,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             installed = menubar.install()
 
+        self.assertEqual(installed, destination)
         info = plistlib.loads((installed / "Contents" / "Info.plist").read_bytes())
         self.assertEqual(
             info,
@@ -1323,7 +1324,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "CFBundleInfoDictionaryVersion": "6.0",
                 "CFBundleName": "Voice2Text",
                 "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "0.3.0",
+                "CFBundleShortVersionString": menubar.__version__,
                 "CFBundleVersion": "1",
                 "LSMinimumSystemVersion": "13.0",
                 "LSUIElement": True,
@@ -1358,6 +1359,95 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(
             codesign[-1].endswith("/Voice2Text.app")
         )  # staged bundle, moved after signing
+
+    def test_menubar_build_without_baked_paths_is_portable(self):
+        bundle = Path(self.tempdir.name) / "out" / "Voice2Text.app"
+        bundle.parent.mkdir()
+        commands = []
+
+        def compile_app(command, **_kwargs):
+            commands.append(command)
+            if command[0] == "xcrun":
+                Path(command[command.index("-o") + 1]).touch(mode=0o755)
+            return mock.Mock(returncode=0)
+
+        with (
+            mock.patch.object(menubar.sys, "platform", "darwin"),
+            mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
+            mock.patch.dict(os.environ, {"V2T_CONFIG": "/somewhere/config.toml"}),
+        ):
+            built = menubar.build(
+                bundle,
+                bake_paths=False,
+                identity="Developer ID Application: Someone (TEAMID)",
+            )
+
+        self.assertEqual(built, bundle)
+        info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+        self.assertEqual(
+            info,
+            {
+                "CFBundleDevelopmentRegion": "en",
+                "CFBundleExecutable": "Voice2Text",
+                "CFBundleIdentifier": "com.lucharo.voice2text",
+                "CFBundleInfoDictionaryVersion": "6.0",
+                "CFBundleName": "Voice2Text",
+                "CFBundlePackageType": "APPL",
+                "CFBundleShortVersionString": menubar.__version__,
+                "CFBundleVersion": "1",
+                "LSMinimumSystemVersion": "13.0",
+                "LSUIElement": True,
+                "NSMicrophoneUsageDescription": "Voice2Text uses the microphone for fully local transcription.",
+                "NSPrincipalClass": "NSApplication",
+            },
+        )
+        codesign = next(command for command in commands if command[0] == "codesign")
+        self.assertEqual(codesign[:5], ["codesign", "--force", "--options", "runtime", "--timestamp"])
+        self.assertEqual(
+            codesign[codesign.index("--sign") + 1],
+            "Developer ID Application: Someone (TEAMID)",
+        )
+        self.assertEqual(codesign[-1], str(bundle))
+
+    def test_menubar_app_path_prefers_the_cask_install(self):
+        system = Path(self.tempdir.name) / "Applications"
+        with mock.patch.object(menubar, "SYSTEM_APPLICATIONS", system):
+            self.assertEqual(menubar.app_path(), menubar.user_app_path())
+
+            executable = system / "Voice2Text.app" / "Contents" / "MacOS" / "Voice2Text"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            self.assertEqual(menubar.app_path(), system / "Voice2Text.app")
+
+    def test_menubar_build_command_compiles_a_portable_bundle(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(menubar, "build") as build,
+            contextlib.redirect_stdout(output),
+        ):
+            build.return_value = Path(self.tempdir.name) / "Voice2Text.app"
+            self.assertEqual(
+                cli.cmd_menubar(["build", self.tempdir.name, "--identity", "Developer ID Application: X (T)"]),
+                0,
+            )
+
+        build.assert_called_once_with(
+            Path(self.tempdir.name) / "Voice2Text.app",
+            bake_paths=False,
+            identity="Developer ID Application: X (T)",
+        )
+        self.assertEqual(output.getvalue(), f"built {self.tempdir.name}/Voice2Text.app\n")
+
+    def test_menubar_build_command_needs_a_destination(self):
+        with (
+            mock.patch.object(menubar, "build") as build,
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            cli.cmd_menubar(["build"])
+
+        self.assertEqual(raised.exception.code, 2)
+        build.assert_not_called()
 
     def test_menubar_prefers_a_stable_apple_development_signature(self):
         output = """\

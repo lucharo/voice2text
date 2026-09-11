@@ -40,10 +40,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The Python that runs the engine: the baked interpreter, else this user's
-    /// `uv tool` install of voice2text, else nil (rendered as an error).
+    /// `uv tool` install of voice2text, else nil (rendered as "not installed").
     private var pythonExecutable: String? {
+        let environment = ProcessInfo.processInfo.environment
         let candidates = [
             Bundle.main.object(forInfoDictionaryKey: "V2TPythonExecutable") as? String,
+            environment["UV_TOOL_DIR"].map { $0 + "/voice2text/bin/python" },
+            environment["XDG_DATA_HOME"].map { $0 + "/uv/tools/voice2text/bin/python" },
             NSHomeDirectory() + "/.local/share/uv/tools/voice2text/bin/python",
         ]
         return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -127,7 +130,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func launchEngine() {
         guard let python = pythonExecutable else {
-            phase = "error"
+            phase = "no-engine"
             render()
             return
         }
@@ -206,7 +209,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
-        if !live && engine == nil && phase != "permission-error" && phase != "error" {
+        if !live && engine == nil && phase != "permission-error" && phase != "error" && phase != "no-engine" {
             phase = "off"
             status = [:]
             externalEngine = false
@@ -259,6 +262,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "stopping": ("hourglass", "Stopping…", nil)
         case "permission-error": ("exclamationmark.triangle", "Permissions required", .systemOrange)
         case "error": ("exclamationmark.triangle", "Could not start — open Log", .systemOrange)
+        case "no-engine": ("exclamationmark.triangle", "v2t is not installed", .systemOrange)
         default: ("waveform.slash", "Off", nil)
         }
         let icon = NSImage(systemSymbolName: presentation.0, accessibilityDescription: presentation.1)
@@ -279,6 +283,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !stt.isEmpty && !cleanup.isEmpty {
             let models = "\(stt) · \(cleanup == "off" ? "no cleanup" : "clean: \(cleanup)")"
             add(models, enabled: false).attributedTitle = secondary(models)
+        }
+        if phase == "no-engine" {
+            // A prebuilt shell (brew cask) with no engine to run: name the one command.
+            let hint = "Run: uv tool install voice2text"
+            add(hint, enabled: false).attributedTitle = secondary(hint)
         }
         menu.addItem(.separator())
 

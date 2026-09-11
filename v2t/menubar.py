@@ -1,4 +1,11 @@
-"""Build and launch the optional one-file macOS menu-bar app."""
+"""Build and launch the optional one-file macOS menu-bar app.
+
+Two ways the bundle reaches a Mac. `v2t menubar install` compiles it on this Mac
+into ~/Applications with this user's paths baked into Info.plist. `v2t menubar
+build DIR` compiles a bundle for other Macs (the release script signs it with
+Developer ID and notarises it): nothing user-specific is baked, and the Swift
+shell falls back to ~/.v2t and the `uv tool` interpreter at launch.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +24,22 @@ from . import __version__, config
 
 APP_NAME = "Voice2Text.app"
 BUNDLE_ID = "com.lucharo.voice2text"
+SYSTEM_APPLICATIONS = Path("/Applications")  # where `brew install --cask voice2text` puts the app
+
+
+def user_app_path() -> Path:
+    """Where `v2t menubar install` puts its locally compiled bundle."""
+    return Path.home() / "Applications" / APP_NAME
 
 
 def app_path() -> Path:
-    return Path.home() / "Applications" / APP_NAME
+    """The bundle to open and to start at login: a Homebrew cask install in
+    /Applications wins over the per-user build, so `brew install --cask voice2text`
+    and `v2t menubar install` never race for the permission identity."""
+    system = SYSTEM_APPLICATIONS / APP_NAME
+    if (system / "Contents" / "MacOS" / "Voice2Text").is_file():
+        return system
+    return user_app_path()
 
 
 def app_executable() -> Path:
@@ -69,44 +88,44 @@ def signing_flags(identity: str) -> list[str]:
     return flags
 
 
-def install() -> Path:
-    """Compile the bundled Swift source into a small, grantable app bundle."""
+def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None) -> Path:
+    """Compile the bundled Swift source into a small, grantable app bundle at
+    `bundle` (a `.app` path; anything already there is replaced).
+
+    With `bake_paths`, Info.plist carries this user's v2t home, interpreter and
+    config so the shell needs no discovery. Without it the bundle is portable:
+    the shell falls back to ~/.v2t and the `uv tool` interpreter of whoever
+    launches it. `identity` defaults to the best one in the keychain."""
     if sys.platform != "darwin":
         raise SystemExit("the Voice2Text menu app is macOS-only")
-    if running():
-        raise SystemExit("quit Voice2Text before updating the menu app")
-    destination = app_path()
-    destination.parent.mkdir(parents=True, exist_ok=True)
     source = files("v2t").joinpath("native", "Voice2Text.swift")
     entitlements = files("v2t").joinpath("native", "Voice2Text.entitlements.plist")
-    with (
-        as_file(source) as source_path,
-        as_file(entitlements) as entitlements_path,
-        tempfile.TemporaryDirectory(dir=destination.parent) as temporary,
-    ):
-        bundle = Path(temporary) / APP_NAME
-        contents = bundle / "Contents"
-        executable = contents / "MacOS" / "Voice2Text"
-        executable.parent.mkdir(parents=True)
-        info = {
-            "CFBundleDevelopmentRegion": "en",
-            "CFBundleExecutable": "Voice2Text",
-            "CFBundleIdentifier": BUNDLE_ID,
-            "CFBundleInfoDictionaryVersion": "6.0",
-            "CFBundleName": "Voice2Text",
-            "CFBundlePackageType": "APPL",
-            "CFBundleShortVersionString": __version__,
-            "CFBundleVersion": "1",
-            "LSMinimumSystemVersion": "13.0",
-            "LSUIElement": True,
-            "NSMicrophoneUsageDescription": "Voice2Text uses the microphone for fully local transcription.",
-            "NSPrincipalClass": "NSApplication",
-            "V2THome": str(config.home()),
-            "V2TPythonExecutable": sys.executable,
-        }
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    contents = bundle / "Contents"
+    executable = contents / "MacOS" / "Voice2Text"
+    executable.parent.mkdir(parents=True)
+    info = {
+        "CFBundleDevelopmentRegion": "en",
+        "CFBundleExecutable": "Voice2Text",
+        "CFBundleIdentifier": BUNDLE_ID,
+        "CFBundleInfoDictionaryVersion": "6.0",
+        "CFBundleName": "Voice2Text",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": __version__,
+        "CFBundleVersion": "1",
+        "LSMinimumSystemVersion": "13.0",
+        "LSUIElement": True,
+        "NSMicrophoneUsageDescription": "Voice2Text uses the microphone for fully local transcription.",
+        "NSPrincipalClass": "NSApplication",
+    }
+    if bake_paths:
+        info["V2THome"] = str(config.home())
+        info["V2TPythonExecutable"] = sys.executable
         if custom_config := os.environ.get("V2T_CONFIG"):
             info["V2TConfig"] = str(Path(custom_config).expanduser())
-        (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    with as_file(source) as source_path, as_file(entitlements) as entitlements_path:
         subprocess.run(
             [
                 "xcrun",
@@ -125,7 +144,8 @@ def install() -> Path:
             check=True,
         )
         executable.chmod(0o755)
-        identity = signing_identity()
+        if identity is None:
+            identity = signing_identity()
         subprocess.run(
             [
                 "codesign",
@@ -139,13 +159,29 @@ def install() -> Path:
             ],
             check=True,
         )
+    return bundle
+
+
+def install() -> Path:
+    """Compile the menu app for this user into ~/Applications."""
+    if sys.platform != "darwin":
+        raise SystemExit("the Voice2Text menu app is macOS-only")
+    if running():
+        raise SystemExit("quit Voice2Text before updating the menu app")
+    destination = user_app_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Staged next to the destination so the final move is a rename, never a
+    # half-copied bundle if the compile or the signature fails.
+    with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
+        bundle = build(Path(temporary) / APP_NAME, bake_paths=True)
         if destination.exists():
             shutil.rmtree(destination)
         shutil.move(bundle, destination)
     return destination
 
 
-def open_app() -> None:
-    if not installed():
+def open_app(bundle: Path | None = None) -> None:
+    bundle = bundle or app_path()
+    if not (bundle / "Contents" / "MacOS" / "Voice2Text").is_file():
         raise SystemExit("menu app is not installed; run: v2t menubar install")
-    subprocess.run(["open", str(app_path())], check=True)
+    subprocess.run(["open", str(bundle)], check=True)
