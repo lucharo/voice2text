@@ -106,8 +106,12 @@ def audio_levels(audio: np.ndarray, sample_rate: int) -> dict:
     frames = x[: x.size // frame * frame].reshape(-1, frame)
     loud = 0.0
     if len(frames):
-        above = (np.sqrt((frames**2).mean(axis=1)) > LOUD_RMS).astype(int)
-        in_run = np.convolve(above, np.ones(3, dtype=int), mode="same") >= 3
+        above = np.sqrt((frames**2).mean(axis=1)) > LOUD_RMS
+        in_run = np.zeros(len(above), dtype=bool)
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], above.astype(int), [0]))))
+        for start, stop in zip(edges[::2], edges[1::2]):  # each run of loud frames
+            if stop - start >= 3:
+                in_run[start:stop] = True
         loud = float(in_run.mean())
     return {
         "rms": round(float(np.sqrt((x**2).mean())), 5),
@@ -459,7 +463,7 @@ class VoiceToText:
                 self.finalizing_recording = False
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
-        next_state, error_message = "idle", ""
+        next_state, error_message, levels = "idle", "", None
         try:
             self._set_state("transcribing")
             audio = np.concatenate(frames, axis=0)
@@ -483,6 +487,8 @@ class VoiceToText:
         except Exception as error:
             next_state, error_message = "error", f"{type(error).__name__}: {error}"
             logger.exception(f"Transcription failed: {error}")
+            if levels is not None:  # the audio was there: keep the failure on record
+                self._record(audio_s, levels, outcome=f"error: {error_message}")
         finally:
             self._restore_media()
             if not self.stopping:
@@ -501,9 +507,27 @@ class VoiceToText:
 
     def _no_speech(self, audio_s: float, levels: dict, stt_s: float) -> None:
         logger.warning("No speech detected")
+        warning = self._warn_about_level(levels, audio_s)
         self._record(
-            audio_s, levels, outcome="error: no speech detected", stt_s=round(stt_s, 3)
+            audio_s,
+            levels,
+            level_warning=warning or None,
+            outcome="error: no speech detected",
+            stt_s=round(stt_s, 3),
         )
+
+    def _warn_about_level(self, levels: dict, audio_s: float) -> str:
+        """Publish the near-silent warning (log, notification, status) and return it.
+
+        The warning names the device so a dead headset link is caught before
+        the next dictation; whatever text there was is still pasted.
+        """
+        warning = level_warning(levels, audio_s, self.input_device) if levels else ""
+        if warning:
+            logger.warning(warning)
+            self.warning = warning  # status.json, until the next recording
+            _notify("v2t: check your microphone", warning)
+        return warning
 
     def _record(self, audio_s: float, levels: dict, **fields) -> None:
         """One history row for the current recording, if history is on."""
@@ -572,6 +596,7 @@ class VoiceToText:
         next_state, error_message, stream = "idle", "", None
         handed_back = False  # streaming broke while held: release decodes whole-file
         raw_text = None  # set once some decoder produced the text
+        levels = None  # set once the recording's audio is in hand
         try:
             if live.cancelled:
                 return
@@ -671,6 +696,8 @@ class VoiceToText:
             else:
                 next_state, error_message = "error", f"{type(error).__name__}: {error}"
                 logger.exception(f"Transcription failed: {error}")
+            if next_state == "error" and levels is not None:
+                self._record(live.duration, levels, outcome=f"error: {error_message}")
         finally:
             if stream is not None:
                 try:
@@ -739,14 +766,7 @@ class VoiceToText:
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
-        # Pasted anyway: the text is there to judge. The warning names the
-        # device so a dead headset link is caught before the next dictation.
-        warning = level_warning(levels, audio_s, self.input_device) if levels else ""
-        if warning:
-            logger.warning(warning)
-            self.warning = warning  # status.json, until the next recording
-            _notify("v2t: check your microphone", warning)
-
+        warning = self._warn_about_level(levels, audio_s)
         self._record(
             audio_s,
             levels,

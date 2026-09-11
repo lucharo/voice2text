@@ -198,7 +198,25 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(
             output.getvalue(),
-            "idle\tparakeet-v3\toff\tcasual\t\n",
+            "idle\tparakeet-v3\toff\tcasual\t\t\n",
+        )
+
+    def test_status_carries_the_last_dictations_microphone_warning(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.warning = (
+            "Near-silent audio from LABLABLA: speech-level sound in 0% of 62s"
+        )
+
+        voice._set_state("idle")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            cli.cmd_status([])
+
+        self.assertEqual(
+            output.getvalue().rstrip("\n").split("\t")[-1],
+            "Near-silent audio from LABLABLA: speech-level sound in 0% of 62s",
         )
 
     def test_recording_refreshes_the_device_list_before_opening_the_mic(self):
@@ -986,6 +1004,42 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([r["clean"] for r in second], ["A.", "B.", "C."])
         self.assertTrue(legacy.exists(), "the JSONL is the user's; never removed")
 
+    def test_an_interrupted_import_leaves_nothing_and_is_retried(self):
+        legacy = config.legacy_history_path()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(
+            json.dumps({"ts": "2026-01-01T00:00:00+00:00", "raw": "a", "clean": "A."})
+            + "\n"
+            + json.dumps({"ts": "2026-01-02T00:00:00+00:00", "raw": "b", "clean": "B."})
+            + "\n"
+        )
+        real_insert = config._insert_history
+        calls = []
+
+        def crash_on_second(con, record):
+            calls.append(record["raw"])
+            if len(calls) == 2:
+                raise sqlite3.OperationalError("disk I/O error")
+            real_insert(con, record)
+
+        with mock.patch.object(config, "_insert_history", side_effect=crash_on_second):
+            with self.assertRaises(sqlite3.OperationalError):
+                config.read_history()
+
+        self.assertTrue(config.history_path().exists(), "the file alone is no marker")
+        with sqlite3.connect(config.history_path()) as con:
+            self.assertEqual(
+                con.execute("select count(*) from transcriptions").fetchone()[0], 0
+            )
+            self.assertIsNone(
+                con.execute(
+                    "select value from meta where key='legacy_imported'"
+                ).fetchone()
+            )
+
+        self.assertEqual([r["clean"] for r in config.read_history()], ["A.", "B."])
+        self.assertEqual([r["clean"] for r in config.read_history()], ["A.", "B."])
+
     def test_a_new_history_column_is_added_to_an_existing_database(self):
         config.append_history({"raw": "a", "clean": "A."})
         with sqlite3.connect(config.history_path()) as con:
@@ -1006,8 +1060,12 @@ class V2TSmokeTests(unittest.TestCase):
         live = app.audio_levels(speech, sr)
         silent = app.audio_levels(dead, sr)
 
-        self.assertGreater(live["loud_frac"], 0.9)
+        self.assertEqual(live["loud_frac"], 1.0, "every frame of a long run counts")
         self.assertEqual(app.level_warning(live, 3.0, "Mic"), "")
+        short_runs = np.zeros(20 * 1600, dtype=np.float32)
+        short_runs[0:3200] = 0.1  # two loud frames: a click, not speech
+        short_runs[8000:12800] = 0.1  # three loud frames: counts, all three
+        self.assertEqual(app.audio_levels(short_runs, sr)["loud_frac"], 3 / 20)
         self.assertLess(silent["loud_frac"], 0.02)
         self.assertEqual(silent["peak"], 1.0)
         self.assertGreater(silent["zero_frac"], 0.3)
@@ -1075,6 +1133,42 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertNotIn("level_warning", row)
         self.assertGreaterEqual(row["loud_frac"], 0.9)
         self.assertEqual(config.read_status()["warning"], "")
+
+    def test_a_near_silent_recording_with_no_transcript_still_warns(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value=""))
+        voice.input_device = "LABLABLA"
+        config.ensure_dirs()
+        quiet = np.full((3 * 16000, 1), 0.002, dtype=np.float32)
+        quiet[0, 0] = 0.9
+
+        with mock.patch.object(app, "_notify") as notify:
+            voice.process_audio([quiet], 3.0)
+
+        notify.assert_called_once()
+        self.assertIn("from LABLABLA", config.read_status()["warning"])
+        row = config.read_history()[-1]
+        self.assertEqual(row["outcome"], "error: no speech detected")
+        self.assertIn("from LABLABLA", row["level_warning"])
+
+    def test_a_transcription_crash_is_recorded_with_the_recording_facts(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(side_effect=RuntimeError("metal")))
+        voice.input_device = "MacBook Pro Microphone"
+        config.ensure_dirs()
+        speech = np.full((2 * 16000, 1), 0.1, dtype=np.float32)
+
+        voice.process_audio([speech], 2.0)
+
+        row = config.read_history()[-1]
+        self.assertEqual(row["outcome"], "error: RuntimeError: metal")
+        self.assertEqual(row["device"], "MacBook Pro Microphone")
+        self.assertEqual(row["loud_frac"], 1.0)
+        self.assertEqual(config.read_status()["state"], "error")
 
     def test_a_dead_input_error_is_recorded_too(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

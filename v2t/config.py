@@ -352,7 +352,6 @@ def _history_db() -> sqlite3.Connection:
     """The history database, created (and the old JSONL imported) on first use."""
     path = history_path()
     _private_dir(path.parent)
-    fresh = not path.exists()
     con = sqlite3.connect(path)
     path.chmod(0o600)  # journal files inherit the database's mode
     con.row_factory = sqlite3.Row
@@ -361,35 +360,56 @@ def _history_db() -> sqlite3.Connection:
         + ", ".join(f"{name} {kind}" for name, kind in HISTORY_COLUMNS)
         + ")"
     )
+    con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     present = {row["name"] for row in con.execute("PRAGMA table_info(transcriptions)")}
     for name, kind in HISTORY_COLUMNS:
         if name not in present:  # a column added since this database was made
             kind = kind.replace(" NOT NULL", "")
             con.execute(f"ALTER TABLE transcriptions ADD COLUMN {name} {kind}")
     con.commit()
-    if fresh:
-        _import_legacy_history(con)
+    _import_legacy_history(con)
     return con
 
 
 def _import_legacy_history(con: sqlite3.Connection) -> int:
-    """Rows from the pre-database JSONL. The file itself is left alone."""
-    path = legacy_history_path()
-    if not path.exists():
+    """Rows from the pre-database JSONL, once. The file itself is left alone.
+
+    The rows and the `legacy_imported` marker land in one write transaction, so
+    a crash midway leaves nothing behind and the next open imports again, and a
+    second process opening at the same time waits for the lock and then finds
+    the marker.
+    """
+    marker = "SELECT value FROM meta WHERE key = 'legacy_imported'"
+    if con.execute(marker).fetchone():
         return 0
-    count = 0
-    for line in path.read_text().splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record, dict) or not record.get("ts"):
-            continue
-        record.setdefault("trigger", "file" if record.get("source") else "hold")
-        record.setdefault("outcome", "printed" if record.get("source") else "pasted")
-        _insert_history(con, record)
-        count += 1
-    con.commit()
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if con.execute(marker).fetchone():
+            con.execute("COMMIT")
+            return 0
+        count = 0
+        path = legacy_history_path()
+        if path.exists():
+            for line in path.read_text().splitlines():
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or not record.get("ts"):
+                    continue
+                record.setdefault("trigger", "file" if record.get("source") else "hold")
+                record.setdefault(
+                    "outcome", "printed" if record.get("source") else "pasted"
+                )
+                _insert_history(con, record)
+                count += 1
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES ('legacy_imported', ?)", (str(count),)
+        )
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
     return count
 
 

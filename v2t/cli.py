@@ -613,17 +613,19 @@ def cmd_setup(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    """Runtime state, models, mode, and any launch error."""
+    """Runtime state, models, mode, any launch error, and the last dictation's warning."""
     from . import backends
 
     s = config.read_status()
+    warning = ""
     if s:
-        state, stt, cleanup, mode, error = (
+        state, stt, cleanup, mode, error, warning = (
             s["state"],
             s["stt"],
             s["cleanup"],
             s["mode"],
             s.get("error", ""),
+            s.get("warning", ""),
         )
     else:
         cfg = config.load()
@@ -648,6 +650,7 @@ def cmd_status(argv: list[str]) -> int:
             cleanup,
             mode,
             error,
+            warning,
         )
     ]
     print("\t".join(fields))
