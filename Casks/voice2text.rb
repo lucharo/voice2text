@@ -14,7 +14,7 @@ cask "voice2text" do
   desc "Menu-bar app for v2t, local push-to-talk voice-to-text"
   homepage "https://github.com/lucharo/voice2text"
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
   depends_on arch: :arm64
 
   app "Voice2Text.app"
