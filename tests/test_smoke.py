@@ -1746,6 +1746,14 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.processing)
         self.assertFalse(voice.jobs.empty())
 
+    def test_cleanup_examples_teach_digits_and_hash_prefixed_references(self):
+        for mode, examples in backends.EXAMPLES.items():
+            cleaned = " ".join(clean for _raw, clean in examples)
+            self.assertIn("PR #359", cleaned, mode)
+            self.assertIn("issue #42", cleaned, mode)
+            self.assertIn("0.1", cleaned, mode)
+            self.assertIn("digits", backends.PROMPTS[mode], mode)
+
     def test_cleanup_prompt_is_a_system_message_with_examples_then_the_text(self):
         messages = backends.cleanup_messages("raw words", "casual")
 
