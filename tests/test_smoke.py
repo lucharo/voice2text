@@ -9,6 +9,7 @@ import os
 import plistlib
 import queue
 import signal
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -562,7 +563,7 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("final words")
         self.assertFalse(voice.processing)
         self.assertEqual(config.read_status()["state"], "idle")
-        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("final words", True))
         self.assertLess(record["stt_s"], 1.0)
         self.assertEqual(
@@ -597,7 +598,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(feeds, [chunk], "the 8000-sample remainder was never flushed")
         self.assertEqual(order, ["close", "whole"], "stream released before decoding")
         paste.assert_called_once_with("whole-file words")
-        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        record = config.read_history()[-1]
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
@@ -680,7 +681,7 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("whole-file words")
         self.assertEqual(config.read_status()["state"], "idle")
         self.assertFalse(voice.processing)
-        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        record = config.read_history()[-1]
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
@@ -931,15 +932,181 @@ class V2TSmokeTests(unittest.TestCase):
 
         pasteboard.clearContents.assert_not_called()
 
-    def test_history_is_private_and_valid_jsonl(self):
-        config.append_history({"raw": "hello", "clean": "Hello."})
+    def test_history_is_a_private_sqlite_table_with_one_row_per_entry(self):
+        config.append_history({"raw": "hello", "clean": "Hello.", "streamed": True})
+        config.append_history({"raw": "again", "clean": "Again.", "novel": "x"})
 
         path = config.history_path()
-        mode = stat.S_IMODE(path.stat().st_mode)
+        rows = config.read_history()
 
-        self.assertEqual(mode, 0o600)
-        self.assertEqual(path.read_text().count("\n"), 1)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual([r["clean"] for r in rows], ["Hello.", "Again."])
+        self.assertIs(rows[0]["streamed"], True)
+        self.assertEqual(rows[1]["novel"], "x", "unknown keys ride in the extra column")
+        self.assertTrue(rows[0]["ts"].endswith("+00:00"))
+        self.assertTrue(rows[0]["version"] and rows[0]["host"], "filled in by append")
+        with sqlite3.connect(path) as con:
+            names = [r[1] for r in con.execute("PRAGMA table_info(transcriptions)")]
+        self.assertEqual(names[:2], ["id", "ts"])
+        self.assertEqual(set(names[1:]), {name for name, _ in config.HISTORY_COLUMNS})
+
+    def test_the_jsonl_history_is_imported_once_and_left_in_place(self):
+        legacy = config.legacy_history_path()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(
+            json.dumps({"ts": "2026-01-01T00:00:00+00:00", "raw": "a", "clean": "A."})
+            + "\n"
+            + json.dumps(
+                {
+                    "ts": "2026-01-02T00:00:00+00:00",
+                    "source": "/x.wav",
+                    "raw": "b",
+                    "clean": "B.",
+                }
+            )
+            + "\nnot json\n"
+        )
+
+        first = config.read_history()
+        config.append_history({"raw": "c", "clean": "C."})
+        second = config.read_history()
+
+        self.assertEqual([r["clean"] for r in first], ["A.", "B."])
+        self.assertEqual((first[0]["trigger"], first[0]["outcome"]), ("hold", "pasted"))
+        self.assertEqual(
+            (first[1]["trigger"], first[1]["outcome"]), ("file", "printed")
+        )
+        self.assertEqual([r["clean"] for r in second], ["A.", "B.", "C."])
+        self.assertTrue(legacy.exists(), "the JSONL is the user's; never removed")
+
+    def test_a_new_history_column_is_added_to_an_existing_database(self):
+        config.append_history({"raw": "a", "clean": "A."})
+        with sqlite3.connect(config.history_path()) as con:
+            con.execute("ALTER TABLE transcriptions DROP COLUMN loud_frac")
+
+        config.append_history({"raw": "b", "clean": "B.", "loud_frac": 0.5})
+
+        self.assertEqual(config.read_history()[-1]["loud_frac"], 0.5)
+
+    def test_audio_levels_tell_speech_from_a_dead_input(self):
+        sr = 16000
+        t = np.arange(3 * sr) / sr
+        speech = (0.1 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+        dead = np.zeros(3 * sr, dtype=np.float32)
+        dead[sr // 2] = 1.0  # the pop of a Bluetooth link opening
+        dead[sr:] = np.random.default_rng(0).normal(0, 0.001, 2 * sr)
+
+        live = app.audio_levels(speech, sr)
+        silent = app.audio_levels(dead, sr)
+
+        self.assertGreater(live["loud_frac"], 0.9)
+        self.assertEqual(app.level_warning(live, 3.0, "Mic"), "")
+        self.assertLess(silent["loud_frac"], 0.02)
+        self.assertEqual(silent["peak"], 1.0)
+        self.assertGreater(silent["zero_frac"], 0.3)
+        self.assertIn("from LABLABLA", app.level_warning(silent, 3.0, "LABLABLA"))
+        self.assertEqual(app.level_warning(silent, 0.5, "LABLABLA"), "", "too short")
+        self.assertEqual(app.audio_levels(np.zeros(0), sr)["loud_frac"], 0.0)
+
+    def test_a_near_silent_dictation_is_pasted_and_warned_about(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value="yeah yeah"))
+        voice.input_device = "LABLABLA"
+        voice.trigger = "latched"
+        config.ensure_dirs()
+        quiet = np.full((3 * 16000, 1), 0.002, dtype=np.float32)
+        quiet[0, 0] = 0.9
+
+        with (
+            mock.patch.object(voice, "paste_to_cursor") as paste,
+            mock.patch.object(app, "_notify") as notify,
+        ):
+            voice.process_audio([quiet], 3.0)
+
+        paste.assert_called_once_with("yeah yeah")
+        notify.assert_called_once()
+        self.assertIn("from LABLABLA", notify.call_args.args[1])
+        self.assertIn("from LABLABLA", config.read_status()["warning"])
+        row = config.read_history()[-1]
+        self.assertEqual(
+            {
+                k: row[k]
+                for k in ("trigger", "device", "sample_rate", "outcome", "replacements")
+            },
+            {
+                "trigger": "latched",
+                "device": "LABLABLA",
+                "sample_rate": 16000,
+                "outcome": "pasted",
+                "replacements": 0,
+            },
+        )
+        self.assertIn("from LABLABLA", row["level_warning"])
+        self.assertLess(row["loud_frac"], 0.02)
+
+    def test_a_normal_dictation_records_levels_without_a_warning(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value="hello"))
+        config.ensure_dirs()
+        sr = 16000
+        speech = (
+            (0.1 * np.sin(np.arange(2 * sr) * 0.1)).astype(np.float32).reshape(-1, 1)
+        )
+
+        with (
+            mock.patch.object(voice, "paste_to_cursor"),
+            mock.patch.object(app, "_notify") as notify,
+        ):
+            voice.process_audio([speech], 2.0)
+
+        notify.assert_not_called()
+        row = config.read_history()[-1]
+        self.assertNotIn("level_warning", row)
+        self.assertGreaterEqual(row["loud_frac"], 0.9)
+        self.assertEqual(config.read_status()["warning"], "")
+
+    def test_a_dead_input_error_is_recorded_too(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.input_device = "Microsoft Teams Audio"
+        config.ensure_dirs()
+
+        with mock.patch.object(app.subprocess, "run"):
+            voice.process_audio([np.zeros((16000, 1), dtype=np.float32)], 1.0)
+
+        row = config.read_history()[-1]
+        self.assertEqual(row["outcome"], "error: no audio captured")
+        self.assertEqual(row["device"], "Microsoft Teams Audio")
+        self.assertNotIn("raw", row)
+        self.assertEqual(config.read_status()["state"], "error")
+
+    def test_notifications_go_through_osascript_with_quotes_escaped(self):
+        with mock.patch.object(app.subprocess, "run") as run:
+            app._notify('v2t: "check"', 'peak 1.00 from "LABLABLA"')
+
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:2], ["osascript", "-e"])
+        self.assertEqual(
+            argv[2],
+            'display notification "peak 1.00 from \\"LABLABLA\\"" '
+            'with title "v2t: \\"check\\""',
+        )
+
+    def test_recording_captures_the_input_device_name(self):
+        voice, _tap = self._tapper()
+        with mock.patch.object(
+            app.sd, "query_devices", return_value={"name": "USB PnP Sound Device"}
+        ):
+            voice.on_press("HOTKEY")
+
+        self.assertEqual(voice.input_device, "USB PnP Sound Device")
+        self.assertEqual(voice.trigger, "hold")
 
     def test_custom_config_keeps_existing_parent_permissions(self):
         parent = Path(self.tempdir.name) / "shared"
@@ -1426,22 +1593,26 @@ class V2TSmokeTests(unittest.TestCase):
 
         self._transcribe([str(path)], stt)
 
-        record = json.loads(config.history_path().read_text().splitlines()[-1])
+        record = config.read_history()[-1]
         self.assertEqual(
             record,
             {
+                "id": record["id"],
                 "ts": record["ts"],
+                "trigger": "file",
                 "source": str(path),
                 "audio_s": 10.0,
                 "backend": "parakeet",
                 "model": backends.PARAKEET_DEFAULT,
-                "cleanup_engine": None,
-                "cleanup_model": None,
                 "mode": "casual",
                 "stt_s": record["stt_s"],
                 "cleanup_s": 0.0,
+                "replacements": 0,
                 "raw": "hey um there",
                 "clean": "hey um there",
+                "outcome": "printed",
+                "host": record["host"],
+                "version": record["version"],
             },
         )
 

@@ -43,13 +43,14 @@ Anything ffmpeg reads works: `.wav`, `.m4a`, `.mp3`, `.opus`, and video files.
   3½-minute voice note in about 11s, including a few seconds of model load. Whisper is slower.
 - **One process, many files.** The model loads once per invocation, so pass every file to a single
   command instead of looping or running parallel processes (it is GPU-bound either way).
-- **History.** Every result is appended to `~/.v2t/history/transcriptions.jsonl` with its source
-  path, unless the user set `save_history = false` in `~/.v2t/config.toml`.
+- **History.** Every result is a row in `~/.v2t/history/history.sqlite` (table `transcriptions`)
+  with its source path, unless the user set `save_history = false` in `~/.v2t/config.toml`.
 - **Recovering a cut dictation.** The app keeps the last hotkey recording's audio at
   `~/.v2t/run/last-recording.wav` (replaced each time; `keep_last_audio = false` turns it off), so
   `v2t transcribe ~/.v2t/run/last-recording.wav` redoes a dictation that came out short.
 - **Reading it back.** `v2t history` lists recent entries with timings, `v2t history <term>` searches
-  raw and clean text, `--json` re-emits records. Prefer it over opening the JSONL.
+  raw and clean text, `--json` re-emits rows. For anything else, `sqlite3` on the database:
+  dictation rows also carry `device`, `loud_frac` and `outcome`, which is where a silent microphone shows.
 - **Dictionary.** Names and jargon in `~/.v2t/dictionary.txt` guide the cleanup pass (`--clean`) towards
   the right spelling; only `heard => written` lines are deterministic, and those apply even without
   cleanup. `v2t dictionary add <term>`. To turn a transcript's mishearings into entries and prove
