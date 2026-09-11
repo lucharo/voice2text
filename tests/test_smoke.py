@@ -33,6 +33,11 @@ class V2TSmokeTests(unittest.TestCase):
         )
         self.env.start()
         self.addCleanup(self.env.stop)
+        # No test may post a real notification (tiny synthetic clips read as
+        # near-silent); the tests about notifications patch this again.
+        notify = mock.patch.object(app, "_notify")
+        notify.start()
+        self.addCleanup(notify.stop)
 
     def test_audio_device_failure_returns_to_error_state(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

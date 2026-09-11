@@ -143,15 +143,18 @@ def _notify(title: str, text: str) -> None:
     def quote(value: str) -> str:
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-    subprocess.run(
-        [
-            "osascript",
-            "-e",
-            f"display notification {quote(text)} with title {quote(title)}",
-        ],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f"display notification {quote(text)} with title {quote(title)}",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:  # no osascript: not macOS
+        pass
 
 
 def _tail(text: str, limit: int = 80) -> str:
