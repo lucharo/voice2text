@@ -26,7 +26,11 @@ from .config import Config
 
 MIC_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 FN_VK = 0x3F  # kVK_Function: the Fn / Globe key, bottom-left on Apple keyboards
-GLOBE_KEY_FIX = "defaults write com.apple.HIToolbox AppleFnUsageType -int 0"
+GLOBE_KEY_FIX = (
+    "System Settings → Keyboard → Press 🌐 key to → Do Nothing "
+    "(the setting only takes effect from that pane, or after logging out and in; "
+    "`defaults write com.apple.HIToolbox AppleFnUsageType -int 0` alone does not apply)"
+)
 LOUD_RMS = 0.01  # a 100 ms frame above this holds speech-level sound (full scale 1)
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 

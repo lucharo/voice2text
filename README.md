@@ -99,8 +99,10 @@ tap or a shortcut that happens to include the key (Fn+arrow) leaves no trace. Fo
 dictations, **double-tap** Fn: it keeps recording hands-free until you tap it once more, like Wispr
 Flow's double-Escape. `key = "cmd_r"` under `[hotkey]` brings back Right Command.
 
-For Fn to be free, System Settings → Keyboard → *Press 🌐 key to* must be **Do Nothing**
-(`defaults write com.apple.HIToolbox AppleFnUsageType -int 0`); `v2t` warns in the log otherwise.
+For Fn to be free, System Settings → Keyboard → *Press 🌐 key to* must be **Do Nothing**. Change it
+in that pane: `defaults write com.apple.HIToolbox AppleFnUsageType -int 0` writes the same value but
+running apps keep the old one until you log out and in, so a tap still opens the emoji picker. `v2t`
+warns in the log while the stored value is not 0.
 
 ### Transcribing files
 
