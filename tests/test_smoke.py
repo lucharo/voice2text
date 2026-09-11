@@ -323,9 +323,6 @@ class V2TSmokeTests(unittest.TestCase):
             def is_alive(self):
                 return True
 
-        pynput = types.ModuleType("pynput")
-        pynput.keyboard = types.SimpleNamespace(Listener=Listener)
-
         def queue_then_stop():
             voice.processing = True
             voice.stopping = True
@@ -335,7 +332,7 @@ class V2TSmokeTests(unittest.TestCase):
             voice.processing = False
 
         with (
-            mock.patch.dict(sys.modules, {"pynput": pynput}),
+            mock.patch.object(app, "_listener", return_value=Listener()),
             mock.patch.object(app, "_resolve_hotkey", return_value=object()),
             mock.patch.object(app.signal, "signal"),
             mock.patch.object(voice, "warmup", side_effect=queue_then_stop),
@@ -1553,7 +1550,11 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([len(c.split()) for c in chunks], [120, 120, 60])
 
     def _tapper(self):
-        """A VoiceToText whose audio stream is mocked, plus a helper to tap the hotkey."""
+        """A VoiceToText whose audio stream is mocked, plus a helper to tap the hotkey.
+
+        The hold timer is a fake: `voice.hold_timer.fire()` stands for the key
+        still being down after HOLD_S.
+        """
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -1561,6 +1562,21 @@ class V2TSmokeTests(unittest.TestCase):
         stream = mock.patch.object(app.sd, "InputStream")
         self.addCleanup(stream.stop)
         stream.start()
+
+        class Timer:
+            def __init__(self, _interval, function):
+                self.fire = function
+                self.cancelled = False
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                self.cancelled = True
+
+        timer = mock.patch.object(app.threading, "Timer", Timer)
+        self.addCleanup(timer.stop)
+        timer.start()
         clock = mock.patch.object(app.time, "perf_counter")
         self.addCleanup(clock.stop)
         now = clock.start()
@@ -1584,6 +1600,114 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.processing)
         self.assertTrue(voice.jobs.empty())
         self.assertEqual(config.read_status()["state"], "idle")
+
+    def test_a_press_records_at_once_but_shows_only_after_the_hold(self):
+        voice, _tap = self._tapper()
+        set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
+        self.addCleanup(set_state.stop)
+        states = set_state.start()
+
+        voice.on_press("HOTKEY")
+
+        self.assertTrue(voice.recording, "the microphone is open from the press")
+        self.assertFalse(voice.shown)
+        states.assert_not_called()
+
+        voice.hold_timer.fire()
+
+        self.assertTrue(voice.shown)
+        self.assertEqual(config.read_status()["state"], "recording")
+
+    def test_a_short_tap_leaves_no_trace(self):
+        voice, tap = self._tapper()
+        set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
+        self.addCleanup(set_state.stop)
+        states = set_state.start()
+
+        tap(at=100.0, held=0.4)
+
+        self.assertTrue(voice.hold_timer is None)
+        self.assertNotIn("recording", [c.args[0] for c in states.call_args_list])
+
+    def test_a_chord_with_the_hotkey_cancels_and_is_not_a_tap(self):
+        voice, tap = self._tapper()
+        app.time.perf_counter.return_value = 100.0
+
+        voice.on_press("HOTKEY")
+        timer = voice.hold_timer
+        voice.on_press("enter")
+
+        self.assertFalse(voice.recording)
+        self.assertTrue(timer.cancelled)
+
+        app.time.perf_counter.return_value = 100.1
+        voice.on_release("HOTKEY")
+        tap(at=100.3, held=0.1)
+
+        self.assertFalse(voice.latched, "chord + tap is not a double-tap")
+        self.assertFalse(voice.recording)
+        self.assertTrue(voice.jobs.empty())
+
+    def test_typing_while_latched_keeps_recording(self):
+        voice, tap = self._tapper()
+
+        tap(at=100.0, held=0.1)
+        tap(at=100.3, held=0.1)
+        voice.on_press("a")
+
+        self.assertTrue(voice.latched)
+        self.assertTrue(voice.recording)
+
+    def test_the_fn_key_is_a_modifier_for_the_listener(self):
+        class KeyCode:
+            def __init__(self, vk):
+                self.vk = vk
+
+            @classmethod
+            def from_vk(cls, vk):
+                return cls(vk)
+
+            def __eq__(self, other):
+                return self.vk == other.vk
+
+            def __hash__(self):
+                return hash(self.vk)
+
+        class Listener:
+            _MODIFIER_FLAGS = {KeyCode(0x36): 1 << 20}
+
+            def __init__(self, on_press, on_release):
+                self.callbacks = (on_press, on_release)
+
+        pynput = types.ModuleType("pynput")
+        pynput.keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=KeyCode, Key=mock.Mock()
+        )
+        quartz = types.SimpleNamespace(kCGEventFlagMaskSecondaryFn=1 << 23)
+
+        with mock.patch.dict(sys.modules, {"pynput": pynput, "Quartz": quartz}):
+            listener = app._listener("press", "release")
+            self.assertEqual(app._resolve_hotkey("fn"), KeyCode(app.FN_VK))
+
+        self.assertEqual(listener.callbacks, ("press", "release"))
+        self.assertEqual(listener._MODIFIER_FLAGS[KeyCode(0x3F)], 1 << 23)
+        self.assertEqual(listener._MODIFIER_FLAGS[KeyCode(0x36)], 1 << 20)
+        self.assertEqual(app.FN_VK, 0x3F)
+
+    def test_globe_key_warning_only_when_the_key_is_not_free(self):
+        def run(_argv, **_kwargs):
+            return app.subprocess.CompletedProcess(_argv, 0, stdout="0\n", stderr="")
+
+        with mock.patch.object(app.subprocess, "run", side_effect=run):
+            self.assertEqual(app.globe_key_warning(), "")
+
+        def run_default(_argv, **_kwargs):
+            return app.subprocess.CompletedProcess(
+                _argv, 1, stdout="", stderr="missing"
+            )
+
+        with mock.patch.object(app.subprocess, "run", side_effect=run_default):
+            self.assertIn(app.GLOBE_KEY_FIX, app.globe_key_warning())
 
     def test_a_double_tap_records_hands_free_until_the_next_tap(self):
         voice, tap = self._tapper()

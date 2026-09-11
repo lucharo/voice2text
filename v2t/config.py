@@ -30,7 +30,7 @@ class Config:
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
     cleanup_model: str = ""  # blank = the engine's own default
     mode: str = "casual"  # casual (default) | strict
-    hotkey: str = "cmd_r"
+    hotkey: str = "fn"
     sample_rate: int = 16000
     pause_music: bool = False
     save_history: bool = True
@@ -234,7 +234,7 @@ def _validate(cfg: Config) -> None:
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
         "streaming_mode": {"off", "hacky"},
-        "hotkey": {"cmd_r", "cmd_l", "alt_r", "alt_l", "ctrl_r", "ctrl_l"},
+        "hotkey": {"fn", "cmd_r", "cmd_l", "alt_r", "alt_l", "ctrl_r", "ctrl_l"},
     }
     for field, allowed in choices.items():
         value = getattr(cfg, field)
@@ -267,7 +267,7 @@ model = ""             # blank = engine default (Qwen3.5-2B-4bit / qwen3:4b-inst
 mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)
 
 [hotkey]
-key = "cmd_r"          # cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
+key = "fn"             # fn (the 🌐 key, bottom-left) | cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
 
 [audio]
 sample_rate = 16000
