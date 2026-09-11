@@ -6,8 +6,8 @@
 # `scripts/release-macos.sh --publish` rewrites version and sha256 on every
 # release. Values below are placeholders until the first publish.
 cask "voice2text" do
-  version "0.0.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "0.4.0"
+  sha256 "27a3affc8124b2fe062f9687d6664fdd163457a18cca34be081d322c3a8e25cb"
 
   url "https://github.com/lucharo/voice2text/releases/download/v#{version}/Voice2Text-#{version}.zip"
   name "Voice2Text"
