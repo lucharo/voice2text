@@ -1004,6 +1004,23 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([r["clean"] for r in second], ["A.", "B.", "C."])
         self.assertTrue(legacy.exists(), "the JSONL is the user's; never removed")
 
+        # A v2t from before the database is still running and appends a line.
+        with legacy.open("a") as f:
+            f.write(
+                json.dumps(
+                    {"ts": "2026-01-03T00:00:00+00:00", "raw": "d", "clean": "D."}
+                )
+                + "\n"
+            )
+            f.write('{"ts": "2026-01-04T00:00:00+00:00", "raw": "half')  # mid-write
+
+        third = config.read_history()
+
+        self.assertEqual([r["clean"] for r in third], ["A.", "B.", "C.", "D."])
+        self.assertEqual(
+            [r["clean"] for r in config.read_history()], ["A.", "B.", "C.", "D."]
+        )
+
     def test_an_interrupted_import_leaves_nothing_and_is_retried(self):
         legacy = config.legacy_history_path()
         legacy.parent.mkdir(parents=True, exist_ok=True)
@@ -1033,7 +1050,7 @@ class V2TSmokeTests(unittest.TestCase):
             )
             self.assertIsNone(
                 con.execute(
-                    "select value from meta where key='legacy_imported'"
+                    "select value from meta where key='legacy_offset'"
                 ).fetchone()
             )
 
@@ -1207,6 +1224,17 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(voice.input_device, "USB PnP Sound Device")
         self.assertEqual(voice.trigger, "hold")
+
+    def test_a_tap_keeps_the_last_dictations_warning_but_a_dictation_clears_it(self):
+        voice, tap = self._tapper()
+        voice.warning = "Near-silent audio from LABLABLA"
+
+        tap(at=100.0, held=0.1)
+        self.assertEqual(voice.warning, "Near-silent audio from LABLABLA")
+
+        voice.on_press("HOTKEY")
+        voice.hold_timer.fire()
+        self.assertEqual(voice.warning, "")
 
     def test_custom_config_keeps_existing_parent_permissions(self):
         parent = Path(self.tempdir.name) / "shared"

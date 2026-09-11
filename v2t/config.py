@@ -372,39 +372,46 @@ def _history_db() -> sqlite3.Connection:
 
 
 def _import_legacy_history(con: sqlite3.Connection) -> int:
-    """Rows from the pre-database JSONL, once. The file itself is left alone.
+    """Rows the pre-database JSONL has gained since the last open. The file is left alone.
 
-    The rows and the `legacy_imported` marker land in one write transaction, so
-    a crash midway leaves nothing behind and the next open imports again, and a
-    second process opening at the same time waits for the lock and then finds
-    the marker.
+    `meta.legacy_offset` is how many bytes of it are in the database. A v2t
+    from before the database keeps appending to the file until it is
+    restarted, so every open imports the complete lines past the offset. The
+    rows and the new offset land in one write transaction: a crash midway
+    leaves nothing behind and the next open imports again, and a second
+    process opening at the same time waits for the lock and finds the offset.
     """
-    marker = "SELECT value FROM meta WHERE key = 'legacy_imported'"
-    if con.execute(marker).fetchone():
+    path = legacy_history_path()
+    marker = "SELECT value FROM meta WHERE key = 'legacy_offset'"
+    row = con.execute(marker).fetchone()
+    done = int(row[0]) if row else 0
+    if not path.exists() or path.stat().st_size <= done:
         return 0
     con.execute("BEGIN IMMEDIATE")
     try:
-        if con.execute(marker).fetchone():
-            con.execute("COMMIT")
-            return 0
+        row = con.execute(marker).fetchone()
+        done = int(row[0]) if row else 0
+        with path.open("rb") as f:
+            f.seek(done)
+            data = f.read()
+        complete = data.rfind(b"\n") + 1  # a line still being written waits
         count = 0
-        path = legacy_history_path()
-        if path.exists():
-            for line in path.read_text().splitlines():
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(record, dict) or not record.get("ts"):
-                    continue
-                record.setdefault("trigger", "file" if record.get("source") else "hold")
-                record.setdefault(
-                    "outcome", "printed" if record.get("source") else "pasted"
-                )
-                _insert_history(con, record)
-                count += 1
+        for line in data[:complete].decode("utf-8", "replace").splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict) or not record.get("ts"):
+                continue
+            record.setdefault("trigger", "file" if record.get("source") else "hold")
+            record.setdefault(
+                "outcome", "printed" if record.get("source") else "pasted"
+            )
+            _insert_history(con, record)
+            count += 1
         con.execute(
-            "INSERT INTO meta (key, value) VALUES ('legacy_imported', ?)", (str(count),)
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_offset', ?)",
+            (str(done + complete),),
         )
         con.execute("COMMIT")
     except BaseException:
@@ -598,7 +605,7 @@ if __name__ == "__main__":
         assert [r["clean"] for r in rows] == ["Old.", "Hello."], "import, then append"
         assert rows[0]["trigger"] == "hold" and rows[1]["streamed"] is True
         assert rows[1]["ts"].endswith("+00:00") and rows[1]["version"], "filled in"
-        assert read_history() == rows, "the import happens once"
+        assert read_history() == rows, "nothing new in the file: nothing imported"
 
         os.environ.pop("V2T_HOME")
         os.environ["XDG_CONFIG_HOME"] = d

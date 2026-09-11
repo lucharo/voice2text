@@ -151,8 +151,9 @@ v2t history --json -n 0     # every row as JSON lines, for jq and friends
 sqlite3 ~/.v2t/history/history.sqlite "select ts, device, loud_frac, outcome from transcriptions order by id desc limit 5"
 ```
 
-A pre-existing `transcriptions.jsonl` is imported into the database the first time it is opened and
-then left alone. When a dictation carries almost no speech-level sound (a Bluetooth headset whose
+A pre-existing `transcriptions.jsonl` is imported into the database the first time it is opened,
+and lines an older, still-running v2t appends afterwards are picked up on the next open; the file
+itself is left alone. When a dictation carries almost no speech-level sound (a Bluetooth headset whose
 link never opened, a virtual device), the text is still pasted, but the log, a macOS notification
 and the `warning` field of `v2t status` name the device and the level.
 

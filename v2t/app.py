@@ -368,7 +368,6 @@ class VoiceToText:
                 return
             self.frames = []
             self.shown = False
-            self.warning = ""
             self.record_start = time.perf_counter()
             try:
                 self._refresh_audio_devices()
@@ -406,6 +405,7 @@ class VoiceToText:
             if not self.recording or self.shown:
                 return
             self.shown = True
+            self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
                 result = subprocess.run(
                     ["nowplaying-cli", "get", "playbackRate"],
