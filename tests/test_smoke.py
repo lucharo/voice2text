@@ -1407,7 +1407,30 @@ class V2TSmokeTests(unittest.TestCase):
             codesign[codesign.index("--sign") + 1],
             "Developer ID Application: Someone (TEAMID)",
         )
-        self.assertEqual(codesign[-1], str(bundle))
+        self.assertTrue(codesign[-1].endswith("/Voice2Text.app"))
+        self.assertNotEqual(codesign[-1], str(bundle))  # staged, moved once signed
+
+    def test_menubar_build_leaves_no_partial_bundle_when_signing_fails(self):
+        bundle = Path(self.tempdir.name) / "out" / "Voice2Text.app"
+        bundle.parent.mkdir()
+        (bundle / "Contents").mkdir(parents=True)
+        (bundle / "Contents" / "marker").write_text("previous build")
+
+        def compile_then_fail(command, **_kwargs):
+            if command[0] == "xcrun":
+                Path(command[command.index("-o") + 1]).touch(mode=0o755)
+                return mock.Mock(returncode=0)
+            raise menubar.subprocess.CalledProcessError(1, command)
+
+        with (
+            mock.patch.object(menubar.sys, "platform", "darwin"),
+            mock.patch.object(menubar.subprocess, "run", side_effect=compile_then_fail),
+            self.assertRaises(menubar.subprocess.CalledProcessError),
+        ):
+            menubar.build(bundle, bake_paths=False, identity="-")
+
+        self.assertEqual((bundle / "Contents" / "marker").read_text(), "previous build")
+        self.assertEqual(sorted(p.name for p in bundle.parent.iterdir()), ["Voice2Text.app"])
 
     def test_menubar_app_path_prefers_the_cask_install(self):
         system = Path(self.tempdir.name) / "Applications"

@@ -90,7 +90,8 @@ def signing_flags(identity: str) -> list[str]:
 
 def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None) -> Path:
     """Compile the bundled Swift source into a small, grantable app bundle at
-    `bundle` (a `.app` path; anything already there is replaced).
+    `bundle` (a `.app` path; anything already there is replaced only once the
+    new bundle has compiled and signed, so a failure leaves no half-built app).
 
     With `bake_paths`, Info.plist carries this user's v2t home, interpreter and
     config so the shell needs no discovery. Without it the bundle is portable:
@@ -98,10 +99,19 @@ def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None)
     launches it. `identity` defaults to the best one in the keychain."""
     if sys.platform != "darwin":
         raise SystemExit("the Voice2Text menu app is macOS-only")
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    # Staged next to the destination so the final move is a rename.
+    with tempfile.TemporaryDirectory(dir=bundle.parent) as temporary:
+        staged = _compile(Path(temporary) / bundle.name, bake_paths=bake_paths, identity=identity)
+        if bundle.exists():
+            shutil.rmtree(bundle)
+        shutil.move(staged, bundle)
+    return bundle
+
+
+def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
     source = files("v2t").joinpath("native", "Voice2Text.swift")
     entitlements = files("v2t").joinpath("native", "Voice2Text.entitlements.plist")
-    if bundle.exists():
-        shutil.rmtree(bundle)
     contents = bundle / "Contents"
     executable = contents / "MacOS" / "Voice2Text"
     executable.parent.mkdir(parents=True)
@@ -168,16 +178,7 @@ def install() -> Path:
         raise SystemExit("the Voice2Text menu app is macOS-only")
     if running():
         raise SystemExit("quit Voice2Text before updating the menu app")
-    destination = user_app_path()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Staged next to the destination so the final move is a rename, never a
-    # half-copied bundle if the compile or the signature fails.
-    with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
-        bundle = build(Path(temporary) / APP_NAME, bake_paths=True)
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.move(bundle, destination)
-    return destination
+    return build(user_app_path(), bake_paths=True)
 
 
 def open_app(bundle: Path | None = None) -> None:
