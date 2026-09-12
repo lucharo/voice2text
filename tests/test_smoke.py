@@ -1429,6 +1429,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             menubar.build(bundle, bake_paths=False, identity="-")
 
+        self.assertEqual(sorted(p.name for p in (bundle / "Contents").iterdir()), ["marker"])
         self.assertEqual((bundle / "Contents" / "marker").read_text(), "previous build")
         self.assertEqual(sorted(p.name for p in bundle.parent.iterdir()), ["Voice2Text.app"])
 
