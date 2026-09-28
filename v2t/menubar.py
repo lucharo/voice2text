@@ -112,12 +112,14 @@ def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None)
 def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
     source = files("v2t").joinpath("native", "Voice2Text.swift")
     entitlements = files("v2t").joinpath("native", "Voice2Text.entitlements.plist")
+    icon = files("v2t").joinpath("native", "AppIcon.icns")
     contents = bundle / "Contents"
     executable = contents / "MacOS" / "Voice2Text"
     executable.parent.mkdir(parents=True)
     info = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleExecutable": "Voice2Text",
+        "CFBundleIconFile": "AppIcon",
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "Voice2Text",
@@ -135,6 +137,8 @@ def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
         if custom_config := os.environ.get("V2T_CONFIG"):
             info["V2TConfig"] = str(Path(custom_config).expanduser())
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    (contents / "Resources").mkdir()
+    (contents / "Resources" / "AppIcon.icns").write_bytes(icon.read_bytes())
     with as_file(source) as source_path, as_file(entitlements) as entitlements_path:
         subprocess.run(
             [

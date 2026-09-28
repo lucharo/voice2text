@@ -1320,6 +1320,7 @@ class V2TSmokeTests(unittest.TestCase):
             {
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleExecutable": "Voice2Text",
+                "CFBundleIconFile": "AppIcon",
                 "CFBundleIdentifier": "com.lucharo.voice2text",
                 "CFBundleInfoDictionaryVersion": "6.0",
                 "CFBundleName": "Voice2Text",
@@ -1334,6 +1335,8 @@ class V2TSmokeTests(unittest.TestCase):
                 "V2TPythonExecutable": sys.executable,
             },
         )
+        icon = installed / "Contents" / "Resources" / "AppIcon.icns"
+        self.assertEqual(icon.read_bytes()[:4], b"icns")
         self.assertEqual(
             stat.S_IMODE(
                 (installed / "Contents" / "MacOS" / "Voice2Text").stat().st_mode
@@ -1389,6 +1392,7 @@ class V2TSmokeTests(unittest.TestCase):
             {
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleExecutable": "Voice2Text",
+                "CFBundleIconFile": "AppIcon",
                 "CFBundleIdentifier": "com.lucharo.voice2text",
                 "CFBundleInfoDictionaryVersion": "6.0",
                 "CFBundleName": "Voice2Text",

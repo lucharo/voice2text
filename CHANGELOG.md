@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The menu app has the waveform logo as its icon.** `Voice2Text.app` shipped with the generic app icon in Finder, `/Applications` and the Microphone and Accessibility panes; it now carries `AppIcon.icns`, rendered from `assets/logo/logo.svg` by `assets/logo/app-icon.sh`. The menu-bar glyph is unchanged.
+
 ## 0.4.0
 
 - **The menu app ships prebuilt, signed and notarised.** `brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git` then `brew install --cask voice2text` installs a Developer ID-signed, notarised `Voice2Text.app` into `/Applications`, so a Mac with no Apple signing identity (a managed work laptop) gets the same stable permission identity as a local build. The bundle carries no user paths: it finds `~/.v2t` and the `uv tool install voice2text` interpreter at launch, and the menu says "v2t is not installed" with the one command to run when it cannot. `v2t menubar build DIR` compiles that portable bundle; `scripts/release-macos.sh --publish` (`just release-macos --publish`) signs, notarises, staples, uploads it to the GitHub Release and rewrites `Casks/voice2text.rb`. `v2t menubar install` is unchanged, and `v2t menubar open` and the login service prefer the `/Applications` copy when both exist.
