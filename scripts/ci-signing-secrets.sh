@@ -26,8 +26,9 @@ done
 read -rs "password?Password the .p12 was exported with: "
 echo
 # Prove the password and the contents before anything is uploaded.
-subjects="$(openssl pkcs12 -in "$p12" -passin "pass:$password" -nokeys -legacy 2>/dev/null \
-  || openssl pkcs12 -in "$p12" -passin "pass:$password" -nokeys)"
+export P12_PASSWORD="$password"  # via the environment, never argv
+subjects="$(openssl pkcs12 -in "$p12" -passin env:P12_PASSWORD -nokeys -legacy 2>/dev/null \
+  || openssl pkcs12 -in "$p12" -passin env:P12_PASSWORD -nokeys)"
 if [[ "$subjects" != *"Developer ID Application"*"7V3HZUL435"* ]]; then
   echo "$p12 does not hold a Developer ID Application certificate for team 7V3HZUL435 (or the password is wrong)." >&2
   exit 1
