@@ -2,21 +2,61 @@
 
 ## Does publication happen in CI?
 
-**Short answer:** No. As of v0.3.0, GitHub Actions validates and builds the package, but it does
-not publish it. A release is published explicitly from a clean checkout with `uv publish` and a
-`UV_PUBLISH_TOKEN` in the environment, then verified from PyPI before the Git tag and GitHub
-release are created.
+**Short answer:** The `release.yml` workflow now handles publication after a `v<version>` tag
+push and approval in the `release` environment. It publishes the engine to PyPI, then signs,
+notarises and publishes the Mac app and updates the Homebrew cask.
+
+**Correction (2026-09-28):** the earlier answer said CI only validates and builds. Version 0.4.1
+adds a publication workflow, but that release was published from the personal Mac. Before the
+next CI release, register the PyPI trusted publisher for owner `lucharo`, repository `voice2text`,
+workflow `release.yml`, environment `release`; signing secrets are already configured. A
+successful `check` run proves validation, not publication.
 
 ### Sources
 
-- [GitHub Actions check workflow](../../.github/workflows/check.yml) — runs lint, tests, build and
-  distribution checks, with no publish job.
-- [Release recipes](../../justfile) — defines the explicit local build and `uv publish` path.
-- [v0.3.0 release](https://github.com/lucharo/voice2text/releases/tag/v0.3.0) — the first release
-  completed through this path.
+- [Release workflow](../../.github/workflows/release.yml) — tag trigger, protected jobs and publication.
+- [Check workflow](../../.github/workflows/check.yml) — validation only.
+- [v0.4.1 release](https://github.com/lucharo/voice2text/releases/tag/v0.4.1) — the local-release exception.
 
-_Verified: 2026-08-01 · Scope: v0.3.0. Recheck the workflow and release recipes before a later
-release._
+_Created: 2026-08-01 · Updated: 2026-09-28 · Verified: 2026-09-28 · Scope: v0.4.1.
+Recheck publisher configuration and the release workflow before the next tag._
+
+## What does PyPI's 503 mean, and what do we need to do?
+
+**Short answer:** The requested service is unavailable; check the failing endpoint as well as
+the status page. During the 0.4.1 release, publisher settings failed while package uploads and
+downloads worked. An operational component label did not prove the logged-in settings page worked.
+Retry publisher setup after recovery; changing Apple signing credentials cannot fix that page.
+
+### Sources
+
+- [PyPI incident, 2026-09-28](https://status.python.org/incidents/krn0mpxz5jp2) — search, login and logged-in page failures.
+- [Python infrastructure status](https://status.python.org/) — current incident and component state.
+- [v0.4.1 release](https://github.com/lucharo/voice2text/releases/tag/v0.4.1) — publication completed through the local path.
+
+_Created: 2026-09-28 · Updated: 2026-09-28 · Verified: 2026-09-28 · Scope: the 0.4.1 incident;
+test the actual endpoint again before treating a later error as the same outage._
+
+## Can we release from the Mac when CI setup is blocked?
+
+**Short answer:** Yes, with publication authorised and the release source fixed to a clean commit.
+Publish and verify the engine first, then use the signed Mac app release path in the
+[release script](../../scripts/release-macos.sh). The script without `--publish` only builds,
+signs, notarises and verifies; GitHub publication and the cask update remain outstanding.
+
+For 0.4.1, signing failed with `errSecInternalComponent` in the agent's background session but
+succeeded when the user ran the same build in a normal terminal. After that handoff, we published
+the verified ZIP from its recorded source commit, checked the downloaded bytes and Gatekeeper
+acceptance, and committed the cask checksum. The duplicate tag-triggered CI publication was cancelled.
+
+### Sources
+
+- [Release script](../../scripts/release-macos.sh) — verification and optional publication gates.
+- [v0.4.1 release](https://github.com/lucharo/voice2text/releases/tag/v0.4.1) — source commit and notarised ZIP.
+- [Cask update](https://github.com/lucharo/voice2text/commit/84f65026a6d590c98902a7cee6734129fb7f2e70) — published version and checksum.
+
+_Created: 2026-09-28 · Updated: 2026-09-28 · Verified: 2026-09-28 · Scope: v0.4.1 on the personal Mac;
+the terminal workaround is an observed result, not a diagnosis of every signing error._
 
 ## How can I tell whether Voice2Text is still loading or healthy?
 
