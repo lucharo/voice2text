@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - **The menu app has the waveform logo as its icon.** `Voice2Text.app` shipped with the generic app icon in Finder, `/Applications` and the Microphone and Accessibility panes; it now carries `AppIcon.icns`, rendered from `assets/logo/logo.svg` by `assets/logo/app-icon.sh`. The menu-bar glyph is unchanged.
 
