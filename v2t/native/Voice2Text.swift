@@ -117,15 +117,81 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // An ungranted Accessibility prompt sends the user to System Settings; the
+    // one-second refresh starts the engine as soon as the switch is on, so
+    // nobody has to come back and press Start a second time.
     private func requestSystemPermissions() {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let accessibility = AXIsProcessTrustedWithOptions(prompt)
-        guard accessibility else {
-            phase = "permission-error"
+        guard AXIsProcessTrustedWithOptions(prompt) else {
+            phase = "awaiting-accessibility"
             render()
             return
         }
         launchEngine()
+    }
+
+    @objc private func cancelStart() {
+        phase = "off"
+        render()
+    }
+
+    /// Forgets this app's Microphone and Accessibility decisions and asks again.
+    /// A grant made for a differently signed build with the same bundle ID (an
+    /// older local build, a copy elsewhere) still shows as on in System Settings
+    /// but no longer matches this signature, and flipping the switch does not
+    /// always rewrite it; a reset is the one reliable way out.
+    @objc private func resetPermissions() {
+        for service in ["Microphone", "Accessibility"] {
+            let reset = Process()
+            reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            reset.arguments = ["reset", service, Bundle.main.bundleIdentifier ?? "com.lucharo.voice2text"]
+            try? reset.run()
+            reset.waitUntilExit()
+        }
+        phase = "off"
+        start()
+    }
+
+    // Voice2Text bundles in the two install locations other than this one. They
+    // share one bundle ID, and macOS keeps a single Microphone and Accessibility
+    // grant per ID pinned to one signature, so whichever copy asked last revokes
+    // the other's. /Applications (the Homebrew cask) is the copy to keep.
+    private static let systemCopy = URL(fileURLWithPath: "/Applications/Voice2Text.app")
+    private static let userCopy = URL(fileURLWithPath: NSHomeDirectory() + "/Applications/Voice2Text.app")
+
+    private var otherCopy: URL? {
+        let own = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+        return [Self.systemCopy, Self.userCopy].first {
+            $0.resolvingSymlinksInPath().standardizedFileURL != own
+                && FileManager.default.fileExists(atPath: $0.appendingPathComponent("Contents/Info.plist").path)
+        }
+    }
+
+    private var runningFromSystemCopy: Bool {
+        Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+            == Self.systemCopy.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    /// From /Applications: bin the stray copy. From anywhere else: hand over to
+    /// the /Applications copy, binning this one only if it is the old
+    /// ~/Applications install (a build folder is left alone).
+    @objc private func resolveOtherCopy() {
+        guard let other = otherCopy, engine == nil else { return }
+        if runningFromSystemCopy {
+            NSWorkspace.shared.recycle([other]) { [weak self] _, _ in
+                DispatchQueue.main.async { self?.rendered = ""; self?.render() }
+            }
+            return
+        }
+        let own = Bundle.main.bundleURL
+        if own.resolvingSymlinksInPath().standardizedFileURL == Self.userCopy.resolvingSymlinksInPath().standardizedFileURL {
+            NSWorkspace.shared.recycle([own], completionHandler: nil)
+        }
+        // Release the single-instance lock first so the /Applications copy can take it.
+        if lockFD >= 0 { close(lockFD); lockFD = -1 }
+        NSWorkspace.shared.openApplication(at: Self.systemCopy, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     private func launchEngine() {
@@ -209,7 +275,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
-        if !live && engine == nil && phase != "permission-error" && phase != "error" && phase != "no-engine" {
+        if phase == "awaiting-accessibility" && AXIsProcessTrusted() {
+            launchEngine()
+            return
+        }
+        if !live && engine == nil && !["permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
             phase = "off"
             status = [:]
             externalEngine = false
@@ -248,7 +318,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // much it has heard so far: a word count and the tail of the text.
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
-        let signature = "\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let other = otherCopy
+        let signature = "\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -261,6 +332,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
         case "stopping": ("hourglass", "Stopping…", nil)
         case "permission-error": ("exclamationmark.triangle", "Permissions required", .systemOrange)
+        case "awaiting-accessibility": ("hand.raised", "Turn on Voice2Text under Accessibility", .systemOrange)
         case "error": ("exclamationmark.triangle", "Could not start — open Log", .systemOrange)
         case "no-engine": ("exclamationmark.triangle", "v2t is not installed", .systemOrange)
         default: ("waveform.slash", "Off", nil)
@@ -289,11 +361,21 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let hint = "Run: uv tool install voice2text"
             add(hint, enabled: false).attributedTitle = secondary(hint)
         }
+        if let other {
+            let folder = (other.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+            let warning = "Another copy in \(folder) takes its permissions"
+            add(warning, image: symbol("exclamationmark.triangle", color: .systemOrange), enabled: false)
+            if engine == nil {
+                add(runningFromSystemCopy ? "Move Other Copy to Bin" : "Switch to /Applications Copy",
+                    action: #selector(resolveOtherCopy), image: symbol(runningFromSystemCopy ? "trash" : "arrow.right.circle"))
+            }
+        }
         menu.addItem(.separator())
 
         if externalEngine { add("Running from terminal", image: symbol("terminal"), enabled: false) }
         else if phase == "permissions" || phase == "starting" { add("Starting…", image: symbol("hourglass"), enabled: false) }
         else if phase == "stopping" { add("Stopping…", image: symbol("hourglass"), enabled: false) }
+        else if phase == "awaiting-accessibility" { add("Cancel Start", action: #selector(cancelStart), image: symbol("xmark")) }
         else if engine == nil { add("Start v2t", action: #selector(start), image: symbol("play.fill"), key: "s") }
         else { add("Stop v2t", action: #selector(stop), image: symbol("stop.fill"), key: "s") }
         menu.addItem(.separator())
@@ -311,6 +393,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(openMicrophone), image: statusDot(microphone))
         add(accessibility ? "Accessibility · Granted" : "Accessibility · Click to grant",
             action: #selector(openAccessibility), image: statusDot(accessibility))
+        if ["permission-error", "awaiting-accessibility"].contains(phase) {
+            add("Reset Permissions", action: #selector(resetPermissions), image: symbol("arrow.counterclockwise"))
+        }
         menu.addItem(.separator())
 
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
