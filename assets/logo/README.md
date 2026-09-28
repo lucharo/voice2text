@@ -15,3 +15,6 @@ uvx --from mlx-audio --with "misaki[en]" python -m mlx_audio.tts.generate \
   --output_path assets/logo --file_prefix voice-to-text
 uv run assets/logo/waveform.py assets/logo/voice-to-text.wav assets/logo/logo.svg 16
 ```
+
+`app-icon.sh` renders `logo.svg` into `v2t/native/AppIcon.icns`, the menu app's bundle
+icon (needs `rsvg-convert`). Rerun it after regenerating the logo.
