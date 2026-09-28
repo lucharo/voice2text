@@ -6,10 +6,10 @@
 #   brew install --cask voice2text
 # The app is only the native shell; the engine is `uv tool install voice2text`.
 # `scripts/release-macos.sh --publish` rewrites version and sha256 on every
-# release. Values below are placeholders until the first publish.
+# release.
 cask "voice2text" do
-  version "0.4.0"
-  sha256 "27a3affc8124b2fe062f9687d6664fdd163457a18cca34be081d322c3a8e25cb"
+  version "0.4.1"
+  sha256 "7bf19d5800f304e13ae7d1bd3897cf35c0b02b8924774cfe1384fe1d748de326"
 
   url "https://github.com/lucharo/voice2text/releases/download/v#{version}/Voice2Text-#{version}.zip"
   name "Voice2Text"
