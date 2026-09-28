@@ -1306,6 +1306,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         with (
             mock.patch.object(menubar, "user_app_path", return_value=destination),
+            mock.patch.object(menubar, "SYSTEM_APPLICATIONS", Path(self.tempdir.name) / "Applications"),
             mock.patch.object(menubar.sys, "platform", "darwin"),
             mock.patch.object(menubar, "signing_identity", return_value="-"),
             mock.patch.object(menubar.subprocess, "run", side_effect=compile_app),
@@ -1362,6 +1363,26 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(
             codesign[-1].endswith("/Voice2Text.app")
         )  # staged bundle, moved after signing
+
+    def test_menubar_install_refuses_beside_the_cask_install(self):
+        system = Path(self.tempdir.name) / "Applications"
+        executable = system / "Voice2Text.app" / "Contents" / "MacOS" / "Voice2Text"
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        destination = Path(self.tempdir.name) / "user" / "Voice2Text.app"
+
+        with (
+            mock.patch.object(menubar, "user_app_path", return_value=destination),
+            mock.patch.object(menubar, "SYSTEM_APPLICATIONS", system),
+            mock.patch.object(menubar.sys, "platform", "darwin"),
+            mock.patch.object(menubar.subprocess, "run") as run,
+            mock.patch.dict(os.environ, {"V2T_HOME": self.tempdir.name}, clear=True),
+            self.assertRaisesRegex(SystemExit, "brew upgrade --cask voice2text"),
+        ):
+            menubar.install()
+
+        run.assert_not_called()
+        self.assertFalse(destination.exists())
 
     def test_menubar_build_without_baked_paths_is_portable(self):
         bundle = Path(self.tempdir.name) / "out" / "Voice2Text.app"

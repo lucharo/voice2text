@@ -265,7 +265,7 @@ reasoning. The defaults don't.
 brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text
 brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
 brew install --cask voice2text   # prebuilt, notarised: /Applications/Voice2Text.app
-v2t menubar install              # or compile it here into ~/Applications/Voice2Text.app
+v2t menubar install              # or, instead, compile it here into ~/Applications/Voice2Text.app
 ```
 
 The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
@@ -293,9 +293,14 @@ notarised by Apple, which is what a Mac with no signing identity of its own need
 user paths and finds `~/.v2t` and the `uv tool install voice2text` interpreter at launch, and its
 menu says "v2t is not installed" with the one command to run when it cannot. `v2t menubar install`
 compiles the same source on this Mac with the best identity in the keychain (Developer ID, then
-Apple Development, then ad-hoc). When both copies exist, `v2t menubar open` and the login service
-prefer the one in `/Applications`. Releasing the cask is `just release-macos --publish` on a Mac
-with the Developer ID certificates (see `scripts/release-macos.sh`).
+Apple Development, then ad-hoc). Keep only one: both copies share a bundle ID, and macOS pins each
+permission grant to one signature, so whichever copy asks last takes the other's grants. `v2t menubar
+install` refuses once the cask is installed, and the menu names any second copy with a button that
+bins it (or, from the stray copy, hands over to `/Applications`). Releasing is pushing a `v<version>` tag that matches
+`pyproject.toml`: `.github/workflows/release.yml` waits for approval in the `release` environment,
+publishes the engine to PyPI through trusted publishing, signs and notarises the app with the
+identity `scripts/ci-signing-secrets.sh` stored, and commits the updated cask to `main`.
+`just release-macos --publish` does the app half from a Mac with the Developer ID certificate.
 
 **Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
 terminal launch uses your terminal's grants. The menu app requests its own grants and

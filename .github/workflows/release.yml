@@ -1,0 +1,101 @@
+name: release
+
+# Pushing a v<version> tag publishes that version: the engine to PyPI (trusted
+# publishing, no token) and the notarised menu app to the GitHub Release, then
+# commits the rewritten cask to main. Both jobs run in the `release`
+# environment, whose required reviewer approves each run before any secret is
+# exposed. One-time setup: scripts/ci-signing-secrets.sh and a PyPI trusted
+# publisher (see scripts/release-macos.sh).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Tag matches pyproject version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $version"; exit 1; }
+      - run: uv lock --check
+      - run: uv build
+      - run: uvx twine check dist/*
+      - run: uv publish --trusted-publishing always
+
+  macos:
+    needs: pypi
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      UV_FROZEN: "1"  # the script's `uv run` must not rewrite uv.lock and dirty the checkout
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Import the Developer ID identity into a throwaway keychain
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          keychain_password="$(openssl rand -base64 24)"
+          security create-keychain -p "$keychain_password" "$RUNNER_TEMP/release.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/release.keychain-db"
+          security unlock-keychain -p "$keychain_password" "$RUNNER_TEMP/release.keychain-db"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$RUNNER_TEMP/release.keychain-db" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$RUNNER_TEMP/release.keychain-db" > /dev/null
+          security list-keychains -d user -s "$RUNNER_TEMP/release.keychain-db" login.keychain-db
+          security find-identity -v -p codesigning "$RUNNER_TEMP/release.keychain-db"
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+      - run: uv sync --frozen
+      - name: Sign, notarise, publish
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-macos.sh --publish
+      - name: Commit the cask to main
+        run: |
+          # Carry only the version and sha256 lines onto main's own cask.
+          version_line="$(grep -m1 '^  version "' Casks/voice2text.rb)"
+          sha_line="$(grep -m1 '^  sha256 "' Casks/voice2text.rb)"
+          git checkout -q -- Casks/voice2text.rb
+          git fetch -q origin main
+          git checkout -q -B main origin/main
+          sed -i '' -e "s/^  version \".*\"/$version_line/" -e "s/^  sha256 \".*\"/$sha_line/" Casks/voice2text.rb
+          grep -qxF "$version_line" Casks/voice2text.rb && grep -qxF "$sha_line" Casks/voice2text.rb
+          git diff --quiet -- Casks/voice2text.rb && { echo "cask already current"; exit 0; }
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "chore: cask points at the $GITHUB_REF_NAME release" -- Casks/voice2text.rb
+          git push -q origin main
+      - name: Remove the keychain and key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"

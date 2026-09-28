@@ -34,8 +34,7 @@ def user_app_path() -> Path:
 
 def app_path() -> Path:
     """The bundle to open and to start at login: a Homebrew cask install in
-    /Applications wins over the per-user build, so `brew install --cask voice2text`
-    and `v2t menubar install` never race for the permission identity."""
+    /Applications wins over the per-user build."""
     system = SYSTEM_APPLICATIONS / APP_NAME
     if (system / "Contents" / "MacOS" / "Voice2Text").is_file():
         return system
@@ -182,6 +181,14 @@ def install() -> Path:
         raise SystemExit("the Voice2Text menu app is macOS-only")
     if running():
         raise SystemExit("quit Voice2Text before updating the menu app")
+    # Both copies share one bundle ID, and macOS pins each permission grant to
+    # one signature, so a second copy revokes the cask's grants whenever it runs.
+    if (SYSTEM_APPLICATIONS / APP_NAME / "Contents" / "MacOS" / "Voice2Text").is_file():
+        raise SystemExit(
+            f"Voice2Text is already installed in {SYSTEM_APPLICATIONS} (Homebrew cask); a second copy "
+            "would take its Microphone and Accessibility permissions. Update it with "
+            "`brew upgrade --cask voice2text`, or `brew uninstall --cask voice2text` first."
+        )
     return build(user_app_path(), bake_paths=True)
 
 
