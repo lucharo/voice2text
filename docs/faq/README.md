@@ -206,8 +206,10 @@ accepts it with no certificate on the installing Mac. The engine is still `uv to
 voice2text`: the shell carries no user paths and finds `~/.v2t` and that interpreter at launch,
 and its menu says "v2t is not installed" with the command to run when it cannot. `v2t menubar
 install` still compiles a local copy into `~/Applications` when a signing identity is available,
-and `v2t menubar open` and the login service prefer the `/Applications` copy when both exist. If
-endpoint security refuses the notarised app too, the block is on the publisher team, which only the
+but refuses once the cask is installed, because two copies share one bundle ID and take each other's
+permissions (see the next question). On the GSK-managed Mac the notarised cask launches and
+endpoint security (defendpointd) logs no rule match for it. If endpoint security refuses the
+notarised app, the block is on the publisher team, which only the
 device administrator can allow-list.
 
 ### Sources
@@ -219,5 +221,43 @@ device administrator can allow-list.
 - [Swift shell](../../v2t/native/Voice2Text.swift) — the launch-time fallback to `~/.v2t` and the
   `uv tool` interpreter when nothing is baked into Info.plist.
 
-_Verified: 2026-09-11 · Scope: v0.4.0. Allow-listing the team on a managed Mac is outside this
+_Verified: 2026-09-28 · Scope: v0.4.1. Allow-listing the team on a managed Mac is outside this
 repository._
+
+## Why does the menu app ask for Microphone or Accessibility again when I already granted it?
+
+**Short answer:** Usually because a second copy of `Voice2Text.app` exists, most often an old
+`v2t menubar install` build in `~/Applications` beside the cask in `/Applications`. Both carry the
+bundle ID `com.lucharo.voice2text`, and macOS keeps one grant per ID pinned to one signature, so
+whichever copy asks last takes the grant from the other, and Spotlight may open either. Since
+v0.4.1 the menu names a second copy with a button that bins it (or hands over to `/Applications`),
+and `v2t menubar install` refuses beside the cask. After removing the extra copy, one fresh grant
+sticks; **Reset Permissions** in the menu clears a grant pinned to an older signature. A single
+re-prompt right after `tccutil reset` or a first install is expected. Since v0.4.1 Start also waits
+for the Accessibility switch instead of failing, so you no longer press Start twice.
+
+### Sources
+
+- [Swift shell](../../v2t/native/Voice2Text.swift) — `otherCopy`, `resolveOtherCopy`,
+  `resetPermissions` and the `awaiting-accessibility` phase.
+- [Menu app install](../../v2t/menubar.py) — the refusal when the cask copy exists.
+- The unified log shows the cause: `log show --predicate 'subsystem == "com.apple.TCC"'` prints
+  `Failed to match existing code requirement` with each copy's `binary_path`.
+
+_Verified: 2026-09-28 · Scope: v0.4.1. Diagnosed on the GSK Mac, where a 0.3.0 ad-hoc build in
+`~/Applications` was taking the cask's grants._
+
+## Where does the app icon come from?
+
+**Short answer:** From the waveform logo in `assets/logo/` (the real waveform of the words "voice
+to text", from #18). Since v0.4.1 `assets/logo/app-icon.sh` renders `logo.svg` onto the macOS icon
+grid into `v2t/native/AppIcon.icns`, and the bundle build copies it into `Contents/Resources` with
+`CFBundleIconFile`, so both the cask and `v2t menubar install` show it in Finder and the privacy
+panes. The menu-bar glyph is a separate SF Symbol that changes with state.
+
+### Sources
+
+- [Logo README](../../assets/logo/README.md) — how the logo and the icon are regenerated.
+- [Menu app build](../../v2t/menubar.py) — where the icon enters the bundle.
+
+_Verified: 2026-09-28 · Scope: v0.4.1._
