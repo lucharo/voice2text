@@ -363,8 +363,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if let other {
             let folder = (other.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
-            let warning = "Another copy in \(folder) takes its permissions"
-            add(warning, image: symbol("exclamationmark.triangle", color: .systemOrange), enabled: false)
+            let warning = add("Another copy in \(folder)", image: symbol("exclamationmark.triangle", color: .systemOrange), enabled: false)
+            warning.toolTip = "Both copies share one identity, so each takes the other's Microphone and Accessibility permissions."
             if engine == nil {
                 add(runningFromSystemCopy ? "Move Other Copy to Bin" : "Switch to /Applications Copy",
                     action: #selector(resolveOtherCopy), image: symbol(runningFromSystemCopy ? "trash" : "arrow.right.circle"))
