@@ -33,6 +33,7 @@ jobs:
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $version"; exit 1; }
+      - run: uv lock --check
       - run: uv build
       - run: uvx twine check dist/*
       - run: uv publish --trusted-publishing always
@@ -43,6 +44,8 @@ jobs:
     environment: release
     permissions:
       contents: write
+    env:
+      UV_FROZEN: "1"  # the script's `uv run` must not rewrite uv.lock and dirty the checkout
     steps:
       - uses: actions/checkout@v5
         with:
@@ -79,11 +82,14 @@ jobs:
         run: scripts/release-macos.sh --publish
       - name: Commit the cask to main
         run: |
-          cask="$(cat Casks/voice2text.rb)"
+          # Carry only the version and sha256 lines onto main's own cask.
+          version_line="$(grep -m1 '^  version "' Casks/voice2text.rb)"
+          sha_line="$(grep -m1 '^  sha256 "' Casks/voice2text.rb)"
           git checkout -q -- Casks/voice2text.rb
           git fetch -q origin main
           git checkout -q -B main origin/main
-          printf '%s\n' "$cask" > Casks/voice2text.rb
+          sed -i '' -e "s/^  version \".*\"/$version_line/" -e "s/^  sha256 \".*\"/$sha_line/" Casks/voice2text.rb
+          grep -qxF "$version_line" Casks/voice2text.rb && grep -qxF "$sha_line" Casks/voice2text.rb
           git diff --quiet -- Casks/voice2text.rb && { echo "cask already current"; exit 0; }
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "chore: cask points at the $GITHUB_REF_NAME release" -- Casks/voice2text.rb

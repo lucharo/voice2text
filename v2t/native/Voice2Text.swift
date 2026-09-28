@@ -145,8 +145,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let reset = Process()
             reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
             reset.arguments = ["reset", service, Bundle.main.bundleIdentifier ?? "com.lucharo.voice2text"]
-            try? reset.run()
-            reset.waitUntilExit()
+            do {
+                try reset.run()
+                reset.waitUntilExit()
+            } catch {}
         }
         phase = "off"
         start()
@@ -172,29 +174,72 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             == Self.systemCopy.resolvingSymlinksInPath().standardizedFileURL
     }
 
-    /// From /Applications: bin the stray copy. From anywhere else: hand over to
-    /// the /Applications copy, binning this one only if it is the old
-    /// ~/Applications install (a build folder is left alone).
+    /// Whether the menu can settle the clash: from /Applications by binning the
+    /// other copy, or from elsewhere by handing over to /Applications. A build
+    /// folder facing only a ~/Applications copy just shows the warning.
+    private var canResolveOtherCopy: Bool {
+        runningFromSystemCopy || otherCopy == Self.systemCopy
+    }
+
+    /// From /Applications: bin the stray copy. From anywhere else: open the
+    /// /Applications copy and, once it has launched, bin this one if it is the
+    /// old ~/Applications install (a build folder is left alone) and quit.
     @objc private func resolveOtherCopy() {
-        guard let other = otherCopy, engine == nil else { return }
+        guard let other = otherCopy, engine == nil, canResolveOtherCopy else { return }
         if runningFromSystemCopy {
-            NSWorkspace.shared.recycle([other]) { [weak self] _, _ in
-                DispatchQueue.main.async { self?.rendered = ""; self?.render() }
+            NSWorkspace.shared.recycle([other]) { [weak self] _, error in
+                DispatchQueue.main.async {
+                    if error == nil { self?.repointLoginAgent(from: other, to: Self.systemCopy) }
+                    self?.rendered = ""
+                    self?.render()
+                }
             }
             return
         }
         let own = Bundle.main.bundleURL
-        if own.resolvingSymlinksInPath().standardizedFileURL == Self.userCopy.resolvingSymlinksInPath().standardizedFileURL {
-            NSWorkspace.shared.recycle([own], completionHandler: nil)
-        }
-        // Release the single-instance lock first so the /Applications copy can take it.
+        let ownIsUserCopy = own.resolvingSymlinksInPath().standardizedFileURL
+            == Self.userCopy.resolvingSymlinksInPath().standardizedFileURL
+        // Release the single-instance lock so the /Applications copy can take it;
+        // take it back if that copy does not launch.
         if lockFD >= 0 { close(lockFD); lockFD = -1 }
-        NSWorkspace.shared.openApplication(at: Self.systemCopy, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+        NSWorkspace.shared.openApplication(at: Self.systemCopy, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard error == nil else {
+                    _ = self.acquireAppLock()
+                    self.rendered = ""
+                    self.render()
+                    return
+                }
+                guard ownIsUserCopy else { NSApp.terminate(nil); return }
+                self.repointLoginAgent(from: own, to: Self.systemCopy)
+                // Quit only once the move is done; quitting first abandons it.
+                NSWorkspace.shared.recycle([own]) { _, _ in
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                }
+            }
+        }
+    }
+
+    /// `v2t service install` bakes the bundle path into the login agent; when that
+    /// bundle has just gone to the Bin, point the agent at the copy that stays.
+    private func repointLoginAgent(from binned: URL, to kept: URL) {
+        let agent = URL(fileURLWithPath: NSHomeDirectory() + "/Library/LaunchAgents/"
+            + (Bundle.main.bundleIdentifier ?? "com.lucharo.voice2text") + ".plist")
+        guard let data = try? Data(contentsOf: agent),
+              var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              var arguments = plist["ProgramArguments"] as? [String],
+              let program = arguments.first, program.hasPrefix(binned.path + "/")
+        else { return }
+        arguments[0] = kept.appendingPathComponent("Contents/MacOS/Voice2Text").path
+        plist["ProgramArguments"] = arguments
+        if let updated = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+            try? updated.write(to: agent, options: .atomic)
         }
     }
 
     private func launchEngine() {
+        guard engine == nil else { return }
         guard let python = pythonExecutable else {
             phase = "no-engine"
             render()
@@ -279,7 +324,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             launchEngine()
             return
         }
-        if !live && engine == nil && !["permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
+        if !live && engine == nil && !["permissions", "permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
             phase = "off"
             status = [:]
             externalEngine = false
@@ -365,7 +410,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let folder = (other.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
             let warning = add("Another copy in \(folder)", image: symbol("exclamationmark.triangle", color: .systemOrange), enabled: false)
             warning.toolTip = "Both copies share one identity, so each takes the other's Microphone and Accessibility permissions."
-            if engine == nil {
+            if engine == nil && canResolveOtherCopy {
                 add(runningFromSystemCopy ? "Move Other Copy to Bin" : "Switch to /Applications Copy",
                     action: #selector(resolveOtherCopy), image: symbol(runningFromSystemCopy ? "trash" : "arrow.right.circle"))
             }
