@@ -76,8 +76,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
-        liveSource?.cancel()
-        unlink(home.appendingPathComponent("run/live.sock").path)
+        if let liveSource {  // a second launch that lost the lock never bound it
+            liveSource.cancel()
+            unlink(home.appendingPathComponent("run/live.sock").path)
+        }
         engine?.terminate()
         logHandle?.closeFile()
         logHandle = nil
