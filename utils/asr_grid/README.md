@@ -10,12 +10,15 @@ dictation on this Mac?**
 |---|---|---|
 | `parakeet-v3` | parakeet-mlx | v2t today: whole-file under 60 s, the local-attention stream from 60 s up |
 | `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, offline |
-| `parakeet-unified-int8` | parakeet-mlx | NVIDIA's model trained for both offline and chunked streaming, English |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
 | `nemotron-en-560ms` | nemotron-asr-mlx | cache-aware streaming Nemotron, English, 560 ms chunks |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |
 | `qwen3-asr-1.7b` (and `-8bit`) | mlx-audio | best open model on the 2026 Open ASR Leaderboard, offline |
+
+Not in the grid: `nvidia/parakeet-unified-en-0.6b`. No MLX runtime loads a faithful conversion
+(the int8 build targets a separate C++ engine, the others are 3–6-bit mixes), and the English
+cache-aware case is covered by `nemotron-en-560ms`, from the same family.
 
 ## Clip sets
 

@@ -60,11 +60,6 @@ STREAM_FEED_S = 0.5  # audio handed to a streaming session between drains
 SYSTEMS = {
     "parakeet-v3": ("parakeet-mlx", "mlx-community/parakeet-tdt-0.6b-v3", "hacky"),
     "parakeet-ultra": ("parakeet-mlx", "selcukkubur/parakeet-ultra-mlx", "offline"),
-    "parakeet-unified-int8": (
-        "parakeet-mlx",
-        "littlebearlabs/parakeet-unified-en-0.6b-mlx-int8",
-        "hacky",
-    ),
     "whisper-turbo": ("mlx-whisper", "mlx-community/whisper-large-v3-turbo", "offline"),
     "nemotron-3.5-stream": (
         "mlx-audio",
