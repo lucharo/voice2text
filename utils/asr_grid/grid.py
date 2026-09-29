@@ -66,7 +66,6 @@ SYSTEMS = {
         "mlx-community/nemotron-3.5-asr-streaming-0.6b",
         "stream",
     ),
-    "nemotron-en-560ms": ("nemotron-asr-mlx", "dboris/nemotron-asr-mlx", "stream"),
     "voxtral-rt-4bit": (
         "mlx-audio",
         "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit",
@@ -341,47 +340,10 @@ class MLXAudio:
         }
 
 
-class NemotronASRMLX:
-    """nemotron-asr-mlx 0.2.0: the English cache-aware Nemotron, pushed in
-    560 ms chunks (its att_context [70, 6]); each push decodes synchronously."""
-
-    CHUNK_MS = 560
-
-    def __init__(self, repo: str, mode: str):
-        from nemotron_asr_mlx import from_pretrained
-
-        self.model = from_pretrained(repo)
-
-    def run(self, clip: dict) -> dict:
-        import mlx.core as mx
-
-        audio = load_audio(clip["path"])
-        session = self.model.create_stream(chunk_ms=self.CHUNK_MS)
-        feed = int(SAMPLE_RATE * STREAM_FEED_S)
-        busy = 0.0
-        last = max(0, (len(audio) - 1) // feed * feed)
-        for start in range(0, last, feed):
-            t0 = time.perf_counter()
-            session.push(mx.array(audio[start : start + feed]))
-            busy += time.perf_counter() - t0
-        t_release = time.perf_counter()
-        # flush() decodes nothing, so a chunk of silence carries the tail through
-        pad = np.zeros(SAMPLE_RATE * self.CHUNK_MS // 1000, np.float32)
-        session.push(mx.array(np.concatenate([audio[last:], pad])))
-        text = session.flush().text
-        wait = time.perf_counter() - t_release
-        return {
-            "stream": text.strip(),
-            "stream_wait_s": wait,
-            "stream_busy_s": busy + wait,
-        }
-
-
 RUNTIMES = {
     "parakeet-mlx": ParakeetMLX,
     "mlx-whisper": MLXWhisper,
     "mlx-audio": MLXAudio,
-    "nemotron-asr-mlx": NemotronASRMLX,
 }
 
 

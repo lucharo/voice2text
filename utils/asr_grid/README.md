@@ -12,13 +12,17 @@ dictation on this Mac?**
 | `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, offline |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
-| `nemotron-en-560ms` | nemotron-asr-mlx | cache-aware streaming Nemotron, English, 560 ms chunks |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |
 | `qwen3-asr-1.7b` (and `-8bit`) | mlx-audio | best open model on the 2026 Open ASR Leaderboard, offline |
 
-Not in the grid: `nvidia/parakeet-unified-en-0.6b`. No MLX runtime loads a faithful conversion
-(the int8 build targets a separate C++ engine, the others are 3–6-bit mixes), and the English
-cache-aware case is covered by `nemotron-en-560ms`, from the same family.
+Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
+
+- `nvidia/parakeet-unified-en-0.6b`: the int8 MLX build targets a separate C++ engine and the
+  other conversions are 3–6-bit mixes.
+- `nvidia/nemotron-speech-streaming-en-0.6b` via `nemotron-asr-mlx` 0.2.0: its streaming path
+  lacks the pre-encode cache and dropped words (45% WER streamed against 20% whole-file on the
+  same 28 s LibriSpeech clip). mlx-audio's Nemotron session expects the multilingual prompt layer,
+  so `nemotron-3.5-stream` is the cache-aware candidate.
 
 ## Clip sets
 
@@ -35,8 +39,6 @@ Each runtime lives in its own environment so their pins never meet v2t's lock:
 ```bash
 uv venv ~/.v2t/eval/grid-envs/mlxaudio && VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio \
   uv pip install mlx-audio==0.5.7 soundfile whisper-normalizer
-uv venv ~/.v2t/eval/grid-envs/nemotron && VIRTUAL_ENV=~/.v2t/eval/grid-envs/nemotron \
-  uv pip install nemotron-asr-mlx==0.2.0 soundfile whisper-normalizer
 VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper run in v2t's own venv
 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py prepare
