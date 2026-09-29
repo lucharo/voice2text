@@ -632,24 +632,28 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 /// How the pill shows a dictation (menu: Pill). The lettered styles are the
-/// options on trial; `off` leaves only the menu-bar icon.
+/// options on trial, D the default; `off` leaves only the menu-bar icon.
 enum PillStyle: String, CaseIterable {
-    case waveform = "a", liveText = "b", island = "c", off
+    case waveform = "a", liveText = "b", island = "c", islandText = "d", off
 
     var title: String {
         switch self {
         case .waveform: "A · Waveform"
         case .liveText: "B · Waveform and live text"
         case .island: "C · Top island with timer"
+        case .islandText: "D · Top island with timer and live text"
         case .off: "Off"
         }
     }
+
+    var atTop: Bool { self == .island || self == .islandText }
 
     var size: NSSize {
         switch self {
         case .waveform: NSSize(width: 116, height: 34)
         case .liveText: NSSize(width: 440, height: 40)
         case .island, .off: NSSize(width: 176, height: 32)
+        case .islandText: NSSize(width: 480, height: 34)
         }
     }
 }
@@ -665,7 +669,7 @@ final class Pill {
     private var visible = false
 
     var style: PillStyle {
-        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillStyle") ?? "") ?? .waveform }
+        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillStyle") ?? "") ?? .islandText }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "pillStyle")
             hide()  // the next status update shows the new style in its place
@@ -713,7 +717,7 @@ final class Pill {
         else { return }
         let area = screen.visibleFrame
         let size = style.size
-        let y = style == .island ? area.maxY - size.height - 8 : area.minY + 20
+        let y = style.atTop ? area.maxY - size.height - 8 : area.minY + 20
         view.style = style
         panel.setFrame(NSRect(x: area.midX - size.width / 2, y: y, width: size.width, height: size.height), display: true)
         panel.invalidateShadow()
@@ -795,22 +799,43 @@ final class PillView: NSView {
         case .liveText:
             let wave = NSRect(x: 16, y: 11, width: 72, height: bounds.height - 22)
             drawBars(in: wave)
-            let text = NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height)
-            if recording && !partial.isEmpty {
-                drawText(partial, in: text, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
-            } else {
-                let label = recording ? elapsed : phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
-                drawText(label, in: text, color: NSColor(white: 1, alpha: 0.6))
-            }
-        case .island, .off:
+            drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
+                      waiting: elapsed)
+        case .island, .islandText, .off:
             let dot = NSRect(x: 15, y: bounds.midY - 3.5, width: 7, height: 7)
             (recording ? NSColor.systemRed : NSColor(white: 1, alpha: 0.4)).setFill()
             NSBezierPath(ovalIn: dot).fill()
-            drawText(elapsed, in: NSRect(x: dot.maxX + 8, y: 0, width: 52, height: bounds.height),
+            drawText(elapsed, in: NSRect(x: dot.maxX + 8, y: 0, width: 44, height: bounds.height),
                      color: NSColor(white: 1, alpha: 0.9))
-            drawBars(in: NSRect(x: bounds.width - 16 - 76, y: 9, width: 76, height: bounds.height - 18))
+            if style == .islandText {
+                let wave = NSRect(x: dot.maxX + 56, y: 10, width: 64, height: bounds.height - 20)
+                drawBars(in: wave)
+                drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
+                          waiting: "Listening…")
+            } else {
+                drawBars(in: NSRect(x: bounds.width - 16 - 76, y: 9, width: 76, height: bounds.height - 18))
+            }
         }
     }
+
+    /// The streamed words, dropping the oldest whole words when they overflow;
+    /// before the first push `waiting`, and after release what the engine is doing.
+    private func drawWords(in rect: NSRect, waiting: String) {
+        if phase == "recording" && !partial.isEmpty {
+            var words = partial.split(whereSeparator: \.isWhitespace)
+            var shown = words.joined(separator: " ")
+            while words.count > 1 && (shown as NSString).size(withAttributes: [.font: Self.font]).width > rect.width {
+                words.removeFirst()
+                shown = "…" + words.joined(separator: " ")
+            }
+            drawText(shown, in: rect, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
+        } else {
+            let label = phase == "recording" ? waiting : phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
+            drawText(label, in: rect, color: NSColor(white: 1, alpha: 0.6))
+        }
+    }
+
+    private static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 
     private var elapsed: String {
         let seconds = Int((stoppedAt ?? Date()).timeIntervalSince(startedAt))
@@ -844,7 +869,7 @@ final class PillView: NSView {
     private func drawText(_ text: String, in rect: NSRect, color: NSColor, truncation: NSLineBreakMode = .byTruncatingTail) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = truncation
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        let font = Self.font
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
         let line = ceil(font.ascender - font.descender)
         let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
