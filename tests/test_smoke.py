@@ -793,13 +793,23 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_status_changes_work_with_no_menu_app_listening(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
         config.ensure_dirs()
 
         voice._set_state("recording")
 
-        status = json.loads((config.run_dir() / "status.json").read_text())
-        self.assertEqual(status["state"], "recording")
+        self.assertEqual(
+            json.loads((config.run_dir() / "status.json").read_text()),
+            {
+                "pid": os.getpid(),
+                "state": "recording",
+                "stt": "parakeet-v3",
+                "cleanup": "off",
+                "mode": "casual",
+                "error": "",
+                "warning": "",
+            },
+        )
 
     def test_input_level_reaches_the_pill_only_once_the_recording_shows(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -822,7 +832,7 @@ class V2TSmokeTests(unittest.TestCase):
         clock = [100.0]
 
         with mock.patch.object(app.time, "perf_counter", lambda: clock[0]):
-            for value in (0.1, 0.4, 0.2):  # three blocks inside one interval
+            for value in (0.4, 0.1, 0.2):  # the first goes out; two held after it
                 voice.audio_callback(
                     np.full((32, 1), value, dtype=np.float32), 32, None, None
                 )
@@ -832,7 +842,7 @@ class V2TSmokeTests(unittest.TestCase):
                 np.full((32, 1), 0.3, dtype=np.float32), 32, None, None
             )
 
-        self.assertEqual(self._pill_events(listener), [{"level": 0.1}, {"level": 0.4}])
+        self.assertEqual(self._pill_events(listener), [{"level": 0.4}, {"level": 0.3}])
 
     def test_a_streamed_recording_with_no_audio_returns_to_idle(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

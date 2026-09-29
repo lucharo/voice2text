@@ -318,8 +318,8 @@ class VoiceToText:
             self.live_socket.sendto(
                 json.dumps(event).encode(), str(config.live_socket_path())
             )
-        except OSError:  # no menu app, or it is busy: the pill just misses one
-            pass
+        except OSError:  # no menu app, it is busy, or the status outgrew a
+            pass  # datagram (2 KB on macOS): the one-second status poll still has it
 
     def _clear_status(self) -> None:
         with self.status_lock:
@@ -441,6 +441,7 @@ class VoiceToText:
             if not self.recording or self.shown:
                 return
             self.shown = True
+            self.level_peak = self.level_sent_at = 0.0  # none of the last recording's
             self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
                 result = subprocess.run(

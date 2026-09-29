@@ -28,6 +28,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastTranscription: String?
     private let pill = Pill()
     private var liveSource: DispatchSourceRead?
+    private var liveSocketID: (device: dev_t, inode: ino_t)?
+    private var menuIsOpen = false
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
@@ -78,7 +80,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer?.invalidate()
         if let liveSource {  // a second launch that lost the lock never bound it
             liveSource.cancel()
-            unlink(home.appendingPathComponent("run/live.sock").path)
+            // A copy that handed over to /Applications quits after the new copy
+            // has bound its own socket here: unlink only the one this copy made.
+            let path = home.appendingPathComponent("run/live.sock").path
+            var info = stat()
+            if let id = liveSocketID, stat(path, &info) == 0, info.st_dev == id.device, info.st_ino == id.inode {
+                unlink(path)
+            }
         }
         engine?.terminate()
         logHandle?.closeFile()
@@ -368,6 +376,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         guard bound == 0 else { close(fd); return }
         chmod(path, 0o600)
+        var info = stat()
+        if stat(path, &info) == 0 { liveSocketID = (info.st_dev, info.st_ino) }
         _ = fcntl(fd, F_SETFL, O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
         source.setEventHandler { [weak self] in self?.readLiveEvents(fd) }
@@ -449,6 +459,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = ""
         item.button?.toolTip = heardTail.isEmpty ? presentation.1 : "\(presentation.1)\n…\(heardTail)"
         item.button?.contentTintColor = presentation.2
+        // Streamed partials arrive while the menu may be open; rebuilding it then
+        // would close a submenu under the pointer. Opening rebuilds it fresh.
+        guard !menuIsOpen else { return }
         menu.removeAllItems()
 
         let state = add(presentation.1, image: symbol(presentation.0, color: presentation.2), enabled: false)
@@ -523,6 +536,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loadLastTranscription()
         rendered = ""
         render()
+        menuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
     }
 
     private var microphoneGranted: Bool {
@@ -585,7 +603,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let raw = sender.representedObject as? String, let style = PillStyle(rawValue: raw) else { return }
         pill.style = style
         rendered = ""
-        render()
+        refresh()  // a dictation in progress reappears in the new style at once
     }
 
     @objc private func copyLast() {
@@ -688,18 +706,20 @@ final class Pill {
         panel.contentView = view
     }
 
+    /// Tracks every phase change, shown or not, so a style switched on or
+    /// changed mid-dictation keeps that dictation's timer and waveform.
     func update(phase: String, partial: String) {
-        guard style != .off, ["recording", "transcribing", "cleaning"].contains(phase) else {
-            hide()
-            return
-        }
-        if phase == "recording" && (!visible || view.phase != "recording") {
+        if phase == "recording" && view.phase != "recording" {
             view.begin()
         } else if phase != "recording" && view.phase == "recording" {
             view.stoppedAt = Date()
         }
         view.phase = phase
         view.partial = partial
+        guard style != .off, ["recording", "transcribing", "cleaning"].contains(phase) else {
+            hide()
+            return
+        }
         if !visible { show() }
         view.needsDisplay = true
     }
@@ -717,7 +737,9 @@ final class Pill {
         else { return }
         let area = screen.visibleFrame
         let size = style.size
-        let y = style.atTop ? area.maxY - size.height - 8 : area.minY + 20
+        // Under the menu bar, and clear of the notch when the menu bar is hidden.
+        let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
+        let y = style.atTop ? top - size.height - 8 : area.minY + 20
         view.style = style
         panel.setFrame(NSRect(x: area.midX - size.width / 2, y: y, width: size.width, height: size.height), display: true)
         panel.invalidateShadow()
@@ -749,7 +771,7 @@ final class Pill {
 /// elapsed time.
 final class PillView: NSView {
     var style = PillStyle.waveform
-    var phase = "recording"
+    var phase = "idle"
     var partial = ""
     var startedAt = Date()
     var stoppedAt: Date?
