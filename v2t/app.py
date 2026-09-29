@@ -5,9 +5,11 @@ macOS-only at runtime (native pasteboard, System Events paste, global hotkey).
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -32,6 +34,7 @@ GLOBE_KEY_FIX = (
     "`defaults write com.apple.HIToolbox AppleFnUsageType -int 0` alone does not apply)"
 )
 LOUD_RMS = 0.01  # a 100 ms frame above this holds speech-level sound (full scale 1)
+LEVEL_INTERVAL_S = 0.02  # the pill's waveform: at most one input level per 20 ms
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -253,6 +256,12 @@ class VoiceToText:
         self.jobs = queue.Queue()
         self.lifecycle_lock = threading.RLock()
         self.status_lock = threading.Lock()
+        # Every status change and the live input level also go to the menu
+        # app's pill as datagrams; nobody listening (a terminal run) is normal.
+        self.live_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.live_socket.setblocking(False)
+        self.level_peak = 0.0  # loudest block since the last level sent
+        self.level_sent_at = 0.0
         self.shutdown_watcher = None
         self.shutdown_read_fd = None
         self.shutdown_write_fd = None
@@ -302,6 +311,15 @@ class VoiceToText:
                 status["words"] = len(partial.split())
                 status["partial"] = _tail(partial)
             config.write_status(status)
+            self._send_live(status)
+
+    def _send_live(self, event: dict) -> None:
+        try:
+            self.live_socket.sendto(
+                json.dumps(event).encode(), str(config.live_socket_path())
+            )
+        except OSError:  # no menu app, or it is busy: the pill just misses one
+            pass
 
     def _clear_status(self) -> None:
         with self.status_lock:
@@ -342,6 +360,20 @@ class VoiceToText:
             logger.warning(f"Audio input: {status}")
         if self.recording:
             self.frames.append(indata.copy())
+            if self.shown:  # a tap or a chord stays invisible
+                self._send_level(indata)
+
+    def _send_level(self, block: np.ndarray) -> None:
+        """Send the input level (RMS, full scale 1) to the pill's waveform.
+
+        Callback blocks can be a few milliseconds long, so the loudest block
+        in each LEVEL_INTERVAL_S goes out and the rest are folded into it.
+        """
+        self.level_peak = max(self.level_peak, float(np.sqrt(np.mean(block**2))))
+        now = time.perf_counter()
+        if now - self.level_sent_at >= LEVEL_INTERVAL_S:
+            self._send_live({"level": round(self.level_peak, 5)})
+            self.level_peak, self.level_sent_at = 0.0, now
 
     def _refresh_audio_devices(self) -> None:
         """Re-read the device list so the stream follows the current default mic.

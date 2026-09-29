@@ -9,6 +9,7 @@ import os
 import plistlib
 import queue
 import signal
+import socket
 import sqlite3
 import stat
 import sys
@@ -750,6 +751,88 @@ class V2TSmokeTests(unittest.TestCase):
             [line.strip() for line in lines], ["Heard so far: 3 words in 5s"]
         )
         self.assertEqual(config.read_status()["partial"], "hello secret words")
+
+    def _pill_listener(self):
+        """A datagram socket where the menu app's pill would listen."""
+        config.ensure_dirs()
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        listener.bind(str(config.live_socket_path()))
+        listener.setblocking(False)
+        self.addCleanup(listener.close)
+        return listener
+
+    def _pill_events(self, listener) -> list[dict]:
+        events = []
+        while True:
+            try:
+                events.append(json.loads(listener.recv(4096)))
+            except BlockingIOError:
+                return events
+
+    def test_status_changes_reach_the_menu_apps_pill(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        listener = self._pill_listener()
+
+        voice._set_state("recording", partial="hello there")
+
+        self.assertEqual(
+            self._pill_events(listener),
+            [
+                {
+                    "pid": os.getpid(),
+                    "state": "recording",
+                    "stt": "parakeet-v3",
+                    "cleanup": "off",
+                    "mode": "casual",
+                    "error": "",
+                    "warning": "",
+                    "words": 2,
+                    "partial": "hello there",
+                }
+            ],
+        )
+
+    def test_status_changes_work_with_no_menu_app_listening(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        config.ensure_dirs()
+
+        voice._set_state("recording")
+
+        status = json.loads((config.run_dir() / "status.json").read_text())
+        self.assertEqual(status["state"], "recording")
+
+    def test_input_level_reaches_the_pill_only_once_the_recording_shows(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        listener = self._pill_listener()
+        voice.recording = True
+        block = np.full((320, 1), 0.5, dtype=np.float32)
+
+        voice.audio_callback(block, 320, None, None)  # still inside the hold
+        hidden = self._pill_events(listener)
+        voice.shown = True
+        voice.audio_callback(block, 320, None, None)
+
+        self.assertEqual(hidden, [])
+        self.assertEqual(self._pill_events(listener), [{"level": 0.5}])
+
+    def test_short_blocks_fold_into_the_loudest_level_per_interval(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        listener = self._pill_listener()
+        voice.recording = voice.shown = True
+        clock = [100.0]
+
+        with mock.patch.object(app.time, "perf_counter", lambda: clock[0]):
+            for value in (0.1, 0.4, 0.2):  # three blocks inside one interval
+                voice.audio_callback(
+                    np.full((32, 1), value, dtype=np.float32), 32, None, None
+                )
+                clock[0] += app.LEVEL_INTERVAL_S / 4
+            clock[0] += app.LEVEL_INTERVAL_S
+            voice.audio_callback(
+                np.full((32, 1), 0.3, dtype=np.float32), 32, None, None
+            )
+
+        self.assertEqual(self._pill_events(listener), [{"level": 0.1}, {"level": 0.4}])
 
     def test_a_streamed_recording_with_no_audio_returns_to_idle(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
