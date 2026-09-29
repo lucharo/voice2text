@@ -275,6 +275,15 @@ state immediately (the icon turns red while recording), previews the last transc
 copy action, and links to config, history, and log. Run `v2t` in a terminal instead if you do not
 want the menu.
 
+**The pill.** While you dictate, a small capsule floats over every app: a bar waveform of the level
+the engine is actually capturing (a flat line means the microphone is delivering nothing), then a
+ripple while it transcribes and cleans up. It never takes focus or clicks, so the paste still lands
+where you were typing. **Pill** in the menu picks the style: **A** waveform only, bottom centre;
+**B** waveform plus the words heard so far (updated every 5 s by streaming), bottom centre; **C**
+a timer and waveform at the top under the menu bar; or **Off**. The engine sends each state change
+and, while recording, the input level as datagrams to `~/.v2t/run/live.sock`, which the app binds;
+a terminal `v2t` sends them too, so the pill works with either launch.
+
 **Start v2t** loads Parakeet and the cleanup model once, then keeps them warm for every
 transcription. To start the same menu app at login, install the optional per-user LaunchAgent:
 
