@@ -413,6 +413,11 @@ def q(values: list[float], p: float) -> float:
     return ordered[min(len(ordered) - 1, int(round(p * (len(ordered) - 1))))]
 
 
+def family(system: str) -> str:
+    """parakeet-v3 and parakeet-ultra are one family; so are the two Qwen3-ASR builds."""
+    return system.split("-")[0]
+
+
 def score_set(set_name: str) -> list[dict]:
     """One row per system on the clips every system finished, so rows compare.
 
@@ -439,7 +444,8 @@ def score_set(set_name: str) -> list[dict]:
                 errors[s] += edits(ref, hyps[s])
                 words[s] += len(ref)
             continue
-        # no label: the leave-one-out medoid of the other systems plus Wispr's ASR
+        # no label: the medoid of the other systems plus Wispr's ASR, leaving out the
+        # system's own family, whose near-identical text would otherwise vote for it
         voters = dict(hyps)
         if clip.get("wispr_asr"):
             voters["wispr-asr"] = normalise(clip["wispr_asr"], clip["lang"])
@@ -454,7 +460,7 @@ def score_set(set_name: str) -> list[dict]:
             return 0 if a == b else pair[frozenset((a, b))]
 
         for s in cells:
-            others = [n for n in names if n != s]
+            others = [n for n in names if family(n) != family(s)]
             if not others:  # a lone system and no Wispr ASR: nothing to agree with
                 continue
             ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))

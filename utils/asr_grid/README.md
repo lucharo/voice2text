@@ -29,7 +29,7 @@ Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
 `ls-clean`, `ls-other` (LibriSpeech test, openslr.org), `fleurs-es` (FLEURS es_419 test): 150
 labelled clips each, seeded, scored as WER after Whisper's text normalisation. `wispr`: the 208
 dictations exported by `../wisprflow_benchmarking_profiling`, which have no ground truth; each
-system is scored against the leave-one-out consensus (medoid) of the other systems plus Wispr's
+system is scored against the consensus (medoid) of the other systems, its own model family left out, plus Wispr's
 own ASR. That measures agreement, not correctness.
 
 ## Run
