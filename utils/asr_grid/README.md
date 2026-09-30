@@ -9,7 +9,7 @@ dictation on this Mac?**
 | name | runtime | what it is |
 |---|---|---|
 | `parakeet-v3` | parakeet-mlx | v2t today: whole-file under 60 s, the local-attention stream from 60 s up |
-| `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, offline |
+| `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, run as a drop-in for v3 (same 60 s rule) |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |
