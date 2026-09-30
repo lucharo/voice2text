@@ -119,7 +119,7 @@ footer{margin-top:40px;font-size:12px;color:var(--fg3);border-top:1px solid var(
 <div class="top"><span class="kicker">voice2text · speech-to-text grid · __DATE__</span><button class="theme" id="theme">Theme: System</button></div>
 <h1>__HEADLINE__</h1><p class="sub">__SUB__</p>
 <div class="charts">
- <div class="card"><h2>Your 208 dictations</h2><p class="note">Disagreement with the other systems' consensus (not truth) · wait p50, whisker to p90</p><svg id="c-wispr" role="img" aria-label="Scatter: disagreement against wait on your dictations"></svg></div>
+ <div class="card"><h2 id="h-wispr">Your dictations</h2><p class="note">Disagreement with the other systems' consensus (not truth) · wait p50, whisker to p90</p><svg id="c-wispr" role="img" aria-label="Scatter: disagreement against wait on your dictations"></svg></div>
  <div class="card"><h2>Labelled clips: LibriSpeech clean + other, FLEURS Spanish</h2><p class="note">Word error rate pooled over 450 clips · wait p50, whisker to p90</p><svg id="c-labelled" role="img" aria-label="Scatter: WER against wait on labelled clips"></svg></div>
 </div>
 <div class="legend" id="legend"></div>
@@ -153,15 +153,23 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
  for(const t of ticks){el('line',{x1:X(t),x2:X(t),y1:m.t,y2:H-m.b,style:'stroke:var(--grid)'},svg);el('text',{x:X(t),y:H-m.b+16,'text-anchor':'middle',style:'fill:var(--fg3);font-size:11px'},svg).textContent=t+'s'}
  const step=ymax>0.2?0.05:ymax>0.1?0.02:0.01;for(let v=0;v<=ymax;v+=step){el('line',{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),style:'stroke:var(--grid)'},svg);el('text',{x:m.l-7,y:Y(v)+4,'text-anchor':'end',style:'fill:var(--fg3);font-size:11px'},svg).textContent=Math.round(v*100)+'%'}
  el('text',{x:(m.l+W-m.r)/2,y:H-8,'text-anchor':'middle',style:'fill:var(--fg2);font-size:12px'},svg).textContent='wait after release (log scale)';
- const placed=[];
+ const placed=pts.map(s=>{const d=s[key];return {x0:X(d.p50)-8,x1:X(d.p90)+4,y:Y(d.wer)+4}});  // dots and whiskers are obstacles too
  for(const s of pts.sort((a,b)=>a[key].p50-b[key].p50)){const d=s[key],x=X(d.p50),y=Y(d.wer);const g=el('g',{},svg);
   el('line',{x1:x,x2:X(d.p90),y1:y,y2:y,style:`stroke:var(--s-${s.mode});stroke-width:2;stroke-linecap:round;opacity:.55`},g);
   if(s.id==='parakeet-v3')el('circle',{cx:x,cy:y,r:10,style:'fill:none;stroke:var(--fg);stroke-width:1.5'},g);
-  shape(g,s.mode,x,y,5.5);let ly=y-9;while(placed.some(p=>Math.abs(p.y-ly)<13&&Math.abs(p.x-x)<150))ly+=14;placed.push({x,y:ly});
-  const t=el('text',{x:x+9,y:ly,style:`fill:var(--fg);font-size:11.5px;font-weight:${s.id==='parakeet-v3'?700:400}`},g);t.textContent=s.name;
+  shape(g,s.mode,x,y,5.5);
+  // A label goes right of its dot (left near the right edge), at the nearest free height;
+  // a displaced label gets a thin leader line back to its dot.
+  const w=s.name.length*6.4+4,left=x+9+w>W-m.r,lx=left?x-9:x+9,x0=left?lx-w:lx;
+  const free=ly=>!placed.some(p=>Math.abs(p.y-ly)<13&&x0<p.x1&&p.x0<x0+w)&&ly>m.t+8&&ly<H-m.b-4;
+  let ly=y+4;for(const off of [0,-14,14,-28,28,-42,42,-56,56]){if(free(y+4+off)){ly=y+4+off;break}}
+  placed.push({x0,x1:x0+w,y:ly});
+  if(Math.abs(ly-(y+4))>2)el('line',{x1:x,y1:y,x2:lx,y2:ly-4,style:'stroke:var(--fg3);stroke-width:1'},g);
+  const t=el('text',{x:lx,y:ly,'text-anchor':left?'end':'start',style:`fill:var(--fg);font-size:11.5px;paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-weight:${s.id==='parakeet-v3'?700:400}`},g);t.textContent=s.name;
   const hit=el('circle',{cx:x,cy:y,r:14,style:'fill:transparent;cursor:default'},g);
   hit.onmousemove=e=>{tip.innerHTML=`<b>${s.name}</b>${DATA.pipelines[s.mode]}<br>error ${pct(d.wer)} · wait p50 ${sec(d.p50)} · p90 ${sec(d.p90)}${d.rtf!==undefined?`<br>compute ${d.rtf.toFixed(2)}× audio`:''}<br>${d.n} clips`;tip.style.left=e.clientX+14+'px';tip.style.top=e.clientY+14+'px';tip.style.opacity=1};
   hit.onmouseleave=()=>tip.style.opacity=0}}
+{const n=Math.max(0,...DATA.systems.map(s=>s.wispr?s.wispr.n:0));document.getElementById('h-wispr').textContent=`Your dictations (the ${n} every model finished)`}
 chart('c-wispr','wispr');chart('c-labelled','labelled');
 const lg=document.getElementById('legend');for(const [mode,label] of Object.entries(DATA.pipelines)){const sp=document.createElement('span');const s=el('svg',{width:14,height:14,viewBox:'0 0 14 14'});shape(s,mode,7,7,4.5);sp.appendChild(s);sp.append(label);lg.appendChild(sp)}
 const cols=[['ls-clean','LS clean'],['ls-other','LS other'],['fleurs-es','FLEURS es']];
