@@ -28,6 +28,8 @@ NAMES = {
     "voxtral-rt-4bit": "Voxtral Realtime 4B",
     "qwen3-asr-1.7b": "Qwen3-ASR 1.7B",
     "qwen3-asr-1.7b-8bit": "Qwen3-ASR 1.7B 8-bit",
+    "parakeet-v3-mlxaudio": "Parakeet v3 via mlx-audio",
+    "whisper-turbo-mlxaudio": "Whisper turbo via mlx-audio",
 }
 PIPELINES = {
     "hacky": "v2t's rule: whole-file under 60 s, streamed above",

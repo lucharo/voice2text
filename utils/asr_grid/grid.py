@@ -77,6 +77,18 @@ SYSTEMS = {
         "mlx-community/Qwen3-ASR-1.7B-8bit",
         "offline",
     ),
+    # the same weights as parakeet-v3 and whisper-turbo, through mlx-audio's own
+    # implementations: could one package replace parakeet-mlx and mlx-whisper?
+    "parakeet-v3-mlxaudio": (
+        "mlx-audio",
+        "mlx-community/parakeet-tdt-0.6b-v3",
+        "offline",
+    ),
+    "whisper-turbo-mlxaudio": (
+        "mlx-audio",
+        "mlx-community/whisper-large-v3-turbo",
+        "offline",
+    ),
 }
 
 
@@ -278,6 +290,10 @@ class MLXAudio:
     def run(self, clip: dict) -> dict:
         audio = load_audio(clip["path"])
         if self.mode == "offline":
+            if "parakeet" in type(self.model).__name__.lower():
+                import mlx.core as mx
+
+                audio = mx.array(audio)  # its generate takes a path or an mx.array
             t0 = time.perf_counter()
             result = self.model.generate(audio)
             return {
