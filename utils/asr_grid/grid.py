@@ -439,6 +439,8 @@ def score_set(set_name: str) -> list[dict]:
 
         for s in cells:
             others = [n for n in names if n != s]
+            if not others:  # a lone system and no Wispr ASR: nothing to agree with
+                continue
             ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))
             errors[s] += dist(ref_name, s)
             words[s] += len(voters[ref_name])
