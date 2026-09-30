@@ -95,15 +95,10 @@ def normalise(text: str | None, lang: str) -> list[str]:
 
 
 def edits(ref: list[str], hyp: list[str]) -> int:
-    previous = list(range(len(hyp) + 1))
-    for i, r in enumerate(ref, 1):
-        current = [i]
-        for j, h in enumerate(hyp, 1):
-            current.append(
-                min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (r != h))
-            )
-        previous = current
-    return previous[-1]
+    """Word-level Levenshtein distance (symmetric)."""
+    from rapidfuzz.distance import Levenshtein
+
+    return Levenshtein.distance(ref, hyp)
 
 
 def private_dir(path: Path) -> Path:
@@ -403,60 +398,74 @@ def q(values: list[float], p: float) -> float:
 
 
 def score_set(set_name: str) -> list[dict]:
+    """One row per system on the clips every system finished, so rows compare.
+
+    Rows carry the pooled error and reference-word counts, the per-clip waits and
+    the compute and audio totals, so sets can be pooled downstream.
+    """
     clips = {c["id"]: c for c in read_jsonl(SETS / f"{set_name}.jsonl")}
     cells = {
         p.stem: {r["id"]: r for r in read_jsonl(p)}
         for p in sorted((RESULTS / set_name).glob("*.jsonl"))
         if p.stem in SYSTEMS
     }
-    # score every system on the clips all of them finished, so rows compare
-    common = (
-        set(clips).intersection(*[set(rows) for rows in cells.values()])
-        if cells
-        else set()
-    )
-    words = {
-        (system, cid): normalise(
-            final_text(system, cells[system][cid]), clips[cid]["lang"]
-        )
-        for system in cells
-        for cid in common
-    }
+    if not cells:
+        return []
+    common = sorted(set(clips).intersection(*[set(rows) for rows in cells.values()]))
+    errors = dict.fromkeys(cells, 0)
+    words = dict.fromkeys(cells, 0)
+    for cid in common:
+        clip = clips[cid]
+        hyps = {s: normalise(final_text(s, cells[s][cid]), clip["lang"]) for s in cells}
+        if clip["text"] is not None:
+            ref = normalise(clip["text"], clip["lang"])
+            for s in cells:
+                errors[s] += edits(ref, hyps[s])
+                words[s] += len(ref)
+            continue
+        # no label: the leave-one-out medoid of the other systems plus Wispr's ASR
+        voters = dict(hyps)
+        if clip.get("wispr_asr"):
+            voters["wispr-asr"] = normalise(clip["wispr_asr"], clip["lang"])
+        names = list(voters)
+        pair = {
+            frozenset((a, b)): edits(voters[a], voters[b])
+            for i, a in enumerate(names)
+            for b in names[i + 1 :]
+        }
+
+        def dist(a: str, b: str) -> int:
+            return 0 if a == b else pair[frozenset((a, b))]
+
+        for s in cells:
+            others = [n for n in names if n != s]
+            ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))
+            errors[s] += dist(ref_name, s)
+            words[s] += len(voters[ref_name])
     rows = []
-    for system in cells:
-        errors = total = 0
-        for cid in common:
-            clip = clips[cid]
-            if clip["text"] is not None:
-                ref = normalise(clip["text"], clip["lang"])
-            else:  # leave-one-out medoid of the other systems plus Wispr's ASR
-                others = [words[(s, cid)] for s in cells if s != system]
-                if clip.get("wispr_asr"):
-                    others.append(normalise(clip["wispr_asr"], clip["lang"]))
-                ref = min(
-                    others,
-                    key=lambda cand: sum(
-                        edits(cand, o) for o in others if o is not cand
-                    ),
-                )
-            errors += edits(ref, words[(system, cid)])
-            total += len(ref)
-        waits = [wait_s(system, cells[system][cid]) for cid in common]
-        audio = sum(clips[cid]["duration_s"] for cid in common)
-        mode = SYSTEMS[system][2]
+    for system, rows_by_id in cells.items():
+        waits = [wait_s(system, rows_by_id[cid]) for cid in common]
         busy = sum(
-            cells[system][cid].get("stream_busy_s") or cells[system][cid]["offline_s"]
+            rows_by_id[cid].get("stream_busy_s") or rows_by_id[cid]["offline_s"]
             for cid in common
         )
+        audio = sum(clips[cid]["duration_s"] for cid in common)
         rows.append(
             {
                 "system": system,
-                "mode": mode,
+                "mode": SYSTEMS[system][2],
                 "n": len(common),
-                "wer": errors / total if total else float("nan"),
+                "errors": errors[system],
+                "words": words[system],
+                "wer": errors[system] / words[system]
+                if words[system]
+                else float("nan"),
+                "waits": waits,
                 "wait_p50": q(waits, 0.5) if waits else float("nan"),
                 "wait_p90": q(waits, 0.9) if waits else float("nan"),
                 "wait_max": max(waits) if waits else float("nan"),
+                "busy_s": busy,
+                "audio_s": audio,
                 "rtf": busy / audio if audio else float("nan"),
             }
         )
