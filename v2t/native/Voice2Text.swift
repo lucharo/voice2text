@@ -26,12 +26,19 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rendered = ""
     private var terminationPending = false
     private var lastTranscription: String?
+    private let pill = Pill()
+    private var liveSource: DispatchSourceRead?
+    private var liveSocketID: (device: dev_t, inode: ino_t)?
+    private var menuIsOpen = false
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
     // machine with no signing identity) carries that other user's paths, so
     // each one falls back to this user's standard locations when it is absent.
     private var home: URL {
+        if let value = ProcessInfo.processInfo.environment["V2T_HOME"], !value.isEmpty {
+            return URL(fileURLWithPath: (value as NSString).expandingTildeInPath)
+        }
         if let value = Bundle.main.object(forInfoDictionaryKey: "V2THome") as? String,
            FileManager.default.fileExists(atPath: (value as NSString).deletingLastPathComponent) {
             return URL(fileURLWithPath: value)
@@ -59,6 +66,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         item.menu = menu
         menu.delegate = self
+        listenForLiveEvents()
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -70,6 +78,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        if let liveSource {  // a second launch that lost the lock never bound it
+            liveSource.cancel()
+            // A copy that handed over to /Applications quits after the new copy
+            // has bound its own socket here: unlink only the one this copy made.
+            let path = home.appendingPathComponent("run/live.sock").path
+            var info = stat()
+            if let id = liveSocketID, stat(path, &info) == 0, info.st_dev == id.device, info.st_ino == id.inode {
+                unlink(path)
+            }
+        }
         engine?.terminate()
         logHandle?.closeFile()
         logHandle = nil
@@ -333,7 +351,58 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine == nil, let message = try? String(contentsOf: home.appendingPathComponent("run/last-error"), encoding: .utf8), !message.isEmpty {
             phase = "error"
         }
+        pill.update(phase: phase, partial: status["partial"] as? String ?? "")
         render()
+    }
+
+    /// Binds run/live.sock, where the engine sends each status change as it
+    /// happens and, while recording, the input level for the pill's waveform.
+    /// The one-second status poll stays the fallback, and the only source for
+    /// an engine that predates the socket (its pill shows no waveform).
+    private func listenForLiveEvents() {
+        let path = home.appendingPathComponent("run/live.sock").path
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = path.utf8CString.map { UInt8(bitPattern: $0) }  // NUL-terminated
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return }
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+        let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return }
+        unlink(path)  // left behind by a previous run
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else { close(fd); return }
+        chmod(path, 0o600)
+        var info = stat()
+        if stat(path, &info) == 0 { liveSocketID = (info.st_dev, info.st_ino) }
+        _ = fcntl(fd, F_SETFL, O_NONBLOCK)
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler { [weak self] in self?.readLiveEvents(fd) }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        liveSource = source
+    }
+
+    private func readLiveEvents(_ fd: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        var statusChanged = false
+        while true {
+            let count = recv(fd, &buffer, buffer.count, 0)
+            guard count > 0 else { break }
+            guard let event = try? JSONSerialization.jsonObject(with: Data(buffer[..<count])) as? [String: Any]
+            else { continue }
+            if let level = event["level"] as? Double {
+                pill.push(level: level)
+            } else {
+                statusChanged = true
+            }
+        }
+        // The engine writes status.json just before it sends the event, so a
+        // re-read goes through the same ownership checks as the poll.
+        if statusChanged { refresh() }
     }
 
     private func engineOwnsLock(_ pid: Int) -> Bool {
@@ -364,7 +433,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -390,6 +459,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = ""
         item.button?.toolTip = heardTail.isEmpty ? presentation.1 : "\(presentation.1)\n…\(heardTail)"
         item.button?.contentTintColor = presentation.2
+        // Streamed partials arrive while the menu may be open; rebuilding it then
+        // would close a submenu under the pointer. Opening rebuilds it fresh.
+        guard !menuIsOpen else { return }
         menu.removeAllItems()
 
         let state = add(presentation.1, image: symbol(presentation.0, color: presentation.2), enabled: false)
@@ -443,6 +515,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        let pillStyles = NSMenu()
+        for style in PillStyle.allCases {
+            let row = NSMenuItem(title: style.title, action: #selector(choosePill(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = style.rawValue
+            row.state = style == pill.style ? .on : .off
+            pillStyles.addItem(row)
+        }
+        add("Pill", image: symbol("capsule")).submenu = pillStyles
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
         add("Dictionary", action: #selector(openDictionary), image: symbol("character.book.closed"))
@@ -455,6 +536,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loadLastTranscription()
         rendered = ""
         render()
+        menuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
     }
 
     private var microphoneGranted: Bool {
@@ -513,6 +599,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastTranscription = clean
     }
 
+    @objc private func choosePill(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let style = PillStyle(rawValue: raw) else { return }
+        pill.style = style
+        rendered = ""
+        refresh()  // a dictation in progress reappears in the new style at once
+    }
+
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -554,4 +647,255 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openLog() { NSWorkspace.shared.open(home.appendingPathComponent("run/v2t.log")) }
     @objc private func quit() { NSApp.terminate(nil) }
+}
+
+/// How the pill shows a dictation (menu: Pill). The lettered styles are the
+/// options on trial, D the default; `off` leaves only the menu-bar icon.
+enum PillStyle: String, CaseIterable {
+    case waveform = "a", liveText = "b", island = "c", islandText = "d", off
+
+    var title: String {
+        switch self {
+        case .waveform: "A · Waveform"
+        case .liveText: "B · Waveform and live text"
+        case .island: "C · Top island with timer"
+        case .islandText: "D · Top island with timer and live text"
+        case .off: "Off"
+        }
+    }
+
+    var atTop: Bool { self == .island || self == .islandText }
+
+    var size: NSSize {
+        switch self {
+        case .waveform: NSSize(width: 116, height: 34)
+        case .liveText: NSSize(width: 440, height: 40)
+        case .island, .off: NSSize(width: 176, height: 32)
+        case .islandText: NSSize(width: 480, height: 34)
+        }
+    }
+}
+
+/// Floats the pill over every app while the engine records, transcribes or
+/// cleans up. The panel never becomes key and ignores the mouse, so focus,
+/// and with it the paste, stays in the app the user is typing in.
+final class Pill {
+    private let panel = NSPanel(
+        contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    private let view = PillView()
+    private var ticker: Timer?
+    private var visible = false
+
+    var style: PillStyle {
+        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillStyle") ?? "") ?? .islandText }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "pillStyle")
+            hide()  // the next status update shows the new style in its place
+        }
+    }
+
+    init() {
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.contentView = view
+    }
+
+    /// Tracks every phase change, shown or not, so a style switched on or
+    /// changed mid-dictation keeps that dictation's timer and waveform.
+    func update(phase: String, partial: String) {
+        if phase == "recording" && view.phase != "recording" {
+            view.begin()
+        } else if phase != "recording" && view.phase == "recording" {
+            view.stoppedAt = Date()
+        }
+        view.phase = phase
+        view.partial = partial
+        guard style != .off, ["recording", "transcribing", "cleaning"].contains(phase) else {
+            hide()
+            return
+        }
+        if !visible { show() }
+        view.needsDisplay = true
+    }
+
+    func push(level: Double) {
+        if visible { view.push(level) }
+    }
+
+    /// On the screen under the pointer: bottom centre above the Dock, or for
+    /// the island top centre under the menu bar.
+    private func show() {
+        let style = style
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) }) ?? NSScreen.main
+        else { return }
+        let area = screen.visibleFrame
+        let size = style.size
+        // Under the menu bar, and clear of the notch when the menu bar is hidden.
+        let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
+        let y = style.atTop ? top - size.height - 8 : area.minY + 20
+        view.style = style
+        panel.setFrame(NSRect(x: area.midX - size.width / 2, y: y, width: size.width, height: size.height), display: true)
+        panel.invalidateShadow()
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+        visible = true
+        // A bar every 50 ms, in common modes so it keeps moving while the menu is open.
+        let ticker = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
+        RunLoop.main.add(ticker, forMode: .common)
+        self.ticker = ticker
+    }
+
+    private func hide() {
+        guard visible else { return }
+        visible = false
+        ticker?.invalidate()
+        ticker = nil
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 }) { [weak self] in
+            guard let self, !self.visible else { return }
+            self.panel.orderOut(nil)
+        }
+    }
+}
+
+/// Draws the pill: a dark capsule holding a bar waveform of the input level,
+/// newest bar on the right, while recording; a ripple across the bars while
+/// the engine transcribes or cleans up; per style, the streamed text or the
+/// elapsed time.
+final class PillView: NSView {
+    var style = PillStyle.waveform
+    var phase = "idle"
+    var partial = ""
+    var startedAt = Date()
+    var stoppedAt: Date?
+    private var bars = [CGFloat](repeating: 0, count: 64)
+    private var loudest: Double?  // since the last tick
+
+    func begin() {
+        startedAt = Date()
+        stoppedAt = nil
+        bars = [CGFloat](repeating: 0, count: bars.count)
+        loudest = nil
+    }
+
+    func push(_ rms: Double) {
+        loudest = max(loudest ?? 0, rms)
+    }
+
+    /// One animation frame. A tick with no new level (input blocks longer
+    /// than a frame) lets the last bar fade rather than drop to nothing.
+    func tick() {
+        if phase == "recording" {
+            let next = loudest.map(Self.height) ?? (bars.last ?? 0) * 0.8
+            bars.removeFirst()
+            bars.append(next)
+            loudest = nil
+        }
+        needsDisplay = true
+    }
+
+    /// RMS (full scale 1) to bar height on a decibel scale: -50 dBFS, a quiet
+    /// room, is a dot; -20 dBFS, loud close speech, fills the bar.
+    static func height(_ rms: Double) -> CGFloat {
+        CGFloat(min(max((20 * log10(max(rms, 1e-6)) + 50) / 30, 0), 1))
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let radius = bounds.height / 2
+        let capsule = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        NSColor(white: 0.07, alpha: 0.92).setFill()
+        capsule.fill()
+        NSColor(white: 1, alpha: 0.14).setStroke()
+        capsule.stroke()
+        let recording = phase == "recording"
+        switch style {
+        case .waveform:
+            drawBars(in: bounds.insetBy(dx: 16, dy: 9))
+        case .liveText:
+            let wave = NSRect(x: 16, y: 11, width: 72, height: bounds.height - 22)
+            drawBars(in: wave)
+            drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
+                      waiting: elapsed)
+        case .island, .islandText, .off:
+            let dot = NSRect(x: 15, y: bounds.midY - 3.5, width: 7, height: 7)
+            (recording ? NSColor.systemRed : NSColor(white: 1, alpha: 0.4)).setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            drawText(elapsed, in: NSRect(x: dot.maxX + 8, y: 0, width: 44, height: bounds.height),
+                     color: NSColor(white: 1, alpha: 0.9))
+            if style == .islandText {
+                let wave = NSRect(x: dot.maxX + 56, y: 10, width: 64, height: bounds.height - 20)
+                drawBars(in: wave)
+                drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
+                          waiting: "Listening…")
+            } else {
+                drawBars(in: NSRect(x: bounds.width - 16 - 76, y: 9, width: 76, height: bounds.height - 18))
+            }
+        }
+    }
+
+    /// The streamed words, dropping the oldest whole words when they overflow;
+    /// before the first push `waiting`, and after release what the engine is doing.
+    private func drawWords(in rect: NSRect, waiting: String) {
+        if phase == "recording" && !partial.isEmpty {
+            var words = partial.split(whereSeparator: \.isWhitespace)
+            var shown = words.joined(separator: " ")
+            while words.count > 1 && (shown as NSString).size(withAttributes: [.font: Self.font]).width > rect.width {
+                words.removeFirst()
+                shown = "…" + words.joined(separator: " ")
+            }
+            drawText(shown, in: rect, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
+        } else {
+            let label = phase == "recording" ? waiting : phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
+            drawText(label, in: rect, color: NSColor(white: 1, alpha: 0.6))
+        }
+    }
+
+    private static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+
+    private var elapsed: String {
+        let seconds = Int((stoppedAt ?? Date()).timeIntervalSince(startedAt))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func drawBars(in rect: NSRect) {
+        let width: CGFloat = 3, gap: CGFloat = 2.5
+        let count = min(bars.count, max(1, Int((rect.width + gap) / (width + gap))))
+        let values: [CGFloat]
+        if phase == "recording" {
+            values = Array(bars.suffix(count))
+            NSColor.white.setFill()
+        } else {  // working: a wave travelling right to left
+            let t = CACurrentMediaTime()
+            values = (0..<count).map { (index: Int) -> CGFloat in
+                let wave: Double = (1 + sin(t * 6 + Double(index) * 0.55)) / 2
+                return CGFloat(0.15 + 0.5 * wave)
+            }
+            NSColor(white: 1, alpha: 0.55).setFill()
+        }
+        var x = rect.minX + (rect.width - (CGFloat(count) * (width + gap) - gap)) / 2
+        for value in values {
+            let height = max(width, value * rect.height)
+            NSBezierPath(roundedRect: NSRect(x: x, y: rect.midY - height / 2, width: width, height: height),
+                         xRadius: width / 2, yRadius: width / 2).fill()
+            x += width + gap
+        }
+    }
+
+    private func drawText(_ text: String, in rect: NSRect, color: NSColor, truncation: NSLineBreakMode = .byTruncatingTail) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = truncation
+        let font = Self.font
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+        let line = ceil(font.ascender - font.descender)
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        NSAttributedString(string: flat, attributes: attributes)
+            .draw(in: NSRect(x: rect.minX, y: rect.midY - line / 2, width: rect.width, height: line))
+    }
 }

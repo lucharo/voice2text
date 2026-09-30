@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0
+
+- **A floating pill shows the dictation while it happens.** The menu app floats a small capsule over every app while v2t records, transcribes and cleans up: a scrolling bar waveform of the input level the engine is capturing, then a ripple until the paste. It never takes focus or the mouse, so the paste still lands in the app you were typing in. The default sits at the top under the menu bar: a recording dot, the elapsed time, the waveform and the streamed words so far, the newest whole words kept when they overflow. **Pill** in the menu also offers the styles still on trial (A, waveform only at the bottom centre; B, waveform and words at the bottom; C, timer and waveform at the top) and Off. The engine sends every status change and the input level (at most one per 20 ms) as datagrams to `~/.v2t/run/live.sock`, so the pill reacts at once instead of on the menu's one-second status poll; with an older engine it still appears, without the waveform.
+
 ## 0.4.1
 
 - **Releases publish from GitHub Actions.** A `v<version>` tag push, once approved in the `release` environment, uploads the engine to PyPI (trusted publishing) and the notarised menu app to the GitHub Release, and commits the cask; `scripts/ci-signing-secrets.sh` loads the Developer ID certificate and notary key into that environment once.

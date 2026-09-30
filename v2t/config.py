@@ -4,6 +4,7 @@ Everything lives under ~/.v2t (or $V2T_HOME, or $XDG_CONFIG_HOME/v2t):
     config.toml                  user settings
     history/history.sqlite       every transcription + metadata, one row each
     run/status.json              live state for CLI and menu-bar clients
+    run/live.sock                the menu app's pill listens here (state, input level)
 
 Zero config works: the defaults below are the shipped behaviour
 (Parakeet + Qwen2.5, MLX, casual cleanup).
@@ -69,6 +70,11 @@ def legacy_history_path() -> Path:
 
 def run_dir() -> Path:
     return home() / "run"
+
+
+def live_socket_path() -> Path:
+    """The datagram socket the menu app binds for its dictation pill."""
+    return run_dir() / "live.sock"
 
 
 def last_audio_path() -> Path:
