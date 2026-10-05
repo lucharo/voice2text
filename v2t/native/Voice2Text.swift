@@ -740,6 +740,7 @@ final class Pill: NSObject {
         if phase == "recording" && view.phase != "recording" {
             recordingAnchor = Self.cursorAnchor()
             view.begin()
+            hide()  // Undo reanchors and restores the selected style's full size.
         } else if phase != "recording" && view.phase == "recording" {
             view.stoppedAt = Date()
         }
