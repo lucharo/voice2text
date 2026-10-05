@@ -2003,28 +2003,26 @@ class V2TSmokeTests(unittest.TestCase):
             cli.cmd_run(["--casual", "--strict"])
 
     def _mlx_cleaner(self, replies):
-        """An MLXCleanup with the model mocked: each call streams the next reply."""
+        """An MLXCleanup with the model mocked: each call decodes the next reply.
+
+        Tokens are words here: the tokenizer splits and joins on spaces.
+        """
         cleaner = object.__new__(backends.MLXCleanup)
         cleaner.model = object()
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
         cleaner.tokenizer.encode.side_effect = lambda text: text.split()
+        cleaner.tokenizer.decode.side_effect = " ".join
         cleaner.last_stats = {}
         queue_ = list(replies)
-        response = type("Response", (), {"text": ""})
 
-        def stream(*_args, **kwargs):
+        def decode(_prompt, _mode, _source, max_tokens):
             reply = queue_.pop(0)
-            if reply is None:  # loop forever: emit max_tokens single tokens
-                for _ in range(kwargs["max_tokens"]):
-                    yield response()
-                return
-            for piece in reply.split(" "):
-                r = response()
-                r.text = piece + " "
-                yield r
+            if reply is None:  # loops forever: runs into max_tokens
+                return ["word"] * max_tokens, 0.0
+            return reply.split(" "), 0.0
 
-        cleaner._stream = stream
+        cleaner._decode = decode
         return cleaner
 
     def test_cleanup_keeps_the_raw_chunk_when_the_model_hits_its_token_limit(self):
@@ -2308,8 +2306,8 @@ class V2TSmokeTests(unittest.TestCase):
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
         cleaner.tokenizer.encode.return_value = [1, 2, 3]
-        response = type("Response", (), {"text": "Hello, there."})
-        cleaner._stream = lambda *_args, **_kwargs: iter([response()])
+        cleaner.tokenizer.decode.side_effect = " ".join
+        cleaner._decode = lambda *_args: (["Hello,", "there."], 0.0)
 
         text, ttft, total = cleaner.cleanup("hello um there", "strict")
 
@@ -2321,6 +2319,111 @@ class V2TSmokeTests(unittest.TestCase):
             add_generation_prompt=True,
             enable_thinking=False,
         )
+
+    class _ToyDecoder:
+        """A greedy "model" over its whole history: it copies SOURCE, inserts 99 at
+        every seventh output position and ends after 25 tokens. Any token a rollback
+        leaves behind changes what it predicts next."""
+
+        SOURCE = list(range(10, 40))
+        EOS = 0
+
+        def __init__(self, prompt):
+            self.prompt_len = len(prompt)
+            self.history = list(prompt)
+            self.feeds = self.rollbacks = 0
+            self.next = self._pick()
+
+        def _pick(self):
+            n = len(self.history) - self.prompt_len
+            if n >= 25:
+                return self.EOS
+            if n % 7 == 6:
+                return 99
+            copied = [t for t in self.history[self.prompt_len :] if t != 99]
+            return self.SOURCE[len(copied) % len(self.SOURCE)]
+
+        def feed(self, tokens):
+            self.feeds += 1
+            picks = []
+            for token in tokens:
+                self.history.append(token)
+                picks.append(self._pick())
+            return picks
+
+        def checkpoint(self):
+            return len(self.history)
+
+        def rollback(self, cp, fed):
+            self.rollbacks += 1
+            del self.history[cp:]
+
+    def test_lookup_decoding_returns_the_greedy_tokens_in_fewer_model_calls(self):
+        greedy = self._ToyDecoder([1, 2, 3])
+        lookup = self._ToyDecoder([1, 2, 3])
+        source, eos = self._ToyDecoder.SOURCE, {self._ToyDecoder.EOS}
+
+        expected = backends.lookup_decode(greedy, source, eos, 100, draft=0)
+        tokens = backends.lookup_decode(lookup, source, eos, 100)
+
+        self.assertEqual(tokens, expected)
+        self.assertEqual(len(expected), 25)
+        self.assertIn(99, expected)
+        self.assertLess(lookup.feeds, greedy.feeds)
+        self.assertGreater(lookup.rollbacks, 0, "some guesses crossed an inserted 99")
+
+    def test_lookup_decoding_stops_at_max_tokens(self):
+        source, eos = self._ToyDecoder.SOURCE, {self._ToyDecoder.EOS}
+
+        expected = backends.lookup_decode(self._ToyDecoder([1]), source, eos, 10, draft=0)
+        tokens = backends.lookup_decode(self._ToyDecoder([1]), source, eos, 10)
+
+        self.assertEqual(tokens, expected)
+        self.assertEqual(len(tokens), 10)
+
+    def test_lookup_decoding_stops_at_an_end_token_inside_a_guess(self):
+        class EndsAtZero(self._ToyDecoder):
+            SOURCE = [5, 6, 7, 8, 0, 9, 10, 11, 12, 13]
+
+            def _pick(self):  # copies SOURCE, so the guess and the model both hit 0
+                n = len(self.history) - self.prompt_len
+                return self.SOURCE[n] if n < len(self.SOURCE) else 0
+
+        source = [5, 6, 7, 8, 0, 9, 10]
+
+        tokens = backends.lookup_decode(EndsAtZero([5, 6, 7]), source, {0}, 50)
+
+        self.assertEqual(tokens, [5, 6, 7, 8])
+
+    def test_lookup_draft_follows_the_latest_match(self):
+        source = [1, 2, 3, 4, 1, 2, 3, 5, 6]
+
+        self.assertEqual(backends.lookup_draft([9, 1, 2, 3], source, 8, 3), [5, 6])
+        self.assertEqual(backends.lookup_draft([2, 3], source, 8, 3), [])
+        self.assertEqual(backends.lookup_draft([1, 2, 3], source, 0, 3), [])
+
+    def test_mlx_cleanup_decodes_with_lookup_from_the_dictation(self):
+        cleaner = object.__new__(backends.MLXCleanup)
+        cleaner.model = object()
+        cleaner.vocabulary = ()
+        cleaner.tokenizer = mock.Mock()
+        cleaner.tokenizer.eos_token_ids = [self._ToyDecoder.EOS]
+        decoders = []
+
+        def make(_model, _prefix, _cache, prompt):
+            decoders.append(self._ToyDecoder(prompt))
+            return decoders[-1]
+
+        source = self._ToyDecoder.SOURCE
+        with (
+            mock.patch.object(backends, "_MLXDecoder", make),
+            mock.patch.object(cleaner, "_prefix", return_value=([], None)),
+        ):
+            tokens, ttft = cleaner._decode([1, 2, 3], "casual", source, 100)
+
+        self.assertEqual(tokens, backends.lookup_decode(self._ToyDecoder([1, 2, 3]), source, {0}, 100, draft=0))
+        self.assertLess(decoders[0].feeds, len(tokens), "guessed tokens skipped model calls")
+        self.assertGreaterEqual(ttft, 0)
 
     def test_ollama_cleanup_uses_the_chat_api_with_the_same_messages(self):
         lines = [
