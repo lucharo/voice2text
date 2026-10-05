@@ -245,6 +245,10 @@ Measured over 208 real dictations in casual mode (M4 Pro; the ordering holds on 
 | **`Qwen3.5-2B-4bit`** | **98% / 93%** | 1.17 s | default |
 | `Qwen3.5-4B-4bit` | 96% / 90% | 2.21 s | not worth the wait |
 
+Those times predate 0.5.0. Since then the instructions, examples and dictionary are processed once and
+reused, and the model checks words guessed from the dictation several at a time, so cleanup runs about
+2.5× faster (median 1.27 s → 0.51 s for the 2B on the same dictations). `utils/cleanup_speed` has the bench.
+
 Pick another with `[cleanup] model = "mlx-community/…"`; it downloads on the next launch.
 
 Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it

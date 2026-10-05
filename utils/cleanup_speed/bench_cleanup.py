@@ -95,11 +95,59 @@ def timed_chunks(engine, text: str) -> tuple[str, list[float]]:
     return " ".join(parts).strip(), times
 
 
+def report(results: list[dict], model: str, n_terms: int) -> None:
+    variants = ["baseline", "prefix", "lookup"]
+    lines = [
+        f"# Cleanup speed, {date.today().isoformat()}",
+        "",
+        f"{len(results)} clips, {model}, {MODE} mode, {n_terms} dictionary terms. "
+        "Seconds of cleanup per dictation (all chunks).",
+        "",
+        "| variant | p50 | p90 | mean | identical to baseline |",
+        "|---|--:|--:|--:|--:|",
+    ]
+    for name in variants:
+        v = [r[f"{name}_s"] for r in results]
+        same = (
+            "–"
+            if name == "baseline"
+            else f"{sum(r[f'{name}_same'] for r in results)}/{len(results)}"
+        )
+        lines.append(
+            f"| {name} | {q(v, 0.5):.2f} | {q(v, 0.9):.2f} | {statistics.fmean(v):.2f} | {same} |"
+        )
+    for name in variants:
+        v = [r[f"{name}_last_chunk_s"] for r in results]
+        lines.append(
+            f"| {name}, cleaned while recording (only the last chunk after release) "
+            f"| {q(v, 0.5):.2f} | {q(v, 0.9):.2f} | {statistics.fmean(v):.2f} | |"
+        )
+    multi = sum(r["baseline_chunks"] > 1 for r in results)
+    lines += ["", f"{multi} of {len(results)} dictations have more than one chunk."]
+    path = OUT / f"{date.today().isoformat()}-report.md"
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+    print("\n".join(lines))
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--limit", type=int)
     p.add_argument("--model", default=backends.MLX_CLEANUP_DEFAULT)
+    p.add_argument(
+        "--report-only",
+        action="store_true",
+        help="rebuild the report from results.jsonl",
+    )
     a = p.parse_args(argv)
+    if a.report_only:
+        saved = [
+            json.loads(line)
+            for line in (OUT / "results.jsonl").read_text().splitlines()
+            if line
+        ]
+        report(saved, a.model, len(config.read_dictionary()[0]))
+        return 0
     OUT.mkdir(parents=True, exist_ok=True, mode=0o700)
     rows = [json.loads(line) for line in SOURCE.read_text().splitlines() if line]
     clips = [r for r in rows if (r.get("v2t_raw") or "").strip()][: a.limit]
@@ -135,38 +183,7 @@ def main(argv: list[str]) -> int:
     path.write_text("".join(json.dumps(r) + "\n" for r in results))
     path.chmod(0o600)
 
-    lines = [
-        f"# Cleanup speed, {date.today().isoformat()}",
-        "",
-        f"{len(results)} clips, {a.model}, {MODE} mode, {len(terms)} dictionary terms. "
-        "Seconds of cleanup per dictation (all chunks).",
-        "",
-        "| variant | p50 | p90 | mean | identical to baseline |",
-        "|---|--:|--:|--:|--:|",
-    ]
-    for name in engines:
-        v = [r[f"{name}_s"] for r in results]
-        same = (
-            "–"
-            if name == "baseline"
-            else f"{sum(r[f'{name}_same'] for r in results)}/{len(results)}"
-        )
-        lines.append(
-            f"| {name} | {q(v, 0.5):.2f} | {q(v, 0.9):.2f} | {statistics.fmean(v):.2f} | {same} |"
-        )
-    for name in engines:
-        v = [r[f"{name}_last_chunk_s"] for r in results]
-        lines.append(
-            f"| {name}, cleaned while recording (only the last chunk after release) "
-            f"| {q(v, 0.5):.2f} | {q(v, 0.9):.2f} | {statistics.fmean(v):.2f} | |"
-        )
-    multi = sum(r["baseline_chunks"] > 1 for r in results)
-    lines += ["", f"{multi} of {len(results)} dictations have more than one chunk."]
-    lines.append()
-    report = OUT / f"{date.today().isoformat()}-report.md"
-    report.write_text("\n".join(lines) + "\n")
-    report.chmod(0o600)
-    print("\n".join(lines))
+    report(results, a.model, len(terms))
     return 0
 
 
