@@ -9,6 +9,7 @@ import os
 import plistlib
 import queue
 import signal
+import socket
 import sqlite3
 import stat
 import sys
@@ -25,6 +26,61 @@ from v2t import app, backends, bench, cli, config, menubar, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
+    def test_grid_compute_uses_the_shipped_short_and_long_clip_paths(self):
+        from utils.asr_grid import grid
+
+        row = {"duration_s": 20, "offline_s": 7, "stream_busy_s": 5,
+               "stream_wait_s": 2, "stream_feed_s": 3}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "fixture").mkdir(parents=True)
+            (root / "sets").mkdir()
+            for duration, expected in ((20, 10), (60, 5)):
+                row["duration_s"] = duration
+                clip = {"id": "clip", "text": "hello", "lang": "en", "duration_s": duration}
+                result = {"id": "clip", "offline": "hello", "stream": "hello", **row}
+                (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
+                (root / "results" / "fixture" / "parakeet-v3.jsonl").write_text(json.dumps(result) + "\n")
+                scoring_dependencies = {
+                    "whisper_normalizer.basic": types.SimpleNamespace(BasicTextNormalizer=lambda: str.lower),
+                    "whisper_normalizer.english": types.SimpleNamespace(EnglishTextNormalizer=lambda: str.lower),
+                    "rapidfuzz.distance": types.SimpleNamespace(Levenshtein=types.SimpleNamespace(distance=lambda a, b: 0 if a == b else 1)),
+                }
+                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.dict(sys.modules, scoring_dependencies):
+                    scored = grid.score_set("fixture")
+                self.assertEqual(scored[0]["busy_s"], expected)
+                self.assertEqual(scored[0]["rtf"], expected / duration)
+
+    def test_grid_empty_cell_has_no_scored_results(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "fixture").mkdir(parents=True)
+            (root / "sets").mkdir()
+            clip = {"id": "clip", "text": "hello", "lang": "en", "duration_s": 20}
+            (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
+            (root / "results" / "fixture" / "parakeet-v3.jsonl").touch()
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"):
+                self.assertEqual(grid.score_set("fixture"), [])
+
+    def test_cleanup_report_only_uses_the_saved_configuration(self):
+        from utils.cleanup_speed import bench_cleanup
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            row = {"config": {"model": "measured-model", "mode": "strict", "n_terms": 13},
+                   "baseline_chunks": 1, "prefix_same": True, "lookup_same": True}
+            for variant in ("baseline", "prefix", "lookup"):
+                row[f"{variant}_s"] = 2.0
+                row[f"{variant}_last_chunk_s"] = 2.0
+            (root / "results.jsonl").write_text(json.dumps(row) + "\n")
+            with mock.patch.object(bench_cleanup, "OUT", root), mock.patch.object(config, "read_dictionary", side_effect=AssertionError("must use saved metadata")), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(bench_cleanup.main(["--report-only", "--model", "different-model"]), 0)
+            report = next(root.glob("*-report.md")).read_text()
+            self.assertIn("measured-model, strict mode, 13 dictionary terms", report)
+            self.assertNotIn("different-model", report)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
@@ -750,6 +806,133 @@ class V2TSmokeTests(unittest.TestCase):
             [line.strip() for line in lines], ["Heard so far: 3 words in 5s"]
         )
         self.assertEqual(config.read_status()["partial"], "hello secret words")
+
+    def _pill_listener(self):
+        """A datagram socket where the menu app's pill would listen."""
+        config.ensure_dirs()
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        listener.bind(str(config.live_socket_path()))
+        listener.setblocking(False)
+        self.addCleanup(listener.close)
+        return listener
+
+    def _pill_events(self, listener) -> list[dict]:
+        events = []
+        while True:
+            try:
+                events.append(json.loads(listener.recv(4096)))
+            except BlockingIOError:
+                return events
+
+    def test_status_changes_reach_the_menu_apps_pill(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        listener = self._pill_listener()
+
+        voice._set_state("recording", partial="hello there")
+
+        self.assertEqual(
+            self._pill_events(listener),
+            [
+                {
+                    "pid": os.getpid(),
+                    "state": "recording",
+                    "stt": "parakeet-v3",
+                    "cleanup": "off",
+                    "mode": "casual",
+                    "streaming": False,
+                    "error": "",
+                    "warning": "",
+                    "words": 2,
+                    "partial": "hello there",
+                }
+            ],
+        )
+
+    def test_status_changes_work_with_no_menu_app_listening(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        config.ensure_dirs()
+
+        voice._set_state("recording")
+
+        self.assertEqual(
+            json.loads((config.run_dir() / "status.json").read_text()),
+            {
+                "pid": os.getpid(),
+                "state": "recording",
+                "stt": "parakeet-v3",
+                "cleanup": "off",
+                "mode": "casual",
+                "streaming": False,
+                "error": "",
+                "warning": "",
+            },
+        )
+
+    def test_status_advertises_live_transcript_only_when_capture_can_stream(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        listener = self._pill_listener()
+        voice.stt, _stream = self._streaming_stt([])
+        for mode, rate, backend_streams, available in (
+            ("hacky", 16000, True, True),
+            ("off", 16000, True, False),
+            ("hacky", 48000, True, False),
+            ("hacky", 16000, False, False),
+        ):
+            with self.subTest(mode=mode, rate=rate, backend_streams=backend_streams):
+                voice.cfg.streaming_mode = mode
+                voice.cfg.sample_rate = rate
+                voice.stt.streaming = backend_streams
+
+                voice._set_state("idle")
+
+                expected = {
+                    "pid": os.getpid(),
+                    "state": "idle",
+                    "stt": "parakeet-v3",
+                    "cleanup": "off",
+                    "mode": "casual",
+                    "streaming": available,
+                    "error": "",
+                    "warning": "",
+                }
+                self.assertEqual(self._pill_events(listener), [expected])
+                self.assertEqual(
+                    json.loads((config.run_dir() / "status.json").read_text()),
+                    expected,
+                )
+
+    def test_input_level_reaches_the_pill_only_once_the_recording_shows(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        listener = self._pill_listener()
+        voice.recording = True
+        block = np.full((320, 1), 0.5, dtype=np.float32)
+
+        voice.audio_callback(block, 320, None, None)  # still inside the hold
+        hidden = self._pill_events(listener)
+        voice.shown = True
+        voice.audio_callback(block, 320, None, None)
+
+        self.assertEqual(hidden, [])
+        self.assertEqual(self._pill_events(listener), [{"level": 0.5}])
+
+    def test_short_blocks_fold_into_the_loudest_level_per_interval(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        listener = self._pill_listener()
+        voice.recording = voice.shown = True
+        clock = [100.0]
+
+        with mock.patch.object(app.time, "perf_counter", lambda: clock[0]):
+            for value in (0.4, 0.1, 0.2):  # the first goes out; two held after it
+                voice.audio_callback(
+                    np.full((32, 1), value, dtype=np.float32), 32, None, None
+                )
+                clock[0] += app.LEVEL_INTERVAL_S / 4
+            clock[0] += app.LEVEL_INTERVAL_S
+            voice.audio_callback(
+                np.full((32, 1), 0.3, dtype=np.float32), 32, None, None
+            )
+
+        self.assertEqual(self._pill_events(listener), [{"level": 0.4}, {"level": 0.3}])
 
     def test_a_streamed_recording_with_no_audio_returns_to_idle(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -1910,28 +2093,26 @@ class V2TSmokeTests(unittest.TestCase):
             cli.cmd_run(["--casual", "--strict"])
 
     def _mlx_cleaner(self, replies):
-        """An MLXCleanup with the model mocked: each call streams the next reply."""
+        """An MLXCleanup with the model mocked: each call decodes the next reply.
+
+        Tokens are words here: the tokenizer splits and joins on spaces.
+        """
         cleaner = object.__new__(backends.MLXCleanup)
         cleaner.model = object()
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
         cleaner.tokenizer.encode.side_effect = lambda text: text.split()
+        cleaner.tokenizer.decode.side_effect = " ".join
         cleaner.last_stats = {}
         queue_ = list(replies)
-        response = type("Response", (), {"text": ""})
 
-        def stream(*_args, **kwargs):
+        def decode(_prompt, _mode, _source, max_tokens):
             reply = queue_.pop(0)
-            if reply is None:  # loop forever: emit max_tokens single tokens
-                for _ in range(kwargs["max_tokens"]):
-                    yield response()
-                return
-            for piece in reply.split(" "):
-                r = response()
-                r.text = piece + " "
-                yield r
+            if reply is None:  # loops forever: runs into max_tokens
+                return ["word"] * max_tokens, 0.0
+            return reply.split(" "), 0.0
 
-        cleaner._stream = stream
+        cleaner._decode = decode
         return cleaner
 
     def test_cleanup_keeps_the_raw_chunk_when_the_model_hits_its_token_limit(self):
@@ -2028,6 +2209,193 @@ class V2TSmokeTests(unittest.TestCase):
             voice.on_release("HOTKEY")
 
         return voice, press_release
+
+    def test_escape_cancels_hold_and_undo_resumes_the_captured_audio(self):
+        voice, _tap = self._tapper()
+        voice.on_press("HOTKEY")
+        voice.hold_timer.fire()
+        audio = np.full((16, 1), 0.5, dtype=np.float32)
+        voice.audio_callback(audio, len(audio), None, None)
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        voice.on_release("HOTKEY")
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+        self.assertTrue(voice.jobs.empty())
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        np.testing.assert_array_equal(voice.cancelled_audio[0][0], audio)
+
+        voice.request_undo()
+        voice.process_next(timeout=0)
+
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.latched)
+        self.assertIsNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "recording")
+        np.testing.assert_array_equal(voice.frames[0], audio)
+        voice.audio_callback(audio / 2, len(audio), None, None)
+        voice.on_press("HOTKEY")
+        voice.on_release("HOTKEY")
+        frames, _duration = voice.jobs.get_nowait()
+        np.testing.assert_array_equal(np.concatenate(frames), np.concatenate([audio, audio / 2]))
+        self.assertFalse(voice.latched)
+
+    def test_escape_cancels_a_queued_whole_file_job_without_decoding(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=mock.Mock(return_value="late text"))
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        saved = voice.cancelled_audio
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        self.assertIs(voice.cancelled_audio, saved)
+        self.assertFalse(voice.processing)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        voice.stt.transcribe.assert_not_called()
+        paste.assert_not_called()
+
+    def test_escape_during_whole_file_decode_blocks_the_late_paste(self):
+        voice, _tap = self._tapper()
+        def decode(_path):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            return "late text"
+        voice.stt = types.SimpleNamespace(transcribe=decode)
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertFalse(voice.processing)
+        self.assertIsNotNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+    def test_escape_during_cleanup_blocks_the_late_paste(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=lambda _path: "raw words")
+        def cleanup(_text, _mode):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            return "clean words", 0.0, 0.0
+        voice.cleaner = types.SimpleNamespace(cleanup=cleanup)
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertIsNotNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+    def test_escape_during_streaming_drains_the_cancelled_job_before_undo(self):
+        voice, _tap = self._tapper()
+        voice.stt, stream = self._streaming_stt([])
+        def feed(_samples):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            voice.request_undo()
+        stream.feed = feed
+        voice.start_recording()
+        samples = int(voice.cfg.sample_rate * backends.STREAM_CHUNK_S)
+        voice.audio_callback(np.ones((samples, 1), dtype=np.float32), samples, None, None)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertFalse(voice.processing)
+        self.assertIsNone(voice.cancelled_job)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        # The next poll accepts Undo only after the cancelled model call returns.
+        voice.stt = None  # resume without starting another streaming worker here
+        voice.process_next(timeout=0)
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.latched)
+        self.assertEqual(len(voice.frames[0]), samples)
+
+    def test_escape_after_paste_has_started_is_not_reported_as_cancelled(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=lambda _path: "words")
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor", side_effect=lambda _text: voice.on_press(types.SimpleNamespace(name="esc"))):
+            voice.process_next(timeout=0)
+        self.assertFalse(voice.escape_consumed)
+        self.assertIsNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "idle")
+
+    def test_escape_when_idle_passes_through_and_does_not_stop_the_engine(self):
+        voice, _tap = self._tapper()
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        self.assertFalse(voice.escape_consumed)
+        self.assertFalse(voice.stopping)
+
+    def test_failed_undo_keeps_the_cancelled_audio_for_another_attempt(self):
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        saved = voice.cancelled_audio
+        with mock.patch.object(app.sd, "InputStream", side_effect=RuntimeError("device gone")), mock.patch.object(app.subprocess, "run"):
+            voice.undo_cancelled()
+        self.assertIs(voice.cancelled_audio, saved)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+
+    def test_listener_swallows_only_escape_consumed_by_the_dictation(self):
+        voice, _tap = self._tapper()
+        class Listener:
+            _MODIFIER_FLAGS = {}
+            def __init__(self, **options):
+                self.options = options
+        escape = types.SimpleNamespace(name="esc", value=types.SimpleNamespace(vk=53))
+        keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value),
+            Key=types.SimpleNamespace(esc=escape),
+        )
+        quartz = types.SimpleNamespace(
+            kCGEventFlagMaskSecondaryFn=1 << 23, kCGKeyboardEventKeycode=9,
+            kCGEventKeyUp=11,
+            CGEventGetIntegerValueField=lambda event, _field: event,
+        )
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
+            listener = app._listener(voice.on_press, voice.on_release, voice.consume_escape)
+        intercept = listener.options["darwin_intercept"]
+        listener.options["on_press"](escape)
+        self.assertEqual(intercept(10, 53), 53)  # idle: let the target app see Esc
+        voice.start_recording()
+        listener.options["on_press"](escape)
+        self.assertIsNone(intercept(10, 53))
+        listener.options["on_press"](escape)  # autorepeat after cancellation finished
+        self.assertIsNone(intercept(10, 53))
+        self.assertIsNone(intercept(11, 53))  # matching key-up is swallowed too
+        listener.options["on_press"](escape)  # next physical press while idle
+        self.assertEqual(intercept(10, 53), 53)
+        self.assertEqual(intercept(10, 0), 0)  # unrelated keys always pass through
+
+    def test_cancelled_audio_survives_a_short_tap_and_a_modifier_chord(self):
+        voice, tap = self._tapper()
+        for chord in (False, True):
+            with self.subTest(chord=chord):
+                voice.start_recording()
+                audio = np.ones((16, 1), dtype=np.float32)
+                voice.frames = [audio]
+                voice.cancel_dictation()
+                saved = voice.cancelled_audio
+                if chord:
+                    voice.on_press("HOTKEY")
+                    voice.on_press("ARROW")
+                    voice.on_release("HOTKEY")
+                else:
+                    tap(at=101.0, held=0.1)
+                self.assertIs(voice.cancelled_audio, saved)
+                self.assertEqual(config.read_status()["state"], "cancelled")
+                voice.undo_cancelled()
+                self.assertTrue(voice.recording)
+                self.assertIsNone(voice.cancelled_audio)
+                np.testing.assert_array_equal(voice.frames[0], audio)
+                voice.cancel_recording()
 
     def test_a_short_tap_is_discarded_not_transcribed(self):
         voice, tap = self._tapper()
@@ -2215,8 +2583,8 @@ class V2TSmokeTests(unittest.TestCase):
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
         cleaner.tokenizer.encode.return_value = [1, 2, 3]
-        response = type("Response", (), {"text": "Hello, there."})
-        cleaner._stream = lambda *_args, **_kwargs: iter([response()])
+        cleaner.tokenizer.decode.side_effect = " ".join
+        cleaner._decode = lambda *_args: (["Hello,", "there."], 0.0)
 
         text, ttft, total = cleaner.cleanup("hello um there", "strict")
 
@@ -2228,6 +2596,134 @@ class V2TSmokeTests(unittest.TestCase):
             add_generation_prompt=True,
             enable_thinking=False,
         )
+
+    class _ToyDecoder:
+        """A greedy "model" over its whole history: it copies SOURCE, inserts 99 at
+        every seventh output position and ends after 25 tokens. Any token a rollback
+        leaves behind changes what it predicts next."""
+
+        SOURCE = list(range(10, 40))
+        EOS = 0
+
+        def __init__(self, prompt):
+            self.prompt_len = len(prompt)
+            self.history = list(prompt)
+            self.feeds = self.rollbacks = 0
+            self.next = self._pick()
+
+        def _pick(self):
+            n = len(self.history) - self.prompt_len
+            if n >= 25:
+                return self.EOS
+            if n % 7 == 6:
+                return 99
+            copied = [t for t in self.history[self.prompt_len :] if t != 99]
+            return self.SOURCE[len(copied) % len(self.SOURCE)]
+
+        def feed(self, tokens):
+            self.feeds += 1
+            picks = []
+            for token in tokens:
+                self.history.append(token)
+                picks.append(self._pick())
+            return picks
+
+        def checkpoint(self):
+            return len(self.history)
+
+        def rollback(self, cp, fed):
+            assert len(self.history) - cp == fed, "a rollback undoes exactly what was fed"
+            self.rollbacks += 1
+            del self.history[cp:]
+
+    def test_lookup_decoding_returns_the_greedy_tokens_in_fewer_model_calls(self):
+        greedy = self._ToyDecoder([1, 2, 3])
+        lookup = self._ToyDecoder([1, 2, 3])
+        source, eos = self._ToyDecoder.SOURCE, {self._ToyDecoder.EOS}
+
+        expected = backends.lookup_decode(greedy, source, eos, 100, draft=0)
+        tokens = backends.lookup_decode(lookup, source, eos, 100)
+
+        self.assertEqual(tokens, expected)
+        self.assertEqual(len(expected), 25)
+        self.assertIn(99, expected)
+        self.assertLess(lookup.feeds, greedy.feeds)
+        self.assertGreater(lookup.rollbacks, 0, "some guesses crossed an inserted 99")
+
+    def test_lookup_decoding_stops_at_max_tokens(self):
+        source, eos = self._ToyDecoder.SOURCE, {self._ToyDecoder.EOS}
+
+        expected = backends.lookup_decode(self._ToyDecoder([1]), source, eos, 10, draft=0)
+        tokens = backends.lookup_decode(self._ToyDecoder([1]), source, eos, 10)
+
+        self.assertEqual(tokens, expected)
+        self.assertEqual(len(tokens), 10)
+
+    def test_lookup_decoding_stops_at_an_end_token_inside_a_guess(self):
+        class EndsAtZero(self._ToyDecoder):
+            SOURCE = [5, 6, 7, 8, 0, 9, 10, 11, 12, 13]
+
+            def _pick(self):  # copies SOURCE, so the guess and the model both hit 0
+                n = len(self.history) - self.prompt_len
+                return self.SOURCE[n] if n < len(self.SOURCE) else 0
+
+        source = [5, 6, 7, 8, 0, 9, 10]
+
+        tokens = backends.lookup_decode(EndsAtZero([5, 6, 7]), source, {0}, 50)
+
+        self.assertEqual(tokens, [5, 6, 7, 8])
+
+    def test_lookup_draft_follows_the_latest_match(self):
+        source = [1, 2, 3, 4, 1, 2, 3, 5, 6]
+
+        self.assertEqual(backends.lookup_draft([9, 1, 2, 3], source, 8, 3), [5, 6])
+        self.assertEqual(backends.lookup_draft([2, 3], source, 8, 3), [])
+        self.assertEqual(backends.lookup_draft([1, 2, 3], source, 0, 3), [])
+
+    def test_mlx_cleanup_decodes_with_lookup_from_the_dictation(self):
+        cleaner = object.__new__(backends.MLXCleanup)
+        cleaner.model = object()
+        cleaner.vocabulary = ()
+        cleaner.tokenizer = mock.Mock()
+        cleaner.tokenizer.eos_token_ids = [self._ToyDecoder.EOS]
+        decoders = []
+
+        def make(_model, _prefix, _cache, prompt):
+            decoders.append(self._ToyDecoder(prompt))
+            return decoders[-1]
+
+        source = self._ToyDecoder.SOURCE
+        with (
+            mock.patch.object(backends, "_MLXDecoder", make),
+            mock.patch.object(cleaner, "_prefix", return_value=([], None)) as prefix,
+        ):
+            tokens, ttft = cleaner._decode([1, 2, 3], "casual", source, 100)
+
+        self.assertEqual(tokens, backends.lookup_decode(self._ToyDecoder([1, 2, 3]), source, {0}, 100, draft=0))
+        self.assertLess(decoders[0].feeds, len(tokens), "guessed tokens skipped model calls")
+        self.assertGreaterEqual(ttft, 0)
+        prefix.assert_called_once_with("casual")
+
+    def test_mlx_cleanup_rebuilds_a_prefix_the_prompt_no_longer_starts_with(self):
+        cleaner = object.__new__(backends.MLXCleanup)
+        cleaner.model = object()
+        cleaner.tokenizer = mock.Mock()
+        cleaner.tokenizer.eos_token_ids = [self._ToyDecoder.EOS]
+        cleaner._prefix_key = ("casual", ())
+        built = []
+
+        def prefix(mode):
+            built.append(cleaner._prefix_key)
+            cleaner._prefix_key = (mode, ())
+            return ([7, 7], None) if len(built) == 1 else ([1, 2], None)
+
+        with (
+            mock.patch.object(backends, "_MLXDecoder", lambda _m, p, _c, prompt: self._ToyDecoder(prompt)),
+            mock.patch.object(cleaner, "_prefix", side_effect=prefix),
+        ):
+            cleaner._decode([1, 2, 3], "casual", self._ToyDecoder.SOURCE, 10)
+
+        self.assertEqual(built, [("casual", ()), None], "the stale key was dropped, then rebuilt")
 
     def test_ollama_cleanup_uses_the_chat_api_with_the_same_messages(self):
         lines = [

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- **Cleanup is about 2.5× faster.** Each cleanup call used to run the whole prompt (instructions, worked examples and dictionary terms, about 775 tokens) through the model and then write one token per model step. Now the fixed part of the prompt is processed once and reused, and the model guesses its next words from the dictation, checking up to eight in one step and keeping only those it agrees with. Over 201 real dictations on an M4 Pro the median cleanup went from 1.27 s to 0.51 s and p90 from 5.34 s to 2.09 s. The text is identical on 169 of them; the other 32 differ by about three words, from float rounding when the prompt is processed in two parts.
+- **A floating pill shows the dictation while it happens.** B appears beside the text insertion caret by default; A sits at the bottom of the screen and is the automatic fallback when an app exposes no caret. The calmer waveform scrolls with captured input, travels during transcription and pulses during cleanup, without status words. **Pill → Show live transcript** optionally adds streamed words, off by default and enabled only when the engine supports streaming. Placement and transcript visibility persist across launches. The pill never takes focus, so the paste still lands where you were typing.
+- **Esc cancels without pasting; Undo recovers the recording.** Cancelling during recording, transcription or cleanup discards late results. Undo on the pill or menu recovers the captured audio and resumes hands-free recording; press Fn to finish.
+
 ## 0.4.1
 
 - **Releases publish from GitHub Actions.** A `v<version>` tag push, once approved in the `release` environment, uploads the engine to PyPI (trusted publishing) and the notarised menu app to the GitHub Release, and commits the cask; `scripts/ci-signing-secrets.sh` loads the Developer ID certificate and notary key into that environment once.

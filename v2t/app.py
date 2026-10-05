@@ -5,9 +5,11 @@ macOS-only at runtime (native pasteboard, System Events paste, global hotkey).
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -32,6 +34,7 @@ GLOBE_KEY_FIX = (
     "`defaults write com.apple.HIToolbox AppleFnUsageType -int 0` alone does not apply)"
 )
 LOUD_RMS = 0.01  # a 100 ms frame above this holds speech-level sound (full scale 1)
+LEVEL_INTERVAL_S = 0.02  # the pill's waveform: at most one input level per 20 ms
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -52,7 +55,7 @@ def _resolve_hotkey(name: str):
     return keys[name]
 
 
-def _listener(on_press, on_release):
+def _listener(on_press, on_release, suppress_escape=None):
     """pynput's global listener, taught the Fn key.
 
     Fn arrives as a flags-changed event like the other modifiers, but pynput
@@ -68,7 +71,23 @@ def _listener(on_press, on_release):
             keyboard.KeyCode.from_vk(FN_VK): kCGEventFlagMaskSecondaryFn,
         }
 
-    return Listener(on_press=on_press, on_release=on_release)
+    options = {}
+    if suppress_escape is not None:
+        from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode, kCGEventKeyUp
+
+        def intercept(_event_type, event):
+            # pynput 1.8.1 calls on_press/on_release BEFORE darwin_intercept
+            # (_util/darwin.py:290). Only swallow Esc handled by this dictation.
+            if (
+                CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+                == keyboard.Key.esc.value.vk
+                and suppress_escape(_event_type == kCGEventKeyUp)
+            ):
+                return None
+            return event
+
+        options["darwin_intercept"] = intercept
+    return Listener(on_press=on_press, on_release=on_release, **options)
 
 
 def globe_key_warning() -> str:
@@ -244,6 +263,13 @@ class VoiceToText:
         self.cleaner = None  # loaded in run() if cleanup is enabled
         self.recording = False
         self.processing = False
+        self.cancel_requested = False
+        self.escape_consumed = False
+        self.delivered = False
+        self.current_audio = None
+        self.cancelled_audio = None  # one recoverable clip, held in memory only
+        self.cancelled_job = None
+        self.undo_requested = threading.Event()
         self.frames: list[np.ndarray] = []
         self.live: LiveTranscription | None = None  # streaming recording in flight
         self.stream = None
@@ -253,6 +279,12 @@ class VoiceToText:
         self.jobs = queue.Queue()
         self.lifecycle_lock = threading.RLock()
         self.status_lock = threading.Lock()
+        # Every status change and the live input level also go to the menu
+        # app's pill as datagrams; nobody listening (a terminal run) is normal.
+        self.live_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.live_socket.setblocking(False)
+        self.level_peak = 0.0  # loudest block since the last level sent
+        self.level_sent_at = 0.0
         self.shutdown_watcher = None
         self.shutdown_read_fd = None
         self.shutdown_write_fd = None
@@ -290,11 +322,14 @@ class VoiceToText:
         with self.status_lock:
             if self.stopping and state != "stopping":
                 return
+            if self.cancel_requested and state not in ("cancelled", "stopping"):
+                return  # a late recogniser result must not revive the pill
             clean_error = " ".join(error.split())
             status = {
                 "pid": os.getpid(),
                 "state": state,
                 **self.status_details,
+                "streaming": self.can_stream(),
                 "error": clean_error,
                 "warning": self.warning,
             }
@@ -302,6 +337,15 @@ class VoiceToText:
                 status["words"] = len(partial.split())
                 status["partial"] = _tail(partial)
             config.write_status(status)
+            self._send_live(status)
+
+    def _send_live(self, event: dict) -> None:
+        try:
+            self.live_socket.sendto(
+                json.dumps(event).encode(), str(config.live_socket_path())
+            )
+        except OSError:  # no menu app, it is busy, or the status outgrew a
+            pass  # datagram (2 KB on macOS): the one-second status poll still has it
 
     def _clear_status(self) -> None:
         with self.status_lock:
@@ -342,6 +386,20 @@ class VoiceToText:
             logger.warning(f"Audio input: {status}")
         if self.recording:
             self.frames.append(indata.copy())
+            if self.shown:  # a tap or a chord stays invisible
+                self._send_level(indata)
+
+    def _send_level(self, block: np.ndarray) -> None:
+        """Send the input level (RMS, full scale 1) to the pill's waveform.
+
+        Callback blocks can be a few milliseconds long, so the loudest block
+        in each LEVEL_INTERVAL_S goes out and the rest are folded into it.
+        """
+        self.level_peak = max(self.level_peak, float(np.sqrt(np.mean(block**2))))
+        now = time.perf_counter()
+        if now - self.level_sent_at >= LEVEL_INTERVAL_S:
+            self._send_live({"level": round(self.level_peak, 5)})
+            self.level_peak, self.level_sent_at = 0.0, now
 
     def _refresh_audio_devices(self) -> None:
         """Re-read the device list so the stream follows the current default mic.
@@ -360,7 +418,7 @@ class VoiceToText:
             logger.warning(f"Could not release audio devices: {error}")
         sd._initialize()
 
-    def start_recording(self, show: bool = True):
+    def start_recording(self, show: bool = True, resume=None):
         """Open the microphone; with `show` the recording is also made visible.
 
         A held hotkey opens the microphone at once so no speech is lost, but
@@ -370,9 +428,9 @@ class VoiceToText:
         with self.lifecycle_lock:
             if self.stopping or self.recording or self.processing:
                 return
-            self.frames = []
+            self.frames = list(resume[0]) if resume else []
             self.shown = False
-            self.record_start = time.perf_counter()
+            self.record_start = time.perf_counter() - (resume[1] if resume else 0)
             try:
                 self._refresh_audio_devices()
                 self.input_device = _default_input_name()
@@ -401,6 +459,9 @@ class VoiceToText:
                 self.recording = False
                 self._close_stream()
                 return
+            self.cancel_requested = False
+            self.current_audio = None
+            self.delivered = False
             if show:
                 self._show_recording()
 
@@ -409,6 +470,8 @@ class VoiceToText:
             if not self.recording or self.shown:
                 return
             self.shown = True
+            self.cancelled_audio = None
+            self.level_peak = self.level_sent_at = 0.0  # none of the last recording's
             self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
                 result = subprocess.run(
@@ -450,6 +513,7 @@ class VoiceToText:
             try:
                 duration = time.perf_counter() - self.record_start
                 self._close_stream()
+                self.current_audio = (list(self.frames), duration)
                 logger.info(f"Stopped ({duration:.1f}s)")
                 if self.live is not None:
                     live, self.live = self.live, None
@@ -469,6 +533,9 @@ class VoiceToText:
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
         next_state, error_message, levels = "idle", "", None
         try:
+            if self.cancel_requested:
+                return
+            self.current_audio = (frames, audio_s)
             self._set_state("transcribing")
             audio = np.concatenate(frames, axis=0)
             self._keep_audio(audio)
@@ -498,6 +565,7 @@ class VoiceToText:
             if not self.stopping:
                 self._set_state(next_state, error_message)
             self.processing = False
+            self.current_audio = None
 
     def _no_audio(self, audio_s: float, levels: dict) -> str:
         """The dead-input error: log it, open the Microphone pane once, record it."""
@@ -716,6 +784,10 @@ class VoiceToText:
                 if not self.stopping:
                     self._set_state(next_state, error_message)
                 self.processing = False
+                self.current_audio = None
+            if self.cancelled_job is live:
+                self.cancelled_job = None
+                self.processing = False
 
     def _show_partial(self, text: str, samples: int) -> None:
         # The log never carries dictated text (0.3.0 guarantee); the tail goes
@@ -735,6 +807,8 @@ class VoiceToText:
         levels: dict | None = None,
     ) -> None:
         """Clean up, paste and record one transcription. Raises on failure."""
+        if self.cancel_requested:
+            return
         levels = levels or {}
         cleaned_text, cleanup_s, stats = raw_text, 0.0, {}
         if self.cleaner is not None:
@@ -766,7 +840,13 @@ class VoiceToText:
         cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
         t0 = time.perf_counter()
-        self.paste_to_cursor(cleaned_text)
+        with self.lifecycle_lock:
+            if self.cancel_requested:
+                return
+            # Serialize the final paste decision with Esc. Once pasted, Esc
+            # belongs to the target app; never claim that a paste was cancelled.
+            self.delivered = True
+            self.paste_to_cursor(cleaned_text)
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
@@ -793,6 +873,9 @@ class VoiceToText:
 
     def process_next(self, timeout: float | None = None) -> bool:
         """Process one queued recording on the model-owning thread."""
+        if self.undo_requested.is_set() and not self.processing:
+            self.undo_requested.clear()
+            self.undo_cancelled()
         try:
             job = self.jobs.get(timeout=timeout)
         except queue.Empty:
@@ -878,6 +961,9 @@ class VoiceToText:
     DOUBLE_TAP_S = 0.5
 
     def on_press(self, key):
+        if getattr(key, "name", None) == "esc":
+            self.escape_consumed = self.escape_consumed or self.cancel_dictation()
+            return
         if key != self.hotkey:
             if self.recording and not self.shown and not self.latched:
                 self.chorded = True
@@ -919,6 +1005,13 @@ class VoiceToText:
         else:
             self.last_tap_at = now
 
+    def consume_escape(self, released: bool) -> bool:
+        """Keep repeats and release suppressed for the same physical press."""
+        consumed = self.escape_consumed
+        if released:
+            self.escape_consumed = False
+        return consumed
+
     def _cancel_hold_timer(self) -> None:
         if self.hold_timer is not None:
             self.hold_timer.cancel()
@@ -937,7 +1030,49 @@ class VoiceToText:
                 live.cancel()
             self._close_stream()
             self._restore_media()
-            self._set_state("idle")
+            self._set_state("cancelled" if self.cancelled_audio else "idle")
+
+    def cancel_dictation(self) -> bool:
+        """Esc stops capture immediately and makes any in-flight result inert."""
+        with self.lifecycle_lock:
+            if self.delivered or not (self.recording or self.processing):
+                return False
+            if self.cancel_requested:
+                return True
+            self._cancel_hold_timer()
+            self.cancel_requested = True
+            self.latched = False
+            self.chorded = True  # the outstanding Fn release cannot latch/start
+            self.last_tap_at = 0.0
+            if self.recording:
+                duration = time.perf_counter() - self.record_start
+                self.recording = False
+                self._close_stream()
+                self.cancelled_audio = (list(self.frames), duration)
+                self.frames = []
+                if self.live is not None:
+                    live, self.live = self.live, None
+                    self.cancelled_job = live
+                    self.processing = True  # drain it before using the same model again
+                    live.cancel()
+            else:
+                self.cancelled_audio = self.current_audio
+            self._restore_media()
+            self._set_state("cancelled")
+            return True
+
+    def request_undo(self, _signum=None, _frame=None) -> None:
+        # A signal only requests work; opening the microphone belongs to the
+        # model-owning loop, after any cancelled inference has returned.
+        self.undo_requested.set()
+
+    def undo_cancelled(self) -> None:
+        with self.lifecycle_lock:
+            if self.stopping or self.processing or not self.cancelled_audio:
+                return
+            self.trigger = "latched"
+            self.start_recording(resume=self.cancelled_audio)
+            self.latched = self.recording
 
     def refresh_dictionary(self) -> None:
         """Re-read dictionary.txt when it changed, so edits apply without a restart."""
@@ -1011,6 +1146,7 @@ class VoiceToText:
         self._start_shutdown_watcher()
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+        signal.signal(signal.SIGUSR1, self.request_undo)
         try:
             self.warmup()
             self.startup_complete = True
@@ -1024,7 +1160,9 @@ class VoiceToText:
             )
             if self.cfg.hotkey == "fn" and (warning := globe_key_warning()):
                 logger.warning(warning)
-            with _listener(self.on_press, self.on_release) as listener:
+            with _listener(
+                self.on_press, self.on_release, self.consume_escape
+            ) as listener:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break

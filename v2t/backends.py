@@ -7,6 +7,7 @@ mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -469,45 +470,185 @@ class _ChunkedCleanup:
         return " ".join(parts).strip(), ttft, time.perf_counter() - t0
 
 
+# Prompt-lookup decoding for cleanup, which mostly copies the dictation: where the
+# last LOOKUP_NGRAM output tokens appear in the dictation, the LOOKUP_DRAFT tokens that
+# follow them there are checked in one forward pass. Measured 2026-09-30 over 201
+# dictations (utils/cleanup_speed, Qwen3.5-2B): median cleanup 1.27 s -> 0.51 s, p90
+# 5.34 s -> 2.09 s, 79% of output tokens accepted from the dictation.
+LOOKUP_DRAFT = 8
+LOOKUP_NGRAM = 3
+
+
+def lookup_draft(
+    out: list[int], source: list[int], draft: int, ngram: int
+) -> list[int]:
+    """The source tokens that followed the latest place the output's last `ngram` tokens occur."""
+    tail = out[-ngram:]
+    if draft <= 0 or len(tail) < ngram:
+        return []
+    for start in range(len(source) - ngram, -1, -1):
+        if source[start : start + ngram] == tail:
+            return source[start + ngram : start + ngram + draft]
+    return []
+
+
+def lookup_decode(
+    decoder,
+    source: list[int],
+    eos: set[int],
+    max_tokens: int,
+    draft: int = LOOKUP_DRAFT,
+    ngram: int = LOOKUP_NGRAM,
+) -> list[int]:
+    """Greedy decoding that checks guessed tokens from `source` in one pass.
+
+    Returns the same tokens as plain greedy decoding. `decoder.next` is the token
+    the prompt predicts; `decoder.feed(tokens)` runs them and returns the greedy
+    pick after each; `checkpoint()` / `rollback(cp, fed)` undo the last `fed`
+    tokens when a guess is only partly right.
+    """
+    out: list[int] = []
+    nxt = decoder.next
+    while nxt not in eos and len(out) < max_tokens:
+        out.append(nxt)
+        guess = lookup_draft(out, source, draft, ngram)
+        if not guess:
+            nxt = decoder.feed([nxt])[-1]
+            continue
+        cp = decoder.checkpoint()
+        fed = [nxt] + guess
+        picks = decoder.feed(fed)
+        ok = 0
+        while ok < len(guess) and picks[ok] == guess[ok] and guess[ok] not in eos:
+            ok += 1
+        out.extend(guess[:ok])
+        if ok < len(guess):  # the model diverged: keep only what it agreed with
+            decoder.rollback(cp, len(fed))
+            decoder.feed(fed[: 1 + ok])
+        nxt = picks[ok]
+    return out[:max_tokens]
+
+
+class _MLXDecoder:
+    """Greedy steps over one mlx-lm model, starting from a copy of a prefix cache.
+
+    Qwen3.5 mixes linear-attention layers (a recurrent state that cannot be trimmed)
+    with full-attention ones, so a rollback trims the plain attention caches and
+    restores every other kind (recurrent, or a sliding window that a long draft may
+    already have wrapped) from the checkpoint.
+    """
+
+    def __init__(self, model, prefix: list[int], prefix_cache, prompt: list[int]):
+        import mlx.core as mx
+        from mlx_lm.models.cache import KVCache, make_prompt_cache
+
+        self._mx, self.model, self._trimmable = mx, model, KVCache
+        if prefix and prompt[: len(prefix)] == prefix:
+            self.cache, rest = copy.deepcopy(prefix_cache), prompt[len(prefix) :]
+        else:  # the template moved the boundary: prefill the whole prompt
+            self.cache, rest = make_prompt_cache(model), prompt
+        if len(rest) > 1:  # only the cache is evaluated, so no logits for these
+            model(mx.array(rest[:-1])[None], cache=self.cache)
+            mx.eval([c.state for c in self.cache])
+        self.next = self.feed(rest[-1:])[-1]
+
+    def feed(self, tokens: list[int]) -> list[int]:
+        logits = self.model(self._mx.array(tokens)[None], cache=self.cache)
+        return self._mx.argmax(logits[0], axis=-1).tolist()
+
+    def checkpoint(self) -> list:
+        return [
+            None if type(c) is self._trimmable else copy.deepcopy(c) for c in self.cache
+        ]
+
+    def rollback(self, cp: list, fed: int) -> None:
+        for i, saved in enumerate(cp):
+            if saved is None:
+                self.cache[i].trim(fed)
+            else:
+                self.cache[i] = saved
+
+
 class MLXCleanup(_ChunkedCleanup):
     """In-process cleanup via mlx-lm — no daemon, no HTTP. The default. Pick a
     non-thinking instruct model (the default Qwen2.5-Instruct doesn't think)."""
 
     default_model = MLX_CLEANUP_DEFAULT
+    # The system prompt, worked examples and dictionary are the same for every call
+    # in a mode, so their cache is built once and copied per call.
+    _prefix_key: tuple | None = None
+    _prefix_tokens: list[int] = []
+    _prefix_cache = None
 
     def __init__(self, model: str = "", url: str = ""):
         try:
-            from mlx_lm import load, stream_generate
+            from mlx_lm import load
         except ImportError as e:
             raise SystemExit(
                 "mlx-lm missing — reinstall voice2text (Apple Silicon only)."
             ) from e
-        self._stream = stream_generate
         self.model_id = model or self.default_model
         self.model, self.tokenizer = load_cache_first(
             self.model_id, lambda: load(self.model_id)
         )
         self.last_stats = {}
 
-    def _generate(self, chunk: str, mode: str):
+    def _prompt(self, chunk: str, mode: str) -> list[int]:
         # enable_thinking=False keeps hybrid Qwen3-family templates in
         # non-thinking mode; templates without the switch ignore it.
-        prompt = self.tokenizer.apply_chat_template(
+        return self.tokenizer.apply_chat_template(
             self._messages(chunk, mode),
             add_generation_prompt=True,
             enable_thinking=False,
         )
+
+    def _generate(self, chunk: str, mode: str):
+        prompt = self._prompt(chunk, mode)
+        source = list(self.tokenizer.encode(chunk))
         # Cleaned text is about as long as the input; a model still going at
         # 1.5× the input plus slack is looping, so stop it there.
-        max_tokens = int(len(self.tokenizer.encode(chunk)) * 1.5) + 64
-        t0, ttft, parts = time.perf_counter(), None, []
-        for resp in self._stream(
-            self.model, self.tokenizer, prompt, max_tokens=max_tokens
-        ):
-            if ttft is None:
-                ttft = time.perf_counter() - t0
-            parts.append(resp.text)
-        return "".join(parts), ttft, len(parts) >= max_tokens
+        max_tokens = int(len(source) * 1.5) + 64
+        tokens, ttft = self._decode(prompt, mode, source, max_tokens)
+        return self.tokenizer.decode(tokens), ttft, len(tokens) >= max_tokens
+
+    def _decode(self, prompt, mode: str, source: list[int], max_tokens: int):
+        """Greedy tokens for the prompt, and the seconds to the first one."""
+        t0, prompt = time.perf_counter(), list(prompt)
+        prefix, cache = self._prefix(mode)
+        if (
+            prompt[: len(prefix)] != prefix
+        ):  # the template changed (a date in it): rebuild once
+            self._prefix_key = None
+            prefix, cache = self._prefix(mode)
+        decoder = _MLXDecoder(self.model, prefix, cache, prompt)
+        ttft = time.perf_counter() - t0
+        eos = set(self.tokenizer.eos_token_ids)
+        return lookup_decode(decoder, source, eos, max_tokens), ttft
+
+    def _prefix(self, mode: str):
+        """The prompt tokens every call in this mode shares, and their cache."""
+        key = (mode, tuple(self.vocabulary))
+        if key != self._prefix_key:
+            import mlx.core as mx
+            from mlx_lm.models.cache import make_prompt_cache
+
+            a, b = (
+                list(self._prompt("alpha one", mode)),
+                list(self._prompt("beta two three", mode)),
+            )
+            n = 0
+            while n < min(len(a), len(b)) and a[n] == b[n]:
+                n += 1
+            cache = make_prompt_cache(self.model)
+            if n:
+                self.model(mx.array(a[:n])[None], cache=cache)
+                mx.eval([c.state for c in cache])
+            self._prefix_key, self._prefix_tokens, self._prefix_cache = (
+                key,
+                a[:n],
+                cache,
+            )
+        return self._prefix_tokens, self._prefix_cache
 
 
 class OllamaCleanup(_ChunkedCleanup):

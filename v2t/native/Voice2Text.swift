@@ -26,12 +26,19 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rendered = ""
     private var terminationPending = false
     private var lastTranscription: String?
+    private let pill = Pill()
+    private var liveSource: DispatchSourceRead?
+    private var liveSocketID: (device: dev_t, inode: ino_t)?
+    private var menuIsOpen = false
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
     // machine with no signing identity) carries that other user's paths, so
     // each one falls back to this user's standard locations when it is absent.
     private var home: URL {
+        if let value = ProcessInfo.processInfo.environment["V2T_HOME"], !value.isEmpty {
+            return URL(fileURLWithPath: (value as NSString).expandingTildeInPath)
+        }
         if let value = Bundle.main.object(forInfoDictionaryKey: "V2THome") as? String,
            FileManager.default.fileExists(atPath: (value as NSString).deletingLastPathComponent) {
             return URL(fileURLWithPath: value)
@@ -58,7 +65,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         item.menu = menu
+        pill.onUndo = { [weak self] in self?.undoDictation() }
         menu.delegate = self
+        listenForLiveEvents()
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -70,6 +79,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        if let liveSource {  // a second launch that lost the lock never bound it
+            liveSource.cancel()
+            // A copy that handed over to /Applications quits after the new copy
+            // has bound its own socket here: unlink only the one this copy made.
+            let path = home.appendingPathComponent("run/live.sock").path
+            var info = stat()
+            if let id = liveSocketID, stat(path, &info) == 0, info.st_dev == id.device, info.st_ino == id.inode {
+                unlink(path)
+            }
+        }
         engine?.terminate()
         logHandle?.closeFile()
         logHandle = nil
@@ -333,7 +352,59 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine == nil, let message = try? String(contentsOf: home.appendingPathComponent("run/last-error"), encoding: .utf8), !message.isEmpty {
             phase = "error"
         }
+        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
+                    streaming: status["streaming"] as? Bool ?? false)
         render()
+    }
+
+    /// Binds run/live.sock, where the engine sends each status change as it
+    /// happens and, while recording, the input level for the pill's waveform.
+    /// The one-second status poll stays the fallback, and the only source for
+    /// an engine that predates the socket (its pill shows no waveform).
+    private func listenForLiveEvents() {
+        let path = home.appendingPathComponent("run/live.sock").path
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = path.utf8CString.map { UInt8(bitPattern: $0) }  // NUL-terminated
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return }
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+        let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return }
+        unlink(path)  // left behind by a previous run
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else { close(fd); return }
+        chmod(path, 0o600)
+        var info = stat()
+        if stat(path, &info) == 0 { liveSocketID = (info.st_dev, info.st_ino) }
+        _ = fcntl(fd, F_SETFL, O_NONBLOCK)
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler { [weak self] in self?.readLiveEvents(fd) }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        liveSource = source
+    }
+
+    private func readLiveEvents(_ fd: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        var statusChanged = false
+        while true {
+            let count = recv(fd, &buffer, buffer.count, 0)
+            guard count > 0 else { break }
+            guard let event = try? JSONSerialization.jsonObject(with: Data(buffer[..<count])) as? [String: Any]
+            else { continue }
+            if let level = event["level"] as? Double {
+                pill.push(level: level)
+            } else {
+                statusChanged = true
+            }
+        }
+        // The engine writes status.json just before it sends the event, so a
+        // re-read goes through the same ownership checks as the poll.
+        if statusChanged { refresh() }
     }
 
     private func engineOwnsLock(_ pid: Int) -> Bool {
@@ -364,7 +435,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let streaming = status["streaming"] as? Bool ?? false
+        let signature = "\(pill.style.rawValue)|\(pill.showLiveTranscript)|\(streaming)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -372,6 +444,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "starting", "loading-stt": ("hourglass", "Loading transcription model…", nil)
         case "loading-cleanup": ("hourglass", "Loading cleanup model…", nil)
         case "idle": ("waveform", "Ready", nil)
+        case "cancelled": ("arrow.uturn.backward", "Dictation cancelled · Undo available", nil)
         case "recording": ("waveform.circle.fill", heardWords > 0 ? "Recording… \(heardWords) words" : "Recording…", .systemRed)
         case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
         case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
@@ -390,6 +463,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = ""
         item.button?.toolTip = heardTail.isEmpty ? presentation.1 : "\(presentation.1)\n…\(heardTail)"
         item.button?.contentTintColor = presentation.2
+        // Streamed partials arrive while the menu may be open; rebuilding it then
+        // would close a submenu under the pointer. Opening rebuilds it fresh.
+        guard !menuIsOpen else { return }
         menu.removeAllItems()
 
         let state = add(presentation.1, image: symbol(presentation.0, color: presentation.2), enabled: false)
@@ -417,6 +493,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        if phase == "cancelled" {
+            add("Undo Cancel · Resume Dictation", action: #selector(undoDictation), image: symbol("arrow.uturn.backward"))
+        }
         if externalEngine { add("Running from terminal", image: symbol("terminal"), enabled: false) }
         else if phase == "permissions" || phase == "starting" { add("Starting…", image: symbol("hourglass"), enabled: false) }
         else if phase == "stopping" { add("Stopping…", image: symbol("hourglass"), enabled: false) }
@@ -443,6 +522,23 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        let pillStyles = NSMenu()
+        for style in PillStyle.allCases {
+            let row = NSMenuItem(title: style.title, action: #selector(choosePill(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = style.rawValue
+            row.state = style == pill.style ? .on : .off
+            pillStyles.addItem(row)
+        }
+        pillStyles.addItem(.separator())
+        let transcript = NSMenuItem(title: "Show live transcript", action: #selector(toggleLiveTranscript), keyEquivalent: "")
+        transcript.target = self
+        transcript.state = pill.showLiveTranscript ? .on : .off
+        transcript.isEnabled = streaming
+        transcript.toolTip = streaming ? "Show words as you speak" : "Requires streaming transcription"
+        pillStyles.addItem(transcript)
+        pillStyles.autoenablesItems = false
+        add("Pill", image: symbol("capsule")).submenu = pillStyles
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
         add("Dictionary", action: #selector(openDictionary), image: symbol("character.book.closed"))
@@ -455,6 +551,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loadLastTranscription()
         rendered = ""
         render()
+        menuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
     }
 
     private var microphoneGranted: Bool {
@@ -513,6 +614,25 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastTranscription = clean
     }
 
+    @objc private func choosePill(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let style = PillStyle(rawValue: raw) else { return }
+        pill.style = style
+        rendered = ""
+        refresh()  // a dictation in progress reappears in the new style at once
+    }
+
+    @objc private func undoDictation() {
+        guard phase == "cancelled", let pid = status["pid"] as? Int, engineOwnsLock(pid) else { return }
+        kill(pid_t(pid), SIGUSR1)
+    }
+
+    @objc private func toggleLiveTranscript() {
+        guard status["streaming"] as? Bool == true else { return }
+        pill.showLiveTranscript.toggle()
+        rendered = ""
+        refresh()
+    }
+
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -554,4 +674,310 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openLog() { NSWorkspace.shared.open(home.appendingPathComponent("run/v2t.log")) }
     @objc private func quit() { NSApp.terminate(nil) }
+}
+
+/// B is the default; A is also used when the focused app exposes no text caret.
+enum PillStyle: String, CaseIterable {
+    case cursorBubble = "caret", compactBottom = "bottom", off
+
+    var title: String {
+        switch self {
+        case .cursorBubble: "B · Near text cursor (default)"
+        case .compactBottom: "A · Bottom of screen"
+        case .off: "Off"
+        }
+    }
+}
+
+/// Floats the pill over every app while the engine records, transcribes or
+/// cleans up. The panel never becomes key and ignores the mouse, so focus,
+/// and with it the paste, stays in the app the user is typing in.
+final class Pill: NSObject {
+    private let panel = NSPanel(
+        contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    private let view = PillView()
+    private var ticker: Timer?
+    private var visible = false
+    private var anchor: NSRect?
+    private var recordingAnchor: NSRect?
+    private var screen: NSScreen?
+    var onUndo: (() -> Void)?
+    private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
+    var style: PillStyle {
+        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "pillPlacement"); hide() }
+    }
+    var showLiveTranscript: Bool {
+        get { UserDefaults.standard.bool(forKey: "showLiveTranscript") }
+        set { UserDefaults.standard.set(newValue, forKey: "showLiveTranscript") }
+    }
+
+    override init() {
+        super.init()
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.contentView = view
+        undoButton.bezelStyle = .inline
+        undoButton.appearance = NSAppearance(named: .darkAqua)
+        undoButton.refusesFirstResponder = true
+        undoButton.focusRingType = .none
+        undoButton.target = self
+        undoButton.action = #selector(undo)
+        undoButton.isHidden = true
+        view.addSubview(undoButton)
+    }
+
+    @objc private func undo() { onUndo?() }
+
+    /// Keep the recording waveform when placement or transcript visibility changes.
+    func update(phase: String, partial: String, streaming: Bool) {
+        if phase == "recording" && view.phase != "recording" {
+            recordingAnchor = Self.cursorAnchor()
+            view.begin()
+            hide()  // Undo reanchors and restores the selected style's full size.
+        }
+        view.phase = phase
+        view.partial = showLiveTranscript && streaming && phase == "recording" ? partial : ""
+        undoButton.isHidden = phase != "cancelled"
+        panel.ignoresMouseEvents = phase != "cancelled"
+        guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
+            hide()
+            return
+        }
+        if !visible { show() }
+        else { position() }
+        view.needsDisplay = true
+    }
+
+    func push(level: Double) {
+        if visible { view.push(level) }
+    }
+
+    /// Above the insertion caret, with bottom centre as the explicit alternative
+    /// and the fallback on apps that expose no caret position.
+    private func show() {
+        let style = style
+        let pointer = NSEvent.mouseLocation
+        anchor = style == .cursorBubble ? recordingAnchor : nil
+        let location = anchor.map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
+        else { return }
+        self.screen = screen
+        view.style = style == .cursorBubble && anchor == nil ? .compactBottom : style
+        position()
+        panel.invalidateShadow()
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+        visible = true
+        // Half the original 20 Hz history speed, with two-sample smoothing.
+        let ticker = Timer(timeInterval: 2.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
+        RunLoop.main.add(ticker, forMode: .common)
+        self.ticker = ticker
+    }
+
+    private func position() {
+        guard let screen else { return }
+        let area = screen.visibleFrame
+        var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : view.compactSize
+        size.width = min(size.width, area.width - 16)
+        let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
+        var x = area.midX - size.width / 2
+        var y = area.minY + 20
+        view.tailBelow = true
+        if style == .cursorBubble, let anchor {
+            x = anchor.midX - size.width / 2
+            y = anchor.maxY + 8
+            if y + size.height > top - 8 {
+                y = anchor.minY - size.height - 8
+                view.tailBelow = false
+            }
+        }
+        x = min(max(x, area.minX + 8), area.maxX - size.width - 8)
+        y = min(max(y, area.minY + 8), top - size.height - 8)
+        view.tailX = min(max((anchor?.midX ?? (x + size.width / 2)) - x, 16), size.width - 16)
+        panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
+        undoButton.frame = NSRect(x: size.width - 68, y: 6, width: 54, height: 22)
+        panel.invalidateShadow()
+    }
+
+    private static func cursorAnchor() -> NSRect? {
+        // Capture once at recording start; never follow the cursor while speaking.
+        // Use the insertion caret where the app exposes it, otherwise bottom centre.
+        // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+           let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            let element = focused as! AXUIElement
+            var selected: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+               let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
+                var range = CFRange()
+                if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
+                    range.length = 0
+                    if let selection = AXValueCreate(.cfRange, &range) {
+                        var value: CFTypeRef?
+                        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
+                           let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                            var rect = CGRect.zero
+                            if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0,
+                               let primary = NSScreen.screens.first {
+                                return NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY,
+                                              width: rect.width, height: rect.height)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private func hide() {
+        guard visible else { return }
+        visible = false
+        ticker?.invalidate()
+        ticker = nil
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 }) { [weak self] in
+            guard let self, !self.visible else { return }
+            self.panel.orderOut(nil)
+        }
+    }
+}
+
+/// Input levels scroll while recording; transcription travels across the bars;
+/// cleanup pulses in place. Optional live words have no placeholder/status text.
+final class PillView: NSView {
+    var style = PillStyle.cursorBubble
+    var phase = "idle"
+    var partial = ""
+    private var bars = [CGFloat](repeating: 0, count: 64)
+    private var loudest: Double?  // since the last tick
+    var tailBelow = true
+    var tailX: CGFloat = 0
+
+    var compactSize: NSSize {
+        // Reuse the waveform-only pill width when there are no words to show.
+        let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
+        let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16 : 116
+        return NSSize(width: width, height: 34 + (style == .cursorBubble ? 6 : 0))
+    }
+
+    func begin() {
+        bars = [CGFloat](repeating: 0, count: bars.count)
+        loudest = nil
+    }
+
+    func push(_ rms: Double) {
+        loudest = max(loudest ?? 0, rms)
+    }
+
+    /// One animation frame. A tick with no new level (input blocks longer
+    /// than a frame) lets the last bar fade rather than drop to nothing.
+    func tick() {
+        if phase == "recording" {
+            let next = loudest.map(Self.height) ?? (bars.last ?? 0) * 0.8
+            bars.removeFirst()
+            bars.append(((bars.last ?? 0) + next) / 2)
+            loudest = nil
+        }
+        needsDisplay = true
+    }
+
+    /// RMS (full scale 1) to bar height on a decibel scale: -50 dBFS, a quiet
+    /// room, is a dot; -20 dBFS, loud close speech, fills the bar.
+    static func height(_ rms: Double) -> CGFloat {
+        CGFloat(min(max((20 * log10(max(rms, 1e-6)) + 50) / 30, 0), 1))
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        var body = bounds
+        if style == .cursorBubble && phase != "cancelled" {
+            body.size.height -= 6
+            if tailBelow { body.origin.y += 6 }
+        }
+        let radius = body.height / 2
+        let capsule = NSBezierPath(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        NSColor(white: 0.07, alpha: 0.92).setFill()
+        capsule.fill()
+        NSColor(white: 1, alpha: 0.14).setStroke()
+        capsule.stroke()
+        if style == .cursorBubble && phase != "cancelled" {
+            let tail = NSBezierPath()
+            let edge = tailBelow ? body.minY + 1 : body.maxY - 1
+            tail.move(to: NSPoint(x: tailX - 6, y: edge))
+            tail.line(to: NSPoint(x: tailX, y: tailBelow ? bounds.minY : bounds.maxY))
+            tail.line(to: NSPoint(x: tailX + 6, y: edge))
+            tail.close()
+            NSColor(white: 0.07, alpha: 0.92).setFill()
+            tail.fill()
+        }
+        if phase == "cancelled" {
+            drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 88, height: bounds.height),
+                     color: NSColor(white: 1, alpha: 0.9))
+            return
+        }
+        if phase == "recording" && !partial.isEmpty {
+            drawBars(in: NSRect(x: 16, y: body.minY + 10, width: 44, height: body.height - 20))
+            drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height))
+        } else {
+            drawBars(in: body.insetBy(dx: 16, dy: 9))
+        }
+    }
+
+    /// Drop the oldest whole words when live text overflows the compact width.
+    private func drawWords(in rect: NSRect) {
+        var words = partial.split(whereSeparator: \.isWhitespace)
+        var shown = words.joined(separator: " ")
+        while words.count > 1 && (shown as NSString).size(withAttributes: [.font: Self.font]).width > rect.width {
+            words.removeFirst()
+            shown = "…" + words.joined(separator: " ")
+        }
+        drawText(shown, in: rect, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
+    }
+
+    private static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+
+    private func drawBars(in rect: NSRect) {
+        let width: CGFloat = 3, gap: CGFloat = 2.5
+        let count = min(bars.count, max(1, Int((rect.width + gap) / (width + gap))))
+        let values: [CGFloat]
+        if phase == "recording" {
+            values = Array(bars.suffix(count))
+            NSColor.white.setFill()
+        } else {  // transcription travels; cleanup breathes in place
+            let t = CACurrentMediaTime()
+            values = (0..<count).map { (index: Int) -> CGFloat in
+                let offset = phase == "cleaning" ? 0 : Double(index) * 0.55
+                let wave: Double = (1 + sin(t * 3 + offset)) / 2
+                return CGFloat(0.15 + 0.5 * wave)
+            }
+            NSColor(white: 1, alpha: 0.55).setFill()
+        }
+        var x = rect.minX + (rect.width - (CGFloat(count) * (width + gap) - gap)) / 2
+        for value in values {
+            let height = max(width, value * rect.height)
+            NSBezierPath(roundedRect: NSRect(x: x, y: rect.midY - height / 2, width: width, height: height),
+                         xRadius: width / 2, yRadius: width / 2).fill()
+            x += width + gap
+        }
+    }
+
+    private func drawText(_ text: String, in rect: NSRect, color: NSColor, truncation: NSLineBreakMode = .byTruncatingTail) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = truncation
+        let font = Self.font
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+        let line = ceil(font.ascender - font.descender)
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        NSAttributedString(string: flat, attributes: attributes)
+            .draw(in: NSRect(x: rect.minX, y: rect.midY - line / 2, width: rect.width, height: line))
+    }
 }

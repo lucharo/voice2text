@@ -245,6 +245,10 @@ Measured over 208 real dictations in casual mode (M4 Pro; the ordering holds on 
 | **`Qwen3.5-2B-4bit`** | **98% / 93%** | 1.17 s | default |
 | `Qwen3.5-4B-4bit` | 96% / 90% | 2.21 s | not worth the wait |
 
+Those times predate 0.5.0. Since then the instructions, examples and dictionary are processed once and
+reused, and the model checks words guessed from the dictation several at a time, so cleanup runs about
+2.5× faster (median 1.27 s → 0.51 s for the 2B on the same dictations). `utils/cleanup_speed` has the bench.
+
 Pick another with `[cleanup] model = "mlx-community/…"`; it downloads on the next launch.
 
 Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
@@ -275,6 +279,19 @@ state immediately (the icon turns red while recording), previews the last transc
 copy action, and links to config, history, and log. Run `v2t` in a terminal instead if you do not
 want the menu.
 
+**The pill.** While you dictate, a small capsule floats over every app: a bar waveform of the level
+the engine is actually capturing (a flat line means the microphone is delivering nothing), then a
+ripple while it transcribes, then a pulse while it cleans up, without status words. It never takes
+focus, so the paste still lands where you were typing. **Pill** in the menu picks the placement:
+**B · Near text cursor** is the default; **A · Bottom of screen** is the second option and the
+automatic fallback when the focused app exposes no text caret; **Off** hides it. **Show live
+transcript** optionally displays words as you speak (off by default, available when the engine can
+stream; Parakeet updates every 5 s). These choices persist across launches. Press **Esc** to cancel
+without pasting; **Undo** on the pill or in the menu recovers the captured audio and resumes
+hands-free recording. Press Fn to finish. The engine sends each state change
+and, while recording, the input level as datagrams to `~/.v2t/run/live.sock`, which the app binds;
+a terminal `v2t` sends them too, so the pill works with either launch.
+
 **Start v2t** loads Parakeet and the cleanup model once, then keeps them warm for every
 transcription. To start the same menu app at login, install the optional per-user LaunchAgent:
 
@@ -301,8 +318,9 @@ bins it (or, from the stray copy, hands over to `/Applications`). Releasing is p
 publishes the engine to PyPI through trusted publishing, signs and notarises the app with the
 identity `scripts/ci-signing-secrets.sh` stored, and commits the updated cask to `main`.
 `just release-macos --publish` does the app half from a Mac with the Developer ID certificate.
-The first CI publication still needs the PyPI trusted publisher registered; v0.4.1 was released
-locally. See [release setup and the local fallback](docs/faq/README.md#does-publication-happen-in-ci).
+The PyPI trusted publisher is registered for this workflow and the `release` environment;
+published distributions include publisher attestations. Version 0.4.1 was released locally.
+See [release setup and the local fallback](docs/faq/README.md#does-publication-happen-in-ci).
 
 **Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
 terminal launch uses your terminal's grants. The menu app requests its own grants and
