@@ -95,12 +95,18 @@ def timed_chunks(engine, text: str) -> tuple[str, list[float]]:
     return " ".join(parts).strip(), times
 
 
-def report(results: list[dict], model: str, n_terms: int) -> None:
+def report(results: list[dict]) -> None:
+    if not results or any("config" not in r for r in results):
+        raise SystemExit("Results have no saved configuration; rerun the benchmark.")
+    metadata = results[0]["config"]
+    if any(r["config"] != metadata for r in results):
+        raise SystemExit("Results mix benchmark configurations; rerun the benchmark.")
     variants = ["baseline", "prefix", "lookup"]
     lines = [
         f"# Cleanup speed, {date.today().isoformat()}",
         "",
-        f"{len(results)} clips, {model}, {MODE} mode, {n_terms} dictionary terms. "
+        f"{len(results)} clips, {metadata['model']}, {metadata['mode']} mode, "
+        f"{metadata['n_terms']} dictionary terms. "
         "Seconds of cleanup per dictation (all chunks).",
         "",
         "| variant | p50 | p90 | mean | identical to baseline |",
@@ -146,11 +152,13 @@ def main(argv: list[str]) -> int:
             for line in (OUT / "results.jsonl").read_text().splitlines()
             if line
         ]
-        report(saved, a.model, len(config.read_dictionary()[0]))
+        report(saved)
         return 0
     OUT.mkdir(parents=True, exist_ok=True, mode=0o700)
     rows = [json.loads(line) for line in SOURCE.read_text().splitlines() if line]
     clips = [r for r in rows if (r.get("v2t_raw") or "").strip()][: a.limit]
+    if not clips:
+        raise SystemExit("No dictations to benchmark.")
     terms, _ = config.read_dictionary()
 
     engines = {
@@ -166,7 +174,8 @@ def main(argv: list[str]) -> int:
 
     results = []
     for n, clip in enumerate(clips, 1):
-        row = {"id": clip["id"], "duration_s": clip["duration_s"]}
+        row = {"id": clip["id"], "duration_s": clip["duration_s"],
+               "config": {"model": a.model, "mode": MODE, "n_terms": len(terms)}}
         for name, engine in engines.items():
             text, times = timed_chunks(engine, clip["v2t_raw"])
             row[f"{name}_s"] = sum(times)
@@ -183,7 +192,7 @@ def main(argv: list[str]) -> int:
     path.write_text("".join(json.dumps(r) + "\n" for r in results))
     path.chmod(0o600)
 
-    report(results, a.model, len(terms))
+    report(results)
     return 0
 
 

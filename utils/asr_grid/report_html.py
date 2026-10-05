@@ -47,7 +47,9 @@ def collect() -> dict:
     out = []
     for system in systems:
         per_set = {name: sets[name].get(system) for name in sets}
-        labelled = [per_set[name] for name in LABELLED if per_set[name]]
+        labelled = [per_set[name] for name in LABELLED
+                    if per_set[name] and per_set[name]["words"] > 0
+                    and per_set[name]["waits"]]
         waits = [w for r in labelled for w in r["waits"]]
         pooled = (
             {
@@ -120,7 +122,7 @@ footer{margin-top:40px;font-size:12px;color:var(--fg3);border-top:1px solid var(
 <h1>__HEADLINE__</h1><p class="sub">__SUB__</p>
 <div class="charts">
  <div class="card"><h2 id="h-wispr">Your dictations</h2><p class="note">Disagreement with the other systems' consensus (not truth) · wait p50, whisker to p90</p><svg id="c-wispr" role="img" aria-label="Scatter: disagreement against wait on your dictations"></svg></div>
- <div class="card"><h2>Labelled clips: LibriSpeech clean + other, FLEURS Spanish</h2><p class="note">Word error rate pooled over 450 clips · wait p50, whisker to p90</p><svg id="c-labelled" role="img" aria-label="Scatter: WER against wait on labelled clips"></svg></div>
+ <div class="card"><h2>Labelled clips: LibriSpeech clean + other, FLEURS Spanish</h2><p class="note" id="n-labelled">Word error rate · wait p50, whisker to p90</p><svg id="c-labelled" role="img" aria-label="Scatter: WER against wait on labelled clips"></svg></div>
 </div>
 <div class="legend" id="legend"></div>
 <table id="table"></table>
@@ -170,6 +172,7 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
   hit.onmousemove=e=>{tip.innerHTML=`<b>${s.name}</b>${DATA.pipelines[s.mode]}<br>error ${pct(d.wer)} · wait p50 ${sec(d.p50)} · p90 ${sec(d.p90)}${d.rtf!==undefined?`<br>compute ${d.rtf.toFixed(2)}× audio`:''}<br>${d.n} clips`;tip.style.left=e.clientX+14+'px';tip.style.top=e.clientY+14+'px';tip.style.opacity=1};
   hit.onmouseleave=()=>tip.style.opacity=0}}
 {const n=Math.max(0,...DATA.systems.map(s=>s.wispr?s.wispr.n:0));document.getElementById('h-wispr').textContent=`Your dictations (the ${n} every model finished)`}
+{const n=Math.max(0,...DATA.systems.map(s=>s.labelled?s.labelled.n:0));document.getElementById('n-labelled').textContent=`Word error rate pooled over ${n} clips · wait p50, whisker to p90`}
 chart('c-wispr','wispr');chart('c-labelled','labelled');
 const lg=document.getElementById('legend');for(const [mode,label] of Object.entries(DATA.pipelines)){const sp=document.createElement('span');const s=el('svg',{width:14,height:14,viewBox:'0 0 14 14'});shape(s,mode,7,7,4.5);sp.appendChild(s);sp.append(label);lg.appendChild(sp)}
 const cols=[['ls-clean','LS clean'],['ls-other','LS other'],['fleurs-es','FLEURS es']];

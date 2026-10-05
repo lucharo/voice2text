@@ -261,7 +261,8 @@ class ParakeetMLX:
         finally:
             if stream is not None:
                 stream.close()
-        return {"stream": text, "stream_wait_s": wait, "stream_busy_s": busy[0] + wait}
+        return {"stream": text, "stream_wait_s": wait,
+                "stream_feed_s": busy[0], "stream_busy_s": busy[0] + wait}
 
 
 class MLXWhisper:
@@ -413,6 +414,15 @@ def q(values: list[float], p: float) -> float:
     return ordered[min(len(ordered) - 1, int(round(p * (len(ordered) - 1))))]
 
 
+def compute_s(system: str, row: dict) -> float:
+    mode = SYSTEMS[system][2]
+    if mode == "hacky" and row["duration_s"] < 60:
+        # Older results stored feed + finalisation together; both timings exist.
+        feed = row.get("stream_feed_s", row["stream_busy_s"] - row["stream_wait_s"])
+        return feed + row["offline_s"]
+    return row["offline_s"] if mode == "offline" else row["stream_busy_s"]
+
+
 def family(system: str) -> str:
     """parakeet-v3 and parakeet-ultra are one family; so are the two Qwen3-ASR builds."""
     return system.split("-")[0]
@@ -433,6 +443,8 @@ def score_set(set_name: str) -> list[dict]:
     if not cells:
         return []
     common = sorted(set(clips).intersection(*[set(rows) for rows in cells.values()]))
+    if not common:
+        return []
     errors = dict.fromkeys(cells, 0)
     words = dict.fromkeys(cells, 0)
     for cid in common:
@@ -468,9 +480,11 @@ def score_set(set_name: str) -> list[dict]:
             words[s] += len(voters[ref_name])
     rows = []
     for system, rows_by_id in cells.items():
+        if not words[system]:
+            continue  # no reference words: this cell cannot supply an error rate
         waits = [wait_s(system, rows_by_id[cid]) for cid in common]
         busy = sum(
-            rows_by_id[cid].get("stream_busy_s") or rows_by_id[cid]["offline_s"]
+            compute_s(system, rows_by_id[cid])
             for cid in common
         )
         audio = sum(clips[cid]["duration_s"] for cid in common)

@@ -26,6 +26,61 @@ from v2t import app, backends, bench, cli, config, menubar, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
+    def test_grid_compute_uses_the_shipped_short_and_long_clip_paths(self):
+        from utils.asr_grid import grid
+
+        row = {"duration_s": 20, "offline_s": 7, "stream_busy_s": 5,
+               "stream_wait_s": 2, "stream_feed_s": 3}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "fixture").mkdir(parents=True)
+            (root / "sets").mkdir()
+            for duration, expected in ((20, 10), (60, 5)):
+                row["duration_s"] = duration
+                clip = {"id": "clip", "text": "hello", "lang": "en", "duration_s": duration}
+                result = {"id": "clip", "offline": "hello", "stream": "hello", **row}
+                (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
+                (root / "results" / "fixture" / "parakeet-v3.jsonl").write_text(json.dumps(result) + "\n")
+                scoring_dependencies = {
+                    "whisper_normalizer.basic": types.SimpleNamespace(BasicTextNormalizer=lambda: str.lower),
+                    "whisper_normalizer.english": types.SimpleNamespace(EnglishTextNormalizer=lambda: str.lower),
+                    "rapidfuzz.distance": types.SimpleNamespace(Levenshtein=types.SimpleNamespace(distance=lambda a, b: 0 if a == b else 1)),
+                }
+                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.dict(sys.modules, scoring_dependencies):
+                    scored = grid.score_set("fixture")
+                self.assertEqual(scored[0]["busy_s"], expected)
+                self.assertEqual(scored[0]["rtf"], expected / duration)
+
+    def test_grid_empty_cell_has_no_scored_results(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "fixture").mkdir(parents=True)
+            (root / "sets").mkdir()
+            clip = {"id": "clip", "text": "hello", "lang": "en", "duration_s": 20}
+            (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
+            (root / "results" / "fixture" / "parakeet-v3.jsonl").touch()
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"):
+                self.assertEqual(grid.score_set("fixture"), [])
+
+    def test_cleanup_report_only_uses_the_saved_configuration(self):
+        from utils.cleanup_speed import bench_cleanup
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            row = {"config": {"model": "measured-model", "mode": "strict", "n_terms": 13},
+                   "baseline_chunks": 1, "prefix_same": True, "lookup_same": True}
+            for variant in ("baseline", "prefix", "lookup"):
+                row[f"{variant}_s"] = 2.0
+                row[f"{variant}_last_chunk_s"] = 2.0
+            (root / "results.jsonl").write_text(json.dumps(row) + "\n")
+            with mock.patch.object(bench_cleanup, "OUT", root), mock.patch.object(config, "read_dictionary", side_effect=AssertionError("must use saved metadata")), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(bench_cleanup.main(["--report-only", "--model", "different-model"]), 0)
+            report = next(root.glob("*-report.md")).read_text()
+            self.assertIn("measured-model, strict mode, 13 dictionary terms", report)
+            self.assertNotIn("different-model", report)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
@@ -2301,18 +2356,46 @@ class V2TSmokeTests(unittest.TestCase):
         )
         quartz = types.SimpleNamespace(
             kCGEventFlagMaskSecondaryFn=1 << 23, kCGKeyboardEventKeycode=9,
+            kCGEventKeyUp=11,
             CGEventGetIntegerValueField=lambda event, _field: event,
         )
         with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
-            listener = app._listener(voice.on_press, voice.on_release, lambda: voice.escape_consumed)
+            listener = app._listener(voice.on_press, voice.on_release, voice.consume_escape)
         intercept = listener.options["darwin_intercept"]
         listener.options["on_press"](escape)
         self.assertEqual(intercept(10, 53), 53)  # idle: let the target app see Esc
         voice.start_recording()
         listener.options["on_press"](escape)
         self.assertIsNone(intercept(10, 53))
+        listener.options["on_press"](escape)  # autorepeat after cancellation finished
+        self.assertIsNone(intercept(10, 53))
         self.assertIsNone(intercept(11, 53))  # matching key-up is swallowed too
+        listener.options["on_press"](escape)  # next physical press while idle
+        self.assertEqual(intercept(10, 53), 53)
         self.assertEqual(intercept(10, 0), 0)  # unrelated keys always pass through
+
+    def test_cancelled_audio_survives_a_short_tap_and_a_modifier_chord(self):
+        voice, tap = self._tapper()
+        for chord in (False, True):
+            with self.subTest(chord=chord):
+                voice.start_recording()
+                audio = np.ones((16, 1), dtype=np.float32)
+                voice.frames = [audio]
+                voice.cancel_dictation()
+                saved = voice.cancelled_audio
+                if chord:
+                    voice.on_press("HOTKEY")
+                    voice.on_press("ARROW")
+                    voice.on_release("HOTKEY")
+                else:
+                    tap(at=101.0, held=0.1)
+                self.assertIs(voice.cancelled_audio, saved)
+                self.assertEqual(config.read_status()["state"], "cancelled")
+                voice.undo_cancelled()
+                self.assertTrue(voice.recording)
+                self.assertIsNone(voice.cancelled_audio)
+                np.testing.assert_array_equal(voice.frames[0], audio)
+                voice.cancel_recording()
 
     def test_a_short_tap_is_discarded_not_transcribed(self):
         voice, tap = self._tapper()

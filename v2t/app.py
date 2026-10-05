@@ -73,7 +73,7 @@ def _listener(on_press, on_release, suppress_escape=None):
 
     options = {}
     if suppress_escape is not None:
-        from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode
+        from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode, kCGEventKeyUp
 
         def intercept(_event_type, event):
             # pynput 1.8.1 calls on_press/on_release BEFORE darwin_intercept
@@ -81,7 +81,7 @@ def _listener(on_press, on_release, suppress_escape=None):
             if (
                 CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
                 == keyboard.Key.esc.value.vk
-                and suppress_escape()
+                and suppress_escape(_event_type == kCGEventKeyUp)
             ):
                 return None
             return event
@@ -460,7 +460,7 @@ class VoiceToText:
                 self._close_stream()
                 return
             self.cancel_requested = False
-            self.cancelled_audio = self.current_audio = None
+            self.current_audio = None
             self.delivered = False
             if show:
                 self._show_recording()
@@ -470,6 +470,7 @@ class VoiceToText:
             if not self.recording or self.shown:
                 return
             self.shown = True
+            self.cancelled_audio = None
             self.level_peak = self.level_sent_at = 0.0  # none of the last recording's
             self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
@@ -961,7 +962,7 @@ class VoiceToText:
 
     def on_press(self, key):
         if getattr(key, "name", None) == "esc":
-            self.escape_consumed = self.cancel_dictation()
+            self.escape_consumed = self.escape_consumed or self.cancel_dictation()
             return
         if key != self.hotkey:
             if self.recording and not self.shown and not self.latched:
@@ -1004,6 +1005,13 @@ class VoiceToText:
         else:
             self.last_tap_at = now
 
+    def consume_escape(self, released: bool) -> bool:
+        """Keep repeats and release suppressed for the same physical press."""
+        consumed = self.escape_consumed
+        if released:
+            self.escape_consumed = False
+        return consumed
+
     def _cancel_hold_timer(self) -> None:
         if self.hold_timer is not None:
             self.hold_timer.cancel()
@@ -1022,7 +1030,7 @@ class VoiceToText:
                 live.cancel()
             self._close_stream()
             self._restore_media()
-            self._set_state("idle")
+            self._set_state("cancelled" if self.cancelled_audio else "idle")
 
     def cancel_dictation(self) -> bool:
         """Esc stops capture immediately and makes any in-flight result inert."""
@@ -1153,7 +1161,7 @@ class VoiceToText:
             if self.cfg.hotkey == "fn" and (warning := globe_key_warning()):
                 logger.warning(warning)
             with _listener(
-                self.on_press, self.on_release, lambda: self.escape_consumed
+                self.on_press, self.on_release, self.consume_escape
             ) as listener:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
