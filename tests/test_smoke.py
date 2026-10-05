@@ -2120,6 +2120,165 @@ class V2TSmokeTests(unittest.TestCase):
 
         return voice, press_release
 
+    def test_escape_cancels_hold_and_undo_resumes_the_captured_audio(self):
+        voice, _tap = self._tapper()
+        voice.on_press("HOTKEY")
+        voice.hold_timer.fire()
+        audio = np.full((16, 1), 0.5, dtype=np.float32)
+        voice.audio_callback(audio, len(audio), None, None)
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        voice.on_release("HOTKEY")
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+        self.assertTrue(voice.jobs.empty())
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        np.testing.assert_array_equal(voice.cancelled_audio[0][0], audio)
+
+        voice.request_undo()
+        voice.process_next(timeout=0)
+
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.latched)
+        self.assertIsNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "recording")
+        np.testing.assert_array_equal(voice.frames[0], audio)
+        voice.audio_callback(audio / 2, len(audio), None, None)
+        voice.on_press("HOTKEY")
+        voice.on_release("HOTKEY")
+        frames, _duration = voice.jobs.get_nowait()
+        np.testing.assert_array_equal(np.concatenate(frames), np.concatenate([audio, audio / 2]))
+        self.assertFalse(voice.latched)
+
+    def test_escape_cancels_a_queued_whole_file_job_without_decoding(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=mock.Mock(return_value="late text"))
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        saved = voice.cancelled_audio
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        self.assertIs(voice.cancelled_audio, saved)
+        self.assertFalse(voice.processing)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        voice.stt.transcribe.assert_not_called()
+        paste.assert_not_called()
+
+    def test_escape_during_whole_file_decode_blocks_the_late_paste(self):
+        voice, _tap = self._tapper()
+        def decode(_path):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            return "late text"
+        voice.stt = types.SimpleNamespace(transcribe=decode)
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertFalse(voice.processing)
+        self.assertIsNotNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+    def test_escape_during_cleanup_blocks_the_late_paste(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=lambda _path: "raw words")
+        def cleanup(_text, _mode):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            return "clean words", 0.0, 0.0
+        voice.cleaner = types.SimpleNamespace(cleanup=cleanup)
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertIsNotNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+    def test_escape_during_streaming_drains_the_cancelled_job_before_undo(self):
+        voice, _tap = self._tapper()
+        voice.stt, stream = self._streaming_stt([])
+        def feed(_samples):
+            voice.on_press(types.SimpleNamespace(name="esc"))
+            voice.request_undo()
+        stream.feed = feed
+        voice.start_recording()
+        samples = int(voice.cfg.sample_rate * backends.STREAM_CHUNK_S)
+        voice.audio_callback(np.ones((samples, 1), dtype=np.float32), samples, None, None)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+        paste.assert_not_called()
+        self.assertFalse(voice.processing)
+        self.assertIsNone(voice.cancelled_job)
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        # The next poll accepts Undo only after the cancelled model call returns.
+        voice.stt = None  # resume without starting another streaming worker here
+        voice.process_next(timeout=0)
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.latched)
+        self.assertEqual(len(voice.frames[0]), samples)
+
+    def test_escape_after_paste_has_started_is_not_reported_as_cancelled(self):
+        voice, _tap = self._tapper()
+        voice.stt = types.SimpleNamespace(transcribe=lambda _path: "words")
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.stop_recording()
+        with mock.patch.object(voice, "paste_to_cursor", side_effect=lambda _text: voice.on_press(types.SimpleNamespace(name="esc"))):
+            voice.process_next(timeout=0)
+        self.assertFalse(voice.escape_consumed)
+        self.assertIsNone(voice.cancelled_audio)
+        self.assertEqual(config.read_status()["state"], "idle")
+
+    def test_escape_when_idle_passes_through_and_does_not_stop_the_engine(self):
+        voice, _tap = self._tapper()
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        self.assertFalse(voice.escape_consumed)
+        self.assertFalse(voice.stopping)
+
+    def test_failed_undo_keeps_the_cancelled_audio_for_another_attempt(self):
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        saved = voice.cancelled_audio
+        with mock.patch.object(app.sd, "InputStream", side_effect=RuntimeError("device gone")), mock.patch.object(app.subprocess, "run"):
+            voice.undo_cancelled()
+        self.assertIs(voice.cancelled_audio, saved)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+
+    def test_listener_swallows_only_escape_consumed_by_the_dictation(self):
+        voice, _tap = self._tapper()
+        class Listener:
+            _MODIFIER_FLAGS = {}
+            def __init__(self, **options):
+                self.options = options
+        escape = types.SimpleNamespace(name="esc", value=types.SimpleNamespace(vk=53))
+        keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value),
+            Key=types.SimpleNamespace(esc=escape),
+        )
+        quartz = types.SimpleNamespace(
+            kCGEventFlagMaskSecondaryFn=1 << 23, kCGKeyboardEventKeycode=9,
+            CGEventGetIntegerValueField=lambda event, _field: event,
+        )
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
+            listener = app._listener(voice.on_press, voice.on_release, lambda: voice.escape_consumed)
+        intercept = listener.options["darwin_intercept"]
+        listener.options["on_press"](escape)
+        self.assertEqual(intercept(10, 53), 53)  # idle: let the target app see Esc
+        voice.start_recording()
+        listener.options["on_press"](escape)
+        self.assertIsNone(intercept(10, 53))
+        self.assertIsNone(intercept(11, 53))  # matching key-up is swallowed too
+        self.assertEqual(intercept(10, 0), 0)  # unrelated keys always pass through
+
     def test_a_short_tap_is_discarded_not_transcribed(self):
         voice, tap = self._tapper()
 

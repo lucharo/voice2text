@@ -65,6 +65,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         item.menu = menu
+        pill.onUndo = { [weak self] in self?.undoDictation() }
         menu.delegate = self
         listenForLiveEvents()
         render()
@@ -441,6 +442,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "starting", "loading-stt": ("hourglass", "Loading transcription model…", nil)
         case "loading-cleanup": ("hourglass", "Loading cleanup model…", nil)
         case "idle": ("waveform", "Ready", nil)
+        case "cancelled": ("arrow.uturn.backward", "Dictation cancelled · Undo available", nil)
         case "recording": ("waveform.circle.fill", heardWords > 0 ? "Recording… \(heardWords) words" : "Recording…", .systemRed)
         case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
         case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
@@ -489,6 +491,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
+        if phase == "cancelled" {
+            add("Undo Cancel · Resume Dictation", action: #selector(undoDictation), image: symbol("arrow.uturn.backward"))
+        }
         if externalEngine { add("Running from terminal", image: symbol("terminal"), enabled: false) }
         else if phase == "permissions" || phase == "starting" { add("Starting…", image: symbol("hourglass"), enabled: false) }
         else if phase == "stopping" { add("Stopping…", image: symbol("hourglass"), enabled: false) }
@@ -606,6 +611,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()  // a dictation in progress reappears in the new style at once
     }
 
+    @objc private func undoDictation() {
+        guard phase == "cancelled", let pid = status["pid"] as? Int, engineOwnsLock(pid) else { return }
+        kill(pid_t(pid), SIGUSR1)
+    }
+
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -687,7 +697,7 @@ enum PillStyle: String, CaseIterable {
 /// Floats the pill over every app while the engine records, transcribes or
 /// cleans up. The panel never becomes key and ignores the mouse, so focus,
 /// and with it the paste, stays in the app the user is typing in.
-final class Pill {
+final class Pill: NSObject {
     private let panel = NSPanel(
         contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
     private let view = PillView()
@@ -696,10 +706,13 @@ final class Pill {
     private var anchor: NSRect?
     private var recordingAnchor: NSRect?
     private var screen: NSScreen?
+    var onUndo: (() -> Void)?
+    private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     // Prototype choices are in-memory and do not replace the installed preference.
     var style: PillStyle = .compactBottom { didSet { hide() } }
 
-    init() {
+    override init() {
+        super.init()
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -709,7 +722,17 @@ final class Pill {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.contentView = view
+        undoButton.bezelStyle = .inline
+        undoButton.appearance = NSAppearance(named: .darkAqua)
+        undoButton.refusesFirstResponder = true
+        undoButton.focusRingType = .none
+        undoButton.target = self
+        undoButton.action = #selector(undo)
+        undoButton.isHidden = true
+        view.addSubview(undoButton)
     }
+
+    @objc private func undo() { onUndo?() }
 
     /// Tracks every phase change, shown or not, so a style switched on or
     /// changed mid-dictation keeps that dictation's timer and waveform.
@@ -722,12 +745,14 @@ final class Pill {
         }
         view.phase = phase
         view.partial = partial
-        guard style != .off, ["recording", "transcribing", "cleaning"].contains(phase) else {
+        undoButton.isHidden = phase != "cancelled"
+        panel.ignoresMouseEvents = phase != "cancelled"
+        guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
             hide()
             return
         }
         if !visible { show() }
-        else if style.compact { position() }
+        else if style.compact || phase == "cancelled" { position() }
         view.needsDisplay = true
     }
 
@@ -761,7 +786,7 @@ final class Pill {
     private func position() {
         guard let screen else { return }
         let area = screen.visibleFrame
-        var size = style.compact ? view.compactSize : style.size
+        var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : style.compact ? view.compactSize : style.size
         size.width = min(size.width, area.width - 16)
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
         var x = area.midX - size.width / 2
@@ -779,6 +804,7 @@ final class Pill {
         y = min(max(y, area.minY + 8), top - size.height - 8)
         view.tailX = min(max((anchor?.midX ?? (x + size.width / 2)) - x, 16), size.width - 16)
         panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
+        undoButton.frame = NSRect(x: size.width - 68, y: 6, width: 54, height: 22)
         panel.invalidateShadow()
     }
 
@@ -884,7 +910,7 @@ final class PillView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         var body = bounds
-        if style == .cursorBubble {
+        if style == .cursorBubble && phase != "cancelled" {
             body.size.height -= 6
             if tailBelow { body.origin.y += 6 }
         }
@@ -894,7 +920,7 @@ final class PillView: NSView {
         capsule.fill()
         NSColor(white: 1, alpha: 0.14).setStroke()
         capsule.stroke()
-        if style == .cursorBubble {
+        if style == .cursorBubble && phase != "cancelled" {
             let tail = NSBezierPath()
             let edge = tailBelow ? body.minY + 1 : body.maxY - 1
             tail.move(to: NSPoint(x: tailX - 6, y: edge))
@@ -905,6 +931,11 @@ final class PillView: NSView {
             tail.fill()
         }
         let recording = phase == "recording"
+        if phase == "cancelled" {
+            drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 88, height: bounds.height),
+                     color: NSColor(white: 1, alpha: 0.9))
+            return
+        }
         switch style {
         case .compactBottom, .cursorBubble:
             drawBars(in: NSRect(x: 16, y: body.minY + 10, width: 44, height: body.height - 20))
