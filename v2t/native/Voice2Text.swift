@@ -653,13 +653,20 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// options on trial, D the default; `off` leaves only the menu-bar icon.
 enum PillStyle: String, CaseIterable {
     case waveform = "a", liveText = "b", island = "c", islandText = "d", off
+    // THROWAWAY PROTOTYPE: compare compact bottom / cursor layouts against the PR.
+    case compactBottom = "prototype-bottom", cursorBubble = "prototype-cursor"
+
+    static let allCases: [PillStyle] = [.compactBottom, .cursorBubble, .islandText, .off]
+    var compact: Bool { self == .compactBottom || self == .cursorBubble }
 
     var title: String {
         switch self {
         case .waveform: "A · Waveform"
         case .liveText: "B · Waveform and live text"
         case .island: "C · Top island with timer"
-        case .islandText: "D · Top island with timer and live text"
+        case .islandText: "C · Original top pill (comparison)"
+        case .compactBottom: "A · Compact bottom · calmer waveform"
+        case .cursorBubble: "B · Cursor speech bubble · calmer waveform"
         case .off: "Off"
         }
     }
@@ -672,6 +679,7 @@ enum PillStyle: String, CaseIterable {
         case .liveText: NSSize(width: 440, height: 40)
         case .island, .off: NSSize(width: 176, height: 32)
         case .islandText: NSSize(width: 480, height: 34)
+        case .compactBottom, .cursorBubble: NSSize(width: 176, height: 34)
         }
     }
 }
@@ -685,14 +693,11 @@ final class Pill {
     private let view = PillView()
     private var ticker: Timer?
     private var visible = false
-
-    var style: PillStyle {
-        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillStyle") ?? "") ?? .islandText }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "pillStyle")
-            hide()  // the next status update shows the new style in its place
-        }
-    }
+    private var anchor: NSRect?
+    private var recordingAnchor: NSRect?
+    private var screen: NSScreen?
+    // Prototype choices are in-memory and do not replace the installed preference.
+    var style: PillStyle = .compactBottom { didSet { hide() } }
 
     init() {
         panel.level = .statusBar
@@ -710,6 +715,7 @@ final class Pill {
     /// changed mid-dictation keeps that dictation's timer and waveform.
     func update(phase: String, partial: String) {
         if phase == "recording" && view.phase != "recording" {
+            recordingAnchor = Self.cursorAnchor()
             view.begin()
         } else if phase != "recording" && view.phase == "recording" {
             view.stoppedAt = Date()
@@ -721,6 +727,7 @@ final class Pill {
             return
         }
         if !visible { show() }
+        else if style.compact { position() }
         view.needsDisplay = true
     }
 
@@ -733,24 +740,79 @@ final class Pill {
     private func show() {
         let style = style
         let pointer = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) }) ?? NSScreen.main
+        anchor = style == .cursorBubble ? recordingAnchor : nil
+        let location = anchor.map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
         else { return }
-        let area = screen.visibleFrame
-        let size = style.size
-        // Under the menu bar, and clear of the notch when the menu bar is hidden.
-        let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
-        let y = style.atTop ? top - size.height - 8 : area.minY + 20
-        view.style = style
-        panel.setFrame(NSRect(x: area.midX - size.width / 2, y: y, width: size.width, height: size.height), display: true)
+        self.screen = screen
+        view.style = style == .cursorBubble && anchor == nil ? .compactBottom : style
+        position()
         panel.invalidateShadow()
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
         visible = true
-        // A bar every 50 ms, in common modes so it keeps moving while the menu is open.
-        let ticker = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
+        // Compare the original 50 ms bars with half-speed, two-sample smoothing.
+        let ticker = Timer(timeInterval: (style.compact ? 2.0 : 1.0) / 20, repeats: true) { [weak self] _ in self?.view.tick() }
         RunLoop.main.add(ticker, forMode: .common)
         self.ticker = ticker
+    }
+
+    private func position() {
+        guard let screen else { return }
+        let area = screen.visibleFrame
+        var size = style.compact ? view.compactSize : style.size
+        size.width = min(size.width, area.width - 16)
+        let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
+        var x = area.midX - size.width / 2
+        var y = style.atTop ? top - size.height - 8 : area.minY + 20
+        view.tailBelow = true
+        if style == .cursorBubble, let anchor {
+            x = anchor.midX - size.width / 2
+            y = anchor.maxY + 8
+            if y + size.height > top - 8 {
+                y = anchor.minY - size.height - 8
+                view.tailBelow = false
+            }
+        }
+        x = min(max(x, area.minX + 8), area.maxX - size.width - 8)
+        y = min(max(y, area.minY + 8), top - size.height - 8)
+        view.tailX = min(max((anchor?.midX ?? (x + size.width / 2)) - x, 16), size.width - 16)
+        panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
+        panel.invalidateShadow()
+    }
+
+    private static func cursorAnchor() -> NSRect? {
+        // Capture once at recording start; never follow the cursor while speaking.
+        // Use the insertion caret where the app exposes it, otherwise bottom centre.
+        // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+           let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            let element = focused as! AXUIElement
+            var selected: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+               let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
+                var range = CFRange()
+                if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
+                    range.length = 0
+                    if let selection = AXValueCreate(.cfRange, &range) {
+                        var value: CFTypeRef?
+                        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
+                           let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                            var rect = CGRect.zero
+                            if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0,
+                               let primary = NSScreen.screens.first {
+                                return NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY,
+                                              width: rect.width, height: rect.height)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     private func hide() {
@@ -777,6 +839,19 @@ final class PillView: NSView {
     var stoppedAt: Date?
     private var bars = [CGFloat](repeating: 0, count: 64)
     private var loudest: Double?  // since the last tick
+    var tailBelow = true
+    var tailX: CGFloat = 0
+
+    private var compactLabel: String {
+        if phase == "recording" { return partial.isEmpty ? "Listening…" : partial }
+        return phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
+    }
+
+    var compactSize: NSSize {
+        // Same insets and spacing as the existing pill; width follows the content.
+        let textWidth = min(252, ceil((compactLabel as NSString).size(withAttributes: [.font: Self.font]).width))
+        return NSSize(width: 16 + 44 + 12 + textWidth + 16, height: 34 + (style == .cursorBubble ? 6 : 0))
+    }
 
     func begin() {
         startedAt = Date()
@@ -795,7 +870,7 @@ final class PillView: NSView {
         if phase == "recording" {
             let next = loudest.map(Self.height) ?? (bars.last ?? 0) * 0.8
             bars.removeFirst()
-            bars.append(next)
+            bars.append(style.compact ? ((bars.last ?? 0) + next) / 2 : next)
             loudest = nil
         }
         needsDisplay = true
@@ -808,14 +883,32 @@ final class PillView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let radius = bounds.height / 2
-        let capsule = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        var body = bounds
+        if style == .cursorBubble {
+            body.size.height -= 6
+            if tailBelow { body.origin.y += 6 }
+        }
+        let radius = body.height / 2
+        let capsule = NSBezierPath(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         NSColor(white: 0.07, alpha: 0.92).setFill()
         capsule.fill()
         NSColor(white: 1, alpha: 0.14).setStroke()
         capsule.stroke()
+        if style == .cursorBubble {
+            let tail = NSBezierPath()
+            let edge = tailBelow ? body.minY + 1 : body.maxY - 1
+            tail.move(to: NSPoint(x: tailX - 6, y: edge))
+            tail.line(to: NSPoint(x: tailX, y: tailBelow ? bounds.minY : bounds.maxY))
+            tail.line(to: NSPoint(x: tailX + 6, y: edge))
+            tail.close()
+            NSColor(white: 0.07, alpha: 0.92).setFill()
+            tail.fill()
+        }
         let recording = phase == "recording"
         switch style {
+        case .compactBottom, .cursorBubble:
+            drawBars(in: NSRect(x: 16, y: body.minY + 10, width: 44, height: body.height - 20))
+            drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height), waiting: "Listening…")
         case .waveform:
             drawBars(in: bounds.insetBy(dx: 16, dy: 9))
         case .liveText:
@@ -874,7 +967,7 @@ final class PillView: NSView {
         } else {  // working: a wave travelling right to left
             let t = CACurrentMediaTime()
             values = (0..<count).map { (index: Int) -> CGFloat in
-                let wave: Double = (1 + sin(t * 6 + Double(index) * 0.55)) / 2
+                let wave: Double = (1 + sin(t * (style.compact ? 3 : 6) + Double(index) * 0.55)) / 2
                 return CGFloat(0.15 + 0.5 * wave)
             }
             NSColor(white: 1, alpha: 0.55).setFill()
