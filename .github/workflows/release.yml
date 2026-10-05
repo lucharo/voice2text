@@ -36,7 +36,14 @@ jobs:
       - run: uv lock --check
       - run: uv build
       - run: uvx twine check dist/*
-      - run: uv publish --trusted-publishing always
+      - name: Preserve the distributions being published
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pypi-distributions
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish with trusted-publisher attestations
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 
   macos:
     needs: pypi

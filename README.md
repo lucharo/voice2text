@@ -318,8 +318,9 @@ bins it (or, from the stray copy, hands over to `/Applications`). Releasing is p
 publishes the engine to PyPI through trusted publishing, signs and notarises the app with the
 identity `scripts/ci-signing-secrets.sh` stored, and commits the updated cask to `main`.
 `just release-macos --publish` does the app half from a Mac with the Developer ID certificate.
-The first CI publication still needs the PyPI trusted publisher registered; v0.4.1 was released
-locally. See [release setup and the local fallback](docs/faq/README.md#does-publication-happen-in-ci).
+The PyPI trusted publisher is registered for this workflow and the `release` environment;
+published distributions include publisher attestations. Version 0.4.1 was released locally.
+See [release setup and the local fallback](docs/faq/README.md#does-publication-happen-in-ci).
 
 **Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
 terminal launch uses your terminal's grants. The menu app requests its own grants and

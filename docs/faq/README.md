@@ -12,14 +12,19 @@ next CI release, register the PyPI trusted publisher for owner `lucharo`, reposi
 workflow `release.yml`, environment `release`; signing secrets are already configured. A
 successful `check` run proves validation, not publication.
 
+**Update (2026-10-05):** the publisher is now registered and read back in PyPI for exactly
+`lucharo/voice2text`, `release.yml`, environment `release`. CI retains its distributions and
+publishes them with publisher attestations. Registration proves configuration; the tagged
+workflow and indexed artifacts must still be verified for each release.
+
 ### Sources
 
 - [Release workflow](../../.github/workflows/release.yml) — tag trigger, protected jobs and publication.
 - [Check workflow](../../.github/workflows/check.yml) — validation only.
 - [v0.4.1 release](https://github.com/lucharo/voice2text/releases/tag/v0.4.1) — the local-release exception.
 
-_Created: 2026-08-01 · Updated: 2026-09-28 · Verified: 2026-09-28 · Scope: v0.4.1.
-Recheck publisher configuration and the release workflow before the next tag._
+_Created: 2026-08-01 · Updated: 2026-10-05 · Verified: 2026-10-05 · Scope: release configuration.
+Recheck the tagged workflow and indexed artifacts for publication evidence._
 
 ## What does PyPI's 503 mean, and what do we need to do?
 
