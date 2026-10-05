@@ -2355,6 +2355,7 @@ class V2TSmokeTests(unittest.TestCase):
             return len(self.history)
 
         def rollback(self, cp, fed):
+            assert len(self.history) - cp == fed, "a rollback undoes exactly what was fed"
             self.rollbacks += 1
             del self.history[cp:]
 
@@ -2417,13 +2418,35 @@ class V2TSmokeTests(unittest.TestCase):
         source = self._ToyDecoder.SOURCE
         with (
             mock.patch.object(backends, "_MLXDecoder", make),
-            mock.patch.object(cleaner, "_prefix", return_value=([], None)),
+            mock.patch.object(cleaner, "_prefix", return_value=([], None)) as prefix,
         ):
             tokens, ttft = cleaner._decode([1, 2, 3], "casual", source, 100)
 
         self.assertEqual(tokens, backends.lookup_decode(self._ToyDecoder([1, 2, 3]), source, {0}, 100, draft=0))
         self.assertLess(decoders[0].feeds, len(tokens), "guessed tokens skipped model calls")
         self.assertGreaterEqual(ttft, 0)
+        prefix.assert_called_once_with("casual")
+
+    def test_mlx_cleanup_rebuilds_a_prefix_the_prompt_no_longer_starts_with(self):
+        cleaner = object.__new__(backends.MLXCleanup)
+        cleaner.model = object()
+        cleaner.tokenizer = mock.Mock()
+        cleaner.tokenizer.eos_token_ids = [self._ToyDecoder.EOS]
+        cleaner._prefix_key = ("casual", ())
+        built = []
+
+        def prefix(mode):
+            built.append(cleaner._prefix_key)
+            cleaner._prefix_key = (mode, ())
+            return ([7, 7], None) if len(built) == 1 else ([1, 2], None)
+
+        with (
+            mock.patch.object(backends, "_MLXDecoder", lambda _m, p, _c, prompt: self._ToyDecoder(prompt)),
+            mock.patch.object(cleaner, "_prefix", side_effect=prefix),
+        ):
+            cleaner._decode([1, 2, 3], "casual", self._ToyDecoder.SOURCE, 10)
+
+        self.assertEqual(built, [("casual", ()), None], "the stale key was dropped, then rebuilt")
 
     def test_ollama_cleanup_uses_the_chat_api_with_the_same_messages(self):
         lines = [

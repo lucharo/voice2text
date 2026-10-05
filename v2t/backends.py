@@ -533,27 +533,33 @@ class _MLXDecoder:
     """Greedy steps over one mlx-lm model, starting from a copy of a prefix cache.
 
     Qwen3.5 mixes linear-attention layers (a recurrent state that cannot be trimmed)
-    with full-attention ones, so a rollback trims the attention caches and restores
-    the recurrent ones from the checkpoint.
+    with full-attention ones, so a rollback trims the plain attention caches and
+    restores every other kind (recurrent, or a sliding window that a long draft may
+    already have wrapped) from the checkpoint.
     """
 
     def __init__(self, model, prefix: list[int], prefix_cache, prompt: list[int]):
         import mlx.core as mx
-        from mlx_lm.models.cache import make_prompt_cache
+        from mlx_lm.models.cache import KVCache, make_prompt_cache
 
-        self._mx, self.model = mx, model
+        self._mx, self.model, self._trimmable = mx, model, KVCache
         if prefix and prompt[: len(prefix)] == prefix:
             self.cache, rest = copy.deepcopy(prefix_cache), prompt[len(prefix) :]
         else:  # the template moved the boundary: prefill the whole prompt
             self.cache, rest = make_prompt_cache(model), prompt
-        self.next = self.feed(rest)[-1]
+        if len(rest) > 1:  # only the cache is evaluated, so no logits for these
+            model(mx.array(rest[:-1])[None], cache=self.cache)
+            mx.eval([c.state for c in self.cache])
+        self.next = self.feed(rest[-1:])[-1]
 
     def feed(self, tokens: list[int]) -> list[int]:
         logits = self.model(self._mx.array(tokens)[None], cache=self.cache)
         return self._mx.argmax(logits[0], axis=-1).tolist()
 
     def checkpoint(self) -> list:
-        return [None if c.is_trimmable() else copy.deepcopy(c) for c in self.cache]
+        return [
+            None if type(c) is self._trimmable else copy.deepcopy(c) for c in self.cache
+        ]
 
     def rollback(self, cp: list, fed: int) -> None:
         for i, saved in enumerate(cp):
@@ -607,8 +613,14 @@ class MLXCleanup(_ChunkedCleanup):
 
     def _decode(self, prompt, mode: str, source: list[int], max_tokens: int):
         """Greedy tokens for the prompt, and the seconds to the first one."""
-        t0 = time.perf_counter()
-        decoder = _MLXDecoder(self.model, *self._prefix(mode), list(prompt))
+        t0, prompt = time.perf_counter(), list(prompt)
+        prefix, cache = self._prefix(mode)
+        if (
+            prompt[: len(prefix)] != prefix
+        ):  # the template changed (a date in it): rebuild once
+            self._prefix_key = None
+            prefix, cache = self._prefix(mode)
+        decoder = _MLXDecoder(self.model, prefix, cache, prompt)
         ttft = time.perf_counter() - t0
         eos = set(self.tokenizer.eos_token_ids)
         return lookup_decode(decoder, source, eos, max_tokens), ttft
