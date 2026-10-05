@@ -329,6 +329,7 @@ class VoiceToText:
                 "pid": os.getpid(),
                 "state": state,
                 **self.status_details,
+                "streaming": self.can_stream(),
                 "error": clean_error,
                 "warning": self.warning,
             }

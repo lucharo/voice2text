@@ -784,6 +784,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "stt": "parakeet-v3",
                     "cleanup": "off",
                     "mode": "casual",
+                    "streaming": False,
                     "error": "",
                     "warning": "",
                     "words": 2,
@@ -806,10 +807,44 @@ class V2TSmokeTests(unittest.TestCase):
                 "stt": "parakeet-v3",
                 "cleanup": "off",
                 "mode": "casual",
+                "streaming": False,
                 "error": "",
                 "warning": "",
             },
         )
+
+    def test_status_advertises_live_transcript_only_when_capture_can_stream(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        listener = self._pill_listener()
+        voice.stt, _stream = self._streaming_stt([])
+        for mode, rate, backend_streams, available in (
+            ("hacky", 16000, True, True),
+            ("off", 16000, True, False),
+            ("hacky", 48000, True, False),
+            ("hacky", 16000, False, False),
+        ):
+            with self.subTest(mode=mode, rate=rate, backend_streams=backend_streams):
+                voice.cfg.streaming_mode = mode
+                voice.cfg.sample_rate = rate
+                voice.stt.streaming = backend_streams
+
+                voice._set_state("idle")
+
+                expected = {
+                    "pid": os.getpid(),
+                    "state": "idle",
+                    "stt": "parakeet-v3",
+                    "cleanup": "off",
+                    "mode": "casual",
+                    "streaming": available,
+                    "error": "",
+                    "warning": "",
+                }
+                self.assertEqual(self._pill_events(listener), [expected])
+                self.assertEqual(
+                    json.loads((config.run_dir() / "status.json").read_text()),
+                    expected,
+                )
 
     def test_input_level_reaches_the_pill_only_once_the_recording_shows(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

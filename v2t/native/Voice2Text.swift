@@ -352,7 +352,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine == nil, let message = try? String(contentsOf: home.appendingPathComponent("run/last-error"), encoding: .utf8), !message.isEmpty {
             phase = "error"
         }
-        pill.update(phase: phase, partial: status["partial"] as? String ?? "")
+        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
+                    streaming: status["streaming"] as? Bool ?? false)
         render()
     }
 
@@ -434,7 +435,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let streaming = status["streaming"] as? Bool ?? false
+        let signature = "\(pill.style.rawValue)|\(pill.showLiveTranscript)|\(streaming)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -528,6 +530,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.state = style == pill.style ? .on : .off
             pillStyles.addItem(row)
         }
+        pillStyles.addItem(.separator())
+        let transcript = NSMenuItem(title: "Show live transcript", action: #selector(toggleLiveTranscript), keyEquivalent: "")
+        transcript.target = self
+        transcript.state = pill.showLiveTranscript ? .on : .off
+        transcript.isEnabled = streaming
+        transcript.toolTip = streaming ? "Show words as you speak" : "Requires streaming transcription"
+        pillStyles.addItem(transcript)
+        pillStyles.autoenablesItems = false
         add("Pill", image: symbol("capsule")).submenu = pillStyles
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
@@ -616,6 +626,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         kill(pid_t(pid), SIGUSR1)
     }
 
+    @objc private func toggleLiveTranscript() {
+        guard status["streaming"] as? Bool == true else { return }
+        pill.showLiveTranscript.toggle()
+        rendered = ""
+        refresh()
+    }
+
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -659,37 +676,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
-/// How the pill shows a dictation (menu: Pill). The lettered styles are the
-/// options on trial, D the default; `off` leaves only the menu-bar icon.
+/// B is the default; A is also used when the focused app exposes no text caret.
 enum PillStyle: String, CaseIterable {
-    case waveform = "a", liveText = "b", island = "c", islandText = "d", off
-    // THROWAWAY PROTOTYPE: compare compact bottom / cursor layouts against the PR.
-    case compactBottom = "prototype-bottom", cursorBubble = "prototype-cursor"
-
-    static let allCases: [PillStyle] = [.compactBottom, .cursorBubble, .islandText, .off]
-    var compact: Bool { self == .compactBottom || self == .cursorBubble }
+    case cursorBubble = "caret", compactBottom = "bottom", off
 
     var title: String {
         switch self {
-        case .waveform: "A · Waveform"
-        case .liveText: "B · Waveform and live text"
-        case .island: "C · Top island with timer"
-        case .islandText: "C · Original top pill (comparison)"
-        case .compactBottom: "A · Compact bottom · calmer waveform"
-        case .cursorBubble: "B · Cursor speech bubble · calmer waveform"
+        case .cursorBubble: "B · Near text cursor (default)"
+        case .compactBottom: "A · Bottom of screen"
         case .off: "Off"
-        }
-    }
-
-    var atTop: Bool { self == .island || self == .islandText }
-
-    var size: NSSize {
-        switch self {
-        case .waveform: NSSize(width: 116, height: 34)
-        case .liveText: NSSize(width: 440, height: 40)
-        case .island, .off: NSSize(width: 176, height: 32)
-        case .islandText: NSSize(width: 480, height: 34)
-        case .compactBottom, .cursorBubble: NSSize(width: 176, height: 34)
         }
     }
 }
@@ -708,8 +703,14 @@ final class Pill: NSObject {
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
-    // Prototype choices are in-memory and do not replace the installed preference.
-    var style: PillStyle = .compactBottom { didSet { hide() } }
+    var style: PillStyle {
+        get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "pillPlacement"); hide() }
+    }
+    var showLiveTranscript: Bool {
+        get { UserDefaults.standard.bool(forKey: "showLiveTranscript") }
+        set { UserDefaults.standard.set(newValue, forKey: "showLiveTranscript") }
+    }
 
     override init() {
         super.init()
@@ -734,18 +735,15 @@ final class Pill: NSObject {
 
     @objc private func undo() { onUndo?() }
 
-    /// Tracks every phase change, shown or not, so a style switched on or
-    /// changed mid-dictation keeps that dictation's timer and waveform.
-    func update(phase: String, partial: String) {
+    /// Keep the recording waveform when placement or transcript visibility changes.
+    func update(phase: String, partial: String, streaming: Bool) {
         if phase == "recording" && view.phase != "recording" {
             recordingAnchor = Self.cursorAnchor()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
-        } else if phase != "recording" && view.phase == "recording" {
-            view.stoppedAt = Date()
         }
         view.phase = phase
-        view.partial = partial
+        view.partial = showLiveTranscript && streaming && phase == "recording" ? partial : ""
         undoButton.isHidden = phase != "cancelled"
         panel.ignoresMouseEvents = phase != "cancelled"
         guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
@@ -753,7 +751,7 @@ final class Pill: NSObject {
             return
         }
         if !visible { show() }
-        else if style.compact || phase == "cancelled" { position() }
+        else { position() }
         view.needsDisplay = true
     }
 
@@ -761,8 +759,8 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
-    /// On the screen under the pointer: bottom centre above the Dock, or for
-    /// the island top centre under the menu bar.
+    /// Above the insertion caret, with bottom centre as the explicit alternative
+    /// and the fallback on apps that expose no caret position.
     private func show() {
         let style = style
         let pointer = NSEvent.mouseLocation
@@ -778,8 +776,8 @@ final class Pill: NSObject {
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
         visible = true
-        // Compare the original 50 ms bars with half-speed, two-sample smoothing.
-        let ticker = Timer(timeInterval: (style.compact ? 2.0 : 1.0) / 20, repeats: true) { [weak self] _ in self?.view.tick() }
+        // Half the original 20 Hz history speed, with two-sample smoothing.
+        let ticker = Timer(timeInterval: 2.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
         RunLoop.main.add(ticker, forMode: .common)
         self.ticker = ticker
     }
@@ -787,11 +785,11 @@ final class Pill: NSObject {
     private func position() {
         guard let screen else { return }
         let area = screen.visibleFrame
-        var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : style.compact ? view.compactSize : style.size
+        var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : view.compactSize
         size.width = min(size.width, area.width - 16)
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
         var x = area.midX - size.width / 2
-        var y = style.atTop ? top - size.height - 8 : area.minY + 20
+        var y = area.minY + 20
         view.tailBelow = true
         if style == .cursorBubble, let anchor {
             x = anchor.midX - size.width / 2
@@ -854,35 +852,25 @@ final class Pill: NSObject {
     }
 }
 
-/// Draws the pill: a dark capsule holding a bar waveform of the input level,
-/// newest bar on the right, while recording; a ripple across the bars while
-/// the engine transcribes or cleans up; per style, the streamed text or the
-/// elapsed time.
+/// Input levels scroll while recording; transcription travels across the bars;
+/// cleanup pulses in place. Optional live words have no placeholder/status text.
 final class PillView: NSView {
-    var style = PillStyle.waveform
+    var style = PillStyle.cursorBubble
     var phase = "idle"
     var partial = ""
-    var startedAt = Date()
-    var stoppedAt: Date?
     private var bars = [CGFloat](repeating: 0, count: 64)
     private var loudest: Double?  // since the last tick
     var tailBelow = true
     var tailX: CGFloat = 0
 
-    private var compactLabel: String {
-        if phase == "recording" { return partial.isEmpty ? "Listening…" : partial }
-        return phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
-    }
-
     var compactSize: NSSize {
-        // Same insets and spacing as the existing pill; width follows the content.
-        let textWidth = min(252, ceil((compactLabel as NSString).size(withAttributes: [.font: Self.font]).width))
-        return NSSize(width: 16 + 44 + 12 + textWidth + 16, height: 34 + (style == .cursorBubble ? 6 : 0))
+        // Reuse the waveform-only pill width when there are no words to show.
+        let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
+        let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16 : 116
+        return NSSize(width: width, height: 34 + (style == .cursorBubble ? 6 : 0))
     }
 
     func begin() {
-        startedAt = Date()
-        stoppedAt = nil
         bars = [CGFloat](repeating: 0, count: bars.count)
         loudest = nil
     }
@@ -897,7 +885,7 @@ final class PillView: NSView {
         if phase == "recording" {
             let next = loudest.map(Self.height) ?? (bars.last ?? 0) * 0.8
             bars.removeFirst()
-            bars.append(style.compact ? ((bars.last ?? 0) + next) / 2 : next)
+            bars.append(((bars.last ?? 0) + next) / 2)
             loudest = nil
         }
         needsDisplay = true
@@ -931,63 +919,31 @@ final class PillView: NSView {
             NSColor(white: 0.07, alpha: 0.92).setFill()
             tail.fill()
         }
-        let recording = phase == "recording"
         if phase == "cancelled" {
             drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 88, height: bounds.height),
                      color: NSColor(white: 1, alpha: 0.9))
             return
         }
-        switch style {
-        case .compactBottom, .cursorBubble:
+        if phase == "recording" && !partial.isEmpty {
             drawBars(in: NSRect(x: 16, y: body.minY + 10, width: 44, height: body.height - 20))
-            drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height), waiting: "Listening…")
-        case .waveform:
-            drawBars(in: bounds.insetBy(dx: 16, dy: 9))
-        case .liveText:
-            let wave = NSRect(x: 16, y: 11, width: 72, height: bounds.height - 22)
-            drawBars(in: wave)
-            drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
-                      waiting: elapsed)
-        case .island, .islandText, .off:
-            let dot = NSRect(x: 15, y: bounds.midY - 3.5, width: 7, height: 7)
-            (recording ? NSColor.systemRed : NSColor(white: 1, alpha: 0.4)).setFill()
-            NSBezierPath(ovalIn: dot).fill()
-            drawText(elapsed, in: NSRect(x: dot.maxX + 8, y: 0, width: 44, height: bounds.height),
-                     color: NSColor(white: 1, alpha: 0.9))
-            if style == .islandText {
-                let wave = NSRect(x: dot.maxX + 56, y: 10, width: 64, height: bounds.height - 20)
-                drawBars(in: wave)
-                drawWords(in: NSRect(x: wave.maxX + 12, y: 0, width: bounds.width - wave.maxX - 30, height: bounds.height),
-                          waiting: "Listening…")
-            } else {
-                drawBars(in: NSRect(x: bounds.width - 16 - 76, y: 9, width: 76, height: bounds.height - 18))
-            }
+            drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height))
+        } else {
+            drawBars(in: body.insetBy(dx: 16, dy: 9))
         }
     }
 
-    /// The streamed words, dropping the oldest whole words when they overflow;
-    /// before the first push `waiting`, and after release what the engine is doing.
-    private func drawWords(in rect: NSRect, waiting: String) {
-        if phase == "recording" && !partial.isEmpty {
-            var words = partial.split(whereSeparator: \.isWhitespace)
-            var shown = words.joined(separator: " ")
-            while words.count > 1 && (shown as NSString).size(withAttributes: [.font: Self.font]).width > rect.width {
-                words.removeFirst()
-                shown = "…" + words.joined(separator: " ")
-            }
-            drawText(shown, in: rect, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
-        } else {
-            let label = phase == "recording" ? waiting : phase == "cleaning" ? "Cleaning up…" : "Transcribing…"
-            drawText(label, in: rect, color: NSColor(white: 1, alpha: 0.6))
+    /// Drop the oldest whole words when live text overflows the compact width.
+    private func drawWords(in rect: NSRect) {
+        var words = partial.split(whereSeparator: \.isWhitespace)
+        var shown = words.joined(separator: " ")
+        while words.count > 1 && (shown as NSString).size(withAttributes: [.font: Self.font]).width > rect.width {
+            words.removeFirst()
+            shown = "…" + words.joined(separator: " ")
         }
+        drawText(shown, in: rect, color: NSColor(white: 1, alpha: 0.92), truncation: .byTruncatingHead)
     }
 
     private static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-
-    private var elapsed: String {
-        let seconds = Int((stoppedAt ?? Date()).timeIntervalSince(startedAt))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
 
     private func drawBars(in rect: NSRect) {
         let width: CGFloat = 3, gap: CGFloat = 2.5
@@ -996,10 +952,11 @@ final class PillView: NSView {
         if phase == "recording" {
             values = Array(bars.suffix(count))
             NSColor.white.setFill()
-        } else {  // working: a wave travelling right to left
+        } else {  // transcription travels; cleanup breathes in place
             let t = CACurrentMediaTime()
             values = (0..<count).map { (index: Int) -> CGFloat in
-                let wave: Double = (1 + sin(t * (style.compact ? 3 : 6) + Double(index) * 0.55)) / 2
+                let offset = phase == "cleaning" ? 0 : Double(index) * 0.55
+                let wave: Double = (1 + sin(t * 3 + offset)) / 2
                 return CGFloat(0.15 + 0.5 * wave)
             }
             NSColor(white: 1, alpha: 0.55).setFill()
