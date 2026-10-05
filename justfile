@@ -2,10 +2,6 @@
 lint:
     uv run ruff check v2t/ tests/
 
-# Throwaway native pill comparison; local prototype branch only.
-pill-prototype output:
-    uv run --frozen python scripts/pill-prototype.py '{{output}}'
-
 # Fast checks; no models, microphone, or permissions needed
 check: lint
     uv run python -m unittest -v tests.test_smoke
