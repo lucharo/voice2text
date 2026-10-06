@@ -263,6 +263,18 @@ def load_audio(path: str) -> np.ndarray:
     return audio.mean(axis=1)
 
 
+def release_cache() -> None:
+    """Return MLX's buffer cache between clips, outside any timing.
+
+    MLX keeps freed buffers for reuse, and a long clip's buffers rarely fit the next
+    one: the cache grew about 3.5 GB per ls-long clip, so a 40-clip pass swapped a
+    48 GB Mac and inflated the waits (2026-10-06).
+    """
+    import mlx.core as mx
+
+    mx.clear_cache()
+
+
 # --- runtimes -----------------------------------------------------------------
 
 
@@ -442,6 +454,7 @@ def run(system: str, set_name: str, limit: int | None) -> None:
     print(f"loaded in {time.perf_counter() - t0:.1f}s")
     warm = min(clips, key=lambda c: c["duration_s"])
     engine.run(warm)  # warm-up on the shortest clip: the first decode compiles kernels
+    release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
         for n, clip in enumerate(todo, 1):
@@ -452,6 +465,7 @@ def run(system: str, set_name: str, limit: int | None) -> None:
             }
             out.write(json.dumps(result) + "\n")
             out.flush()
+            release_cache()
             if n % 10 == 0 or n == len(todo):
                 print(f"  {n}/{len(todo)}", flush=True)
 
@@ -521,6 +535,7 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
         return
     engine = RUNTIMES[runtime](repo, mode)
     engine.decode(load_audio(min(clips, key=lambda c: c["duration_s"])["path"]))  # warm-up
+    release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
         for n, clip in enumerate(todo, 1):
@@ -528,6 +543,7 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
             result.update(chunked(engine, load_audio(clip["path"])))
             out.write(json.dumps(result) + "\n")
             out.flush()
+            release_cache()
             if n % 10 == 0 or n == len(todo):
                 print(f"  {n}/{len(todo)}", flush=True)
 

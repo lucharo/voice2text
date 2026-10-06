@@ -54,14 +54,29 @@ _Created: 2026-09-08 · Verified: 2026-09-08._
 
 ## Would 30 s pieces beat the 5 s stream for long dictations?
 
-**Short answer (proposal, 2026-10-06, not shipped):** probably. From 60 s up, decoding the recording
-in pieces of about 30 s, cut at the quietest 100 ms near each mark and decoded whole while the key is
-still held, gave 5.9% disagreement against 8.3% for today's stream on 86 long dictations, and a
-shorter median wait (0.27 s against 0.38 s). On the 40 labelled long clips (ls-long) the early word
-error rates were 5.3% for v3 as shipped and 2.3% for Parakeet Ultra in pieces. Provided decoding keeps up in real time, the
-release wait depends on the last piece (at most about 35 s of audio), not on the dictation's length.
-A slower model can fall behind, and the queued pieces then add to the wait. Waiting on
-the full grid-job5 and grid-job6 results before building it into v2t.
+**Short answer (measured 2026-10-06, not shipped):** yes, with the same model. From 60 s up, decoding
+the recording in pieces of about 30 s, cut at the quietest 100 ms near each mark and decoded whole
+while the key is still held, is both more accurate and quicker on release than today's stream:
+
+| Parakeet on ls-long (40 labelled clips, 65–286 s) | WER | wait p50 | p90 | max |
+|---|--:|--:|--:|--:|
+| v3, today's 5 s stream | 5.3% | 0.46 s | 0.75 s | 1.75 s |
+| v3 in pieces | 2.3% | 0.28 s | 0.54 s | 0.68 s |
+| Ultra, 5 s stream | 3.4% | 0.41 s | 0.60 s | 1.01 s |
+| Ultra in pieces | 2.3% | 0.33 s | 0.59 s | 0.94 s |
+
+On 86 long dictations (no ground truth, so disagreement) v3 in pieces gave 5.9% against 8.3% for the
+stream. Ultra adds nothing over v3 once both run in pieces on labelled audio; it disagrees less on
+dictations (5.2% against 6.1% on all 208), which is agreement, not correctness. The release wait
+depends on the last piece (at most about 35 s of audio) while decoding keeps up in real time; a
+slower model falls behind and the queued pieces add to the wait.
+
+Earlier waits from the grid swung between runs (v3 in pieces: p90 0.54 s, 1.48 s): `grid.py` never
+returned MLX's buffer cache, which grew about 3.5 GB per long clip until the 48 GB Mac swapped. The
+table comes from the run that clears it between clips, with no swap-outs; the stream baseline ran
+before and after the piece runs and agreed (p50 0.50 s, then 0.46 s).
+
+_Created: 2026-10-06 · Verified: 2026-10-06._
 
 ### Sources
 

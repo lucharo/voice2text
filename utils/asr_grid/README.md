@@ -52,7 +52,9 @@ VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper 
 
 Run cells one at a time: two models on the GPU contaminate each other's timings. Check `df -h /`
 and swap first: at 595 MB free a cell died with no traceback, and swapping inflated the waits of
-another, so rerun a spoiled cell rather than keep it. Voxtral's realtime session can end itself
+another, so rerun a spoiled cell rather than keep it. Results from before 2026-10-06 on long sets
+swapped by themselves: the harness kept MLX's buffer cache, about 3.5 GB per ls-long clip, and now
+clears it after every clip. Voxtral's realtime session can end itself
 early and return no words; `stopped_early_s` records where. Cells resume where they stopped. Models load offline from the Hugging Face cache; where huggingface.co is
 blocked, download them elsewhere (`hf download <repo>` with `HF_HUB_CACHE` pointed at a folder)
 and rsync that folder into `~/.cache/huggingface/hub`.
@@ -75,3 +77,6 @@ transcripts, and `<date>-report.md`, which holds numbers only.
 - **RTF** is compute over audio. A streaming system needs it well under 1 to keep up live.
 - Streaming sessions are fed 0.5 s at a time and drained between feeds; the drain for mlx-audio
   sessions reads their queue state, which is pinned to mlx-audio 0.5.7.
+
+What the grid found for long dictations, Parakeet in 30 s pieces against today's stream, is in
+[internal/streaming.md](../../internal/streaming.md#would-30-s-pieces-beat-the-5-s-stream-for-long-dictations).
