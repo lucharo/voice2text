@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.8
+
+- **Long dictations are more accurate and paste sooner.** From 60 s on, v2t transcribes the recording whole in pieces of about 30 s while you speak, each cut at the quietest moment near its mark, so letting go leaves only the last piece. On 40 labelled recordings of one to five minutes, 2.3% of words came out wrong, down from 5.3% with the running draft it replaces, and the text was ready 0.28 s after release at the median (0.46 s before). Under 60 s nothing changes.
+
 ## 0.5.7
 
 - **The pill sits up and to the right of the caret**, its tail curling down-left at 45° to just above it, so it no longer covers the caret or the text beside it. Without room above, it sits down and to the right instead. An empty field gets the same placement from its start.
