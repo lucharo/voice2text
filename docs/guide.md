@@ -30,7 +30,7 @@ v2t transcribe --clean memo.opus      # add the cleanup pass
 - `v2t --no-cleanup` pastes the raw transcription.
 
 Either way, long dictations are cleaned in chunks of about 120 words. A chunk whose cleaned length
-falls outside 75–130% of what you said (60–130% in strict) is pasted raw instead, so cleanup can
+falls outside 75 to 130% of what you said (60 to 130% in strict) is pasted raw instead, so cleanup can
 punctuate but never drop or invent content.
 
 ## History
