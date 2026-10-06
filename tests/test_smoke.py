@@ -614,10 +614,79 @@ class V2TSmokeTests(unittest.TestCase):
         stream.add_audio.assert_not_called()
         self.assertEqual(live.text, "", "the streamed text is not the preview's")
 
+    def test_parakeet_decode_runs_the_model_on_audio_and_skips_a_sub_hop_piece(self):
+        model = mock.Mock()
+        model.preprocessor_config.hop_length = 160
+        model.generate.return_value = [mock.Mock(text=" piece words ")]
+        fake_mx = types.SimpleNamespace(array=np.asarray)
+        audio_module = types.SimpleNamespace(
+            get_logmel=mock.Mock(side_effect=lambda pcm, cfg: ("mel", pcm.size))
+        )
+        stt = object.__new__(backends.ParakeetSTT)  # no model download
+        stt.model = model
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "mlx": mock.Mock(core=fake_mx),
+                "mlx.core": fake_mx,
+                "parakeet_mlx": mock.Mock(audio=audio_module),
+                "parakeet_mlx.audio": audio_module,
+            },
+        ):
+            text = stt.decode(np.ones((16000, 1), dtype=np.float32))
+            short = stt.decode(np.ones(100, dtype=np.float32))
+
+        self.assertEqual((text, short), ("piece words", ""))
+        model.generate.assert_called_once_with(("mel", 16000))
+        model.transcribe_stream.assert_not_called()
+
+    @staticmethod
+    def _speech_with_pauses(seconds: float, pauses_at: tuple[float, ...]) -> np.ndarray:
+        """Steady 'speech' with one 100 ms silence starting at each of `pauses_at`."""
+        audio = np.full(int(16000 * seconds), 0.5, dtype=np.float32)
+        for at in pauses_at:
+            audio[int(16000 * at) : int(16000 * at) + 1600] = 0.0
+        return audio
+
+    def test_pieces_are_cut_at_the_pause_nearest_each_mark_once_the_cut_is_known(self):
+        audio = self._speech_with_pauses(70, (27.0, 58.0))
+        decoded: list[int] = []
+        pieces = backends.PieceDecoder(
+            lambda piece: decoded.append(piece.size) or f"p{len(decoded)}", 16000
+        )
+        stepped_at: list[int] = []
+
+        for second in range(70):
+            pieces.add(audio[second * 16000 : (second + 1) * 16000])
+            if pieces.step():
+                stepped_at.append(second + 1)
+        text = pieces.finish()
+
+        # cut 1: the pause in 25-35 s, at 27.05 s, known at 35 s; cut 2: the pause
+        # within 5 s of 27.05 + 30 s, at 58.05 s, known at 62.05 s; the rest on finish
+        self.assertEqual(stepped_at, [35, 63])
+        self.assertEqual(decoded, [432800, 496000, 1120000 - 928800])
+        self.assertEqual(text, "p1 p2 p3")
+        self.assertEqual(
+            (pieces.pieces, pieces.decoded_samples, pieces.pending_samples),
+            (3, 1120000, 0),
+        )
+
+    def test_a_piece_with_no_words_leaves_no_gap_in_the_text(self):
+        replies = iter(["first", "  ", "third"])
+        pieces = backends.PieceDecoder(lambda piece: next(replies), 16000)
+        pieces.add(self._speech_with_pauses(70, (27.0, 58.0)))
+
+        self.assertEqual(pieces.finish(), "first third")
+        self.assertEqual(pieces.pieces, 3)
+
     def _streaming_stt(
         self, feeds: list, partial: str = "so far", final: str = "final words"
     ):
-        """An STT with Parakeet's streaming surface: stream() -> feed()/text/close()."""
+        """An STT with Parakeet's streaming surface: stream() -> feed()/text/close(),
+        and decode(audio), which long recordings use piece by piece; it returns
+        `final`, and the sizes it was given are on `stt.decoded`."""
         stream = mock.Mock()
         stream.text = ""
 
@@ -640,11 +709,14 @@ class V2TSmokeTests(unittest.TestCase):
         stream.finish.side_effect = finish
         stream.preview.return_value = ""
         stream.closed = False
-        return mock.Mock(
+        stt = mock.Mock(
             streaming=True, sample_rate=16000, stream=mock.Mock(return_value=stream)
-        ), stream
+        )
+        stt.decoded = []
+        stt.decode.side_effect = lambda audio: stt.decoded.append(audio.size) or final
+        return stt, stream
 
-    def test_streaming_feeds_the_recording_while_held_and_finalises_on_release(self):
+    def test_streaming_feeds_the_recording_while_held_and_a_long_one_ends_in_pieces(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -679,11 +751,11 @@ class V2TSmokeTests(unittest.TestCase):
             voice.live = None
 
         self.assertFalse(worker.is_alive(), "processing thread finished after release")
+        self.assertEqual(feeds, [chunk], "one chunk while held, no flush on release")
+        stream.finish.assert_not_called()
         self.assertEqual(
-            feeds, [chunk, 8000], "one chunk while held, the remainder on release"
+            voice.stt.decoded, [chunk + 8000], "under one piece: one decode of it all"
         )
-        stream.finish.assert_called_once()  # the release push also flushes the tail
-        self.assertEqual(stream.finish.call_args.args[0].size, 8000)
         self.assertEqual(
             {k: partial_status[k] for k in ("state", "words", "partial")},
             {"state": "recording", "words": 2, "partial": "so far"},
@@ -743,7 +815,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
         self.assertEqual(statuses, ["so far", "so far tail", "so far tail", "so far tail"])
         chunk = int(16000 * backends.STREAM_CHUNK_S)
-        self.assertEqual(feeds, [chunk, 32000], "previews never reach the stream")
+        self.assertEqual(feeds, [chunk], "previews never reach the stream")
         paste.assert_called_once_with("final words")
 
     def test_no_preview_runs_while_the_live_transcript_is_off(self):
@@ -787,6 +859,128 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses, ["so far", "so far", "so far"])
         paste.assert_called_once_with("final words")
         self.assertEqual(config.read_history()[-1]["streamed"], True)
+
+    # 70 s with pauses at 27 s and 58 s: pieces end at 27.05 s and 58.05 s
+    _PIECE_SIZES = (432800, 496000, 1120000 - 928800)
+
+    def _hold_long(self, voice, expect: list[str | None]):
+        """Hold a 70 s recording, fed as 0-5 s, 5-60 s and 60-70 s; after each slice
+        wait for the worker to drain it and, where `expect` names one, for that
+        partial. Returns the partial seen after each slice, the paste mock and
+        the log lines."""
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+        audio = self._speech_with_pauses(70, (27.0, 58.0))
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        worker = app.threading.Thread(target=voice.process_next)
+        worker.start()
+        self.addCleanup(worker.join)
+        statuses = []
+        for (lo, hi), wanted in zip(((0, 5), (5, 60), (60, 70)), expect):
+            frame = audio[lo * 16000 : hi * 16000].reshape(-1, 1)
+            voice.audio_callback(frame, len(frame), None, None)
+            for _ in range(100):
+                partial = config.read_status().get("partial")
+                drained = voice.live.fed == len(voice.live.frames)
+                if drained and (wanted is None or partial == wanted):
+                    break
+                app.time.sleep(0.02)
+            app.time.sleep(0.25)  # one more pass of the worker's 0.1 s loop
+            statuses.append(config.read_status().get("partial"))
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()  # a moment of wall clock: the audio decides
+            worker.join(timeout=5)
+        voice.live = None
+        self.assertFalse(worker.is_alive())
+        return statuses, paste, lines
+
+    def test_past_the_takeover_the_stream_closes_and_pieces_decode_while_held(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        order: list = []
+        stream.close.side_effect = lambda: order.append("close") or "streamed"
+        self._pieces_or_tail(voice, lambda audio: "tail", pieces=order)
+
+        statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        self.assertEqual(feeds, [80000, 880000], "the stream stops at the takeover")
+        self.assertEqual(order, ["close", *self._PIECE_SIZES], "closed, then each piece once")
+        self.assertTrue(statuses[1].startswith("piece"), "partial from the pieces")
+        self.assertTrue(
+            any(line.startswith("Heard so far") and "70s" in line for line in lines),
+            "with the live transcript off, a preview of the tail is logged as heard",
+        )
+        self.assertIn(
+            "Past the takeover: decoding the rest in pieces\n", lines
+        )
+        self.assertTrue(
+            any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
+        )
+        paste.assert_called_once_with("piece piece piece")
+        record = config.read_history()[-1]
+        self.assertEqual((record["raw"], record["streamed"]), ("piece piece piece", True))
+
+    def _pieces_or_tail(self, voice, tail, pieces: list | None = None):
+        """decode() answers 'piece' for a piece (its size goes on `pieces`) and
+        calls `tail` for a preview. The last preview while held sees exactly the
+        audio the last piece will, so that size is a piece only after release."""
+        first, second, last = self._PIECE_SIZES
+        held = {}  # the recording, kept: release detaches it from voice.live
+
+        def decode(audio):
+            live = held.setdefault("live", voice.live)  # first decode: still held
+            if audio.size in (first, second) or (
+                audio.size == last and live.done.is_set()
+            ):
+                if pieces is not None:
+                    pieces.append(audio.size)
+                return "piece"
+            return tail(audio)
+
+        voice.stt.decode.side_effect = decode
+
+    def test_past_the_takeover_the_live_transcript_previews_the_audio_after_the_pieces(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, _stream = self._streaming_stt([])
+        self._pieces_or_tail(voice, lambda audio: "tail")
+
+        statuses, paste, lines = self._hold_long(
+            voice, [None, "piece tail", "piece piece tail"]
+        )
+
+        self.assertEqual(statuses[1:], ["piece tail", "piece piece tail"])
+        self.assertFalse(
+            any(line.startswith("Heard so far") and "70s" in line for line in lines),
+            "live-transcript previews go to the status only, not the log",
+        )
+        paste.assert_called_once_with("piece piece piece")
+
+    def test_a_failing_preview_past_the_takeover_stops_previews_but_not_the_pieces(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, _stream = self._streaming_stt([])
+        previews: list[int] = []
+
+        def tail(audio):
+            previews.append(audio.size)
+            raise RuntimeError("metal out of memory")
+
+        self._pieces_or_tail(voice, tail)
+
+        statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        self.assertEqual(len(previews), 1, "off for the rest of the recording")
+        self.assertIn("Live preview off for this recording: metal out of memory\n", lines)
+        self.assertEqual(statuses[1:], ["piece", "piece piece"])
+        paste.assert_called_once_with("piece piece piece")
 
     def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -870,14 +1064,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.addCleanup(lock.close)
         feeds: list[int] = []
         voice.stt, stream = self._streaming_stt(feeds)
-        original_feed = stream.feed.side_effect
-
-        def feed(chunk):
-            if feeds:  # the final push, the remainder flushed on release
-                raise RuntimeError("metal out of memory")
-            return original_feed(chunk)
-
-        stream.feed.side_effect = feed
+        voice.stt.decode.side_effect = RuntimeError("metal out of memory")  # the last piece
         voice.stt.transcribe = mock.Mock(return_value="whole-file words")
         chunk = int(16000 * backends.STREAM_CHUNK_S)
 
@@ -894,7 +1081,8 @@ class V2TSmokeTests(unittest.TestCase):
             voice.stop_recording()
             self.assertTrue(voice.process_next(timeout=0))
 
-        self.assertEqual(feeds, [chunk], "the flush raised")
+        self.assertEqual(feeds, [chunk], "nothing pushed after release")
+        voice.stt.decode.assert_called_once()  # the piece decode raised
         self.assertTrue(stream.closed, "stream released before the fallback decode")
         paste.assert_called_once_with("whole-file words")
         self.assertEqual(config.read_status()["state"], "idle")
