@@ -1,0 +1,331 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" font-family="system-ui,-apple-system,Segoe UI,sans-serif">
+<style>.bg{fill:#fcfcfb}.grid{stroke:#ecebe7}.rule{stroke:#8a8984;stroke-dasharray:4 3}.tick{fill:#8a8984;font-size:11px}.axis{fill:#52514e;font-size:12px}.title{fill:#0b0b0b;font-size:15px;font-weight:600}.lab{font-size:12px;font-weight:600}.whole{fill:#eb6834}.stream{fill:#2a78d6}.dot{stroke:#fcfcfb;stroke-width:1.5}@media (prefers-color-scheme:dark){.bg{fill:#1a1a19}.grid{stroke:#2a2a28}.tick{fill:#8f8e86}.axis{fill:#c3c2b7}.title{fill:#fff}.whole{fill:#d95926}.stream{fill:#3987e5}.dot{stroke:#1a1a19}}</style>
+<rect class="bg" width="760" height="400"/>
+<text class="title" x="58" y="22">Wait after you let go, by dictation length (Parakeet v3, 208 real dictations)</text>
+<line class="grid" x1="285.3" x2="285.3" y1="40" y2="354"/>
+<text class="tick" x="285.3" y="370" text-anchor="middle">10 s</text>
+<line class="grid" x1="393.8" x2="393.8" y1="40" y2="354"/>
+<text class="tick" x="393.8" y="370" text-anchor="middle">30 s</text>
+<line class="grid" x1="462.2" x2="462.2" y1="40" y2="354"/>
+<text class="tick" x="462.2" y="370" text-anchor="middle">60 s</text>
+<line class="grid" x1="530.7" x2="530.7" y1="40" y2="354"/>
+<text class="tick" x="530.7" y="370" text-anchor="middle">120 s</text>
+<line class="grid" x1="621.1" x2="621.1" y1="40" y2="354"/>
+<text class="tick" x="621.1" y="370" text-anchor="middle">300 s</text>
+<line class="grid" x1="689.6" x2="689.6" y1="40" y2="354"/>
+<text class="tick" x="689.6" y="370" text-anchor="middle">600 s</text>
+<line class="grid" x1="58" x2="740" y1="329.0" y2="329.0"/>
+<text class="tick" x="51" y="333.0" text-anchor="end">0.1 s</text>
+<line class="grid" x1="58" x2="740" y1="289.3" y2="289.3"/>
+<text class="tick" x="51" y="293.3" text-anchor="end">0.3 s</text>
+<line class="grid" x1="58" x2="740" y1="245.9" y2="245.9"/>
+<text class="tick" x="51" y="249.9" text-anchor="end">1 s</text>
+<line class="grid" x1="58" x2="740" y1="206.2" y2="206.2"/>
+<text class="tick" x="51" y="210.2" text-anchor="end">3 s</text>
+<line class="grid" x1="58" x2="740" y1="162.8" y2="162.8"/>
+<text class="tick" x="51" y="166.8" text-anchor="end">10 s</text>
+<line class="grid" x1="58" x2="740" y1="123.1" y2="123.1"/>
+<text class="tick" x="51" y="127.1" text-anchor="end">30 s</text>
+<line class="grid" x1="58" x2="740" y1="79.7" y2="79.7"/>
+<text class="tick" x="51" y="83.7" text-anchor="end">100 s</text>
+<line class="rule" x1="462.2" x2="462.2" y1="40" y2="354"/>
+<text class="tick" x="467.2" y="52">60 s: v2t switches to the streamed draft</text>
+<text class="axis" x="399.0" y="392" text-anchor="middle">dictation length (log scale)</text>
+<text class="axis" transform="translate(14 197.0) rotate(-90)" text-anchor="middle">wait (log scale)</text>
+<circle class="dot whole" cx="558.9" cy="216.5" r="4"><title>160 s, whole file: 2.25 s</title></circle>
+<circle class="dot whole" cx="392.0" cy="280.1" r="4"><title>29 s, whole file: 0.39 s</title></circle>
+<circle class="dot whole" cx="409.6" cy="278.3" r="4"><title>35 s, whole file: 0.41 s</title></circle>
+<circle class="dot whole" cx="351.3" cy="295.7" r="4"><title>20 s, whole file: 0.25 s</title></circle>
+<circle class="dot whole" cx="290.0" cy="307.0" r="4"><title>10 s, whole file: 0.18 s</title></circle>
+<circle class="dot whole" cx="227.7" cy="313.8" r="4"><title>6 s, whole file: 0.15 s</title></circle>
+<circle class="dot whole" cx="360.1" cy="294.6" r="4"><title>21 s, whole file: 0.26 s</title></circle>
+<circle class="dot whole" cx="476.2" cy="255.7" r="4"><title>69 s, whole file: 0.76 s</title></circle>
+<circle class="dot whole" cx="396.5" cy="276.1" r="4"><title>31 s, whole file: 0.43 s</title></circle>
+<circle class="dot whole" cx="632.3" cy="185.7" r="4"><title>336 s, whole file: 5.29 s</title></circle>
+<circle class="dot whole" cx="394.7" cy="276.6" r="4"><title>30 s, whole file: 0.43 s</title></circle>
+<circle class="dot whole" cx="531.2" cy="235.2" r="4"><title>121 s, whole file: 1.34 s</title></circle>
+<circle class="dot whole" cx="519.9" cy="236.8" r="4"><title>108 s, whole file: 1.29 s</title></circle>
+<circle class="dot whole" cx="428.4" cy="272.6" r="4"><title>43 s, whole file: 0.48 s</title></circle>
+<circle class="dot whole" cx="455.2" cy="260.4" r="4"><title>56 s, whole file: 0.67 s</title></circle>
+<circle class="dot whole" cx="559.3" cy="218.5" r="4"><title>160 s, whole file: 2.13 s</title></circle>
+<circle class="dot whole" cx="493.0" cy="250.6" r="4"><title>82 s, whole file: 0.88 s</title></circle>
+<circle class="dot whole" cx="529.1" cy="234.5" r="4"><title>118 s, whole file: 1.37 s</title></circle>
+<circle class="dot whole" cx="452.1" cy="259.7" r="4"><title>54 s, whole file: 0.68 s</title></circle>
+<circle class="dot whole" cx="300.5" cy="300.7" r="4"><title>12 s, whole file: 0.22 s</title></circle>
+<circle class="dot whole" cx="544.9" cy="224.1" r="4"><title>139 s, whole file: 1.83 s</title></circle>
+<circle class="dot whole" cx="374.1" cy="279.9" r="4"><title>25 s, whole file: 0.39 s</title></circle>
+<circle class="dot whole" cx="464.8" cy="254.2" r="4"><title>62 s, whole file: 0.79 s</title></circle>
+<circle class="dot whole" cx="562.0" cy="216.5" r="4"><title>165 s, whole file: 2.26 s</title></circle>
+<circle class="dot whole" cx="379.9" cy="284.8" r="4"><title>26 s, whole file: 0.34 s</title></circle>
+<circle class="dot whole" cx="399.0" cy="281.4" r="4"><title>32 s, whole file: 0.37 s</title></circle>
+<circle class="dot whole" cx="347.1" cy="291.1" r="4"><title>19 s, whole file: 0.29 s</title></circle>
+<circle class="dot whole" cx="484.3" cy="247.1" r="4"><title>75 s, whole file: 0.97 s</title></circle>
+<circle class="dot whole" cx="710.0" cy="125.3" r="4"><title>738 s, whole file: 28.23 s</title></circle>
+<circle class="dot whole" cx="394.8" cy="277.1" r="4"><title>30 s, whole file: 0.42 s</title></circle>
+<circle class="dot whole" cx="389.0" cy="277.8" r="4"><title>29 s, whole file: 0.41 s</title></circle>
+<circle class="dot whole" cx="578.0" cy="213.8" r="4"><title>194 s, whole file: 2.43 s</title></circle>
+<circle class="dot whole" cx="611.8" cy="196.9" r="4"><title>273 s, whole file: 3.88 s</title></circle>
+<circle class="dot whole" cx="446.1" cy="260.9" r="4"><title>51 s, whole file: 0.66 s</title></circle>
+<circle class="dot whole" cx="395.4" cy="280.6" r="4"><title>30 s, whole file: 0.38 s</title></circle>
+<circle class="dot whole" cx="321.3" cy="303.5" r="4"><title>14 s, whole file: 0.20 s</title></circle>
+<circle class="dot whole" cx="355.0" cy="285.4" r="4"><title>20 s, whole file: 0.33 s</title></circle>
+<circle class="dot whole" cx="413.3" cy="263.7" r="4"><title>37 s, whole file: 0.61 s</title></circle>
+<circle class="dot whole" cx="564.3" cy="215.5" r="4"><title>169 s, whole file: 2.32 s</title></circle>
+<circle class="dot whole" cx="508.7" cy="243.5" r="4"><title>96 s, whole file: 1.07 s</title></circle>
+<circle class="dot whole" cx="429.8" cy="273.7" r="4"><title>43 s, whole file: 0.46 s</title></circle>
+<circle class="dot whole" cx="496.5" cy="245.2" r="4"><title>85 s, whole file: 1.02 s</title></circle>
+<circle class="dot whole" cx="557.9" cy="207.3" r="4"><title>158 s, whole file: 2.91 s</title></circle>
+<circle class="dot whole" cx="492.4" cy="246.3" r="4"><title>81 s, whole file: 0.99 s</title></circle>
+<circle class="dot whole" cx="456.6" cy="250.2" r="4"><title>57 s, whole file: 0.89 s</title></circle>
+<circle class="dot whole" cx="526.2" cy="235.1" r="4"><title>115 s, whole file: 1.35 s</title></circle>
+<circle class="dot whole" cx="510.0" cy="238.9" r="4"><title>97 s, whole file: 1.21 s</title></circle>
+<circle class="dot whole" cx="279.5" cy="310.5" r="4"><title>9 s, whole file: 0.17 s</title></circle>
+<circle class="dot whole" cx="273.9" cy="313.3" r="4"><title>9 s, whole file: 0.15 s</title></circle>
+<circle class="dot whole" cx="422.1" cy="274.3" r="4"><title>40 s, whole file: 0.45 s</title></circle>
+<circle class="dot whole" cx="613.6" cy="195.0" r="4"><title>278 s, whole file: 4.10 s</title></circle>
+<circle class="dot whole" cx="185.6" cy="320.1" r="4"><title>4 s, whole file: 0.13 s</title></circle>
+<circle class="dot whole" cx="300.4" cy="309.6" r="4"><title>12 s, whole file: 0.17 s</title></circle>
+<circle class="dot whole" cx="470.7" cy="258.0" r="4"><title>65 s, whole file: 0.71 s</title></circle>
+<circle class="dot whole" cx="255.8" cy="317.0" r="4"><title>7 s, whole file: 0.14 s</title></circle>
+<circle class="dot whole" cx="313.3" cy="302.4" r="4"><title>13 s, whole file: 0.21 s</title></circle>
+<circle class="dot whole" cx="386.0" cy="289.4" r="4"><title>28 s, whole file: 0.30 s</title></circle>
+<circle class="dot whole" cx="594.8" cy="208.4" r="4"><title>230 s, whole file: 2.83 s</title></circle>
+<circle class="dot whole" cx="608.0" cy="200.6" r="4"><title>263 s, whole file: 3.50 s</title></circle>
+<circle class="dot whole" cx="481.9" cy="256.4" r="4"><title>73 s, whole file: 0.75 s</title></circle>
+<circle class="dot whole" cx="564.3" cy="220.1" r="4"><title>169 s, whole file: 2.04 s</title></circle>
+<circle class="dot whole" cx="527.2" cy="237.1" r="4"><title>116 s, whole file: 1.28 s</title></circle>
+<circle class="dot whole" cx="544.3" cy="232.7" r="4"><title>138 s, whole file: 1.44 s</title></circle>
+<circle class="dot whole" cx="446.3" cy="265.0" r="4"><title>51 s, whole file: 0.59 s</title></circle>
+<circle class="dot whole" cx="446.1" cy="265.1" r="4"><title>51 s, whole file: 0.59 s</title></circle>
+<circle class="dot whole" cx="458.3" cy="259.9" r="4"><title>58 s, whole file: 0.68 s</title></circle>
+<circle class="dot whole" cx="360.9" cy="286.7" r="4"><title>21 s, whole file: 0.32 s</title></circle>
+<circle class="dot whole" cx="472.5" cy="254.2" r="4"><title>67 s, whole file: 0.79 s</title></circle>
+<circle class="dot whole" cx="181.8" cy="318.4" r="4"><title>4 s, whole file: 0.13 s</title></circle>
+<circle class="dot whole" cx="485.1" cy="246.7" r="4"><title>76 s, whole file: 0.98 s</title></circle>
+<circle class="dot whole" cx="527.3" cy="231.9" r="4"><title>116 s, whole file: 1.47 s</title></circle>
+<circle class="dot whole" cx="627.0" cy="187.6" r="4"><title>318 s, whole file: 5.03 s</title></circle>
+<circle class="dot whole" cx="355.9" cy="292.8" r="4"><title>20 s, whole file: 0.27 s</title></circle>
+<circle class="dot whole" cx="635.0" cy="184.7" r="4"><title>345 s, whole file: 5.44 s</title></circle>
+<circle class="dot whole" cx="340.5" cy="302.5" r="4"><title>17 s, whole file: 0.21 s</title></circle>
+<circle class="dot whole" cx="211.7" cy="319.6" r="4"><title>5 s, whole file: 0.13 s</title></circle>
+<circle class="dot whole" cx="261.3" cy="315.2" r="4"><title>8 s, whole file: 0.15 s</title></circle>
+<circle class="dot whole" cx="309.8" cy="306.2" r="4"><title>13 s, whole file: 0.19 s</title></circle>
+<circle class="dot whole" cx="432.6" cy="276.5" r="4"><title>44 s, whole file: 0.43 s</title></circle>
+<circle class="dot whole" cx="368.6" cy="286.2" r="4"><title>23 s, whole file: 0.33 s</title></circle>
+<circle class="dot whole" cx="470.3" cy="258.9" r="4"><title>65 s, whole file: 0.70 s</title></circle>
+<circle class="dot whole" cx="410.3" cy="280.9" r="4"><title>35 s, whole file: 0.38 s</title></circle>
+<circle class="dot whole" cx="425.8" cy="270.6" r="4"><title>41 s, whole file: 0.50 s</title></circle>
+<circle class="dot whole" cx="392.4" cy="284.8" r="4"><title>30 s, whole file: 0.34 s</title></circle>
+<circle class="dot whole" cx="390.7" cy="287.7" r="4"><title>29 s, whole file: 0.31 s</title></circle>
+<circle class="dot whole" cx="348.2" cy="291.8" r="4"><title>19 s, whole file: 0.28 s</title></circle>
+<circle class="dot whole" cx="272.0" cy="315.2" r="4"><title>9 s, whole file: 0.15 s</title></circle>
+<circle class="dot whole" cx="438.8" cy="268.4" r="4"><title>47 s, whole file: 0.54 s</title></circle>
+<circle class="dot whole" cx="367.8" cy="289.9" r="4"><title>23 s, whole file: 0.30 s</title></circle>
+<circle class="dot whole" cx="439.5" cy="266.9" r="4"><title>48 s, whole file: 0.56 s</title></circle>
+<circle class="dot whole" cx="352.6" cy="294.1" r="4"><title>20 s, whole file: 0.26 s</title></circle>
+<circle class="dot whole" cx="358.3" cy="292.0" r="4"><title>21 s, whole file: 0.28 s</title></circle>
+<circle class="dot whole" cx="362.4" cy="288.3" r="4"><title>22 s, whole file: 0.31 s</title></circle>
+<circle class="dot whole" cx="486.9" cy="248.3" r="4"><title>77 s, whole file: 0.93 s</title></circle>
+<circle class="dot whole" cx="440.0" cy="267.8" r="4"><title>48 s, whole file: 0.54 s</title></circle>
+<circle class="dot whole" cx="498.4" cy="248.2" r="4"><title>87 s, whole file: 0.94 s</title></circle>
+<circle class="dot whole" cx="123.6" cy="323.4" r="4"><title>2 s, whole file: 0.12 s</title></circle>
+<circle class="dot whole" cx="390.0" cy="276.7" r="4"><title>29 s, whole file: 0.43 s</title></circle>
+<circle class="dot whole" cx="400.8" cy="276.6" r="4"><title>32 s, whole file: 0.43 s</title></circle>
+<circle class="dot whole" cx="588.3" cy="210.0" r="4"><title>215 s, whole file: 2.70 s</title></circle>
+<circle class="dot whole" cx="576.0" cy="214.0" r="4"><title>190 s, whole file: 2.42 s</title></circle>
+<circle class="dot whole" cx="405.4" cy="277.8" r="4"><title>34 s, whole file: 0.41 s</title></circle>
+<circle class="dot whole" cx="423.0" cy="271.2" r="4"><title>40 s, whole file: 0.50 s</title></circle>
+<circle class="dot whole" cx="488.4" cy="250.1" r="4"><title>78 s, whole file: 0.89 s</title></circle>
+<circle class="dot whole" cx="476.7" cy="255.4" r="4"><title>69 s, whole file: 0.77 s</title></circle>
+<circle class="dot whole" cx="609.7" cy="200.2" r="4"><title>267 s, whole file: 3.54 s</title></circle>
+<circle class="dot whole" cx="335.4" cy="301.5" r="4"><title>17 s, whole file: 0.21 s</title></circle>
+<circle class="dot whole" cx="266.0" cy="312.3" r="4"><title>8 s, whole file: 0.16 s</title></circle>
+<circle class="dot whole" cx="598.5" cy="201.3" r="4"><title>239 s, whole file: 3.44 s</title></circle>
+<circle class="dot whole" cx="541.9" cy="229.5" r="4"><title>134 s, whole file: 1.57 s</title></circle>
+<circle class="dot whole" cx="694.1" cy="138.8" r="4"><title>628 s, whole file: 19.43 s</title></circle>
+<circle class="dot whole" cx="386.3" cy="275.3" r="4"><title>28 s, whole file: 0.44 s</title></circle>
+<circle class="dot whole" cx="262.6" cy="302.1" r="4"><title>8 s, whole file: 0.21 s</title></circle>
+<circle class="dot whole" cx="427.6" cy="267.6" r="4"><title>42 s, whole file: 0.55 s</title></circle>
+<circle class="dot whole" cx="362.8" cy="288.3" r="4"><title>22 s, whole file: 0.31 s</title></circle>
+<circle class="dot whole" cx="377.0" cy="284.6" r="4"><title>25 s, whole file: 0.34 s</title></circle>
+<circle class="dot whole" cx="394.5" cy="273.9" r="4"><title>30 s, whole file: 0.46 s</title></circle>
+<circle class="dot whole" cx="449.7" cy="254.0" r="4"><title>53 s, whole file: 0.80 s</title></circle>
+<circle class="dot whole" cx="407.4" cy="268.7" r="4"><title>34 s, whole file: 0.53 s</title></circle>
+<circle class="dot whole" cx="469.1" cy="241.2" r="4"><title>64 s, whole file: 1.14 s</title></circle>
+<circle class="dot whole" cx="434.7" cy="264.9" r="4"><title>45 s, whole file: 0.59 s</title></circle>
+<circle class="dot whole" cx="362.7" cy="275.4" r="4"><title>22 s, whole file: 0.44 s</title></circle>
+<circle class="dot whole" cx="593.5" cy="193.2" r="4"><title>227 s, whole file: 4.30 s</title></circle>
+<circle class="dot whole" cx="422.3" cy="265.9" r="4"><title>40 s, whole file: 0.57 s</title></circle>
+<circle class="dot whole" cx="386.6" cy="272.1" r="4"><title>28 s, whole file: 0.48 s</title></circle>
+<circle class="dot whole" cx="532.7" cy="224.5" r="4"><title>122 s, whole file: 1.81 s</title></circle>
+<circle class="dot whole" cx="480.5" cy="244.2" r="4"><title>72 s, whole file: 1.05 s</title></circle>
+<circle class="dot whole" cx="231.3" cy="305.9" r="4"><title>6 s, whole file: 0.19 s</title></circle>
+<circle class="dot whole" cx="389.9" cy="270.3" r="4"><title>29 s, whole file: 0.51 s</title></circle>
+<circle class="dot whole" cx="415.1" cy="263.7" r="4"><title>37 s, whole file: 0.61 s</title></circle>
+<circle class="dot whole" cx="506.1" cy="237.0" r="4"><title>94 s, whole file: 1.28 s</title></circle>
+<circle class="dot whole" cx="349.7" cy="288.9" r="4"><title>19 s, whole file: 0.30 s</title></circle>
+<circle class="dot whole" cx="348.3" cy="284.8" r="4"><title>19 s, whole file: 0.34 s</title></circle>
+<circle class="dot whole" cx="371.9" cy="278.8" r="4"><title>24 s, whole file: 0.40 s</title></circle>
+<circle class="dot whole" cx="334.4" cy="292.6" r="4"><title>16 s, whole file: 0.27 s</title></circle>
+<circle class="dot whole" cx="601.8" cy="197.5" r="4"><title>247 s, whole file: 3.82 s</title></circle>
+<circle class="dot whole" cx="392.6" cy="272.2" r="4"><title>30 s, whole file: 0.48 s</title></circle>
+<circle class="dot whole" cx="421.3" cy="267.3" r="4"><title>40 s, whole file: 0.55 s</title></circle>
+<circle class="dot whole" cx="488.4" cy="246.5" r="4"><title>78 s, whole file: 0.98 s</title></circle>
+<circle class="dot whole" cx="497.5" cy="240.4" r="4"><title>86 s, whole file: 1.17 s</title></circle>
+<circle class="dot whole" cx="718.4" cy="122.8" r="4"><title>803 s, whole file: 30.25 s</title></circle>
+<circle class="dot whole" cx="376.0" cy="271.4" r="4"><title>25 s, whole file: 0.49 s</title></circle>
+<circle class="dot whole" cx="415.4" cy="272.5" r="4"><title>37 s, whole file: 0.48 s</title></circle>
+<circle class="dot whole" cx="400.1" cy="280.4" r="4"><title>32 s, whole file: 0.38 s</title></circle>
+<circle class="dot whole" cx="467.7" cy="262.1" r="4"><title>63 s, whole file: 0.64 s</title></circle>
+<circle class="dot whole" cx="630.1" cy="188.5" r="4"><title>328 s, whole file: 4.91 s</title></circle>
+<circle class="dot whole" cx="198.6" cy="314.6" r="4"><title>4 s, whole file: 0.15 s</title></circle>
+<circle class="dot whole" cx="477.0" cy="259.1" r="4"><title>70 s, whole file: 0.69 s</title></circle>
+<circle class="dot whole" cx="437.0" cy="265.4" r="4"><title>46 s, whole file: 0.58 s</title></circle>
+<circle class="dot whole" cx="423.9" cy="273.7" r="4"><title>41 s, whole file: 0.46 s</title></circle>
+<circle class="dot whole" cx="513.1" cy="244.8" r="4"><title>100 s, whole file: 1.03 s</title></circle>
+<circle class="dot whole" cx="376.0" cy="291.0" r="4"><title>25 s, whole file: 0.29 s</title></circle>
+<circle class="dot whole" cx="569.6" cy="219.1" r="4"><title>178 s, whole file: 2.10 s</title></circle>
+<circle class="dot whole" cx="456.1" cy="265.9" r="4"><title>56 s, whole file: 0.57 s</title></circle>
+<circle class="dot whole" cx="500.7" cy="248.3" r="4"><title>89 s, whole file: 0.94 s</title></circle>
+<circle class="dot whole" cx="503.9" cy="248.5" r="4"><title>91 s, whole file: 0.93 s</title></circle>
+<circle class="dot whole" cx="548.6" cy="229.5" r="4"><title>144 s, whole file: 1.57 s</title></circle>
+<circle class="dot whole" cx="623.2" cy="184.0" r="4"><title>306 s, whole file: 5.55 s</title></circle>
+<circle class="dot whole" cx="725.8" cy="57.6" r="4"><title>866 s, whole file: 184.15 s</title></circle>
+<circle class="dot whole" cx="550.0" cy="219.7" r="4"><title>146 s, whole file: 2.06 s</title></circle>
+<circle class="dot whole" cx="310.4" cy="302.7" r="4"><title>13 s, whole file: 0.21 s</title></circle>
+<circle class="dot whole" cx="541.6" cy="229.3" r="4"><title>134 s, whole file: 1.58 s</title></circle>
+<circle class="dot whole" cx="414.7" cy="276.9" r="4"><title>37 s, whole file: 0.42 s</title></circle>
+<circle class="dot whole" cx="493.5" cy="249.2" r="4"><title>82 s, whole file: 0.91 s</title></circle>
+<circle class="dot whole" cx="445.5" cy="265.8" r="4"><title>51 s, whole file: 0.58 s</title></circle>
+<circle class="dot whole" cx="390.8" cy="285.5" r="4"><title>29 s, whole file: 0.33 s</title></circle>
+<circle class="dot whole" cx="630.2" cy="192.5" r="4"><title>329 s, whole file: 4.38 s</title></circle>
+<circle class="dot whole" cx="85.4" cy="333.5" r="4"><title>1 s, whole file: 0.09 s</title></circle>
+<circle class="dot whole" cx="480.7" cy="255.6" r="4"><title>72 s, whole file: 0.76 s</title></circle>
+<circle class="dot whole" cx="375.2" cy="290.9" r="4"><title>25 s, whole file: 0.29 s</title></circle>
+<circle class="dot whole" cx="427.7" cy="274.3" r="4"><title>42 s, whole file: 0.45 s</title></circle>
+<circle class="dot whole" cx="480.9" cy="254.2" r="4"><title>72 s, whole file: 0.79 s</title></circle>
+<circle class="dot whole" cx="154.7" cy="326.4" r="4"><title>3 s, whole file: 0.11 s</title></circle>
+<circle class="dot whole" cx="436.4" cy="269.5" r="4"><title>46 s, whole file: 0.52 s</title></circle>
+<circle class="dot whole" cx="390.1" cy="287.2" r="4"><title>29 s, whole file: 0.32 s</title></circle>
+<circle class="dot whole" cx="599.8" cy="202.6" r="4"><title>242 s, whole file: 3.31 s</title></circle>
+<circle class="dot whole" cx="566.5" cy="222.2" r="4"><title>172 s, whole file: 1.93 s</title></circle>
+<circle class="dot whole" cx="286.2" cy="312.1" r="4"><title>10 s, whole file: 0.16 s</title></circle>
+<circle class="dot whole" cx="592.8" cy="208.3" r="4"><title>225 s, whole file: 2.83 s</title></circle>
+<circle class="dot whole" cx="187.3" cy="319.6" r="4"><title>4 s, whole file: 0.13 s</title></circle>
+<circle class="dot whole" cx="360.8" cy="294.2" r="4"><title>21 s, whole file: 0.26 s</title></circle>
+<circle class="dot whole" cx="504.2" cy="241.7" r="4"><title>92 s, whole file: 1.12 s</title></circle>
+<circle class="dot whole" cx="319.1" cy="303.4" r="4"><title>14 s, whole file: 0.20 s</title></circle>
+<circle class="dot whole" cx="275.5" cy="313.1" r="4"><title>9 s, whole file: 0.16 s</title></circle>
+<circle class="dot whole" cx="473.0" cy="255.0" r="4"><title>67 s, whole file: 0.78 s</title></circle>
+<circle class="dot whole" cx="353.8" cy="294.9" r="4"><title>20 s, whole file: 0.26 s</title></circle>
+<circle class="dot whole" cx="367.3" cy="293.7" r="4"><title>23 s, whole file: 0.27 s</title></circle>
+<circle class="dot whole" cx="424.9" cy="274.2" r="4"><title>41 s, whole file: 0.46 s</title></circle>
+<circle class="dot whole" cx="465.1" cy="261.2" r="4"><title>62 s, whole file: 0.65 s</title></circle>
+<circle class="dot whole" cx="463.9" cy="257.5" r="4"><title>61 s, whole file: 0.72 s</title></circle>
+<circle class="dot whole" cx="505.7" cy="243.4" r="4"><title>93 s, whole file: 1.07 s</title></circle>
+<circle class="dot whole" cx="703.1" cy="147.4" r="4"><title>688 s, whole file: 15.30 s</title></circle>
+<circle class="dot whole" cx="293.4" cy="305.6" r="4"><title>11 s, whole file: 0.19 s</title></circle>
+<circle class="dot whole" cx="368.8" cy="296.0" r="4"><title>23 s, whole file: 0.25 s</title></circle>
+<circle class="dot whole" cx="62.6" cy="334.4" r="4"><title>1 s, whole file: 0.09 s</title></circle>
+<circle class="dot whole" cx="457.4" cy="259.7" r="4"><title>57 s, whole file: 0.68 s</title></circle>
+<circle class="dot whole" cx="516.9" cy="242.9" r="4"><title>104 s, whole file: 1.09 s</title></circle>
+<circle class="dot whole" cx="273.8" cy="316.7" r="4"><title>9 s, whole file: 0.14 s</title></circle>
+<circle class="dot whole" cx="614.2" cy="194.9" r="4"><title>280 s, whole file: 4.10 s</title></circle>
+<circle class="dot whole" cx="360.1" cy="296.0" r="4"><title>21 s, whole file: 0.25 s</title></circle>
+<circle class="dot whole" cx="162.2" cy="330.1" r="4"><title>3 s, whole file: 0.10 s</title></circle>
+<circle class="dot whole" cx="584.3" cy="215.3" r="4"><title>207 s, whole file: 2.33 s</title></circle>
+<circle class="dot whole" cx="335.1" cy="298.1" r="4"><title>17 s, whole file: 0.23 s</title></circle>
+<circle class="dot whole" cx="688.6" cy="165.3" r="4"><title>594 s, whole file: 9.32 s</title></circle>
+<circle class="dot whole" cx="585.8" cy="211.9" r="4"><title>210 s, whole file: 2.56 s</title></circle>
+<circle class="dot whole" cx="474.0" cy="257.3" r="4"><title>68 s, whole file: 0.73 s</title></circle>
+<circle class="dot whole" cx="438.1" cy="269.3" r="4"><title>47 s, whole file: 0.52 s</title></circle>
+<circle class="dot whole" cx="419.8" cy="272.3" r="4"><title>39 s, whole file: 0.48 s</title></circle>
+<path class="dot stream" d="M558.9,258.6L563.5,266.6L554.3,266.6Z"><title>160 s, streamed draft: 0.61 s</title></path>
+<path class="dot stream" d="M476.2,272.4L480.8,280.4L471.6,280.4Z"><title>69 s, streamed draft: 0.42 s</title></path>
+<path class="dot stream" d="M632.3,241.4L636.9,249.4L627.7,249.4Z"><title>336 s, streamed draft: 0.99 s</title></path>
+<path class="dot stream" d="M531.2,278.5L535.8,286.5L526.6,286.5Z"><title>121 s, streamed draft: 0.35 s</title></path>
+<path class="dot stream" d="M519.9,276.6L524.5,284.6L515.3,284.6Z"><title>108 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M559.3,279.8L563.9,287.8L554.7,287.8Z"><title>160 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M493.0,279.9L497.6,287.9L488.4,287.9Z"><title>82 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M529.1,271.4L533.7,279.4L524.5,279.4Z"><title>118 s, streamed draft: 0.43 s</title></path>
+<path class="dot stream" d="M544.9,269.6L549.5,277.6L540.3,277.6Z"><title>139 s, streamed draft: 0.45 s</title></path>
+<path class="dot stream" d="M464.8,277.3L469.4,285.3L460.2,285.3Z"><title>62 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M562.0,275.5L566.6,283.5L557.4,283.5Z"><title>165 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M484.3,280.3L488.9,288.3L479.7,288.3Z"><title>75 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M710.0,215.1L714.6,223.1L705.4,223.1Z"><title>738 s, streamed draft: 2.04 s</title></path>
+<path class="dot stream" d="M578.0,279.4L582.6,287.4L573.4,287.4Z"><title>194 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M611.8,272.9L616.4,280.9L607.2,280.9Z"><title>273 s, streamed draft: 0.41 s</title></path>
+<path class="dot stream" d="M564.3,276.9L568.9,284.9L559.7,284.9Z"><title>169 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M508.7,276.3L513.3,284.3L504.1,284.3Z"><title>96 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M496.5,272.0L501.1,280.0L491.9,280.0Z"><title>85 s, streamed draft: 0.42 s</title></path>
+<path class="dot stream" d="M557.9,269.1L562.5,277.1L553.3,277.1Z"><title>158 s, streamed draft: 0.46 s</title></path>
+<path class="dot stream" d="M492.4,280.2L497.0,288.2L487.8,288.2Z"><title>81 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M526.2,273.3L530.8,281.3L521.6,281.3Z"><title>115 s, streamed draft: 0.41 s</title></path>
+<path class="dot stream" d="M510.0,277.5L514.6,285.5L505.4,285.5Z"><title>97 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M613.6,275.6L618.2,283.6L609.0,283.6Z"><title>278 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M470.7,278.3L475.3,286.3L466.1,286.3Z"><title>65 s, streamed draft: 0.35 s</title></path>
+<path class="dot stream" d="M594.8,271.6L599.4,279.6L590.2,279.6Z"><title>230 s, streamed draft: 0.43 s</title></path>
+<path class="dot stream" d="M608.0,276.8L612.6,284.8L603.4,284.8Z"><title>263 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M481.9,274.5L486.5,282.5L477.3,282.5Z"><title>73 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M564.3,272.0L568.9,280.0L559.7,280.0Z"><title>169 s, streamed draft: 0.42 s</title></path>
+<path class="dot stream" d="M527.2,279.8L531.8,287.8L522.6,287.8Z"><title>116 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M544.3,283.5L548.9,291.5L539.7,291.5Z"><title>138 s, streamed draft: 0.31 s</title></path>
+<path class="dot stream" d="M472.5,273.2L477.1,281.2L467.9,281.2Z"><title>67 s, streamed draft: 0.41 s</title></path>
+<path class="dot stream" d="M485.1,276.9L489.7,284.9L480.5,284.9Z"><title>76 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M527.3,279.6L531.9,287.6L522.7,287.6Z"><title>116 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M627.0,266.7L631.6,274.7L622.4,274.7Z"><title>318 s, streamed draft: 0.49 s</title></path>
+<path class="dot stream" d="M635.0,276.5L639.6,284.5L630.4,284.5Z"><title>345 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M470.3,281.2L474.9,289.2L465.7,289.2Z"><title>65 s, streamed draft: 0.33 s</title></path>
+<path class="dot stream" d="M486.9,274.9L491.5,282.9L482.3,282.9Z"><title>77 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M498.4,277.8L503.0,285.8L493.8,285.8Z"><title>87 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M588.3,273.0L592.9,281.0L583.7,281.0Z"><title>215 s, streamed draft: 0.41 s</title></path>
+<path class="dot stream" d="M576.0,274.2L580.6,282.2L571.4,282.2Z"><title>190 s, streamed draft: 0.40 s</title></path>
+<path class="dot stream" d="M488.4,277.1L493.0,285.1L483.8,285.1Z"><title>78 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M476.7,279.9L481.3,287.9L472.1,287.9Z"><title>69 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M609.7,272.6L614.3,280.6L605.1,280.6Z"><title>267 s, streamed draft: 0.42 s</title></path>
+<path class="dot stream" d="M598.5,271.5L603.1,279.5L593.9,279.5Z"><title>239 s, streamed draft: 0.43 s</title></path>
+<path class="dot stream" d="M541.9,274.0L546.5,282.0L537.3,282.0Z"><title>134 s, streamed draft: 0.40 s</title></path>
+<path class="dot stream" d="M694.1,213.7L698.7,221.7L689.5,221.7Z"><title>628 s, streamed draft: 2.12 s</title></path>
+<path class="dot stream" d="M469.1,270.6L473.7,278.6L464.5,278.6Z"><title>64 s, streamed draft: 0.44 s</title></path>
+<path class="dot stream" d="M593.5,270.4L598.1,278.4L588.9,278.4Z"><title>227 s, streamed draft: 0.44 s</title></path>
+<path class="dot stream" d="M532.7,270.6L537.3,278.6L528.1,278.6Z"><title>122 s, streamed draft: 0.44 s</title></path>
+<path class="dot stream" d="M480.5,275.8L485.1,283.8L475.9,283.8Z"><title>72 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M506.1,263.3L510.7,271.3L501.5,271.3Z"><title>94 s, streamed draft: 0.54 s</title></path>
+<path class="dot stream" d="M601.8,269.4L606.4,277.4L597.2,277.4Z"><title>247 s, streamed draft: 0.45 s</title></path>
+<path class="dot stream" d="M488.4,272.0L493.0,280.0L483.8,280.0Z"><title>78 s, streamed draft: 0.42 s</title></path>
+<path class="dot stream" d="M497.5,275.4L502.1,283.4L492.9,283.4Z"><title>86 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M718.4,206.7L723.0,214.7L713.8,214.7Z"><title>803 s, streamed draft: 2.58 s</title></path>
+<path class="dot stream" d="M467.7,277.0L472.3,285.0L463.1,285.0Z"><title>63 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M630.1,273.8L634.7,281.8L625.5,281.8Z"><title>328 s, streamed draft: 0.40 s</title></path>
+<path class="dot stream" d="M477.0,275.2L481.6,283.2L472.4,283.2Z"><title>70 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M513.1,281.6L517.7,289.6L508.5,289.6Z"><title>100 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M569.6,281.7L574.2,289.7L565.0,289.7Z"><title>178 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M500.7,280.6L505.3,288.6L496.1,288.6Z"><title>89 s, streamed draft: 0.33 s</title></path>
+<path class="dot stream" d="M503.9,282.0L508.5,290.0L499.3,290.0Z"><title>91 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M548.6,277.4L553.2,285.4L544.0,285.4Z"><title>144 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M623.2,277.6L627.8,285.6L618.6,285.6Z"><title>306 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M725.8,216.8L730.4,224.8L721.2,224.8Z"><title>866 s, streamed draft: 1.95 s</title></path>
+<path class="dot stream" d="M550.0,280.6L554.6,288.6L545.4,288.6Z"><title>146 s, streamed draft: 0.33 s</title></path>
+<path class="dot stream" d="M541.6,275.9L546.2,283.9L537.0,283.9Z"><title>134 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M493.5,281.8L498.1,289.8L488.9,289.8Z"><title>82 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M630.2,276.5L634.8,284.5L625.6,284.5Z"><title>329 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M480.7,282.0L485.3,290.0L476.1,290.0Z"><title>72 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M480.9,274.0L485.5,282.0L476.3,282.0Z"><title>72 s, streamed draft: 0.40 s</title></path>
+<path class="dot stream" d="M599.8,276.6L604.4,284.6L595.2,284.6Z"><title>242 s, streamed draft: 0.37 s</title></path>
+<path class="dot stream" d="M566.5,277.5L571.1,285.5L561.9,285.5Z"><title>172 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M592.8,275.0L597.4,283.0L588.2,283.0Z"><title>225 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M504.2,280.3L508.8,288.3L499.6,288.3Z"><title>92 s, streamed draft: 0.34 s</title></path>
+<path class="dot stream" d="M473.0,282.0L477.6,290.0L468.4,290.0Z"><title>67 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M465.1,278.9L469.7,286.9L460.5,286.9Z"><title>62 s, streamed draft: 0.35 s</title></path>
+<path class="dot stream" d="M463.9,274.0L468.5,282.0L459.3,282.0Z"><title>61 s, streamed draft: 0.40 s</title></path>
+<path class="dot stream" d="M505.7,275.0L510.3,283.0L501.1,283.0Z"><title>93 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M703.1,214.9L707.7,222.9L698.5,222.9Z"><title>688 s, streamed draft: 2.05 s</title></path>
+<path class="dot stream" d="M516.9,277.6L521.5,285.6L512.3,285.6Z"><title>104 s, streamed draft: 0.36 s</title></path>
+<path class="dot stream" d="M614.2,275.9L618.8,283.9L609.6,283.9Z"><title>280 s, streamed draft: 0.38 s</title></path>
+<path class="dot stream" d="M584.3,281.9L588.9,289.9L579.7,289.9Z"><title>207 s, streamed draft: 0.32 s</title></path>
+<path class="dot stream" d="M688.6,275.0L693.2,283.0L684.0,283.0Z"><title>594 s, streamed draft: 0.39 s</title></path>
+<path class="dot stream" d="M585.8,278.4L590.4,286.4L581.2,286.4Z"><title>210 s, streamed draft: 0.35 s</title></path>
+<path class="dot stream" d="M474.0,282.4L478.6,290.4L469.4,290.4Z"><title>68 s, streamed draft: 0.32 s</title></path>
+<text class="lab whole" x="552.7" y="156.2" text-anchor="end">● read the whole file after release</text>
+<text class="lab stream" x="734.9" y="322.4" text-anchor="end">▲ keep the streamed draft (from 60 s)</text>
+</svg>

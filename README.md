@@ -123,9 +123,14 @@ optional live transcript on the pill. What happens when you let go depends on ho
 - **Under 60 seconds:** the draft is thrown away and the whole recording is transcribed again in
   one pass. That takes about a third of a second and gives the more accurate text.
 - **60 seconds or more:** the draft is kept and only the last few seconds are transcribed. Redoing
-  the whole recording would take longer the longer you spoke: 1.4 s at the median for dictations
-  over a minute, and up to 111 s for one 12-minute dictation. Finishing the draft takes about 0.3 s
-  whatever the length.
+  the whole recording would take longer the longer you spoke: 1.5 s at the median for dictations
+  over a minute, 15 to 30 s for ten-minute ones, and three minutes for one 14-minute dictation.
+  Finishing the draft takes about 0.4 s whatever the length.
+
+![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to three minutes; the streamed draft stays under a second from 60 s up](docs/images/wait-vs-length.svg)
+
+<sub>One dot per dictation, Parakeet v3 on an M4 Pro. Made with
+`python utils/asr_grid/plot_wait.py` from the [ASR grid](utils/asr_grid/README.md) results.</sub>
 
 The draft is not kept every time because it is less accurate. To keep up live, each stretch of
 audio is transcribed using only the ~20 seconds before it, not the whole recording, and each 5 s

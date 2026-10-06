@@ -47,6 +47,7 @@ VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py chunk --system qwen3-asr-1.7b-8bit --set wispr
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py report
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/report_html.py --headline "..."
+.venv/bin/python utils/asr_grid/plot_wait.py               # the README's wait-vs-length chart
 ```
 
 Run cells one at a time: two models on the GPU contaminate each other's timings. Cells resume
