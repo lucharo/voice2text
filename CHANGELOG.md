@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- Keep the Mac app's version aligned with the Python package. Includes the 0.5.0 desktop UI and 0.5.1 publication fix.
+
 ## 0.5.1
 
 - Fix Mac release publication after notarisation: zsh now passes the existing release tag's refspec unchanged to Git. This completes delivery of the 0.5.0 desktop UI; dictation behaviour is unchanged.

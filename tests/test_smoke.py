@@ -14,6 +14,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import tomllib
 import types
 import unittest
 from pathlib import Path
@@ -26,6 +27,11 @@ from v2t import app, backends, bench, cli, config, menubar, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
+    def test_app_version_matches_package_release(self):
+        project = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        expected = tomllib.loads(project.read_text())["project"]["version"]
+        self.assertEqual(menubar.__version__, expected)
+
     def test_grid_compute_uses_the_shipped_short_and_long_clip_paths(self):
         from utils.asr_grid import grid
 
