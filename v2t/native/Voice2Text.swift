@@ -72,7 +72,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
         }
-        if CommandLine.arguments.contains("--start") {
+        // Opening the app starts dictation once both grants exist, so nobody
+        // has to press Start after a login, an upgrade or a relaunch. Without
+        // them, Start stays a deliberate click that leads to the prompts.
+        refresh()
+        let granted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && AXIsProcessTrusted()
+        if CommandLine.arguments.contains("--start") || granted {
             start()
         }
     }
@@ -116,7 +121,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func start() {
         guard engine == nil && !externalEngine && phase != "permissions" && phase != "starting" else { return }
-        NSApp.activate(ignoringOtherApps: true)
         try? FileManager.default.removeItem(at: home.appendingPathComponent("run/last-error"))
         phase = "permissions"
         render()
@@ -124,6 +128,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .authorized:
             requestSystemPermissions()
         case .notDetermined:
+            NSApp.activate(ignoringOtherApps: true)  // only a prompt needs the focus
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
                     if granted { self?.requestSystemPermissions() }
@@ -140,6 +145,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // one-second refresh starts the engine as soon as the switch is on, so
     // nobody has to come back and press Start a second time.
     private func requestSystemPermissions() {
+        if !AXIsProcessTrusted() { NSApp.activate(ignoringOtherApps: true) }
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(prompt) else {
             phase = "awaiting-accessibility"
@@ -667,8 +673,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
-/// Near the text cursor is the default. Where the focused app exposes no caret
-/// (Ghostty), the pill sits at the bottom of the focused field or pane instead.
+/// Near the text cursor is the default: a speech bubble beside the focused text
+/// box, pointing at the caret. A tall pane with no caret (a Ghostty split) gets
+/// the pill at its bottom instead.
 enum PillStyle: String, CaseIterable {
     case cursorBubble = "caret", compactBottom = "bottom", off
 
@@ -690,10 +697,15 @@ final class Pill: NSObject {
     private let view = PillView()
     private var ticker: Timer?
     private var visible = false
-    private var anchor: NSRect?
-    private var recordingAnchor: NSRect?
+    /// What the focused app reported when the recording started.
+    struct Focus {
+        var caret: NSRect?
+        var box: NSRect?  // the focused element's frame
+        var atStart = false  // caret at index 0: an empty field
+    }
+    private var focus = Focus()
+    private var target: (x: CGFloat, box: NSRect)?  // the bubble's tail x and the box it sits beside
     private var pane: NSRect?
-    private var recordingPane: NSRect?
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
@@ -713,8 +725,15 @@ final class Pill: NSObject {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.contentView = view
-        undoButton.bezelStyle = .inline
-        undoButton.appearance = NSAppearance(named: .darkAqua)
+        // Drawn as a light chip: an inline bezel reads as disabled in a panel
+        // that is never key.
+        undoButton.isBordered = false
+        undoButton.wantsLayer = true
+        undoButton.layer?.backgroundColor = NSColor(white: 1, alpha: 0.2).cgColor
+        undoButton.layer?.cornerRadius = 11
+        undoButton.attributedTitle = NSAttributedString(string: "Undo  ⌘Z", attributes: [
+            .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        ])
         undoButton.refusesFirstResponder = true
         undoButton.focusRingType = .none
         undoButton.target = self
@@ -729,7 +748,7 @@ final class Pill: NSObject {
     /// Words show only with the experimental `live_transcript` config key on.
     func update(phase: String, partial: String, liveTranscript: Bool) {
         if phase == "recording" && view.phase != "recording" {
-            (recordingAnchor, recordingPane) = Self.focusedAnchors()
+            focus = Self.focused()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -750,19 +769,30 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
-    /// Above the insertion caret, with bottom centre as the explicit alternative.
-    /// An app that exposes no caret gets the bottom centre of its focused field
-    /// or pane, else of the screen.
+    /// A speech bubble beside the focused text box: below it when the box is in
+    /// the top half of the screen, above it otherwise, its tail at the caret (or
+    /// at the start of an empty field). A box taller than 40% of the screen is a
+    /// document or terminal pane: the bubble goes by the caret line, or without
+    /// a caret, the pill sits at the pane's bottom centre.
     private func show() {
         let style = style
-        let pointer = NSEvent.mouseLocation
-        anchor = style == .cursorBubble ? recordingAnchor : nil
-        pane = style == .cursorBubble ? recordingPane : nil
-        let location = (anchor ?? pane).map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
+        let location = (focus.caret ?? focus.box).map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
         else { return }
         self.screen = screen
-        view.style = style == .cursorBubble && anchor == nil ? .compactBottom : style
+        target = nil
+        pane = nil
+        if style == .cursorBubble {
+            let tall = focus.box.map { $0.height > screen.visibleFrame.height * 0.4 } ?? true
+            if let box = focus.box, !tall {
+                target = (focus.caret?.midX ?? (focus.atStart ? box.minX + 16 : box.midX), box)
+            } else if let caret = focus.caret {
+                target = (caret.midX, caret)
+            } else {
+                pane = focus.box
+            }
+        }
+        view.style = style == .cursorBubble && target == nil ? .compactBottom : style
         position()
         panel.invalidateShadow()
         panel.alphaValue = 0
@@ -778,27 +808,28 @@ final class Pill: NSObject {
     private func position() {
         guard let screen else { return }
         let area = screen.visibleFrame
-        var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : view.compactSize
+        var size = view.phase == "cancelled" ? NSSize(width: 214, height: 34) : view.compactSize
         size.width = min(size.width, area.width - 16)
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
-        let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
-        var x = base.midX - size.width / 2
-        // A field too short to hold the pill clear of its text gets it just below.
-        var y = pane != nil && base.height < 3 * size.height ? base.minY - size.height - 8 : base.minY + 20
+        var x: CGFloat, y: CGFloat
         view.tailBelow = true
-        if style == .cursorBubble, let anchor {
-            x = anchor.midX - size.width / 2
-            y = anchor.maxY + 8
-            if y + size.height > top - 8 {
-                y = anchor.minY - size.height - 8
-                view.tailBelow = false
-            }
+        if let target {
+            x = target.x - size.width / 2
+            var below = target.box.midY >= screen.frame.midY  // top half (Cocoa y grows up)
+            if below && target.box.minY - size.height - 6 < area.minY + 8 { below = false }
+            if !below && target.box.maxY + size.height + 6 > top - 8 { below = true }
+            y = below ? target.box.minY - size.height - 6 : target.box.maxY + 6
+            view.tailBelow = !below  // the tail points back at the box
+        } else {
+            let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
+            x = base.midX - size.width / 2
+            y = base.minY + 20
         }
         x = min(max(x, area.minX + 8), area.maxX - size.width - 8)
         y = min(max(y, area.minY + 8), top - size.height - 8)
-        view.tailX = min(max((anchor?.midX ?? (x + size.width / 2)) - x, 16), size.width - 16)
+        view.tailX = min(max((target?.x ?? (x + size.width / 2)) - x, 16), size.width - 16)
         panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
-        undoButton.frame = NSRect(x: size.width - 68, y: 6, width: 54, height: 22)
+        undoButton.frame = NSRect(x: size.width - 92, y: 6, width: 80, height: 22)
         panel.invalidateShadow()
     }
 
@@ -806,7 +837,7 @@ final class Pill: NSObject {
     /// element's frame (in a terminal such as Ghostty, the split being typed in),
     /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
     /// main thread for one AX timeout, not two.
-    private static func focusedAnchors() -> (caret: NSRect?, pane: NSRect?) {
+    private static func focused() -> Focus {
         // Capture once at recording start; never follow the cursor while speaking.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         enableElectronAccessibility()
@@ -815,8 +846,9 @@ final class Pill: NSObject {
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
               let primary = NSScreen.screens.first
-        else { return (nil, nil) }
+        else { return Focus() }
         let element = focused as! AXUIElement
+        var result = Focus()
         let flip = { (rect: CGRect) in
             NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
         }
@@ -825,15 +857,15 @@ final class Pill: NSObject {
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
             var range = CFRange()
             if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
+                result.atStart = range.location == 0
                 // Native text views answer for the empty range at the caret.
                 // Chromium (Chrome, Electron apps such as Claude) answers a
                 // zero-height rect there, so measure the character before it.
                 if let rect = bounds(element, CFRange(location: range.location, length: 0)) {
-                    return (flip(rect), nil)
-                }
-                if range.location > 0,
-                   let rect = bounds(element, CFRange(location: range.location - 1, length: 1)) {
-                    return (flip(CGRect(x: rect.maxX, y: rect.minY, width: 1, height: rect.height)), nil)
+                    result.caret = flip(rect)
+                } else if range.location > 0,
+                          let rect = bounds(element, CFRange(location: range.location - 1, length: 1)) {
+                    result.caret = flip(CGRect(x: rect.maxX, y: rect.minY, width: 1, height: rect.height))
                 }
             }
         }
@@ -846,8 +878,9 @@ final class Pill: NSObject {
               let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
               size.width >= 120, size.height >= 20
-        else { return (nil, nil) }
-        return (nil, flip(CGRect(origin: position, size: size)))
+        else { return result }
+        result.box = flip(CGRect(origin: position, size: size))
+        return result
     }
 
     /// The screen rect of `range` in `element`, or nil when the app has none.
@@ -907,7 +940,7 @@ final class PillView: NSView {
         let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
         let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16
             : phase == "cleaning" ? 132 : 116
-        return NSSize(width: width, height: 34 + (style == .cursorBubble ? 6 : 0))
+        return NSSize(width: width, height: 34 + (style == .cursorBubble ? Self.tail : 0))
     }
 
     func begin() {
@@ -939,28 +972,51 @@ final class PillView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         var body = bounds
-        if style == .cursorBubble && phase != "cancelled" {
-            body.size.height -= 6
-            if tailBelow { body.origin.y += 6 }
+        let bubble = style == .cursorBubble && phase != "cancelled"
+        if bubble {
+            body.size.height -= Self.tail
+            if tailBelow { body.origin.y += Self.tail }
         }
         let radius = body.height / 2
         let capsule = NSBezierPath(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
-        NSColor(white: 0.07, alpha: 0.92).setFill()
-        capsule.fill()
+        let tail = NSBezierPath()
+        if bubble {
+            // A Messages-style tail: a wide base inside the bubble, a convex
+            // sweep down to a point beside the caret and a concave curl back.
+            let s: CGFloat = tailBelow ? -1 : 1  // towards the box
+            let base = tailBelow ? body.minY + 3 : body.maxY - 3
+            let tip = NSPoint(x: tailX - 6, y: tailBelow ? bounds.minY : bounds.maxY)
+            tail.move(to: NSPoint(x: tailX + 9, y: base))
+            tail.curve(to: tip, controlPoint1: NSPoint(x: tailX + 8, y: base + s * 8),
+                       controlPoint2: NSPoint(x: tailX + 2, y: tip.y - s * 1))
+            tail.curve(to: NSPoint(x: tailX - 4, y: base), controlPoint1: NSPoint(x: tailX - 2, y: tip.y - s * 3),
+                       controlPoint2: NSPoint(x: tailX - 2, y: base + s * 5))
+            tail.close()
+        }
+        // Bubble and tail in one translucent layer, so their overlap is not darker.
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.setAlpha(0.92)
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            NSColor(white: 0.07, alpha: 1).setFill()
+            capsule.fill()
+            tail.fill()
+            context.endTransparencyLayer()
+            context.restoreGState()
+        }
+        // The outline stops where the tail joins.
+        NSGraphicsContext.saveGraphicsState()
+        if bubble {
+            let clip = NSBezierPath(rect: bounds)
+            clip.appendRect(NSRect(x: tailX - 4, y: tailBelow ? body.minY - 1 : body.maxY - 3, width: 13, height: 4))
+            clip.windingRule = .evenOdd
+            clip.addClip()
+        }
         NSColor(white: 1, alpha: 0.14).setStroke()
         capsule.stroke()
-        if style == .cursorBubble && phase != "cancelled" {
-            let tail = NSBezierPath()
-            let edge = tailBelow ? body.minY + 1 : body.maxY - 1
-            tail.move(to: NSPoint(x: tailX - 6, y: edge))
-            tail.line(to: NSPoint(x: tailX, y: tailBelow ? bounds.minY : bounds.maxY))
-            tail.line(to: NSPoint(x: tailX + 6, y: edge))
-            tail.close()
-            NSColor(white: 0.07, alpha: 0.92).setFill()
-            tail.fill()
-        }
+        NSGraphicsContext.restoreGraphicsState()
         if phase == "cancelled" {
-            drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 88, height: bounds.height),
+            drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 112, height: bounds.height),
                      color: NSColor(white: 1, alpha: 0.9))
             return
         }
@@ -990,6 +1046,7 @@ final class PillView: NSView {
     }
 
     private static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+    static let tail: CGFloat = 9
 
     private func drawBars(in rect: NSRect) {
         let width: CGFloat = 3, gap: CGFloat = 2.5
