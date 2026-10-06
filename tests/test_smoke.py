@@ -2476,6 +2476,81 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.recording)
         self.assertFalse(voice.latched)
 
+    CMD, SHIFT = 1 << 20, 1 << 17
+
+    def _quartz(self):
+        """Quartz as the listener sees it; an event is a keycode or (keycode, flags)."""
+        return types.SimpleNamespace(
+            kCGEventFlagMaskSecondaryFn=1 << 23, kCGKeyboardEventKeycode=9,
+            kCGEventKeyUp=11, kCGEventFlagMaskCommand=self.CMD,
+            kCGEventFlagMaskShift=self.SHIFT, kCGEventFlagMaskControl=1 << 18,
+            kCGEventFlagMaskAlternate=1 << 19,
+            CGEventGetIntegerValueField=lambda event, _field: event[0] if isinstance(event, tuple) else event,
+            CGEventGetFlags=lambda event: event[1] if isinstance(event, tuple) else 0,
+        )
+
+    def test_the_cancelled_pill_goes_away_when_the_undo_window_closes(self):
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+        voice.undo_timer.fire()
+
+        self.assertEqual(config.read_status()["state"], "idle")
+        self.assertIsNone(voice.cancelled_audio, "the held audio is dropped")
+        self.assertIsNone(voice.undo_timer)
+        voice.request_undo()
+        voice.process_next(timeout=0)
+        self.assertFalse(voice.recording, "nothing left to undo")
+
+    def test_the_undo_window_waits_for_a_cancelled_job_to_drain(self):
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))
+        first = voice.undo_timer
+        voice.processing = True  # the cancelled inference has not returned yet
+
+        first.fire()
+
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        self.assertIsNotNone(voice.cancelled_audio)
+        self.assertIsNot(voice.undo_timer, first, "looks again shortly")
+
+    def test_cmd_z_undoes_only_while_a_cancelled_dictation_is_recoverable(self):
+        voice, _tap = self._tapper()
+        class Listener:
+            _MODIFIER_FLAGS = {}
+            def __init__(self, **options):
+                self.options = options
+        escape = types.SimpleNamespace(name="esc", value=types.SimpleNamespace(vk=53))
+        keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value),
+            Key=types.SimpleNamespace(esc=escape),
+        )
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": self._quartz()}):
+            listener = app._listener(
+                voice.on_press, voice.on_release, voice.consume_escape, voice.take_undo_shortcut
+            )
+        intercept = listener.options["darwin_intercept"]
+        cmd_z, cmd_shift_z = (app.Z_VK, self.CMD), (app.Z_VK, self.CMD | self.SHIFT)
+
+        self.assertEqual(intercept(10, cmd_z), cmd_z, "idle: the app's own undo")
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(escape)
+        intercept(11, 53)
+        self.assertEqual(intercept(10, (app.Z_VK, 0)), (app.Z_VK, 0), "plain z passes")
+        self.assertEqual(intercept(10, cmd_shift_z), cmd_shift_z, "redo passes")
+        self.assertIsNone(intercept(10, cmd_z))
+        self.assertTrue(voice.undo_requested.is_set())
+        self.assertIsNone(intercept(10, cmd_z), "autorepeat swallowed")
+        self.assertIsNone(intercept(11, (app.Z_VK, 0)), "key-up swallowed, Cmd already up")
+        voice.undo_timer.fire()  # the window closes
+        self.assertEqual(intercept(10, cmd_z), cmd_z)
+
     def test_listener_swallows_only_escape_consumed_by_the_dictation(self):
         voice, _tap = self._tapper()
         class Listener:
@@ -2487,12 +2562,7 @@ class V2TSmokeTests(unittest.TestCase):
             Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value),
             Key=types.SimpleNamespace(esc=escape),
         )
-        quartz = types.SimpleNamespace(
-            kCGEventFlagMaskSecondaryFn=1 << 23, kCGKeyboardEventKeycode=9,
-            kCGEventKeyUp=11,
-            CGEventGetIntegerValueField=lambda event, _field: event,
-        )
-        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": self._quartz()}):
             listener = app._listener(voice.on_press, voice.on_release, voice.consume_escape)
         intercept = listener.options["darwin_intercept"]
         listener.options["on_press"](escape)
