@@ -454,6 +454,7 @@ def run(system: str, set_name: str, limit: int | None) -> None:
     print(f"loaded in {time.perf_counter() - t0:.1f}s")
     warm = min(clips, key=lambda c: c["duration_s"])
     engine.run(warm)  # warm-up on the shortest clip: the first decode compiles kernels
+    release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
         for n, clip in enumerate(todo, 1):
@@ -534,6 +535,7 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
         return
     engine = RUNTIMES[runtime](repo, mode)
     engine.decode(load_audio(min(clips, key=lambda c: c["duration_s"])["path"]))  # warm-up
+    release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
         for n, clip in enumerate(todo, 1):
