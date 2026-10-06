@@ -326,6 +326,6 @@
 <path class="dot stream" d="M688.6,275.0L693.2,283.0L684.0,283.0Z"><title>594 s, streamed draft: 0.39 s</title></path>
 <path class="dot stream" d="M585.8,278.4L590.4,286.4L581.2,286.4Z"><title>210 s, streamed draft: 0.35 s</title></path>
 <path class="dot stream" d="M474.0,282.4L478.6,290.4L469.4,290.4Z"><title>68 s, streamed draft: 0.32 s</title></path>
-<text class="lab whole" x="552.7" y="156.2" text-anchor="end">● read the whole file after release</text>
+<text class="lab whole" x="433.8" y="156.2" text-anchor="end">● read the whole file after release</text>
 <text class="lab stream" x="734.9" y="322.4" text-anchor="end">▲ keep the streamed draft (from 60 s)</text>
 </svg>

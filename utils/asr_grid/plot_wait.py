@@ -92,7 +92,7 @@ def main() -> int:
             f'L{cx - 4.6:.1f},{cy + 3:.1f}Z"><title>{d:.0f} s, streamed draft: {w:.2f} s</title></path>'
         )
     out.append(
-        f'<text class="lab whole" x="{X(150):.1f}" y="{Y(12):.1f}" text-anchor="end">● read the whole file after release</text>'
+        f'<text class="lab whole" x="{X(45):.1f}" y="{Y(12):.1f}" text-anchor="end">● read the whole file after release</text>'
     )
     out.append(
         f'<text class="lab stream" x="{X(950):.1f}" y="{Y(0.12):.1f}" text-anchor="end">▲ keep the streamed draft (from 60 s)</text>'
