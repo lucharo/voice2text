@@ -276,7 +276,7 @@ The optional app is a single, inspectable Swift source file — no window, Xcode
 or separate settings system. It exists because macOS only grants microphone access to a real app
 identity. The menu requests the two native grants, starts one long-running Python process, shows
 state immediately (the icon turns red while recording), previews the last transcription with a
-copy action, and links to config, history, and log. Run `v2t` in a terminal instead if you do not
+copy action, shows the installed version, and links to config, history, log and **Send Feedback…** (a new GitHub issue). Run `v2t` in a terminal instead if you do not
 want the menu.
 
 **The pill.** While you dictate, a small capsule floats over every app: a bar waveform of the level

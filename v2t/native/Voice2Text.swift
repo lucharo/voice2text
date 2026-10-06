@@ -477,6 +477,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let models = "\(stt) · \(cleanup == "off" ? "no cleanup" : "clean: \(cleanup)")"
             add(models, enabled: false).attributedTitle = secondary(models)
         }
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            add("Version \(version)", enabled: false).attributedTitle = secondary("Version \(version)")
+        }
         if phase == "no-engine" {
             // A prebuilt shell (brew cask) with no engine to run: name the one command.
             let hint = "Run: uv tool install voice2text"
@@ -543,6 +546,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
         add("Dictionary", action: #selector(openDictionary), image: symbol("character.book.closed"))
         add("Log", action: #selector(openLog), image: symbol("doc.text"))
+        add("Send Feedback…", action: #selector(openFeedback), image: symbol("bubble.left"))
         menu.addItem(.separator())
         add("Quit Voice2Text", action: #selector(quit), key: "q")
     }
@@ -673,6 +677,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(url)
     }
     @objc private func openLog() { NSWorkspace.shared.open(home.appendingPathComponent("run/v2t.log")) }
+    @objc private func openFeedback() {
+        if let url = URL(string: "https://github.com/lucharo/voice2text/issues/new") { NSWorkspace.shared.open(url) }
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.5
+
+- The menu shows the installed version under the model line, and **Send Feedback…** opens a new GitHub issue.
+- Releases publish on the `v<version>` tag push alone; the manual approval step in the `release` environment is gone (only `v*` tags may deploy to it).
+
 ## 0.5.4
 
 - **The live transcript keeps up: words show about 1 s after you say them, down from about 3 s.** Between 5 s decoding chunks the engine previews the newest audio every second. The preview is display only: the pasted text is unchanged (identical with and without previews on 7 recordings).
