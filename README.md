@@ -114,6 +114,31 @@ in that pane: `defaults write com.apple.HIToolbox AppleFnUsageType -int 0` write
 running apps keep the old one until you log out and in, so a tap still opens the emoji picker. `v2t`
 warns in the log while the stored value is not 0.
 
+### What happens while you hold the key
+
+With Parakeet (the default), v2t transcribes while you speak. Every 5 seconds the new audio goes to
+the model, which extends a running draft: that draft is the word count in the menu bar and the
+optional live transcript on the pill. What happens when you let go depends on how long you spoke:
+
+- **Under 60 seconds:** the draft is thrown away and the whole recording is transcribed again in
+  one pass. That takes about a third of a second and gives the more accurate text.
+- **60 seconds or more:** the draft is kept and only the last few seconds are transcribed. Redoing
+  the whole recording would take longer the longer you spoke: 1.4 s at the median for dictations
+  over a minute, and up to 111 s for one 12-minute dictation. Finishing the draft takes about 0.3 s
+  whatever the length.
+
+The draft is not kept every time because it is less accurate. To keep up live, each stretch of
+audio is transcribed using only the ~20 seconds before it, not the whole recording, and each 5 s
+piece is processed on its own. On dictations over a minute the draft differs from the whole-file
+text in about 8% of words. Under a minute, redoing the recording costs about the same as finishing
+the draft, so nothing is gained by accepting that difference. Measured on 208 real dictations on an
+M4 Pro; the details are in the
+[FAQ](docs/faq/README.md#how-do-i-turn-streaming-transcription-on-or-off-and-what-does-it-actually-change).
+
+`v2t --streaming-mode off` (or `streaming_mode = "off"` in the config) turns this off: nothing is
+transcribed until you let go, and every recording is transcribed whole. Whisper cannot stream, so
+it always works that way.
+
 ### Transcribing files
 
 `v2t transcribe` points the same local models at audio already on disk — anything ffmpeg reads
