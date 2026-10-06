@@ -2,10 +2,10 @@
 
     python report_html.py --headline "..." --sub "..."    # -> ~/.v2t/eval/grid/<date>-grid-report.html
 
-Two scatters (your dictations; the labelled sets pooled): error against the wait after
-release, one dot per system, colour and shape by pipeline, with the Pareto front (the systems
-nothing beats on both error and wait). On the dictations an arrow joins each whole-file system
-to its chunked run. A table carries every number.
+Three scatters (your dictations; long labelled clips; the short labelled sets pooled):
+error against the wait after release, one dot per system, colour and shape by pipeline, with the Pareto front (the systems
+nothing beats on both error and wait). Where a chunked run exists, an arrow joins it to the
+same system's whole-file run. A table carries every number.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent))
 import grid  # noqa: E402
 
-LABELLED = ["ls-clean", "ls-other", "fleurs-es"]
+LABELLED = ["ls-clean", "ls-other", "fleurs-es"]  # pooled; all under 60 s
+LONG = "ls-long"  # labelled, 65 to 286 s: the only labelled clips the 60 s rule reaches
 NAMES = {
     "parakeet-v3": "Parakeet v3 (today)",
     "parakeet-ultra": "Parakeet Ultra",
@@ -45,7 +46,7 @@ PIPELINES = {
 def collect() -> dict:
     sets = {
         name: {r["system"]: r for r in grid.score_set(name)}
-        for name in LABELLED + ["wispr"]
+        for name in LABELLED + ["wispr", LONG]
     }
     systems = sorted(set().union(*[set(rows) for rows in sets.values()]))
     out = []
@@ -66,7 +67,16 @@ def collect() -> dict:
             if len(labelled) == len(LABELLED)
             else None
         )
-        wispr = per_set["wispr"]
+        def scatter(r: dict | None) -> dict | None:
+            return None if not r else {
+                "wer": r["wer"],
+                "p50": r["wait_p50"],
+                "p90": r["wait_p90"],
+                "max": r["wait_max"],
+                "rtf": r["rtf"],
+                "n": r["n"],
+            }
+
         out.append(
             {
                 "id": system,
@@ -77,16 +87,8 @@ def collect() -> dict:
                     for name, r in per_set.items()
                 },
                 "labelled": pooled,
-                "wispr": None
-                if not wispr
-                else {
-                    "wer": wispr["wer"],
-                    "p50": wispr["wait_p50"],
-                    "p90": wispr["wait_p90"],
-                    "max": wispr["wait_max"],
-                    "rtf": wispr["rtf"],
-                    "n": wispr["n"],
-                },
+                "wispr": scatter(per_set["wispr"]),
+                "long": scatter(per_set[LONG]),
             }
         )
     return {"systems": out, "pipelines": PIPELINES}
@@ -126,6 +128,7 @@ footer{margin-top:40px;font-size:12px;color:var(--fg3);border-top:1px solid var(
 <h1>__HEADLINE__</h1><p class="sub">__SUB__</p>
 <div class="charts">
  <div class="card"><h2 id="h-wispr">Your dictations</h2><p class="note">Disagreement with the other systems' consensus (not truth) · wait p50, whisker to p90</p><svg id="c-wispr" role="img" aria-label="Scatter: disagreement against wait on your dictations"></svg></div>
+ <div class="card"><h2 id="h-long">Long labelled clips</h2><p class="note">Word error rate on LibriSpeech chapters joined into 65–286 s clips, where v2t's 60 s rule applies · wait p50, whisker to p90</p><svg id="c-long" role="img" aria-label="Scatter: WER against wait on long labelled clips"></svg></div>
  <div class="card"><h2>Labelled clips: LibriSpeech clean + other, FLEURS Spanish</h2><p class="note" id="n-labelled">Word error rate · wait p50, whisker to p90</p><svg id="c-labelled" role="img" aria-label="Scatter: WER against wait on labelled clips"></svg></div>
 </div>
 <div class="legend" id="legend"></div>
@@ -192,16 +195,18 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
   hit.onmouseleave=()=>tip.style.opacity=0}}
 {const n=Math.max(0,...DATA.systems.map(s=>s.wispr?s.wispr.n:0));document.getElementById('h-wispr').textContent=`Your dictations (the ${n} every model finished)`}
 {const n=Math.max(0,...DATA.systems.map(s=>s.labelled?s.labelled.n:0));document.getElementById('n-labelled').textContent=`Word error rate pooled over ${n} clips · wait p50, whisker to p90`}
-chart('c-wispr','wispr');chart('c-labelled','labelled');
+{const n=Math.max(0,...DATA.systems.map(s=>s.long?s.long.n:0));document.getElementById('h-long').textContent=`Long labelled clips (${n})`}
+chart('c-wispr','wispr');chart('c-long','long');chart('c-labelled','labelled');
 const lg=document.getElementById('legend');for(const [mode,label] of Object.entries(DATA.pipelines)){const sp=document.createElement('span');const s=el('svg',{width:14,height:14,viewBox:'0 0 14 14'});shape(s,mode,7,7,4.5);sp.appendChild(s);sp.append(label);lg.appendChild(sp)}
 {const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('path',{d:'M1,3L11,3L11,11L21,11',style:'fill:none;stroke:var(--fg2);stroke-width:1.3;stroke-dasharray:4 3'},s);sp.appendChild(s);sp.append('Pareto front: nothing below or left of it');lg.appendChild(sp)}
 if(DATA.systems.some(s=>s.mode==='chunked')){const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('line',{x1:2,y1:7,x2:15,y2:7,style:'stroke:var(--fg3);stroke-width:1.3'},s);el('path',{d:'M14,3L20,7L14,11Z',style:'fill:var(--fg3)'},s);sp.appendChild(s);sp.append('from whole file to chunked');lg.appendChild(sp)}
 const cols=[['ls-clean','LS clean'],['ls-other','LS other'],['fleurs-es','FLEURS es']];
 const best=k=>Math.min(...DATA.systems.map(s=>s.sets[k]?s.sets[k].wer:9));
-let h='<tr><th>system</th><th>pipeline</th>'+cols.map(c=>`<th>${c[1]}</th>`).join('')+'<th>your dictations</th><th>wait p50</th><th>p90</th><th>max</th><th>compute / audio</th></tr>';
+let h='<tr><th>system</th><th>pipeline</th>'+cols.map(c=>`<th>${c[1]}</th>`).join('')+'<th>long clips</th><th>your dictations</th><th>wait p50</th><th>p90</th><th>max</th><th>compute / audio</th></tr>';
 const KIND={hacky:'v2t rule',stream:'streaming',offline:'whole-file',chunked:'chunked from 60 s'};
 for(const s of DATA.systems){const w=s.wispr;h+=`<tr><td>${s.name}</td><td>${KIND[s.mode]}</td>`+
  cols.map(c=>{const v=s.sets[c[0]];return v?`<td class="${v.wer===best(c[0])?'best':''}">${pct(v.wer)}</td>`:'<td>–</td>'}).join('')+
+ (s.sets['ls-long']?`<td class="${s.sets['ls-long'].wer===best('ls-long')?'best':''}">${pct(s.sets['ls-long'].wer)}</td>`:'<td>–</td>')+
  (w?`<td class="${w.wer===best('wispr')?'best':''}">${pct(w.wer)}</td><td>${sec(w.p50)}</td><td>${sec(w.p90)}</td><td>${sec(w.max)}</td><td>${w.rtf.toFixed(2)}×</td>`:'<td>–</td><td>–</td><td>–</td><td>–</td><td>–</td>')+'</tr>'}
 document.getElementById('table').innerHTML=h;
 </script></body></html>
