@@ -660,7 +660,9 @@ class VoiceToText:
 
         Runs on the processing thread. New frames go into the streaming
         recogniser every STREAM_CHUNK_S seconds of audio and the partial text
-        goes to the log and the menu bar. Once the hotkey thread calls `finish`,
+        goes to the log and the menu bar; in between, every PREVIEW_STEP_S
+        seconds the audio not pushed yet is decoded on its own and shown after
+        it, display only. Once the hotkey thread calls `finish`,
         a recording longer than STREAM_TAKEOVER_S takes the streamed text (only
         the remainder is left to decode); a shorter one is decoded whole-file,
         which costs about the same there and gives the reference text.
@@ -675,6 +677,9 @@ class VoiceToText:
             self.refresh_dictionary()
             stream = self.stt.stream()
             feeder = backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
+            preview_step = int(self.cfg.sample_rate * backends.PREVIEW_STEP_S)
+            previewed = 0  # unpushed samples at the last preview
+            previewing = True
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
@@ -683,8 +688,25 @@ class VoiceToText:
                 for frame in live.frames[live.fed :]:
                     live.fed += 1
                     pushed = feeder.push(frame) or pushed
-                if pushed and not live.done.is_set():  # after release: no more partials
-                    self._show_partial(stream.text, feeder.sent_samples)
+                if pushed:
+                    previewed = 0
+                    if not live.done.is_set():  # after release: no more partials
+                        self._show_partial(stream.text, feeder.sent_samples)
+                elif (
+                    previewing
+                    and not live.done.is_set()
+                    and feeder.pending_samples - previewed >= preview_step
+                ):
+                    previewed = feeder.pending_samples
+                    try:
+                        tail = stream.preview(feeder.peek())
+                    except Exception as error:  # display only: never the recording
+                        logger.warning(f"Live preview off for this recording: {error}")
+                        previewing = False
+                    else:
+                        self._set_state(
+                            "recording", partial=f"{stream.text} {tail}".strip()
+                        )
                 if live.done.is_set() and live.fed == len(live.frames):
                     break
                 live.done.wait(0.1)

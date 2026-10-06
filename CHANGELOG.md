@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4
+
+- **The live transcript keeps up: words show about 1 s after you say them, down from about 3 s.** Between 5 s decoding chunks the engine previews the newest audio every second. The preview is display only: the pasted text is unchanged (identical with and without previews on 7 recordings).
+- **In apps that expose no text caret, such as Ghostty, the pill sits at the bottom of the pane you are typing in** rather than the bottom of the screen.
+- The Pill menu reads **Near text cursor**, **Bottom of screen** and **Off**, without the A/B labels left over from the design comparison.
+
 ## 0.5.3
 
 - Publish the notarised Mac app when GitHub Actions has checked out an annotated release tag as a local lightweight tag. Verify the remote commit without rewriting the checkout's tag.

@@ -676,14 +676,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
-/// B is the default; A is also used when the focused app exposes no text caret.
+/// Near the text cursor is the default. Where the focused app exposes no caret
+/// (Ghostty), the pill sits at the bottom of the focused field or pane instead.
 enum PillStyle: String, CaseIterable {
     case cursorBubble = "caret", compactBottom = "bottom", off
 
     var title: String {
         switch self {
-        case .cursorBubble: "B · Near text cursor (default)"
-        case .compactBottom: "A · Bottom of screen"
+        case .cursorBubble: "Near text cursor (default)"
+        case .compactBottom: "Bottom of screen"
         case .off: "Off"
         }
     }
@@ -700,6 +701,8 @@ final class Pill: NSObject {
     private var visible = false
     private var anchor: NSRect?
     private var recordingAnchor: NSRect?
+    private var pane: NSRect?
+    private var recordingPane: NSRect?
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
@@ -738,7 +741,7 @@ final class Pill: NSObject {
     /// Keep the recording waveform when placement or transcript visibility changes.
     func update(phase: String, partial: String, streaming: Bool) {
         if phase == "recording" && view.phase != "recording" {
-            recordingAnchor = Self.cursorAnchor()
+            (recordingAnchor, recordingPane) = Self.focusedAnchors()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -759,13 +762,15 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
-    /// Above the insertion caret, with bottom centre as the explicit alternative
-    /// and the fallback on apps that expose no caret position.
+    /// Above the insertion caret, with bottom centre as the explicit alternative.
+    /// An app that exposes no caret gets the bottom centre of its focused field
+    /// or pane, else of the screen.
     private func show() {
         let style = style
         let pointer = NSEvent.mouseLocation
         anchor = style == .cursorBubble ? recordingAnchor : nil
-        let location = anchor.map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
+        pane = style == .cursorBubble ? recordingPane : nil
+        let location = (anchor ?? pane).map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
         else { return }
         self.screen = screen
@@ -788,8 +793,10 @@ final class Pill: NSObject {
         var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : view.compactSize
         size.width = min(size.width, area.width - 16)
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
-        var x = area.midX - size.width / 2
-        var y = area.minY + 20
+        let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
+        var x = base.midX - size.width / 2
+        // A field too short to hold the pill clear of its text gets it just below.
+        var y = pane != nil && base.height < 3 * size.height ? base.minY - size.height - 8 : base.minY + 20
         view.tailBelow = true
         if style == .cursorBubble, let anchor {
             x = anchor.midX - size.width / 2
@@ -807,37 +814,52 @@ final class Pill: NSObject {
         panel.invalidateShadow()
     }
 
-    private static func cursorAnchor() -> NSRect? {
+    /// The insertion caret where the focused app exposes it, else the focused
+    /// element's frame (in a terminal such as Ghostty, the split being typed in),
+    /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
+    /// main thread for one AX timeout, not two.
+    private static func focusedAnchors() -> (caret: NSRect?, pane: NSRect?) {
         // Capture once at recording start; never follow the cursor while speaking.
-        // Use the insertion caret where the app exposes it, otherwise bottom centre.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
-        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-           let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
-            let element = focused as! AXUIElement
-            var selected: CFTypeRef?
-            if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
-               let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
-                var range = CFRange()
-                if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
-                    range.length = 0
-                    if let selection = AXValueCreate(.cfRange, &range) {
-                        var value: CFTypeRef?
-                        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
-                           let value, CFGetTypeID(value) == AXValueGetTypeID() {
-                            var rect = CGRect.zero
-                            if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0,
-                               let primary = NSScreen.screens.first {
-                                return NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY,
-                                              width: rect.width, height: rect.height)
-                            }
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
+              let primary = NSScreen.screens.first
+        else { return (nil, nil) }
+        let element = focused as! AXUIElement
+        let flip = { (rect: CGRect) in
+            NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        }
+        var selected: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+           let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
+            var range = CFRange()
+            if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
+                range.length = 0
+                if let selection = AXValueCreate(.cfRange, &range) {
+                    var value: CFTypeRef?
+                    if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
+                       let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                        var rect = CGRect.zero
+                        if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0 {
+                            return (flip(rect), nil)
                         }
                     }
                 }
             }
         }
-        return nil
+        var position = CGPoint.zero, size = CGSize.zero
+        var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
+              size.width >= 120, size.height >= 20
+        else { return (nil, nil) }
+        return (nil, flip(CGRect(origin: position, size: size)))
     }
 
     private func hide() {

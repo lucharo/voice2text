@@ -80,6 +80,15 @@ STREAM_DEPTH = 1
 # under this many seconds it is about as quick as the last push and the app
 # takes it, giving exactly today's text; above, the streamed text wins seconds.
 STREAM_TAKEOVER_S = 60.0
+# Between pushes, every PREVIEW_STEP_S seconds the audio not pushed yet (under
+# STREAM_CHUNK_S of it) is decoded on its own and shown after the streamed text,
+# for display only, so a word shows ~1 s after it is said instead of ~3 s.
+# Measured 2026-10-06 on 21 dictations (674 previews, M4 Pro): ~120 ms per
+# preview; the streamed text identical with and without previews; 84% of the
+# preview's words survive into the final text (91% of the words a push adds),
+# the word at the seam with the last push least often (76%) until the next push
+# replaces it.
+PREVIEW_STEP_S = 1.0
 
 
 class ChunkFeeder:
@@ -132,6 +141,12 @@ class ChunkFeeder:
         self.pending, self.pending_samples = [], 0
         return chunk
 
+    def peek(self) -> np.ndarray:
+        """The buffered remainder (possibly empty), left in the buffer."""
+        if not self.pending:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self.pending)
+
     def _send(self) -> None:
         chunk = np.concatenate(self.pending)
         self.pending, self.pending_samples = [], 0
@@ -149,6 +164,7 @@ class ParakeetStream:
         import mlx.core as mx
 
         self._mx = mx
+        self._model = model
         # parakeet-mlx computes the log-mel of each push on its own, and a push
         # shorter than one hop (10 ms) yields an empty spectrogram that crashes
         # Metal with a negative allocation. Such a push only happens as the last
@@ -175,6 +191,16 @@ class ParakeetStream:
         self._stream.add_audio(self._mx.array(pcm))
         self.text = self._stream.result.text.strip()
         return self.text
+
+    def preview(self, audio: np.ndarray) -> str:
+        """Decode `audio` on its own, for display only; the stream is untouched."""
+        from parakeet_mlx.audio import get_logmel
+
+        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if pcm.size < self._min_samples:
+            return ""
+        mel = get_logmel(self._mx.array(pcm), self._model.preprocessor_config)
+        return self._model.generate(mel)[0].text.strip()
 
     def finish(self, audio: np.ndarray | None = None) -> str:
         """Push the last audio (the remainder on release, possibly empty) plus the
