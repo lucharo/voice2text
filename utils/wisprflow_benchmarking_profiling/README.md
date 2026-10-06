@@ -29,8 +29,9 @@ uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py \
   --cleanup-model mlx-community/Qwen3.5-2B-4bit --mode casual --tag 2b-casual
 # then compare tagged cells in one table
 uv run python utils/wisprflow_benchmarking_profiling/compare_cells.py 08b-casual 15b-casual 2b-casual 4b-casual
-# streaming: also push each clip through Parakeet's transcribe_stream as the app does while
-# the hotkey is held; reports streamed-vs-whole-file disagreement and the latency left after release
+# streaming: also push each clip through Parakeet's transcribe_stream as the app did while the
+# hotkey was held up to 0.5.7 (since 0.5.8 it switches to pieces from 60 s, measured by
+# utils/asr_grid's chunk pass); reports streamed-vs-whole-file disagreement and the wait after release
 uv run python utils/wisprflow_benchmarking_profiling/bench_wisprflow.py --streaming --no-cleanup --chunk-s 5 --tag stream-5s
 ```
 
@@ -65,6 +66,11 @@ disagreement), and `<date>-report[-<tag>].md` (numbers and clip ids only, safe t
 Strict mode on the 1.5B kept 85% (39 clips under 75%) and on the 4B 86%; casual is the default for
 that reason. Parakeet itself: ~11 ms per second of audio, median disagreement with Wispr's own ASR
 13%. Wispr's median end-to-end latency over 1,275 dictations was 1.97 s (p90 4.3 s, p99 19.8 s).
+
+Streaming (`--streaming`, 2026-09-08): 5 s pushes disagreed with whole-file decoding by 6.2% of
+the words at the median, 1 s pushes by 15.6%, for the same wait after release; that picked
+`STREAM_CHUNK_S`. The long-dictation follow-up (pieces against the stream) lives in
+[internal/streaming.md](../../internal/streaming.md).
 
 ## Not doing
 

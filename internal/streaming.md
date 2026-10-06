@@ -8,22 +8,26 @@ The user-facing explanation is `docs/how-it-works.md`. These are the measurement
 
 **Short answer:** It is on by default with the Parakeet backend: `streaming_mode = "hacky"` under
 `[transcription]`, or `v2t --streaming-mode hacky`; `off` restores decoding after release. While the
-hotkey is held the recogniser is fed every 5 s and the menu bar shows *Recording… N words*. Only
-dictations of 60 s or more get faster: the wait after release drops from about 1.4 s median (4.7 s
-p90, 111 s worst case on a 12-minute clip) to about 0.33 s, at the cost of slightly different text
-(0.7% fewer words at the median, 5% at the 10th percentile). Under 60 s the recording is still
-decoded whole-file on release, so the text and timing are unchanged. Cleanup latency is unchanged
-either way. Whisper has no streaming path and always decodes after release.
+hotkey is held the recogniser is fed every 5 s and the menu bar shows *Recording… N words*. Under
+60 s the recording is still decoded whole-file on release, so the text and timing are what `off`
+gives. From 60 s (0.5.8 on) the stream closes and the recording is decoded whole in ~30 s pieces
+while the key is held, so release waits on the last piece only (next entries). Cleanup latency is
+unchanged either way. Whisper has no streaming path and always decodes after release.
+
+From 0.3 to 0.5.7 the streamed text itself was kept from 60 s. On the 2026-09-08 bench that cut the
+wait after release from about 1.4 s median (4.7 s p90, 111 s worst case on a 12-minute clip) to
+about 0.33 s, at the cost of slightly different text (0.7% fewer words at the median, 5% at the 10th
+percentile).
 
 ### Sources
 
-- [`STREAM_CHUNK_S`, `STREAM_TAKEOVER_S`](../v2t/backends.py) — the two constants and the
+- [`STREAM_CHUNK_S`, `STREAM_TAKEOVER_S`, `PIECE_S`](../v2t/backends.py) — the constants and the
   measurements that picked them.
-- [`process_live`](../v2t/app.py) — the feed loop and the 60 s takeover rule.
+- [`process_live`](../v2t/app.py) — the feed loop and the 60 s takeover to pieces.
 - [Streaming benchmark](../utils/wisprflow_benchmarking_profiling/README.md) — `--streaming`
   reports the latency left after release and the disagreement per duration bucket.
 
-_Created: 2026-09-08 · Verified: 2026-09-08 (208 clips, M4 Pro, PR #17)._
+_Created: 2026-09-08 · Verified: 2026-09-08 (208 clips, M4 Pro, PR #17) · Updated: 2026-10-06 (0.5.8)._
 
 ## Why is the streamed text not identical to whole-file decoding, when it is the same model?
 
@@ -54,13 +58,13 @@ _Created: 2026-09-08 · Verified: 2026-09-08._
 
 ## Would 30 s pieces beat the 5 s stream for long dictations?
 
-**Short answer (measured 2026-10-06, not shipped):** yes, with the same model. From 60 s up, decoding
+**Short answer (measured 2026-10-06, shipped in 0.5.8):** yes, with the same model. From 60 s up, decoding
 the recording in pieces of about 30 s, cut at the quietest 100 ms near each mark and decoded whole
-while the key is still held, is both more accurate and quicker on release than today's stream:
+while the key is still held, is both more accurate and quicker on release than the 5 s stream v2t kept until 0.5.7:
 
 | Parakeet on ls-long (40 labelled clips, 65–286 s) | WER | wait p50 | p90 | max |
 |---|--:|--:|--:|--:|
-| v3, today's 5 s stream | 5.3% | 0.46 s | 0.75 s | 1.75 s |
+| v3, 5 s stream (v2t to 0.5.7) | 5.3% | 0.46 s | 0.75 s | 1.75 s |
 | v3 in pieces | 2.3% | 0.28 s | 0.54 s | 0.68 s |
 | Ultra, 5 s stream | 3.4% | 0.41 s | 0.60 s | 1.01 s |
 | Ultra in pieces | 2.3% | 0.33 s | 0.59 s | 0.94 s |
@@ -76,7 +80,10 @@ returned MLX's buffer cache, which grew about 3.5 GB per long clip until the 48 
 table comes from the run that clears it between clips, with no swap-outs; the stream baseline ran
 before and after the piece runs and agreed (p50 0.50 s, then 0.46 s).
 
-**Decision (Luis, 2026-10-06):** build pieces with v3, the model v2t already ships.
+**Decision (Luis, 2026-10-06):** build pieces with v3, the model v2t already ships. Shipped in
+0.5.8 (`PieceDecoder` in `v2t/backends.py`). On three ls-long clips (65, 137 and 286 s) fed through
+the app's own `process_live` with the real model, the pasted text was identical to the grid's
+`parakeet-v3+chunked` text.
 
 **Worth watching: Parakeet Ultra.** Moondream's post-training of Parakeet v3 (September 2026): the
 same 0.6B architecture, CC-BY-4.0, so parakeet-mlx loads it as a drop-in. The MLX copy

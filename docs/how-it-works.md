@@ -12,27 +12,26 @@ Both models stay loaded between dictations, so each one starts at once.
 
 ## What happens while you hold the key
 
-- Every 5 seconds the new audio goes to Parakeet, which extends a running draft.
+- **Under 60 seconds:** every 5 seconds the new audio goes to Parakeet, which keeps a running
+  draft for the menu bar. When you let go, the whole recording is transcribed in one pass: about
+  a third of a second, and the most accurate text.
+- **From 60 seconds:** the draft stops, and the recording is transcribed whole in pieces of about
+  30 seconds while you keep talking. Each piece ends at the quietest moment near its mark, so no
+  word is cut in half. When you let go only the last piece is left: about 0.2 s, however long you
+  spoke.
 - The live transcript on the pill is experimental and off. With `live_transcript = true` under
   `[transcription]`, v2t also previews the newest audio every second, so words appear about 1 s
   after you say them. The preview is for display only and never changes the pasted text.
-- **Under 60 seconds:** when you let go, the draft is thrown away and the whole recording is
-  transcribed again in one pass. That takes about a third of a second and gives the more accurate
-  text.
-- **60 seconds or more:** the draft is kept and only the last few seconds are transcribed. Redoing
-  the whole recording would take longer the longer you spoke: 1.5 s at the median for dictations
-  over a minute, 15 to 30 s for ten-minute ones, and three minutes for one 14-minute dictation.
-  Finishing the draft takes about 0.4 s whatever the length.
 
-![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to three minutes; the streamed draft stays near 0.4 s from 60 s up, under 3 s at worst](images/wait-vs-length.svg)
+![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to about 20 s; in pieces it stays between 0.05 and 0.6 s from 60 s up](images/wait-vs-length.svg)
 
 <small>One dot per dictation, Parakeet v3 on an M4 Pro.</small>
 
-The draft is not kept every time because it is less accurate. To keep up live, each stretch of
-audio is transcribed using only the ~20 seconds before it, and each 5 s piece is processed on its
-own. On dictations over a minute the draft differs from the whole-file text in about 8% of words.
-Under a minute, redoing the recording costs about the same as finishing the draft, so nothing is
-gained by accepting that difference.
+Transcribing the whole recording on release would take longer the longer you spoke: 1.3 s at the
+median for dictations over a minute, and 9 to 19 s for ones of ten minutes or more. Until 0.5.8
+v2t kept the running draft instead. That was quick, but each stretch of audio was transcribed using
+only the ~20 seconds before it. On 40 recordings of one to five minutes with known text, pieces got
+2.3% of words wrong against 5.3% for the draft.
 
 `v2t --streaming-mode off` (or `streaming_mode = "off"`) turns this off: nothing is transcribed
 until you let go, and every recording is transcribed whole. Whisper cannot stream, so it always
