@@ -3,7 +3,9 @@
     python report_html.py --headline "..." --sub "..."    # -> ~/.v2t/eval/grid/<date>-grid-report.html
 
 Two scatters (your dictations; the labelled sets pooled): error against the wait after
-release, one dot per system, colour and shape by pipeline. A table carries every number.
+release, one dot per system, colour and shape by pipeline, with the Pareto front (the systems
+nothing beats on both error and wait). On the dictations an arrow joins each whole-file system
+to its chunked run. A table carries every number.
 """
 
 from __future__ import annotations
@@ -31,10 +33,12 @@ NAMES = {
     "parakeet-v3-mlxaudio": "Parakeet v3 via mlx-audio",
     "whisper-turbo-mlxaudio": "Whisper turbo via mlx-audio",
 }
+NAMES.update({s + grid.CHUNKED: NAMES[s] + ", chunked" for s in list(NAMES)})
 PIPELINES = {
-    "hacky": "v2t's rule: whole-file under 60 s, streamed above",
-    "stream": "natively streaming",
-    "offline": "whole-file after release",
+    "stream": "streaming model: decodes as you speak",
+    "hacky": "Parakeet in v2t: whole file under 60 s, its stream from 60 s",
+    "offline": "batch model: whole file after release",
+    "chunked": "batch model: 30 s pieces while you speak, from 60 s",
 }
 
 
@@ -67,7 +71,7 @@ def collect() -> dict:
             {
                 "id": system,
                 "name": NAMES.get(system, system),
-                "mode": grid.SYSTEMS[system][2],
+                "mode": grid.mode_of(system),
                 "sets": {
                     name: None if not r else {"wer": r["wer"], "n": r["n"]}
                     for name, r in per_set.items()
@@ -95,11 +99,11 @@ PAGE = r"""<!DOCTYPE html>
 <style>
 :root{color-scheme:light dark;--font:system-ui,-apple-system,'Segoe UI',sans-serif;--mono:ui-monospace,Menlo,monospace;
 --bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--fg3:#8a8984;--surface:#f4f4f2;--border:#e4e3df;--grid:#ecebe7;
---s-hacky:#2a78d6;--s-stream:#eb6834;--s-offline:#1baf7a}
+--s-hacky:#2a78d6;--s-stream:#eb6834;--s-offline:#1baf7a;--s-chunked:#1baf7a}
 :root[data-theme="dark"]{--bg:#1a1a19;--fg:#ffffff;--fg2:#c3c2b7;--fg3:#8f8e86;--surface:#232322;--border:#34332f;--grid:#2a2a28;
---s-hacky:#3987e5;--s-stream:#d95926;--s-offline:#199e70}
+--s-hacky:#3987e5;--s-stream:#d95926;--s-offline:#199e70;--s-chunked:#199e70}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1a1a19;--fg:#ffffff;--fg2:#c3c2b7;--fg3:#8f8e86;
---surface:#232322;--border:#34332f;--grid:#2a2a28;--s-hacky:#3987e5;--s-stream:#d95926;--s-offline:#199e70}}
+--surface:#232322;--border:#34332f;--grid:#2a2a28;--s-hacky:#3987e5;--s-stream:#d95926;--s-offline:#199e70;--s-chunked:#199e70}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.5}
 main{max-width:1120px;margin:0 auto;padding:28px 24px 80px}
 .top{display:flex;align-items:center;gap:12px}.kicker{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--fg3);font-weight:600}
@@ -130,6 +134,7 @@ footer{margin-top:40px;font-size:12px;color:var(--fg3);border-top:1px solid var(
 <li>One M4 Pro, one system on the GPU at a time, each clip decoded after a warm-up. The live v2t engine could still take the GPU during a dictation.</li>
 <li>Wait = seconds from releasing the key to the final text: the whole-file decode for whole-file systems; the last half-second push plus flush for streaming ones, after everything earlier was decoded while recording. Parakeet rows follow v2t's rule (whole-file under 60 s, the 5 s-push stream above).</li>
 <li>Error = word error rate after Whisper's text normalisation. Your dictations have no reference, so each system is scored against the transcript the other systems and Wispr Flow's own ASR agree with most (leave-one-out medoid). Low disagreement means "sounds like the rest", not "correct".</li>
+<li>Chunked = a batch model given v2t's 60 s rule: from 60 s up, each ~30 s piece (cut at the quietest 100 ms within 5 s of the mark) is decoded while you speak, so on release only the last piece is left; under 60 s it is the whole-file run. Chunked runs never vote in the consensus, so adding them moves no other number.</li>
 <li>RTF = compute over audio; a streaming system needs it well under 1 to keep up live.</li>
 <li>Not run: parakeet-unified-en and the English Nemotron streaming model; no faithful MLX runtime exists for either (see utils/asr_grid/README.md).</li>
 </ul></details>
@@ -143,6 +148,7 @@ setTheme(THEME);document.getElementById('theme').onclick=()=>setTheme(THEMES[(TH
 const NS='http://www.w3.org/2000/svg';const pct=v=>(v*100).toFixed(1)+'%';const sec=v=>v<10?v.toFixed(2)+' s':v.toFixed(1)+' s';
 function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);parent&&parent.appendChild(e);return e}
 function shape(g,mode,x,y,r){const st=`fill:var(--s-${mode});stroke:var(--surface);stroke-width:2`;
+ if(mode==='chunked')return el('rect',{x:x-r+1,y:y-r+1,width:2*r-2,height:2*r-2,rx:2,style:'fill:var(--surface);stroke:var(--s-offline);stroke-width:2.2'},g);
  if(mode==='stream')return el('path',{d:`M${x},${y-r-1.5}L${x+r+1.5},${y}L${x},${y+r+1.5}L${x-r-1.5},${y}Z`,style:st},g);
  if(mode==='offline')return el('rect',{x:x-r,y:y-r,width:2*r,height:2*r,rx:2,style:st},g);
  return el('circle',{cx:x,cy:y,r:r,style:st},g)}
@@ -155,19 +161,32 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
  for(const t of ticks){el('line',{x1:X(t),x2:X(t),y1:m.t,y2:H-m.b,style:'stroke:var(--grid)'},svg);el('text',{x:X(t),y:H-m.b+16,'text-anchor':'middle',style:'fill:var(--fg3);font-size:11px'},svg).textContent=t+'s'}
  const step=ymax>0.2?0.05:ymax>0.1?0.02:0.01;for(let v=0;v<=ymax;v+=step){el('line',{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),style:'stroke:var(--grid)'},svg);el('text',{x:m.l-7,y:Y(v)+4,'text-anchor':'end',style:'fill:var(--fg3);font-size:11px'},svg).textContent=Math.round(v*100)+'%'}
  el('text',{x:(m.l+W-m.r)/2,y:H-8,'text-anchor':'middle',style:'fill:var(--fg2);font-size:12px'},svg).textContent='wait after release (log scale)';
+ // Pareto front: by wait, each system that has lower error than every faster one
+ const front=[];for(const s of [...pts].sort((a,b)=>a[key].p50-b[key].p50)){if(!front.length||s[key].wer<front[front.length-1][key].wer)front.push(s)}
+ let fd=`M${X(front[0][key].p50)},${m.t}L${X(front[0][key].p50)},${Y(front[0][key].wer)}`;
+ for(let i=1;i<front.length;i++)fd+=`L${X(front[i][key].p50)},${Y(front[i-1][key].wer)}L${X(front[i][key].p50)},${Y(front[i][key].wer)}`;
+ fd+=`L${W-m.r},${Y(front[front.length-1][key].wer)}`;
+ el('path',{d:fd,style:'fill:none;stroke:var(--fg2);stroke-width:1.3;stroke-dasharray:5 4;opacity:.8'},svg);
+ // a chunked run: an arrow from its whole-file point, unlabelled (the legend and table name it)
+ const defs=el('defs',{},svg),mk=el('marker',{id:id+'-arrow',viewBox:'0 0 8 8',refX:7,refY:4,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},defs);
+ el('path',{d:'M0,0L8,4L0,8Z',style:'fill:var(--fg3)'},mk);
+ for(const s of pts.filter(s=>s.id.endsWith('+chunked'))){const b=pts.find(p=>p.id+'+chunked'===s.id);if(!b)continue;
+  const x1=X(b[key].p50),y1=Y(b[key].wer),x2=X(s[key].p50),y2=Y(s[key].wer),L=Math.hypot(x2-x1,y2-y1);if(L<16)continue;
+  el('line',{x1:x1+(x2-x1)*8/L,y1:y1+(y2-y1)*8/L,x2:x2-(x2-x1)*9/L,y2:y2-(y2-y1)*9/L,'marker-end':`url(#${id}-arrow)`,style:'stroke:var(--fg3);stroke-width:1.3'},svg)}
  const placed=pts.map(s=>{const d=s[key];return {x0:X(d.p50)-8,x1:X(d.p90)+4,y:Y(d.wer)+4}});  // dots and whiskers are obstacles too
  for(const s of pts.sort((a,b)=>a[key].p50-b[key].p50)){const d=s[key],x=X(d.p50),y=Y(d.wer);const g=el('g',{},svg);
   el('line',{x1:x,x2:X(d.p90),y1:y,y2:y,style:`stroke:var(--s-${s.mode});stroke-width:2;stroke-linecap:round;opacity:.55`},g);
   if(s.id==='parakeet-v3')el('circle',{cx:x,cy:y,r:10,style:'fill:none;stroke:var(--fg);stroke-width:1.5'},g);
   shape(g,s.mode,x,y,5.5);
+  const named=!s.id.endsWith('+chunked');
   // A label goes right of its dot (left near the right edge), at the nearest free height;
   // a displaced label gets a thin leader line back to its dot.
-  const w=s.name.length*6.4+4,left=x+9+w>W-m.r,lx=left?x-9:x+9,x0=left?lx-w:lx;
+  if(named){const w=s.name.length*6.4+4,left=x+9+w>W-m.r,lx=left?x-9:x+9,x0=left?lx-w:lx;
   const free=ly=>!placed.some(p=>Math.abs(p.y-ly)<13&&x0<p.x1&&p.x0<x0+w)&&ly>m.t+8&&ly<H-m.b-4;
   let ly=y+4;for(const off of [0,-14,14,-28,28,-42,42,-56,56]){if(free(y+4+off)){ly=y+4+off;break}}
   placed.push({x0,x1:x0+w,y:ly});
   if(Math.abs(ly-(y+4))>2)el('line',{x1:x,y1:y,x2:lx,y2:ly-4,style:'stroke:var(--fg3);stroke-width:1'},g);
-  const t=el('text',{x:lx,y:ly,'text-anchor':left?'end':'start',style:`fill:var(--fg);font-size:11.5px;paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-weight:${s.id==='parakeet-v3'?700:400}`},g);t.textContent=s.name;
+  const t=el('text',{x:lx,y:ly,'text-anchor':left?'end':'start',style:`fill:var(--fg);font-size:11.5px;paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-weight:${s.id==='parakeet-v3'?700:400}`},g);t.textContent=s.name}
   const hit=el('circle',{cx:x,cy:y,r:14,style:'fill:transparent;cursor:default'},g);
   hit.onmousemove=e=>{tip.innerHTML=`<b>${s.name}</b>${DATA.pipelines[s.mode]}<br>error ${pct(d.wer)} · wait p50 ${sec(d.p50)} · p90 ${sec(d.p90)}${d.rtf!==undefined?`<br>compute ${d.rtf.toFixed(2)}× audio`:''}<br>${d.n} clips`;tip.style.left=e.clientX+14+'px';tip.style.top=e.clientY+14+'px';tip.style.opacity=1};
   hit.onmouseleave=()=>tip.style.opacity=0}}
@@ -175,10 +194,13 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
 {const n=Math.max(0,...DATA.systems.map(s=>s.labelled?s.labelled.n:0));document.getElementById('n-labelled').textContent=`Word error rate pooled over ${n} clips · wait p50, whisker to p90`}
 chart('c-wispr','wispr');chart('c-labelled','labelled');
 const lg=document.getElementById('legend');for(const [mode,label] of Object.entries(DATA.pipelines)){const sp=document.createElement('span');const s=el('svg',{width:14,height:14,viewBox:'0 0 14 14'});shape(s,mode,7,7,4.5);sp.appendChild(s);sp.append(label);lg.appendChild(sp)}
+{const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('path',{d:'M1,3L11,3L11,11L21,11',style:'fill:none;stroke:var(--fg2);stroke-width:1.3;stroke-dasharray:4 3'},s);sp.appendChild(s);sp.append('Pareto front: nothing below or left of it');lg.appendChild(sp)}
+if(DATA.systems.some(s=>s.mode==='chunked')){const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('line',{x1:2,y1:7,x2:15,y2:7,style:'stroke:var(--fg3);stroke-width:1.3'},s);el('path',{d:'M14,3L20,7L14,11Z',style:'fill:var(--fg3)'},s);sp.appendChild(s);sp.append('from whole file to chunked');lg.appendChild(sp)}
 const cols=[['ls-clean','LS clean'],['ls-other','LS other'],['fleurs-es','FLEURS es']];
 const best=k=>Math.min(...DATA.systems.map(s=>s.sets[k]?s.sets[k].wer:9));
 let h='<tr><th>system</th><th>pipeline</th>'+cols.map(c=>`<th>${c[1]}</th>`).join('')+'<th>your dictations</th><th>wait p50</th><th>p90</th><th>max</th><th>compute / audio</th></tr>';
-for(const s of DATA.systems){const w=s.wispr;h+=`<tr><td>${s.name}</td><td>${s.mode==='hacky'?'v2t rule':s.mode==='stream'?'streaming':'whole-file'}</td>`+
+const KIND={hacky:'v2t rule',stream:'streaming',offline:'whole-file',chunked:'chunked from 60 s'};
+for(const s of DATA.systems){const w=s.wispr;h+=`<tr><td>${s.name}</td><td>${KIND[s.mode]}</td>`+
  cols.map(c=>{const v=s.sets[c[0]];return v?`<td class="${v.wer===best(c[0])?'best':''}">${pct(v.wer)}</td>`:'<td>–</td>'}).join('')+
  (w?`<td class="${w.wer===best('wispr')?'best':''}">${pct(w.wer)}</td><td>${sec(w.p50)}</td><td>${sec(w.p90)}</td><td>${sec(w.max)}</td><td>${w.rtf.toFixed(2)}×</td>`:'<td>–</td><td>–</td><td>–</td><td>–</td><td>–</td>')+'</tr>'}
 document.getElementById('table').innerHTML=h;

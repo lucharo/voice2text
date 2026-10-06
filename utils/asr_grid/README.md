@@ -44,7 +44,9 @@ VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py prepare
 .venv/bin/python utils/asr_grid/grid.py run --system parakeet-v3 --set ls-clean
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py run --system voxtral-rt-4bit --set wispr
+~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py chunk --system qwen3-asr-1.7b-8bit --set wispr
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py report
+~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/report_html.py --headline "..."
 ```
 
 Run cells one at a time: two models on the GPU contaminate each other's timings. Cells resume
@@ -60,6 +62,13 @@ transcripts, and `<date>-report.md`, which holds numbers only.
 - **Wait** is seconds from release to the final text: the whole-file decode for an offline
   system, the last push plus flush for a streaming one (everything earlier was fed and decoded
   while "recording"). For `parakeet-v3` it follows v2t's own 60 s rule.
+- **`<system>+chunked`** gives a whole-file system the same 60 s rule. Under 60 s it is the
+  whole-file run. From 60 s up, the recording is cut every ~30 s at the quietest 100 ms within 5 s
+  of the mark (the splitter mlx-audio's Qwen3-ASR uses for long files), each piece is decoded as
+  soon as its cut is known, and only the last piece is left after release. The wait counts any
+  piece still queued at release. `grid.py chunk` writes these to `<system>.chunked.jsonl` beside
+  the whole-file results; a chunked row is scored but never votes in the dictation consensus, so
+  adding one moves no other number.
 - **RTF** is compute over audio. A streaming system needs it well under 1 to keep up live.
 - Streaming sessions are fed 0.5 s at a time and drained between feeds; the drain for mlx-audio
   sessions reads their queue state, which is pinned to mlx-audio 0.5.7.
