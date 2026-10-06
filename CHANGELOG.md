@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.7
+
+- **The pill sits up and to the right of the caret**, its tail curling down-left at 45° to just above it, so it no longer covers the caret or the text beside it. Without room above, it sits down and to the right instead. An empty field gets the same placement from its start.
+
+## 0.5.6
+
+- **The pill is a speech bubble beside the text box you're typing in**, with a Messages-style tail pointing at the caret, or at the start of an empty field. It sits below the box when the box is in the top half of the screen and above it otherwise. Tall panes without a caret (a Ghostty split) keep the pill at the bottom of the pane.
+- **Undo is easier to see and use.** The pill's Undo is a visible chip labelled ⌘Z, and **Cmd+Z** brings the cancelled dictation back. The cancelled pill and its undo go away after 5 s, and the held audio is dropped then. Cmd+Z goes to the app as usual at any other time.
+- **Opening the app starts v2t** once Microphone and Accessibility are granted, so there's no Start click after a login, an upgrade or a relaunch.
+
 ## 0.5.5
 
 - **The live transcript is parked as experimental.** It is off, and the menu toggle is gone. Set `live_transcript = true` under `[transcription]` in `config.toml` to bring it back. While it is off the engine runs no previews.

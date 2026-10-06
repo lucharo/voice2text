@@ -35,6 +35,11 @@ GLOBE_KEY_FIX = (
 )
 LOUD_RMS = 0.01  # a 100 ms frame above this holds speech-level sound (full scale 1)
 LEVEL_INTERVAL_S = 0.02  # the pill's waveform: at most one input level per 20 ms
+# How long a cancelled dictation stays recoverable (pill, menu, Cmd+Z) before the
+# audio is dropped: Gmail's default undo-send window, inside Material Design's
+# 4-10 s snackbar range.
+UNDO_WINDOW_S = 5.0
+Z_VK = 6  # kVK_ANSI_Z
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -55,7 +60,7 @@ def _resolve_hotkey(name: str):
     return keys[name]
 
 
-def _listener(on_press, on_release, suppress_escape=None):
+def _listener(on_press, on_release, suppress_escape=None, undo_shortcut=None):
     """pynput's global listener, taught the Fn key.
 
     Fn arrives as a flags-changed event like the other modifiers, but pynput
@@ -73,17 +78,32 @@ def _listener(on_press, on_release, suppress_escape=None):
 
     options = {}
     if suppress_escape is not None:
-        from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode, kCGEventKeyUp
+        from Quartz import (
+            CGEventGetFlags,
+            CGEventGetIntegerValueField,
+            kCGEventFlagMaskAlternate,
+            kCGEventFlagMaskCommand,
+            kCGEventFlagMaskControl,
+            kCGEventFlagMaskShift,
+            kCGEventKeyUp,
+            kCGKeyboardEventKeycode,
+        )
+
+        others = kCGEventFlagMaskShift | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate
 
         def intercept(_event_type, event):
             # pynput 1.8.1 calls on_press/on_release BEFORE darwin_intercept
-            # (_util/darwin.py:290). Only swallow Esc handled by this dictation.
-            if (
-                CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
-                == keyboard.Key.esc.value.vk
-                and suppress_escape(_event_type == kCGEventKeyUp)
-            ):
+            # (_util/darwin.py:290). Only swallow Esc handled by this dictation,
+            # and Cmd+Z while a cancelled dictation can be recovered.
+            keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+            released = _event_type == kCGEventKeyUp
+            if keycode == keyboard.Key.esc.value.vk and suppress_escape(released):
                 return None
+            if keycode == Z_VK and undo_shortcut is not None:
+                flags = CGEventGetFlags(event)
+                plain_command = flags & kCGEventFlagMaskCommand and not flags & others
+                if (plain_command or released) and undo_shortcut(released):
+                    return None
             return event
 
         options["darwin_intercept"] = intercept
@@ -270,6 +290,8 @@ class VoiceToText:
         self.cancelled_audio = None  # one recoverable clip, held in memory only
         self.cancelled_job = None
         self.undo_requested = threading.Event()
+        self.undo_timer = None  # running while a cancelled dictation is recoverable
+        self.undo_key_down = False  # a Cmd+Z press taken for undo, until its key-up
         self.frames: list[np.ndarray] = []
         self.live: LiveTranscription | None = None  # streaming recording in flight
         self.stream = None
@@ -472,6 +494,7 @@ class VoiceToText:
                 return
             self.shown = True
             self.cancelled_audio = None
+            self._withdraw_undo()
             self.level_peak = self.level_sent_at = 0.0  # none of the last recording's
             self.warning = ""  # the last dictation's; a tap or chord keeps it
             if self.cfg.pause_music:
@@ -1054,6 +1077,8 @@ class VoiceToText:
             self._close_stream()
             self._restore_media()
             self._set_state("cancelled" if self.cancelled_audio else "idle")
+            if self.cancelled_audio:
+                self._offer_undo()
 
     def cancel_dictation(self) -> bool:
         """Esc stops capture immediately and makes any in-flight result inert."""
@@ -1082,7 +1107,48 @@ class VoiceToText:
                 self.cancelled_audio = self.current_audio
             self._restore_media()
             self._set_state("cancelled")
+            self._offer_undo()
             return True
+
+    def _offer_undo(self, seconds: float = UNDO_WINDOW_S) -> None:
+        """(Re)start the window in which the cancelled dictation can come back."""
+        self._withdraw_undo()
+        self.undo_timer = threading.Timer(seconds, self._expire_undo)
+        self.undo_timer.daemon = True
+        self.undo_timer.start()
+
+    def _withdraw_undo(self) -> None:
+        if self.undo_timer is not None:
+            self.undo_timer.cancel()
+            self.undo_timer = None
+
+    def _expire_undo(self) -> None:
+        """The window closed: drop the held audio and put the pill away."""
+        with self.lifecycle_lock:
+            self.undo_timer = None
+            if self.recording or self.cancelled_audio is None or self.stopping:
+                return
+            if self.processing:  # the cancelled job is still draining: look again
+                self._offer_undo(0.5)
+                return
+            self.cancelled_audio = None
+            self.cancel_requested = False
+            self._set_state("idle")
+
+    def take_undo_shortcut(self, released: bool) -> bool:
+        """Cmd+Z while a cancelled dictation is recoverable: undo it, and keep
+        the key (repeats and key-up included) from reaching the app."""
+        if released:
+            taken, self.undo_key_down = self.undo_key_down, False
+            return taken
+        if self.undo_key_down:
+            return True
+        with self.lifecycle_lock:
+            offered = self.undo_timer is not None and not self.recording
+        if offered:
+            self.undo_key_down = True
+            self.request_undo()
+        return offered
 
     def request_undo(self, _signum=None, _frame=None) -> None:
         # A signal only requests work; opening the microphone belongs to the
@@ -1184,7 +1250,7 @@ class VoiceToText:
             if self.cfg.hotkey == "fn" and (warning := globe_key_warning()):
                 logger.warning(warning)
             with _listener(
-                self.on_press, self.on_release, self.consume_escape
+                self.on_press, self.on_release, self.consume_escape, self.take_undo_shortcut
             ) as listener:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
