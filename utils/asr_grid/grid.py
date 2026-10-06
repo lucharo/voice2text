@@ -263,6 +263,18 @@ def load_audio(path: str) -> np.ndarray:
     return audio.mean(axis=1)
 
 
+def release_cache() -> None:
+    """Return MLX's buffer cache between clips, outside any timing.
+
+    MLX keeps freed buffers for reuse, and a long clip's buffers rarely fit the next
+    one: the cache grew about 3.5 GB per ls-long clip, so a 40-clip pass swapped a
+    48 GB Mac and inflated the waits (2026-10-06).
+    """
+    import mlx.core as mx
+
+    mx.clear_cache()
+
+
 # --- runtimes -----------------------------------------------------------------
 
 
@@ -452,6 +464,7 @@ def run(system: str, set_name: str, limit: int | None) -> None:
             }
             out.write(json.dumps(result) + "\n")
             out.flush()
+            release_cache()
             if n % 10 == 0 or n == len(todo):
                 print(f"  {n}/{len(todo)}", flush=True)
 
@@ -528,6 +541,7 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
             result.update(chunked(engine, load_audio(clip["path"])))
             out.write(json.dumps(result) + "\n")
             out.flush()
+            release_cache()
             if n % 10 == 0 or n == len(todo):
                 print(f"  {n}/{len(todo)}", flush=True)
 
