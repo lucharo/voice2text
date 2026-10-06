@@ -741,8 +741,7 @@ final class Pill: NSObject {
     /// Keep the recording waveform when placement or transcript visibility changes.
     func update(phase: String, partial: String, streaming: Bool) {
         if phase == "recording" && view.phase != "recording" {
-            recordingAnchor = Self.cursorAnchor()
-            recordingPane = recordingAnchor == nil ? Self.focusedFrame() : nil
+            (recordingAnchor, recordingPane) = Self.focusedAnchors()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -796,7 +795,8 @@ final class Pill: NSObject {
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
         let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
         var x = base.midX - size.width / 2
-        var y = base.minY + 20
+        // A field too short to hold the pill clear of its text gets it just below.
+        var y = pane != nil && base.height < 3 * size.height ? base.minY - size.height - 8 : base.minY + 20
         view.tailBelow = true
         if style == .cursorBubble, let anchor {
             x = anchor.midX - size.width / 2
@@ -814,63 +814,52 @@ final class Pill: NSObject {
         panel.invalidateShadow()
     }
 
-    private static func cursorAnchor() -> NSRect? {
+    /// The insertion caret where the focused app exposes it, else the focused
+    /// element's frame (in a terminal such as Ghostty, the split being typed in),
+    /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
+    /// main thread for one AX timeout, not two.
+    private static func focusedAnchors() -> (caret: NSRect?, pane: NSRect?) {
         // Capture once at recording start; never follow the cursor while speaking.
-        // Use the insertion caret where the app exposes it, otherwise bottom centre.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
-        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-           let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
-            let element = focused as! AXUIElement
-            var selected: CFTypeRef?
-            if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
-               let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
-                var range = CFRange()
-                if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
-                    range.length = 0
-                    if let selection = AXValueCreate(.cfRange, &range) {
-                        var value: CFTypeRef?
-                        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
-                           let value, CFGetTypeID(value) == AXValueGetTypeID() {
-                            var rect = CGRect.zero
-                            if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0,
-                               let primary = NSScreen.screens.first {
-                                return NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY,
-                                              width: rect.width, height: rect.height)
-                            }
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
+              let primary = NSScreen.screens.first
+        else { return (nil, nil) }
+        let element = focused as! AXUIElement
+        let flip = { (rect: CGRect) in
+            NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        }
+        var selected: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+           let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
+            var range = CFRange()
+            if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
+                range.length = 0
+                if let selection = AXValueCreate(.cfRange, &range) {
+                    var value: CFTypeRef?
+                    if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
+                       let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                        var rect = CGRect.zero
+                        if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0 {
+                            return (flip(rect), nil)
                         }
                     }
                 }
             }
         }
-        return nil
-    }
-
-    /// The focused element's frame in Cocoa coordinates: in a terminal that
-    /// exposes no caret it is the split pane being typed in.
-    private static func focusedFrame() -> NSRect? {
-        let system = AXUIElementCreateSystemWide()
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
-        else { return nil }
-        let element = focused as! AXUIElement
         var position = CGPoint.zero, size = CGSize.zero
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == AXValueGetTypeID(),
-              AXValueGetValue(value as! AXValue, .cgPoint, &position)
-        else { return nil }
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+        var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
               let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
-              size.width >= 120, size.height >= 40,
-              let primary = NSScreen.screens.first
-        else { return nil }
-        return NSRect(x: position.x, y: primary.frame.maxY - position.y - size.height,
-                      width: size.width, height: size.height)
+              size.width >= 120, size.height >= 20
+        else { return (nil, nil) }
+        return (nil, flip(CGRect(origin: position, size: size)))
     }
 
     private func hide() {
