@@ -567,6 +567,22 @@ def _yesno(prompt: str, default: bool = True) -> bool:
 
 
 def cmd_setup(argv: list[str]) -> int:
+    argparse.ArgumentParser(
+        prog="v2t setup",
+        description="guided config: pick models, detect Ollama, write config.toml",
+    ).parse_args(argv)
+    try:
+        return _setup()
+    except EOFError:  # no terminal and no piped answers (an agent, CI)
+        print(
+            "\nv2t setup needs answers on standard input; run it in a terminal, "
+            "or `v2t config --init` writes the defaults without asking.",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _setup() -> int:
     from shutil import which
 
     path = config.config_path()

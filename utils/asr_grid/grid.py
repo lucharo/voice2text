@@ -52,6 +52,9 @@ SAMPLE = 150
 SEED = 20260929
 SAMPLE_RATE = 16000
 STREAM_FEED_S = 0.5  # audio handed to a streaming session between drains
+TAKEOVER_S = 60  # v2t keeps the streamed text from here up (backends.STREAM_TAKEOVER_S)
+CHUNK_S = 30  # the `chunked` pass: decode each ~30 s piece while recording
+CHUNK_SEARCH_S = 5  # cut at the quietest 100 ms within this many seconds of the mark
 
 # name -> runtime, repository, mode. `offline` decodes the whole clip after
 # release; `hacky` is v2t as shipped (Parakeet's local-attention stream, 5 s
@@ -134,6 +137,7 @@ def prepare() -> None:
     if LIBRISPEECH.exists():
         sets["ls-clean"] = librispeech_set("test-clean")
         sets["ls-other"] = librispeech_set("test-other")
+        sets["ls-long"] = librispeech_long_set()
     if FLEURS_ES.exists():
         sets["fleurs-es"] = fleurs_set()
     for name, clips in sets.items():
@@ -185,6 +189,48 @@ def librispeech_set(split: str) -> list[dict]:
         }
         for utt, path, text in sorted(rows[:SAMPLE])
     ]
+
+
+def librispeech_long_set() -> list[dict]:
+    """Labelled long clips: consecutive utterances of one chapter joined into one file.
+
+    Every other labelled clip is under 60 s, so v2t's 60 s rule never fires on them.
+    These, 60 to 300 s like the long dictations, put the stream and the chunk pass
+    against a real reference. 20 chapters from each test split, seeded.
+    """
+    import soundfile as sf
+
+    out_dir = private_dir(SETS / "ls-long")
+    rng = random.Random(SEED)
+    clips = []
+    for split in ("test-clean", "test-other"):
+        chapters = sorted(p for p in (LIBRISPEECH / split).glob("*/*") if p.is_dir())
+        for chapter in sorted(rng.sample(chapters, 20)):
+            target = rng.uniform(60, 300)
+            trans = next(chapter.glob("*.trans.txt"))
+            audio, texts = [], []
+            for line in trans.read_text().splitlines():
+                utt, text = line.split(" ", 1)
+                audio.append(sf.read(str(chapter / f"{utt}.flac"), dtype="float32")[0])
+                texts.append(text)
+                if sum(len(a) for a in audio) >= target * SAMPLE_RATE:
+                    break
+            joined = np.concatenate(audio)
+            if len(joined) < 60 * SAMPLE_RATE:
+                continue  # a chapter too short to reach the rule
+            clip_id = f"{chapter.parent.name}-{chapter.name}-long"
+            path = out_dir / f"{clip_id}.wav"
+            sf.write(str(path), joined, SAMPLE_RATE, subtype="PCM_16")
+            clips.append(
+                {
+                    "id": clip_id,
+                    "path": str(path),
+                    "duration_s": round(len(joined) / SAMPLE_RATE, 3),
+                    "lang": "en",
+                    "text": " ".join(texts),
+                }
+            )
+    return clips
 
 
 def fleurs_set() -> list[dict]:
@@ -240,6 +286,15 @@ class ParakeetMLX:
             out.update(self._stream(load_audio(clip["path"])))
         return out
 
+    def decode(self, audio: np.ndarray) -> str:
+        """What `transcribe` does after reading the file (parakeet-mlx 0.5)."""
+        import mlx.core as mx
+        from parakeet_mlx.audio import get_logmel
+
+        model = self.stt.model
+        mel = get_logmel(mx.array(audio), model.preprocessor_config)  # float32, as load_audio
+        return model.generate(mel)[0].text.strip()
+
     def _stream(self, audio: np.ndarray) -> dict:
         stream = self.stt.stream()
         busy = [0.0]
@@ -277,6 +332,11 @@ class MLXWhisper:
         text = self.stt.transcribe(clip["path"])
         return {"offline": text, "offline_s": time.perf_counter() - t0}
 
+    def decode(self, audio: np.ndarray) -> str:
+        return self.stt._mlx_whisper.transcribe(
+            audio, path_or_hf_repo=self.stt.model_path
+        )["text"].strip()
+
 
 class MLXAudio:
     """mlx-audio 0.5.7: `generate` for offline models, a streaming session
@@ -291,17 +351,18 @@ class MLXAudio:
     def run(self, clip: dict) -> dict:
         audio = load_audio(clip["path"])
         if self.mode == "offline":
-            if "parakeet" in type(self.model).__name__.lower():
-                import mlx.core as mx
-
-                audio = mx.array(audio)  # its generate takes a path or an mx.array
             t0 = time.perf_counter()
-            result = self.model.generate(audio)
-            return {
-                "offline": result.text.strip(),
-                "offline_s": time.perf_counter() - t0,
-            }
+            text = self.decode(audio)
+            return {"offline": text, "offline_s": time.perf_counter() - t0}
         return self._stream(audio)
+
+    def decode(self, audio: np.ndarray) -> str:
+        if "parakeet" in type(self.model).__name__.lower():
+            import mlx.core as mx
+
+            # its generate takes a path or an mx.array
+            return self.model.generate(mx.array(audio)).text.strip()
+        return self.model.generate(audio).text.strip()
 
     def _session(self, audio_s: float):
         kind = type(self.model).__name__.lower()
@@ -333,12 +394,15 @@ class MLXAudio:
         feed = int(SAMPLE_RATE * STREAM_FEED_S)
         parts: list[str] = []
         busy = 0.0
+        stopped = None  # the session ended itself (an end token) before release
         last = max(0, (len(audio) - 1) // feed * feed)  # the push that follows release
         for start in range(0, last, feed):
             t0 = time.perf_counter()
             session.feed(audio[start : start + feed])
             self._drain(session, parts)
             busy += time.perf_counter() - t0
+            if stopped is None and session.done:
+                stopped = round((start + feed) / SAMPLE_RATE, 1)
         t_release = time.perf_counter()
         session.feed(audio[last:])
         session.close()
@@ -349,6 +413,7 @@ class MLXAudio:
             "stream": "".join(parts).strip(),
             "stream_wait_s": wait,
             "stream_busy_s": busy + wait,
+            "stopped_early_s": stopped,
         }
 
 
@@ -391,21 +456,104 @@ def run(system: str, set_name: str, limit: int | None) -> None:
                 print(f"  {n}/{len(todo)}", flush=True)
 
 
+# --- chunked: the batch models' version of v2t's 60 s rule ---------------------
+
+
+def chunk_cuts(audio: np.ndarray) -> list[tuple[int, int]]:
+    """Where a recording would be cut while it is still going on.
+
+    Every CHUNK_S, at the quietest 100 ms within CHUNK_SEARCH_S of the mark (the
+    splitter mlx-audio's Qwen3-ASR uses for long files). A cut needs the audio up
+    to CHUNK_SEARCH_S past its mark, so only the cuts that audio exists for are
+    made before release; the rest is one piece decoded after it. Returns
+    (cut, sample at which the cut is known) pairs.
+    """
+    window = SAMPLE_RATE // 10
+    search = CHUNK_SEARCH_S * SAMPLE_RATE
+    cuts, start = [], 0
+    while start + CHUNK_S * SAMPLE_RATE + search <= len(audio):
+        lo = start + CHUNK_S * SAMPLE_RATE - search
+        region = audio[lo : lo + 2 * search]
+        energy = np.convolve(region**2, np.ones(window) / window, mode="valid")
+        start = lo + int(np.argmin(energy)) + window // 2
+        cuts.append((start, lo + 2 * search))
+    return cuts
+
+
+def chunked(engine, audio: np.ndarray) -> dict:
+    """Decode a recording piece by piece as it would arrive, then the rest on release.
+
+    Each piece is decoded once its cut is known; a piece still decoding when the next
+    is ready queues behind it. The wait is from release to the last piece's text.
+    """
+    cuts = chunk_cuts(audio)
+    bounds = [0, *(cut for cut, _ in cuts), len(audio)]
+    known = [known for _, known in cuts] + [len(audio)]  # the last piece: at release
+    texts, finished, busy = [], 0.0, 0.0
+    for lo, hi, ready in zip(bounds, bounds[1:], known):
+        t0 = time.perf_counter()
+        texts.append(engine.decode(audio[lo:hi]))
+        took = time.perf_counter() - t0
+        busy += took
+        finished = max(ready / SAMPLE_RATE, finished) + took
+    return {
+        "chunked": " ".join(t for t in texts if t),
+        "chunked_wait_s": finished - len(audio) / SAMPLE_RATE,
+        "chunked_busy_s": busy,
+        "pieces": len(bounds) - 1,
+    }
+
+
+def run_chunked(system: str, set_name: str, limit: int | None) -> None:
+    runtime, repo, mode = SYSTEMS[system]
+    if mode == "stream":
+        raise SystemExit(f"{system} streams natively; `chunk` is for whole-file decoders")
+    clips = [
+        c
+        for c in read_jsonl(SETS / f"{set_name}.jsonl")
+        if c["duration_s"] >= TAKEOVER_S
+    ]
+    out_path = private_dir(RESULTS / set_name) / f"{system}.chunked.jsonl"
+    done = {r["id"] for r in read_jsonl(out_path)}
+    todo = [c for c in clips if c["id"] not in done][:limit]
+    print(f"{system} chunked on {set_name}: {len(done)} done, {len(todo)} to go")
+    if not todo:
+        return
+    engine = RUNTIMES[runtime](repo, mode)
+    engine.decode(load_audio(min(clips, key=lambda c: c["duration_s"])["path"]))  # warm-up
+    with out_path.open("a") as out:
+        os.chmod(out_path, 0o600)
+        for n, clip in enumerate(todo, 1):
+            result = {"id": clip["id"], "duration_s": clip["duration_s"]}
+            result.update(chunked(engine, load_audio(clip["path"])))
+            out.write(json.dumps(result) + "\n")
+            out.flush()
+            if n % 10 == 0 or n == len(todo):
+                print(f"  {n}/{len(todo)}", flush=True)
+
+
 # --- report -------------------------------------------------------------------
+
+
+CHUNKED = "+chunked"  # a whole-file system scored with its `chunk` pass from 60 s up
+
+
+def mode_of(system: str) -> str:
+    return "chunked" if system.endswith(CHUNKED) else SYSTEMS[system][2]
 
 
 def final_text(system: str, row: dict) -> str:
     """The text a user would get: v2t's hacky rule, the stream, or the whole file."""
-    mode = SYSTEMS[system][2]
-    if mode == "hacky":
-        return row["stream"] if row["duration_s"] >= 60 else row["offline"]
+    mode = mode_of(system)
+    if mode in ("hacky", "chunked") and row["duration_s"] >= TAKEOVER_S:
+        return row["stream" if mode == "hacky" else "chunked"]
     return row["stream"] if mode == "stream" else row["offline"]
 
 
 def wait_s(system: str, row: dict) -> float:
-    mode = SYSTEMS[system][2]
-    if mode == "hacky":
-        return row["stream_wait_s"] if row["duration_s"] >= 60 else row["offline_s"]
+    mode = mode_of(system)
+    if mode in ("hacky", "chunked") and row["duration_s"] >= TAKEOVER_S:
+        return row["stream_wait_s" if mode == "hacky" else "chunked_wait_s"]
     return row["stream_wait_s"] if mode == "stream" else row["offline_s"]
 
 
@@ -415,12 +563,32 @@ def q(values: list[float], p: float) -> float:
 
 
 def compute_s(system: str, row: dict) -> float:
-    mode = SYSTEMS[system][2]
-    if mode == "hacky" and row["duration_s"] < 60:
+    mode = mode_of(system)
+    if mode == "chunked":
+        return row["chunked_busy_s" if row["duration_s"] >= TAKEOVER_S else "offline_s"]
+    if mode == "hacky" and row["duration_s"] < TAKEOVER_S:
         # Older results stored feed + finalisation together; both timings exist.
         feed = row.get("stream_feed_s", row["stream_busy_s"] - row["stream_wait_s"])
         return feed + row["offline_s"]
     return row["offline_s"] if mode == "offline" else row["stream_busy_s"]
+
+
+def chunked_cells(set_name: str, cells: dict, common: list[str]) -> dict:
+    """`<system>+chunked` for each whole-file system whose chunk pass covers the
+    common clips from 60 s up: its own rows with the chunked text merged in."""
+    out = {}
+    for path in sorted((RESULTS / set_name).glob("*.chunked.jsonl")):
+        base = path.name.removesuffix(".chunked.jsonl")
+        if base not in cells:
+            continue
+        extra = {r["id"]: r for r in read_jsonl(path)}
+        long = [cid for cid in common if cells[base][cid]["duration_s"] >= TAKEOVER_S]
+        if not all(cid in extra for cid in long):
+            continue  # pass not finished: leave it out rather than score a subset
+        out[base + CHUNKED] = {
+            cid: {**cells[base][cid], **extra.get(cid, {})} for cid in common
+        }
+    return out
 
 
 def family(system: str) -> str:
@@ -445,20 +613,23 @@ def score_set(set_name: str) -> list[dict]:
     common = sorted(set(clips).intersection(*[set(rows) for rows in cells.values()]))
     if not common:
         return []
-    errors = dict.fromkeys(cells, 0)
-    words = dict.fromkeys(cells, 0)
+    # chunked variants are scored like any system but never vote, so adding one
+    # leaves every other row unchanged
+    scored = {**cells, **chunked_cells(set_name, cells, common)}
+    errors = dict.fromkeys(scored, 0)
+    words = dict.fromkeys(scored, 0)
     for cid in common:
         clip = clips[cid]
-        hyps = {s: normalise(final_text(s, cells[s][cid]), clip["lang"]) for s in cells}
+        hyps = {s: normalise(final_text(s, scored[s][cid]), clip["lang"]) for s in scored}
         if clip["text"] is not None:
             ref = normalise(clip["text"], clip["lang"])
-            for s in cells:
+            for s in scored:
                 errors[s] += edits(ref, hyps[s])
                 words[s] += len(ref)
             continue
         # no label: the medoid of the other systems plus Wispr's ASR, leaving out the
         # system's own family, whose near-identical text would otherwise vote for it
-        voters = dict(hyps)
+        voters = {s: hyps[s] for s in cells}
         if clip.get("wispr_asr"):
             voters["wispr-asr"] = normalise(clip["wispr_asr"], clip["lang"])
         names = list(voters)
@@ -471,15 +642,15 @@ def score_set(set_name: str) -> list[dict]:
         def dist(a: str, b: str) -> int:
             return 0 if a == b else pair[frozenset((a, b))]
 
-        for s in cells:
+        for s in scored:
             others = [n for n in names if family(n) != family(s)]
             if not others:  # a lone system and no Wispr ASR: nothing to agree with
                 continue
             ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))
-            errors[s] += dist(ref_name, s)
+            errors[s] += edits(voters[ref_name], hyps[s])
             words[s] += len(voters[ref_name])
     rows = []
-    for system, rows_by_id in cells.items():
+    for system, rows_by_id in scored.items():
         if not words[system]:
             continue  # no reference words: this cell cannot supply an error rate
         waits = [wait_s(system, rows_by_id[cid]) for cid in common]
@@ -491,7 +662,7 @@ def score_set(set_name: str) -> list[dict]:
         rows.append(
             {
                 "system": system,
-                "mode": SYSTEMS[system][2],
+                "mode": mode_of(system),
                 "n": len(common),
                 "errors": errors[system],
                 "words": words[system],
@@ -548,6 +719,10 @@ def main(argv: list[str]) -> int:
     r.add_argument("--system", choices=sorted(SYSTEMS), required=True)
     r.add_argument("--set", dest="set_name", required=True)
     r.add_argument("--limit", type=int)
+    c = sub.add_parser("chunk", help="a whole-file system, piece by piece, on clips from 60 s")
+    c.add_argument("--system", choices=sorted(SYSTEMS), required=True)
+    c.add_argument("--set", dest="set_name", required=True)
+    c.add_argument("--limit", type=int)
     sub.add_parser("report")
     a = p.parse_args(argv)
     private_dir(GRID)
@@ -555,6 +730,8 @@ def main(argv: list[str]) -> int:
         prepare()
     elif a.command == "run":
         run(a.system, a.set_name, a.limit)
+    elif a.command == "chunk":
+        run_chunked(a.system, a.set_name, a.limit)
     else:
         report()
     return 0
