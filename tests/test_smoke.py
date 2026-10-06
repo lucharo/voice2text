@@ -1599,6 +1599,32 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
+    def test_setup_help_prints_usage_and_asks_nothing(self):
+        output = io.StringIO()
+        with (
+            mock.patch("builtins.input", side_effect=AssertionError("prompted")),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as exit_,
+        ):
+            cli.cmd_setup(["--help"])
+
+        self.assertEqual(exit_.exception.code, 0)
+        self.assertIn("usage: v2t setup", output.getvalue())
+        self.assertFalse(config.config_path().exists())
+
+    def test_setup_without_answers_exits_cleanly_and_writes_nothing(self):
+        errors = io.StringIO()
+        with (
+            mock.patch("builtins.input", side_effect=EOFError),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(errors),
+        ):
+            code = cli.cmd_setup([])
+
+        self.assertEqual(code, 1)
+        self.assertIn("v2t config --init", errors.getvalue())
+        self.assertFalse(config.config_path().exists())
+
     def test_setup_quotes_the_whisper_extra_for_zsh(self):
         output = io.StringIO()
         with (
