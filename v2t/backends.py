@@ -247,6 +247,18 @@ def _decode_pcm(model, pcm: np.ndarray) -> str:
     return model.generate(mel)[0].text.strip()
 
 
+def release_cache() -> None:
+    """Hand MLX's cache of freed buffers back to the system.
+
+    MLX keeps freed buffers for reuse, and pieces and previews of differing lengths
+    rarely fit the ones kept: without this the cache grew to 20.5 GB over three long
+    recordings (65, 137 and 286 s, measured 2026-10-06), against 1.2 GB in use.
+    """
+    import mlx.core as mx
+
+    mx.clear_cache()
+
+
 class ParakeetStream:
     """One live Parakeet transcription: feed audio as it arrives, read the partial
     text, then close. Opening switches the shared model to local attention and
@@ -336,7 +348,10 @@ class ParakeetSTT:
         pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
         if pcm.size < int(self.model.preprocessor_config.hop_length):
             return ""  # under one hop the log-mel is empty and crashes Metal
-        return _decode_pcm(self.model, pcm)
+        try:
+            return _decode_pcm(self.model, pcm)
+        finally:
+            release_cache()
 
     def stream(self) -> ParakeetStream:
         return ParakeetStream(self.model)

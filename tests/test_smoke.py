@@ -614,11 +614,11 @@ class V2TSmokeTests(unittest.TestCase):
         stream.add_audio.assert_not_called()
         self.assertEqual(live.text, "", "the streamed text is not the preview's")
 
-    def test_parakeet_decode_runs_the_model_on_audio_and_skips_a_sub_hop_piece(self):
+    def test_parakeet_decode_runs_the_model_frees_its_buffers_and_skips_a_sub_hop_piece(self):
         model = mock.Mock()
         model.preprocessor_config.hop_length = 160
         model.generate.return_value = [mock.Mock(text=" piece words ")]
-        fake_mx = types.SimpleNamespace(array=np.asarray)
+        fake_mx = types.SimpleNamespace(array=np.asarray, clear_cache=mock.Mock())
         audio_module = types.SimpleNamespace(
             get_logmel=mock.Mock(side_effect=lambda pcm, cfg: ("mel", pcm.size))
         )
@@ -640,6 +640,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual((text, short), ("piece words", ""))
         model.generate.assert_called_once_with(("mel", 16000))
         model.transcribe_stream.assert_not_called()
+        fake_mx.clear_cache.assert_called_once()  # after the decode: freed buffers go back
 
     @staticmethod
     def _speech_with_pauses(seconds: float, pauses_at: tuple[float, ...]) -> np.ndarray:
