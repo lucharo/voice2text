@@ -40,8 +40,8 @@ The audio is still at `~/.v2t/run/last-recording.wav` for `v2t transcribe`.
 
 Open the menu-bar icon and choose **Pill**:
 
-- **Near text cursor**: the default. In an empty Chrome or Electron field it sits just below the
-  field; in Ghostty, at the bottom of the pane you are typing in.
+- **Near text cursor**: the default. A speech bubble beside the text box, its tail at the caret;
+  in a Ghostty split, at the bottom of the pane.
 - **Bottom of screen**: always there.
 - **Off**: no pill.
 

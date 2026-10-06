@@ -44,6 +44,7 @@ v2t warns in its log while that setting is anything else. Prefer Right Command? 
 | Dictate | Hold Fn, talk, let go |
 | Dictate hands-free | Double-tap Fn, talk, tap Fn once to finish |
 | Cancel | Press Esc while recording |
+| Undo a cancel | Cmd+Z within 5 s (menu app) |
 
 Nothing shows until the key has been down for half a second, so a quick tap or an Fn shortcut
 (Fn+arrow) leaves no trace.
@@ -71,8 +72,9 @@ brew install --cask voice2text
 ```
 
 The first line is needed because Homebrew 6 loads no third-party tap it has not been told to trust.
-Open **Voice2Text** from `/Applications`, grant the two permissions it asks for, then choose
-**Start v2t**. The menu shows **Ready** once the models are loaded.
+Open **Voice2Text** from `/Applications` and grant the two permissions it asks for. Once both are
+granted, opening the app starts v2t, so later launches need no click. The menu shows **Ready** once
+the models are loaded.
 
 To start it at login:
 

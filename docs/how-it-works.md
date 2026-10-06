@@ -40,8 +40,10 @@ works that way.
 
 ## The pill
 
-With the [menu app](getting-started.md#the-menu-app-optional), a small capsule floats over every
-app while you dictate. It never takes focus, so the paste lands where you were typing.
+With the [menu app](getting-started.md#the-menu-app-optional), a small speech bubble sits beside
+the text box you are typing in while you dictate, its tail pointing at the caret, or at the start of
+an empty field. It sits below the box when the box is in the top half of the screen, above it
+otherwise, and it never takes focus, so the paste lands where you were typing.
 
 | State | The pill shows |
 |---|---|
@@ -51,10 +53,12 @@ app while you dictate. It never takes focus, so the paste lands where you were t
 
 - **Pill** in the menu picks where it sits: **Near text cursor** (the default), **Bottom of
   screen**, or **Off**.
-- Near the text cursor works in native text views (TextEdit, Notes, Mail) and in Chrome, Brave and
-  Electron apps such as Slack once the field has text. In an empty Chromium field it sits just below
-  the field; in Ghostty, at the bottom of the pane you are typing in.
-- **Undo**, on the pill or in the menu, recovers a cancelled dictation and carries on recording.
+- The tail finds the caret in native text views (TextEdit, Notes, Mail) and in Chrome, Brave and
+  Electron apps such as Slack. In a tall pane with no caret, such as a Ghostty split, the pill sits
+  at the bottom of the pane.
+- After Esc, the cancelled pill shows an **Undo ⌘Z** chip for 5 s. The chip, Cmd+Z or **Undo Cancel** in the menu brings the
+  dictation back and carries on recording; after 5 s the audio is dropped and Cmd+Z goes to the app
+  as usual.
 
 ## Startup
 
