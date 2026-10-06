@@ -815,15 +815,15 @@ final class Pill: NSObject {
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
         var x: CGFloat, y: CGFloat
         view.tailBelow = true
-        // The tail tip sits 3 pt right of the caret and 10 pt clear of it.
+        // The tail tip sits 8 pt right of the caret and 8 pt clear of it.
         var tipX: CGFloat?
         if let target {
             let tail = view.hasTail ? 0 : PillView.tail  // keep the body still when the tail goes
-            tipX = target.midX + 3
+            tipX = target.midX + 8
             x = tipX! - PillView.tipInset
-            y = target.maxY + 10 + tail
+            y = target.maxY + 8 + tail
             if y + size.height > top - 8 {  // no room above: down and to the right
-                y = target.minY - 10 - tail - size.height
+                y = target.minY - 8 - tail - size.height
                 view.tailBelow = false
             }
         } else {
