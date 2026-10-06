@@ -17,13 +17,20 @@ successful `check` run proves validation, not publication.
 publishes them with publisher attestations. Registration proves configuration; the tagged
 workflow and indexed artifacts must still be verified for each release.
 
+**Verified release (2026-10-06):** [v0.5.3](https://github.com/lucharo/voice2text/releases/tag/v0.5.3)
+was published by [GitHub Actions](https://github.com/lucharo/voice2text/actions/runs/37451102357).
+Both indexed PyPI distributions match the CI artifacts, their publisher attestations verify,
+and isolated wheel and sdist installs run `v2t --help`. The downloaded arm64 Mac app reports
+0.5.3, passes signature, stapling and Gatekeeper checks, and its ZIP checksum matches the
+automatically updated cask. Installation and real dictation on the work Mac remain separate checks.
+
 ### Sources
 
 - [Release workflow](../../.github/workflows/release.yml) — tag trigger, protected jobs and publication.
 - [Check workflow](../../.github/workflows/check.yml) — validation only.
 - [v0.4.1 release](https://github.com/lucharo/voice2text/releases/tag/v0.4.1) — the local-release exception.
 
-_Created: 2026-08-01 · Updated: 2026-10-05 · Verified: 2026-10-05 · Scope: release configuration.
+_Created: 2026-08-01 · Updated: 2026-10-06 · Verified: 2026-10-06 · Scope: v0.5.3 CI publication.
 Recheck the tagged workflow and indexed artifacts for publication evidence._
 
 ## What does PyPI's 503 mean, and what do we need to do?
