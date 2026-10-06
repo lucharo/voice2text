@@ -58,8 +58,9 @@ _Created: 2026-09-08 · Verified: 2026-09-08._
 in pieces of about 30 s, cut at the quietest 100 ms near each mark and decoded whole while the key is
 still held, gave 5.9% disagreement against 8.3% for today's stream on 86 long dictations, and a
 shorter median wait (0.27 s against 0.38 s). On the 40 labelled long clips (ls-long) the early word
-error rates were 5.3% for v3 as shipped and 2.3% for Parakeet Ultra in pieces. The release wait
-depends on the last piece (at most about 35 s of audio), not on the dictation's length. Waiting on
+error rates were 5.3% for v3 as shipped and 2.3% for Parakeet Ultra in pieces. Provided decoding keeps up in real time, the
+release wait depends on the last piece (at most about 35 s of audio), not on the dictation's length.
+A slower model can fall behind, and the queued pieces then add to the wait. Waiting on
 the full grid-job5 and grid-job6 results before building it into v2t.
 
 ### Sources

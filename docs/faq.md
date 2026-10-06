@@ -68,8 +68,8 @@ permission per app identity, so the copy that asked last takes it from the other
 
 ## How long does cleanup take?
 
-About half a second at the median with the default `Qwen3.5-2B`, and about 2 s for the slowest
-tenth, measured on 201 real dictations on an M4 Pro.
+About half a second at the median with the default `Qwen3.5-2B`, and nine in ten finish within
+about 2 s, measured on 201 real dictations on an M4 Pro.
 
 - Since 0.5.0 the fixed part of the prompt is processed once and reused, and the model checks
   several guessed words per step: the median went from 1.27 s to 0.51 s.
