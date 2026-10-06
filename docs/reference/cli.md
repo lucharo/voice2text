@@ -82,7 +82,7 @@ v2t dictionary add "my sequel => MySQL"
 v2t setup
 ```
 
-Asks which models to use, detects Ollama, and writes `~/.v2t/config.toml`. Takes no flags.
+Asks which models to use, detects Ollama, and writes `~/.v2t/config.toml`. It needs a terminal; `v2t config --init` writes the defaults without asking.
 
 ## status
 
