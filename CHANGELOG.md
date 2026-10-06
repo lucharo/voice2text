@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Fix Mac release publication after notarisation: zsh now passes the existing release tag's refspec unchanged to Git. This completes delivery of the 0.5.0 desktop UI; dictation behaviour is unchanged.
+
 ## 0.5.0
 
 - **Cleanup is about 2.5× faster.** Each cleanup call used to run the whole prompt (instructions, worked examples and dictionary terms, about 775 tokens) through the model and then write one token per model step. Now the fixed part of the prompt is processed once and reused, and the model guesses its next words from the dictation, checking up to eight in one step and keeping only those it agrees with. Over 201 real dictations on an M4 Pro the median cleanup went from 1.27 s to 0.51 s and p90 from 5.34 s to 2.09 s. The text is identical on 169 of them; the other 32 differ by about three words, from float rounding when the prompt is processed in two parts.
