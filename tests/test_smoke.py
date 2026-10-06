@@ -101,6 +101,18 @@ class V2TSmokeTests(unittest.TestCase):
         notify = mock.patch.object(app, "_notify")
         notify.start()
         self.addCleanup(notify.stop)
+        # Each engine opens a pill socket; close it with the test. Left to the
+        # garbage collector, its ResourceWarning prints into whichever later
+        # test is capturing stderr (CI, 2026-10-06: a dictionary-apply test).
+        real_init = app.VoiceToText.__init__
+
+        def init(voice, *args, **kwargs):
+            real_init(voice, *args, **kwargs)
+            self.addCleanup(voice.live_socket.close)
+
+        engines = mock.patch.object(app.VoiceToText, "__init__", init)
+        engines.start()
+        self.addCleanup(engines.stop)
 
     def test_audio_device_failure_returns_to_error_state(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
