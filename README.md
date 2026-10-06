@@ -316,7 +316,7 @@ Apple Development, then ad-hoc). Keep only one: both copies share a bundle ID, a
 permission grant to one signature, so whichever copy asks last takes the other's grants. `v2t menubar
 install` refuses once the cask is installed, and the menu names any second copy with a button that
 bins it (or, from the stray copy, hands over to `/Applications`). Releasing is pushing a `v<version>` tag that matches
-`pyproject.toml`: `.github/workflows/release.yml` waits for approval in the `release` environment,
+`pyproject.toml`: `.github/workflows/release.yml` (no manual approval step; only `v*` tags reach the `release` environment)
 publishes the engine to PyPI through trusted publishing, signs and notarises the app with the
 identity `scripts/ci-signing-secrets.sh` stored, and commits the updated cask to `main`.
 `just release-macos --publish` does the app half from a Mac with the Developer ID certificate.

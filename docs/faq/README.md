@@ -3,7 +3,7 @@
 ## Does publication happen in CI?
 
 **Short answer:** The `release.yml` workflow now handles publication after a `v<version>` tag
-push and approval in the `release` environment. It publishes the engine to PyPI, then signs,
+push, with no manual approval step (the `release` environment accepts only `v*` tags, since 2026-10-06). It publishes the engine to PyPI, then signs,
 notarises and publishes the Mac app and updates the Homebrew cask.
 
 **Correction (2026-09-28):** the earlier answer said CI only validates and builds. Version 0.4.1

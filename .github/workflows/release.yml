@@ -3,8 +3,8 @@ name: release
 # Pushing a v<version> tag publishes that version: the engine to PyPI (trusted
 # publishing, no token) and the notarised menu app to the GitHub Release, then
 # commits the rewritten cask to main. Both jobs run in the `release`
-# environment, whose required reviewer approves each run before any secret is
-# exposed. One-time setup: scripts/ci-signing-secrets.sh and a PyPI trusted
+# environment, which only `v*` tags may deploy to; there is no manual approval
+# step, so pushing the tag is the release decision. One-time setup: scripts/ci-signing-secrets.sh and a PyPI trusted
 # publisher (see scripts/release-macos.sh).
 
 on:
