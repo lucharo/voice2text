@@ -53,9 +53,10 @@ otherwise, and it never takes focus, so the paste lands where you were typing.
 
 - **Pill** in the menu picks where it sits: **Near text cursor** (the default), **Bottom of
   screen**, or **Off**.
-- The tail finds the caret in native text views (TextEdit, Notes, Mail) and in Chrome, Brave and
-  Electron apps such as Slack. In a tall pane with no caret, such as a Ghostty split, the pill sits
-  at the bottom of the pane.
+- The tail finds the caret in native text views (TextEdit, Notes, Mail), and in Chrome, Brave and
+  Electron apps such as Slack once the field has text; an empty Chromium field reports no caret, so
+  the tail points at the field's start. In a tall pane with no caret, such as a Ghostty split, the
+  pill sits at the bottom of the pane.
 - After Esc, the cancelled pill shows an **Undo ⌘Z** chip for 5 s. The chip, Cmd+Z or **Undo Cancel** in the menu brings the
   dictation back and carries on recording; after 5 s the audio is dropped and Cmd+Z goes to the app
   as usual.
