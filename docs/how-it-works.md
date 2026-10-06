@@ -24,7 +24,7 @@ Both models stay loaded between dictations, so each one starts at once.
   over a minute, 15 to 30 s for ten-minute ones, and three minutes for one 14-minute dictation.
   Finishing the draft takes about 0.4 s whatever the length.
 
-![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to three minutes; the streamed draft stays under a second from 60 s up](images/wait-vs-length.svg)
+![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to three minutes; the streamed draft stays near 0.4 s from 60 s up, under 3 s at worst](images/wait-vs-length.svg)
 
 <small>One dot per dictation, Parakeet v3 on an M4 Pro.</small>
 

@@ -9,7 +9,7 @@ dictation on this Mac?**
 | name | runtime | what it is |
 |---|---|---|
 | `parakeet-v3` | parakeet-mlx | v2t today: whole-file under 60 s, the local-attention stream from 60 s up |
-| `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, run as a drop-in for v3 (same 60 s rule) |
+| `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, run as a drop-in for v3 (same 60 s rule). The grid uses `selcukkubur/parakeet-ultra-mlx`; `beshkenadze/parakeet-ultra-mlx-fp16` is the other MLX conversion (October 2026) |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |
@@ -50,8 +50,10 @@ VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper 
 .venv/bin/python utils/asr_grid/plot_wait.py               # the README's wait-vs-length chart
 ```
 
-Run cells one at a time: two models on the GPU contaminate each other's timings. Cells resume
-where they stopped. Models load offline from the Hugging Face cache; where huggingface.co is
+Run cells one at a time: two models on the GPU contaminate each other's timings. Check `df -h /`
+and swap first: at 595 MB free a cell died with no traceback, and swapping inflated the waits of
+another, so rerun a spoiled cell rather than keep it. Voxtral's realtime session can end itself
+early and return no words; `stopped_early_s` records where. Cells resume where they stopped. Models load offline from the Hugging Face cache; where huggingface.co is
 blocked, download them elsewhere (`hf download <repo>` with `HF_HUB_CACHE` pointed at a folder)
 and rsync that folder into `~/.cache/huggingface/hub`.
 

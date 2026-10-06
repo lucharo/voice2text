@@ -23,7 +23,7 @@ failure. During active use, `recording`, `transcribing`, and `cleaning` are heal
 - [Status command](../v2t/cli.py) — reports live state, selected models, mode and launch error.
 - [Smoke tests](../tests/test_smoke.py) — verifies the `idle` status output and error-state
   behaviour.
-- [README usage](../README.md) — documents the live menu states, `v2t status`, permissions and
+- [Getting started](../docs/getting-started.md) and [FAQ](../docs/faq.md) — document the live menu states, `v2t status`, permissions and
   the hotkey interaction.
 
 _Created: 2026-08-29 · Updated: 2026-08-29 · Verified: 2026-08-29 · Scope/version: v0.3.0
@@ -44,7 +44,7 @@ The checks still run for a first download or a partial cache, where the network 
   around the load when `cached_locally` finds a snapshot, and retries online on failure.
 - [Smoke tests](../tests/test_smoke.py) — `test_cached_models_load_without_hub_revision_checks`
   and `test_partial_cache_falls_back_to_an_online_load`.
-- [README startup time](../README.md#startup-time) — the user-facing statement.
+- [How it works, Startup](../docs/how-it-works.md#startup) — the user-facing statement.
 
 _Created: 2026-09-04 · Updated: 2026-09-04 · Verified: 2026-09-04 (timings measured on an M4 Pro)._
 
@@ -64,7 +64,7 @@ ID-signed and notarised bundle would restore the menu route there.
 - [Menu app source](../v2t/native/Voice2Text.swift) — requests microphone and accessibility, then
   launches the engine with `V2T_LAUNCH_CONTEXT=menubar`.
 - [LaunchAgent](../v2t/service.py) — `ProgramArguments` runs the app bundle, not Python.
-- [README menu-bar section](../README.md#optional-menu-bar-app) — permissions paragraph.
+- [Getting started, the menu app](../docs/getting-started.md#the-menu-app-optional) — permissions paragraph.
 
 _Created: 2026-09-04 · Updated: 2026-09-04 · Verified: 2026-09-04 · Scope: v0.3.x on macOS 26; the
 launchd-without-bundle path has not been re-tested on this macOS version._
@@ -86,7 +86,7 @@ The live transcript is experimental and off by default since 0.5.5: `live_transc
 `[transcription]` in `config.toml` turns it on. Words appear about 1 s after you say them, but an
 early wrong word can pull you into correcting yourself mid-sentence. Cleanup shows a live seconds
 counter. Placement persists across launches. See the
-[README pill controls](../README.md#optional-menu-bar-app) for Esc and Undo behaviour.
+[pill section of How it works](../docs/how-it-works.md#the-pill) for Esc and Undo behaviour.
 
 ### Sources
 
@@ -122,7 +122,7 @@ for `v2t transcribe`.
   threshold; `_default_input_name` records the device.
 - [History schema](../v2t/config.py) — `HISTORY_COLUMNS` lists every column, including
   `device`, `rms`, `peak`, `zero_frac`, `loud_frac`, `level_warning` and `outcome`.
-- [README history](../README.md) — the same query and the warning's three surfaces.
+- [Guide, History](../docs/guide.md#history) — the same query and the warning's three surfaces.
 
 _Created: 2026-09-11 · Verified: 2026-09-11 (a 62 s headset recording with `loud_frac` 0.0 and a
 1.0 peak at 1.6 s; the built-in microphone read as `loud_frac` above 0.9 in tests)._

@@ -37,7 +37,8 @@ but it does change accuracy: on 208 clips 1 s pushes disagreed with whole-file d
 the words at the median, 5 s pushes by 0.062. A decoder-only model such as GPT-2 has none of this:
 causal attention only looks left, so generating token by token is the batch computation split in
 time. A `clean` mode would use a checkpoint trained to stream (NVIDIA's `parakeet-unified` or the
-cache-aware Nemotron streaming models); none is in MLX yet. Whisper's encoder is also bidirectional
+cache-aware Nemotron streaming models); none is in MLX yet. (Correction, 2026-10-06: mlx-audio
+0.5.7 runs `nemotron-3.5-asr-streaming-0.6b` as a cache-aware stream, and the ASR grid includes it.) Whisper's encoder is also bidirectional
 over a fixed 30 s window and mlx-whisper exposes no cached path, so streaming it would mean
 re-encoding the last 30 s every second.
 
@@ -50,3 +51,17 @@ re-encoding the last 30 s every second.
   [PR #17](https://github.com/lucharo/voice2text/pull/17) — the measurements behind the numbers.
 
 _Created: 2026-09-08 · Verified: 2026-09-08._
+
+## Would 30 s pieces beat the 5 s stream for long dictations?
+
+**Short answer (proposal, 2026-10-06, not shipped):** probably. From 60 s up, decoding the recording
+in pieces of about 30 s, cut at the quietest 100 ms near each mark and decoded whole while the key is
+still held, gave 5.9% disagreement against 8.3% for today's stream on 86 long dictations, and a
+shorter median wait (0.27 s against 0.38 s). On the 40 labelled long clips (ls-long) the early word
+error rates were 5.3% for v3 as shipped and 2.3% for Parakeet Ultra in pieces. The release wait
+depends on the last piece (at most about 35 s of audio), not on the dictation's length. Waiting on
+the full grid-job5 and grid-job6 results before building it into v2t.
+
+### Sources
+
+- [ASR grid README](../utils/asr_grid/README.md) — `grid.py chunk` and the `ls-long` set.

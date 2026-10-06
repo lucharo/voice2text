@@ -5,7 +5,7 @@
 Three scatters (your dictations; long labelled clips; the short labelled sets pooled):
 error against the wait after release, one dot per system, colour and shape by pipeline, with the Pareto front (the systems
 nothing beats on both error and wait). Where a chunked run exists, an arrow joins it to the
-same system's whole-file run. A table carries every number.
+same system's own run (whole-file for a batch model, v2t's rule for Parakeet). A table carries every number.
 """
 
 from __future__ import annotations
@@ -199,7 +199,7 @@ function chart(id,key){const svg=document.getElementById(id);const W=520,H=330,m
 chart('c-wispr','wispr');chart('c-long','long');chart('c-labelled','labelled');
 const lg=document.getElementById('legend');for(const [mode,label] of Object.entries(DATA.pipelines)){const sp=document.createElement('span');const s=el('svg',{width:14,height:14,viewBox:'0 0 14 14'});shape(s,mode,7,7,4.5);sp.appendChild(s);sp.append(label);lg.appendChild(sp)}
 {const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('path',{d:'M1,3L11,3L11,11L21,11',style:'fill:none;stroke:var(--fg2);stroke-width:1.3;stroke-dasharray:4 3'},s);sp.appendChild(s);sp.append('Pareto front: nothing below or left of it');lg.appendChild(sp)}
-if(DATA.systems.some(s=>s.mode==='chunked')){const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('line',{x1:2,y1:7,x2:15,y2:7,style:'stroke:var(--fg3);stroke-width:1.3'},s);el('path',{d:'M14,3L20,7L14,11Z',style:'fill:var(--fg3)'},s);sp.appendChild(s);sp.append('from whole file to chunked');lg.appendChild(sp)}
+if(DATA.systems.some(s=>s.mode==='chunked')){const sp=document.createElement('span');const s=el('svg',{width:22,height:14,viewBox:'0 0 22 14'});el('line',{x1:2,y1:7,x2:15,y2:7,style:'stroke:var(--fg3);stroke-width:1.3'},s);el('path',{d:'M14,3L20,7L14,11Z',style:'fill:var(--fg3)'},s);sp.appendChild(s);sp.append('same model, run in chunks from 60 s');lg.appendChild(sp)}
 const cols=[['ls-clean','LS clean'],['ls-other','LS other'],['fleurs-es','FLEURS es']];
 const best=k=>Math.min(...DATA.systems.map(s=>s.sets[k]?s.sets[k].wer:9));
 let h='<tr><th>system</th><th>pipeline</th>'+cols.map(c=>`<th>${c[1]}</th>`).join('')+'<th>long clips</th><th>your dictations</th><th>wait p50</th><th>p90</th><th>max</th><th>compute / audio</th></tr>';
