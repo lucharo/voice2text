@@ -276,19 +276,19 @@ The optional app is a single, inspectable Swift source file — no window, Xcode
 or separate settings system. It exists because macOS only grants microphone access to a real app
 identity. The menu requests the two native grants, starts one long-running Python process, shows
 state immediately (the icon turns red while recording), previews the last transcription with a
-copy action, and links to config, history, and log. Run `v2t` in a terminal instead if you do not
+copy action, shows the installed version, and links to config, history, log and **Send Feedback…** (a new GitHub issue). Run `v2t` in a terminal instead if you do not
 want the menu.
 
 **The pill.** While you dictate, a small capsule floats over every app: a bar waveform of the level
 the engine is actually capturing (a flat line means the microphone is delivering nothing), then a
-ripple while it transcribes, then a pulse while it cleans up, without status words. It never takes
+ripple while it transcribes, then a pulse with a live seconds counter while it cleans up. It never takes
 focus, so the paste still lands where you were typing. **Pill** in the menu picks the placement:
 **Near text cursor** is the default; in an app that exposes no text caret, such as Ghostty, it sits
 at the bottom of the focused field or pane instead. **Bottom of screen** pins it there; **Off** hides
-it. **Show live transcript** optionally displays words as you speak (off by default, available when
-the engine can stream). Parakeet decodes in 5 s chunks and previews the audio since the last chunk
-every second, so a word shows about 1 s after you say it; the preview is display only and never
-changes the pasted text. These choices persist across launches. Press **Esc** to cancel
+it. These choices persist across launches. The live transcript is experimental and off: set
+`live_transcript = true` under `[transcription]` in `config.toml` to see streamed words in the pill
+(Parakeet decodes in 5 s chunks and previews the audio since the last chunk every second, so a word
+shows about 1 s after you say it; the preview is display only and never changes the pasted text). Press **Esc** to cancel
 without pasting; **Undo** on the pill or in the menu recovers the captured audio and resumes
 hands-free recording. Press Fn to finish. The engine sends each state change
 and, while recording, the input level as datagrams to `~/.v2t/run/live.sock`, which the app binds;

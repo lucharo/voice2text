@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- **The live transcript is parked as experimental.** It is off, and the menu toggle is gone. Set `live_transcript = true` under `[transcription]` in `config.toml` to bring it back. While it is off the engine runs no previews.
+- **The pill counts the cleanup up live in seconds**, so you can see how quick it is each time.
+- **In Chrome, Brave and Electron apps such as Claude and Slack, the pill now follows the caret** once the field has text. It is measured from the character before the caret, because Chromium reports no height for the empty caret position. Electron apps are asked to build their accessibility tree (`AXManualAccessibility`).
+- The menu shows the installed version under the model line, and **Send Feedback…** opens a new GitHub issue.
+- Releases publish on the `v<version>` tag push alone; the manual approval step in the `release` environment is gone (only `v*` tags may deploy to it).
+
 ## 0.5.4
 
 - **The live transcript keeps up: words show about 1 s after you say them, down from about 3 s.** Between 5 s decoding chunks the engine previews the newest audio every second. The preview is display only: the pasted text is unchanged (identical with and without previews on 7 recordings).

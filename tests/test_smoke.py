@@ -716,7 +716,7 @@ class V2TSmokeTests(unittest.TestCase):
         return statuses, paste
 
     def test_a_preview_shows_the_unpushed_audio_every_second_between_pushes(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
         feeds: list[int] = []
@@ -734,8 +734,28 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(feeds, [chunk, 32000], "previews never reach the stream")
         paste.assert_called_once_with("final words")
 
-    def test_a_failing_preview_stops_previews_but_not_the_recording(self):
+    def test_no_preview_runs_while_the_live_transcript_is_off(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt, stream = self._streaming_stt([])
+
+        statuses, paste = self._hold_and_feed(voice, [1.0, 1.0])
+
+        stream.preview.assert_not_called()
+        self.assertEqual(statuses, ["so far", "so far", "so far"])
+        paste.assert_called_once_with("final words")
+
+    def test_live_transcript_is_read_from_config_and_validated(self):
+        self.assertFalse(config.Config().live_transcript)
+        config.write_config("[transcription]\nlive_transcript = true\n")
+        self.assertTrue(config.load().live_transcript)
+        config.write_config('[transcription]\nlive_transcript = "yes"\n')
+        with self.assertRaises(SystemExit):
+            config.load()
+
+    def test_a_failing_preview_stops_previews_but_not_the_recording(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
         feeds: list[int] = []
@@ -946,6 +966,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "cleanup": "off",
                     "mode": "casual",
                     "streaming": False,
+                    "live_transcript": False,
                     "error": "",
                     "warning": "",
                     "words": 2,
@@ -969,25 +990,30 @@ class V2TSmokeTests(unittest.TestCase):
                 "cleanup": "off",
                 "mode": "casual",
                 "streaming": False,
+                "live_transcript": False,
                 "error": "",
                 "warning": "",
             },
         )
 
-    def test_status_advertises_live_transcript_only_when_capture_can_stream(self):
+    def test_status_advertises_live_transcript_only_when_enabled_and_capture_can_stream(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
         voice.stt, _stream = self._streaming_stt([])
-        for mode, rate, backend_streams, available in (
-            ("hacky", 16000, True, True),
-            ("off", 16000, True, False),
-            ("hacky", 48000, True, False),
-            ("hacky", 16000, False, False),
+        for mode, rate, backend_streams, live, available in (
+            ("hacky", 16000, True, True, True),
+            ("hacky", 16000, True, False, True),  # streams, but the transcript is off
+            ("off", 16000, True, True, False),
+            ("hacky", 48000, True, True, False),
+            ("hacky", 16000, False, True, False),
         ):
-            with self.subTest(mode=mode, rate=rate, backend_streams=backend_streams):
+            with self.subTest(
+                mode=mode, rate=rate, backend_streams=backend_streams, live=live
+            ):
                 voice.cfg.streaming_mode = mode
                 voice.cfg.sample_rate = rate
                 voice.stt.streaming = backend_streams
+                voice.cfg.live_transcript = live
 
                 voice._set_state("idle")
 
@@ -998,6 +1024,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "cleanup": "off",
                     "mode": "casual",
                     "streaming": available,
+                    "live_transcript": available and live,
                     "error": "",
                     "warning": "",
                 }

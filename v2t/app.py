@@ -330,6 +330,7 @@ class VoiceToText:
                 "state": state,
                 **self.status_details,
                 "streaming": self.can_stream(),
+                "live_transcript": self.cfg.live_transcript and self.can_stream(),
                 "error": clean_error,
                 "warning": self.warning,
             }
@@ -660,9 +661,9 @@ class VoiceToText:
 
         Runs on the processing thread. New frames go into the streaming
         recogniser every STREAM_CHUNK_S seconds of audio and the partial text
-        goes to the log and the menu bar; in between, every PREVIEW_STEP_S
-        seconds the audio not pushed yet is decoded on its own and shown after
-        it, display only. Once the hotkey thread calls `finish`,
+        goes to the log and the menu bar; with the experimental live transcript
+        on, every PREVIEW_STEP_S seconds in between the audio not pushed yet is
+        decoded on its own and shown after it, display only. Once the hotkey thread calls `finish`,
         a recording longer than STREAM_TAKEOVER_S takes the streamed text (only
         the remainder is left to decode); a shorter one is decoded whole-file,
         which costs about the same there and gives the reference text.
@@ -679,7 +680,7 @@ class VoiceToText:
             feeder = backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
             preview_step = int(self.cfg.sample_rate * backends.PREVIEW_STEP_S)
             previewed = 0  # unpushed samples at the last preview
-            previewing = True
+            previewing = self.cfg.live_transcript  # previews exist only to be shown
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
