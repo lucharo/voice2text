@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" font-family="system-ui,-apple-system,Segoe UI,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400" font-family="system-ui,-apple-system,Segoe UI,sans-serif">
 <style>.bg{fill:#fcfcfb}.grid{stroke:#ecebe7}.rule{stroke:#8a8984;stroke-dasharray:4 3}.tick{fill:#8a8984;font-size:11px}.axis{fill:#52514e;font-size:12px}.title{fill:#0b0b0b;font-size:15px;font-weight:600}.lab{font-size:12px;font-weight:600}.whole{fill:#eb6834}.stream{fill:#2a78d6}.dot{stroke:#fcfcfb;stroke-width:1.5}@media (prefers-color-scheme:dark){.bg{fill:#1a1a19}.grid{stroke:#2a2a28}.tick{fill:#8f8e86}.axis{fill:#c3c2b7}.title{fill:#fff}.whole{fill:#d95926}.stream{fill:#3987e5}.dot{stroke:#1a1a19}}</style>
 <rect class="bg" width="760" height="400"/>
 <text class="title" x="58" y="22">Wait after you let go, by dictation length (Parakeet v3, 208 real dictations)</text>

@@ -19,3 +19,4 @@ dist/
 .claude/specs/
 .claude/.DS_Store
 build/
+site/

@@ -1,377 +1,49 @@
 # `voice2text`
 
+[![check](https://img.shields.io/github/actions/workflow/status/lucharo/voice2text/check.yml?branch=main&label=check)](https://github.com/lucharo/voice2text/actions/workflows/check.yml)
 [![PyPI](https://img.shields.io/pypi/v/voice2text)](https://pypi.org/project/voice2text/)
 [![Downloads](https://static.pepy.tech/badge/voice2text/month)](https://pepy.tech/project/voice2text)
-[![Total Downloads](https://static.pepy.tech/badge/voice2text)](https://pepy.tech/project/voice2text)
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-blue?logo=apple)](https://github.com/lucharo/voice2text)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-blue?logo=apple)](https://v2t.luischav.es/getting-started/)
+[![Licence: GPL-2.0](https://img.shields.io/badge/licence-GPL--2.0-green)](LICENSE)
 [![Works on my machine](https://img.shields.io/badge/works-on%20my%20machine-brightgreen)](https://github.com/lucharo/voice2text)
 
-Local, MLX-first voice-to-text. Hold **Right ⌘**, talk, release — it transcribes with
-[Parakeet](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3), cleans the text up with a
-small local LLM, and pastes at your cursor. No cloud or account; after the one-time model download,
-it runs without a network connection.
+**Voice-as-an-Interface, done simply.**
 
-Voice-to-text tools like [Wispr Flow](https://wisprflow.ai/), [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper),
-and [VoiceInk](https://www.voiceink.app/) are great until the network gets in the way — Wispr Flow
-[isn't compatible with most VPNs](https://docs.wisprflow.ai/troubleshooting), so behind a corporate
-SSL-intercepting gateway (Zscaler and friends) it stalls or fails. Once the models are cached, going
-local makes that whole class of problem disappear: the VPN is irrelevant. Speech models are good
-enough now that the basics fit in a small Python package on consumer hardware.
+- Hold a key, talk, let go: the text is pasted where your cursor is.
+- Everything runs on your Mac: [Parakeet](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)
+  transcribes and a small local LLM tidies the punctuation, both on [MLX](https://github.com/ml-explore/mlx).
+- No account, no daemon, no network once the models are cached, so a corporate VPN or proxy never
+  gets in the way.
 
-> **Heritage:** this started as a single `voice2text.py` under 300 lines — that proof-of-concept is
-> preserved forever at the [`nano`](https://github.com/lucharo/voice2text/releases/tag/nano) tag.
-> From `0.3.0` it's a small, modular package: pluggable MLX backends, one config file, a benchmark
-> harness, and an optional one-file menu-bar app.
+Speech-to-text as boring technology: just another peripheral.
 
-> **Design tenet — be communicative.** An ergonomic tool is an expressive one: every action gets
-> immediate, visible feedback. The optional menu-bar icon tracks live state (off · loading · ready ·
-> recording · transcribing · cleaning · error), so you always know whether the tool heard you.
-
-## What you get
-
-- **Push-to-talk** — hold Right ⌘ (configurable), release to transcribe + paste. Double-tap for hands-free, tap again to stop.
-- **Parakeet (MLX)** transcription by default — ~10× faster than Whisper on Apple Silicon, English + 24 European languages. Whisper stays available as a fallback for rare languages/accents.
-- **In-process LLM cleanup** via mlx-lm (`Qwen3.5-2B`) — punctuation and fillers, keeping 98% of your words on a 208-dictation benchmark. No Ollama, no daemon. Casual or strict. (Ollama optional — see [Cleanup engine](#cleanup-engine).)
-- **Pastes at cursor**, restoring your previous clipboard.
-- **File transcription** — `v2t transcribe memo.opus` runs the same local models over audio you already have (see [Transcribing files](#transcribing-files)).
-- **One config file** at `~/.v2t/config.toml`, plus a SQLite **history** of every transcription: text, timings, and which microphone at what level.
-- **Optional one-file Swift menu** — native permissions, instant state, and quick links; no window or Xcode project.
-
-## Install
-
-Requires **macOS on Apple Silicon** (MLX). Parakeet transcription and in-process mlx-lm cleanup ship
-as dependencies, with no daemon. The models download from Hugging Face on first launch, then remain
-in the local cache:
+**Docs: [v2t.luischav.es](https://v2t.luischav.es/)**
 
 ```bash
-uv tool install voice2text   # Parakeet STT + in-process Qwen3.5 cleanup
-v2t setup                    # optional: pick models, detect Ollama, write config
+uv tool install voice2text
 v2t
 ```
 
-The optional menu-bar app (the identity that holds the Microphone and Accessibility grants)
-comes prebuilt, signed with Developer ID and notarised, so it also installs on a Mac with no Apple
-signing identity, such as a managed work laptop:
-
-```bash
-brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text   # Homebrew 6 loads no third-party tap it has not been told to trust
-brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
-brew install --cask voice2text   # /Applications/Voice2Text.app; the engine above stays separate
-```
-
-Prefer Whisper for transcription? Add the extra (quote the brackets — zsh treats them as globs):
-
-```bash
-uv tool install 'voice2text[whisper]'   # adds the Whisper backend; select it in config
-```
-
-<details>
-<summary>Other install methods (uvx, pip, dev)</summary>
-
-```bash
-# quick try (fresh venv each run — slower startup)
-uvx --from voice2text v2t
-
-# pip
-pip install voice2text && v2t
-
-# from source
-git clone https://github.com/lucharo/voice2text.git && cd voice2text
-uv sync --no-dev && uv run v2t
-```
-</details>
-
-## Usage
-
-```bash
-v2t                      # run push-to-talk (casual cleanup, parakeet)
-v2t --strict             # heavier cleanup: restructures, drops false starts
-v2t --no-cleanup         # paste raw transcription, skip the LLM
-v2t --backend whisper    # use the whisper backend for this run
-v2t --pause-music        # pause media while recording (needs nowplaying-cli)
-v2t --streaming-mode off # decode after release instead of while the hotkey is held
-
-v2t transcribe memo.opus # transcribe a file you already have (no microphone)
-
-v2t setup                # guided config: pick models, detect Ollama
-v2t history              # last 10 transcriptions; `v2t history <term>` searches, --raw, --json
-v2t dictionary           # names/jargon to spell right; `add`, `import-wispr`
-v2t status               # running / idle (also used by the menu app)
-v2t stop                 # stop a running v2t gracefully  (--force if it is stuck)
-v2t config               # show resolved config + paths  (--init writes a template)
-v2t menubar install      # optional: compile + open the tiny native menu app (or brew install --cask voice2text)
-v2t service install      # optional: start that menu app at login
-```
-
-Hold **Fn** (the 🌐 key, bottom-left) to record, release to transcribe and paste. The microphone
-opens on the press, but nothing shows until the key has been down for half a second, so a short
-tap or a shortcut that happens to include the key (Fn+arrow) leaves no trace. For longer
-dictations, **double-tap** Fn: it keeps recording hands-free until you tap it once more, like Wispr
-Flow's double-Escape. `key = "cmd_r"` under `[hotkey]` brings back Right Command.
-
-For Fn to be free, System Settings → Keyboard → *Press 🌐 key to* must be **Do Nothing**. Change it
-in that pane: `defaults write com.apple.HIToolbox AppleFnUsageType -int 0` writes the same value but
-running apps keep the old one until you log out and in, so a tap still opens the emoji picker. `v2t`
-warns in the log while the stored value is not 0.
-
-### What happens while you hold the key
-
-With Parakeet (the default), v2t transcribes while you speak. Every 5 seconds the new audio goes to
-the model, which extends a running draft: that draft is the word count in the menu bar and the
-optional live transcript on the pill. What happens when you let go depends on how long you spoke:
-
-- **Under 60 seconds:** the draft is thrown away and the whole recording is transcribed again in
-  one pass. That takes about a third of a second and gives the more accurate text.
-- **60 seconds or more:** the draft is kept and only the last few seconds are transcribed. Redoing
-  the whole recording would take longer the longer you spoke: 1.5 s at the median for dictations
-  over a minute, 15 to 30 s for ten-minute ones, and three minutes for one 14-minute dictation.
-  Finishing the draft takes about 0.4 s whatever the length.
-
-![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to three minutes; the streamed draft stays under a second from 60 s up](docs/images/wait-vs-length.svg)
-
-<sub>One dot per dictation, Parakeet v3 on an M4 Pro. Made with
-`python utils/asr_grid/plot_wait.py` from the [ASR grid](utils/asr_grid/README.md) results.</sub>
-
-The draft is not kept every time because it is less accurate. To keep up live, each stretch of
-audio is transcribed using only the ~20 seconds before it, not the whole recording, and each 5 s
-piece is processed on its own. On dictations over a minute the draft differs from the whole-file
-text in about 8% of words. Under a minute, redoing the recording costs about the same as finishing
-the draft, so nothing is gained by accepting that difference. Measured on 208 real dictations on an
-M4 Pro; the details are in the
-[FAQ](docs/faq/README.md#how-do-i-turn-streaming-transcription-on-or-off-and-what-does-it-actually-change).
-
-`v2t --streaming-mode off` (or `streaming_mode = "off"` in the config) turns this off: nothing is
-transcribed until you let go, and every recording is transcribed whole. Whisper cannot stream, so
-it always works that way.
-
-### Transcribing files
-
-`v2t transcribe` points the same local models at audio already on disk — anything ffmpeg reads
-(`.opus`, `.m4a`, `.mp3`, video files too), no microphone or permissions involved.
-
-```bash
-v2t transcribe memo.opus              # prints the transcript, copies it to the clipboard
-v2t transcribe memo.opus > notes.txt  # redirected: clean text, no clipboard copy
-v2t transcribe *.m4a                  # several files, each under a `# filename` heading
-v2t transcribe --clean memo.opus      # add the LLM cleanup pass (--casual / --strict imply it)
-```
-
-Files transcribe **verbatim** by default: cleanup rewrites, and that is rarely what you want for
-someone else's voice note. Every step reports live elapsed time — a 3½-minute WhatsApp note takes
-about 11s with Parakeet on an M1 Max (~19× realtime). Each result is appended to the same
-[history](#config--v2t) as your dictations, with the file it came from (`save_history = false` to opt out).
-
-### Strict vs Casual
-
-| Raw transcription | Strict | Casual |
-|-------------------|--------|--------|
-| "Hey um I'll see you tomorrow at 9 actually no make it 10" | "Hey, I'll see you tomorrow at 10." | "Hey, I'll see you tomorrow at 9, actually no, make it 10." |
-| "So basically I was thinking we could um you know maybe try the other approach" | "I was thinking we could try the other approach." | "So basically, I was thinking we could maybe try the other approach." |
-
-**Casual** (default) only adds punctuation and removes "um/uh", keeping your phrasing. **Strict** also removes fillers and restructures for clarity; it is the opinionated mode, and with a small model it can over-edit, which is why it is no longer the default.
-
-Either way, long dictations are cleaned in sentence-aligned chunks of about 120 words, and any chunk whose cleaned length drifts outside 75–130% of the raw chunk (60–130% in strict) is pasted raw instead. Cleanup may punctuate; it may not drop or invent content.
-
-Both modes send the model a short system prompt plus these worked examples as prior turns, so even a
-small model treats your dictation as text to clean rather than a question to answer.
-
-### History
-
-Every dictation and file transcription is one row in `~/.v2t/history/history.sqlite`, table
-`transcriptions`: raw and cleaned text, models and timings, how it was triggered (hold, latched,
-file), the input device it was recorded from, its level (`rms`, `peak`, `zero_frac`, and
-`loud_frac`, the share of the recording with speech-level sound), cleanup chunk stats, dictionary
-replacements fired, and the outcome. Failed dictations are rows too (`outcome = 'error: …'`), so a
-dead microphone shows up next to the device that produced it. Read it back without opening the
-database:
-
-```bash
-v2t history                 # the last 10, oldest first, with timings
-v2t history -n 3 --raw      # show the raw transcription next to the cleaned one
-v2t history standup         # entries whose raw or clean text mentions "standup"
-v2t history --json -n 0     # every row as JSON lines, for jq and friends
-sqlite3 ~/.v2t/history/history.sqlite "select ts, device, loud_frac, outcome from transcriptions order by id desc limit 5"
-```
-
-A pre-existing `transcriptions.jsonl` is imported into the database the first time it is opened,
-and lines an older, still-running v2t appends afterwards are picked up on the next open; the file
-itself is left alone. When a dictation carries almost no speech-level sound (a Bluetooth headset whose
-link never opened, a virtual device), the text is still pasted, but the log, a macOS notification
-and the `warning` field of `v2t status` name the device and the level.
-
-The menu-bar app shows the last transcription too, with a **Copy Last Transcription** action for
-when the paste landed in the wrong window.
-
-### Dictionary
-
-Names, products and jargon the recogniser gets wrong go in `~/.v2t/dictionary.txt`, one per line.
-Plain terms are shown to the cleanup model, which is told to spell them exactly like that when it
-sees a similar-sounding word. `heard => written` lines are exact, case-insensitive replacements
-applied after cleanup (and with `--no-cleanup`), so they work even with the LLM off.
-
-```bash
-v2t dictionary                       # list
-v2t dictionary add Parakeet          # a term
-v2t dictionary add "whisper flow => Wispr Flow"
-v2t dictionary import-wispr          # merge Wispr Flow's dictionary from its local database
-v2t dictionary apply transcript.txt  # run the replacements over a transcript; stderr says which fired
-```
-
-`apply` reads stdin when no file is given, so a new `heard => written` line can be proven against
-the raw text that prompted it before the next dictation.
-
-### Startup time
-
-Both models load from the Hugging Face cache without contacting the hub once they are there, so a
-warm start is about 2 s. On a slow or blocked network the hub's revision checks alone used to cost
-45 s for Parakeet and 19 s for the cleanup model; the first download still needs a connection.
-
-## Config — `~/.v2t/`
-
-Everything lives in one directory (override with `$V2T_HOME`, or `$XDG_CONFIG_HOME/v2t`):
-
-```
-~/.v2t/
-  config.toml                    # all settings (v2t config --init to create)
-  history/history.sqlite         # every transcription + metadata, one row each (toggle in config)
-  run/                           # private runtime status + log
-  run/last-recording.wav         # the last dictation's audio, replaced every time (toggle in config)
-```
-
-`config.toml` (every key optional — these are the defaults):
-
-```toml
-[transcription]
-backend = "parakeet"   # parakeet (MLX) | whisper
-model = ""             # blank = backend default
-streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
-
-[cleanup]
-enabled = true
-engine = "mlx"         # mlx (in-process via mlx-lm) | ollama
-model = ""             # blank = engine default
-mode = "casual"        # casual | strict
-
-[hotkey]
-key = "fn"             # fn (the 🌐 key, bottom-left) | cmd_r | cmd_l | alt_r | alt_l | ctrl_r | ctrl_l
-
-[behavior]
-pause_music = false
-save_history = true
-keep_last_audio = true # run/last-recording.wav; `v2t transcribe ~/.v2t/run/last-recording.wav` redoes a cut dictation
-```
-
-### Cleanup engine
-
-Cleanup runs **in-process via [mlx-lm](https://github.com/ml-explore/mlx-lm)** by default
-(`Qwen3.5-2B-4bit`, non-thinking) — no daemon, no HTTP, same MLX stack as transcription.
-
-Measured over 208 real dictations in casual mode (M4 Pro; the ordering holds on slower chips):
-
-| cleanup model | words kept (median / p10) | median cleanup time | note |
-|---|--:|--:|---|
-| `Qwen3.5-0.8B-4bit` | 96% / 86% | 0.61 s | fastest |
-| `Qwen2.5-1.5B-Instruct-4bit` | 92% / 82% | 0.85 s | previous default |
-| **`Qwen3.5-2B-4bit`** | **98% / 93%** | 1.17 s | default |
-| `Qwen3.5-4B-4bit` | 96% / 90% | 2.21 s | not worth the wait |
-
-Those times predate 0.5.0. Since then the instructions, examples and dictionary are processed once and
-reused, and the model checks words guessed from the dictation several at a time, so cleanup runs about
-2.5× faster (median 1.27 s → 0.51 s for the 2B on the same dictations). `utils/cleanup_speed` has the bench.
-
-Pick another with `[cleanup] model = "mlx-community/…"`; it downloads on the next launch.
-
-Already running **[Ollama](https://ollama.com)**? Switch to it (`v2t setup` offers this when it
-detects Ollama, or edit the config):
-
-```toml
-[cleanup]
-engine = "ollama"
-model = "qwen3:4b-instruct-2507"   # then: ollama pull qwen3:4b-instruct-2507
-```
-
-Either way, use a **non-thinking** model — a model that emits `<think>` blocks will paste its
-reasoning. The defaults don't.
-
-## Optional menu-bar app
+Hold **Fn**, say something, let go. The optional menu-bar app adds its own permissions, a state
+icon and a floating pill while you dictate:
 
 ```bash
 brew trust --tap lucharo/voice2text && brew trust --cask lucharo/voice2text/voice2text
 brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
-brew install --cask voice2text   # prebuilt, notarised: /Applications/Voice2Text.app
-v2t menubar install              # or, instead, compile it here into ~/Applications/Voice2Text.app
+brew install --cask voice2text
 ```
 
-The optional app is a single, inspectable Swift source file — no window, Xcode project, AppleScript,
-or separate settings system. It exists because macOS only grants microphone access to a real app
-identity. The menu requests the two native grants, starts one long-running Python process, shows
-state immediately (the icon turns red while recording), previews the last transcription with a
-copy action, shows the installed version, and links to config, history, log and **Send Feedback…** (a new GitHub issue). Run `v2t` in a terminal instead if you do not
-want the menu.
+## Docs
 
-**The pill.** While you dictate, a small capsule floats over every app: a bar waveform of the level
-the engine is actually capturing (a flat line means the microphone is delivering nothing), then a
-ripple while it transcribes, then a pulse with a live seconds counter while it cleans up. It never takes
-focus, so the paste still lands where you were typing. **Pill** in the menu picks the placement:
-**Near text cursor** is the default; in an app that exposes no text caret, such as Ghostty, it sits
-at the bottom of the focused field or pane instead. **Bottom of screen** pins it there; **Off** hides
-it. These choices persist across launches. The live transcript is experimental and off: set
-`live_transcript = true` under `[transcription]` in `config.toml` to see streamed words in the pill
-(Parakeet decodes in 5 s chunks and previews the audio since the last chunk every second, so a word
-shows about 1 s after you say it; the preview is display only and never changes the pasted text). Press **Esc** to cancel
-without pasting; **Undo** on the pill or in the menu recovers the captured audio and resumes
-hands-free recording. Press Fn to finish. The engine sends each state change
-and, while recording, the input level as datagrams to `~/.v2t/run/live.sock`, which the app binds;
-a terminal `v2t` sends them too, so the pill works with either launch.
+- [Getting started](https://v2t.luischav.es/getting-started/): install, permissions, the menu app
+- [How it works](https://v2t.luischav.es/how-it-works/): what happens while you hold the key
+- [Guide](https://v2t.luischav.es/guide/): files, cleanup modes, history, dictionary
+- [Reference](https://v2t.luischav.es/reference/cli/): every command and config key
+- [FAQ](https://v2t.luischav.es/faq/)
 
-**Start v2t** loads Parakeet and the cleanup model once, then keeps them warm for every
-transcription. To start the same menu app at login, install the optional per-user LaunchAgent:
+## Contributing
 
-```bash
-v2t service install       # install + start ~/Library/LaunchAgents/com.lucharo.voice2text.plist
-v2t service status
-v2t service uninstall
-```
+`uv sync`, then `just check`. See the [maintainer docs](https://v2t.luischav.es/maintainers/).
 
-The service starts the same `Voice2Text.app` bundle, so manual and login launches share one stable
-permission identity. The engine lock still prevents duplicate Python processes.
-
-Both routes produce the same bundle, signed with hardened runtime plus the audio-input
-entitlement. The cask ships a build signed with a `Developer ID Application` certificate and
-notarised by Apple, which is what a Mac with no signing identity of its own needs; it carries no
-user paths and finds `~/.v2t` and the `uv tool install voice2text` interpreter at launch, and its
-menu says "v2t is not installed" with the one command to run when it cannot. `v2t menubar install`
-compiles the same source on this Mac with the best identity in the keychain (Developer ID, then
-Apple Development, then ad-hoc). Keep only one: both copies share a bundle ID, and macOS pins each
-permission grant to one signature, so whichever copy asks last takes the other's grants. `v2t menubar
-install` refuses once the cask is installed, and the menu names any second copy with a button that
-bins it (or, from the stray copy, hands over to `/Applications`). Releasing is pushing a `v<version>` tag that matches
-`pyproject.toml`: `.github/workflows/release.yml` (no manual approval step; only `v*` tags reach the `release` environment)
-publishes the engine to PyPI through trusted publishing, signs and notarises the app with the
-identity `scripts/ci-signing-secrets.sh` stored, and commits the updated cask to `main`.
-`just release-macos --publish` does the app half from a Mac with the Developer ID certificate.
-The PyPI trusted publisher is registered for this workflow and the `release` environment;
-published distributions include publisher attestations. Version 0.4.1 was released locally.
-See [release setup and the local fallback](docs/faq/README.md#does-publication-happen-in-ci).
-
-**Permissions.** v2t needs **Microphone** (record) and **Accessibility** (global hotkey + paste). A
-terminal launch uses your terminal's grants. The menu app requests its own grants and
-shows their live state as flat rows; click a missing row to open the exact Settings pane.
-
-## Models & benchmarks
-
-The contributor-only `just bench` harness writes `~/.v2t/benchmarks/results/<date>-<host>.md` — two
-tables (speech-to-text RTF and cleanup TTFT/total), one column per model. It lives in the dev group,
-not the installed CLI. See [`benchmarks/`](benchmarks/) for the method and defaults.
-
-| | default | why |
-|---|---|---|
-| transcription | `parakeet-tdt-0.6b-v3` | fastest on Apple Silicon, multilingual |
-| cleanup | `Qwen3.5-2B-4bit` (mlx-lm), casual | most faithful small model on real dictations; non-thinking, no daemon, ~1.6 GB |
-| cleanup (fast) | `Qwen3.5-0.8B-4bit` (mlx-lm) | opt-in via config; half the time, 96% of words kept, ~0.6 GB |
-
-> This is **macOS / Apple Silicon-only** by design (MLX, native pasteboard/event APIs,
-> `nowplaying-cli`, System Settings permission URLs). Fork it for Linux/Windows if you like.
-
-Contributor questions, including how releases are published, are covered in the
-[`FAQ`](docs/faq/README.md).
+This started as a single `voice2text.py` under 300 lines, preserved at the
+[`nano`](https://github.com/lucharo/voice2text/releases/tag/nano) tag.

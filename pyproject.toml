@@ -27,6 +27,7 @@ v2t = "v2t.cli:main"
 
 [dependency-groups]
 dev = ["hatch", "mlx-whisper", "ruff"]
+docs = ["zensical>=0.0.62"]
 
 [build-system]
 requires = ["hatchling"]

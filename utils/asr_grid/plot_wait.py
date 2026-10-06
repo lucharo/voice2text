@@ -40,7 +40,7 @@ def main() -> int:
         if r["duration_s"] >= grid.TAKEOVER_S
     ]
     out = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
         'font-family="system-ui,-apple-system,Segoe UI,sans-serif">',
         "<style>"
         ".bg{fill:#fcfcfb}.grid{stroke:#ecebe7}.rule{stroke:#8a8984;stroke-dasharray:4 3}"
