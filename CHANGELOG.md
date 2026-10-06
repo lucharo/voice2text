@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3
+
+- Publish the notarised Mac app when GitHub Actions has checked out an annotated release tag as a local lightweight tag. Verify the remote commit without rewriting the checkout's tag.
+
 ## 0.5.2
 
 - Keep the Mac app's version aligned with the Python package. Includes the 0.5.0 desktop UI and 0.5.1 publication fix.

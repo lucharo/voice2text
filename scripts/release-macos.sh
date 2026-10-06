@@ -172,8 +172,10 @@ if [[ "$publish" == true ]]; then
     exit 1
   fi
   if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-    git fetch -q origin "refs/tags/${tag}:refs/tags/${tag}"
-    tagged_sha="$(git rev-list -n 1 "$tag")"
+    # checkout@v5 may flatten an annotated tag locally; verify the remote
+    # commit without trying to replace that local tag.
+    git fetch -q --no-tags origin "refs/tags/${tag}"
+    tagged_sha="$(git rev-list -n 1 FETCH_HEAD)"
     if [[ "$tagged_sha" != "$head_sha" ]]; then
       echo "Tag $tag already points at ${tagged_sha:0:12}, not HEAD ${head_sha:0:12}. Bump the version in pyproject.toml for a new release." >&2
       exit 1

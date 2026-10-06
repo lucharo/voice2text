@@ -27,4 +27,5 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - run: zsh tests/release-tag-check.zsh
       - run: xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices
