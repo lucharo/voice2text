@@ -353,7 +353,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             phase = "error"
         }
         pill.update(phase: phase, partial: status["partial"] as? String ?? "",
-                    streaming: status["streaming"] as? Bool ?? false)
+                    liveTranscript: status["live_transcript"] as? Bool ?? false)
         render()
     }
 
@@ -435,8 +435,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let streaming = status["streaming"] as? Bool ?? false
-        let signature = "\(pill.style.rawValue)|\(pill.showLiveTranscript)|\(streaming)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -533,14 +532,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.state = style == pill.style ? .on : .off
             pillStyles.addItem(row)
         }
-        pillStyles.addItem(.separator())
-        let transcript = NSMenuItem(title: "Show live transcript", action: #selector(toggleLiveTranscript), keyEquivalent: "")
-        transcript.target = self
-        transcript.state = pill.showLiveTranscript ? .on : .off
-        transcript.isEnabled = streaming
-        transcript.toolTip = streaming ? "Show words as you speak" : "Requires streaming transcription"
-        pillStyles.addItem(transcript)
-        pillStyles.autoenablesItems = false
         add("Pill", image: symbol("capsule")).submenu = pillStyles
         add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
@@ -630,13 +621,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         kill(pid_t(pid), SIGUSR1)
     }
 
-    @objc private func toggleLiveTranscript() {
-        guard status["streaming"] as? Bool == true else { return }
-        pill.showLiveTranscript.toggle()
-        rendered = ""
-        refresh()
-    }
-
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -717,10 +701,6 @@ final class Pill: NSObject {
         get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "pillPlacement"); hide() }
     }
-    var showLiveTranscript: Bool {
-        get { UserDefaults.standard.bool(forKey: "showLiveTranscript") }
-        set { UserDefaults.standard.set(newValue, forKey: "showLiveTranscript") }
-    }
 
     override init() {
         super.init()
@@ -746,14 +726,15 @@ final class Pill: NSObject {
     @objc private func undo() { onUndo?() }
 
     /// Keep the recording waveform when placement or transcript visibility changes.
-    func update(phase: String, partial: String, streaming: Bool) {
+    /// Words show only with the experimental `live_transcript` config key on.
+    func update(phase: String, partial: String, liveTranscript: Bool) {
         if phase == "recording" && view.phase != "recording" {
             (recordingAnchor, recordingPane) = Self.focusedAnchors()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
         view.phase = phase
-        view.partial = showLiveTranscript && streaming && phase == "recording" ? partial : ""
+        view.partial = liveTranscript && phase == "recording" ? partial : ""
         undoButton.isHidden = phase != "cancelled"
         panel.ignoresMouseEvents = phase != "cancelled"
         guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
@@ -828,6 +809,7 @@ final class Pill: NSObject {
     private static func focusedAnchors() -> (caret: NSRect?, pane: NSRect?) {
         // Capture once at recording start; never follow the cursor while speaking.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
+        enableElectronAccessibility()
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -843,16 +825,15 @@ final class Pill: NSObject {
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
             var range = CFRange()
             if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
-                range.length = 0
-                if let selection = AXValueCreate(.cfRange, &range) {
-                    var value: CFTypeRef?
-                    if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
-                       let value, CFGetTypeID(value) == AXValueGetTypeID() {
-                        var rect = CGRect.zero
-                        if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0 {
-                            return (flip(rect), nil)
-                        }
-                    }
+                // Native text views answer for the empty range at the caret.
+                // Chromium (Chrome, Electron apps such as Claude) answers a
+                // zero-height rect there, so measure the character before it.
+                if let rect = bounds(element, CFRange(location: range.location, length: 0)) {
+                    return (flip(rect), nil)
+                }
+                if range.location > 0,
+                   let rect = bounds(element, CFRange(location: range.location - 1, length: 1)) {
+                    return (flip(CGRect(x: rect.maxX, y: rect.minY, width: 1, height: rect.height)), nil)
                 }
             }
         }
@@ -867,6 +848,32 @@ final class Pill: NSObject {
               size.width >= 120, size.height >= 20
         else { return (nil, nil) }
         return (nil, flip(CGRect(origin: position, size: size)))
+    }
+
+    /// The screen rect of `range` in `element`, or nil when the app has none.
+    private static func bounds(_ element: AXUIElement, _ range: CFRange) -> CGRect? {
+        var range = range
+        guard let selection = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        var rect = CGRect.zero
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0
+        else { return nil }
+        return rect
+    }
+
+    private static var electronEnabled = Set<pid_t>()
+
+    /// Electron builds its accessibility tree only for an assistive client
+    /// that asks: AXManualAccessibility on the app element (Electron docs,
+    /// "Accessibility"). Without it the focused element may carry no text
+    /// ranges. Native apps reject the attribute, which is harmless.
+    private static func enableElectronAccessibility() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              !electronEnabled.contains(pid) else { return }
+        electronEnabled.insert(pid)
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
 
     private func hide() {
@@ -885,7 +892,10 @@ final class Pill: NSObject {
 /// cleanup pulses in place. Optional live words have no placeholder/status text.
 final class PillView: NSView {
     var style = PillStyle.cursorBubble
-    var phase = "idle"
+    var phase = "idle" {
+        didSet { if phase == "cleaning" && oldValue != "cleaning" { cleaningSince = CACurrentMediaTime() } }
+    }
+    private var cleaningSince = CACurrentMediaTime()
     var partial = ""
     private var bars = [CGFloat](repeating: 0, count: 64)
     private var loudest: Double?  // since the last tick
@@ -895,7 +905,8 @@ final class PillView: NSView {
     var compactSize: NSSize {
         // Reuse the waveform-only pill width when there are no words to show.
         let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
-        let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16 : 116
+        let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16
+            : phase == "cleaning" ? 132 : 116
         return NSSize(width: width, height: 34 + (style == .cursorBubble ? 6 : 0))
     }
 
@@ -956,6 +967,12 @@ final class PillView: NSView {
         if phase == "recording" && !partial.isEmpty {
             drawBars(in: NSRect(x: 16, y: body.minY + 10, width: 44, height: body.height - 20))
             drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height))
+        } else if phase == "cleaning" {
+            // Count the cleanup up live, so its speed is visible every time.
+            let elapsed = String(format: "%.1f s", CACurrentMediaTime() - cleaningSince)
+            drawBars(in: NSRect(x: 14, y: body.minY + 9, width: 44, height: body.height - 18))
+            drawText(elapsed, in: NSRect(x: 64, y: body.minY, width: body.width - 76, height: body.height),
+                     color: NSColor(white: 1, alpha: 0.85))
         } else {
             drawBars(in: body.insetBy(dx: 16, dy: 9))
         }

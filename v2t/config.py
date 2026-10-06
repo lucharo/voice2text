@@ -29,6 +29,7 @@ class Config:
     backend: str = "parakeet"  # parakeet | whisper
     stt_model: str = ""  # blank = the backend's own default
     streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
+    live_transcript: bool = False  # experimental: streamed words in the pill while speaking
     cleanup_enabled: bool = True
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
     cleanup_model: str = ""  # blank = the engine's own default
@@ -207,6 +208,7 @@ _SECTIONS = {
         "backend": "backend",
         "model": "stt_model",
         "streaming_mode": "streaming_mode",
+        "live_transcript": "live_transcript",
     },
     "cleanup": {
         "enabled": "cleanup_enabled",
@@ -258,7 +260,13 @@ def _validate(cfg: Config) -> None:
             )
     if not isinstance(cfg.sample_rate, int) or cfg.sample_rate <= 0:
         raise SystemExit("audio.sample_rate must be a positive integer")
-    for field in ("cleanup_enabled", "pause_music", "save_history", "keep_last_audio"):
+    for field in (
+        "cleanup_enabled",
+        "live_transcript",
+        "pause_music",
+        "save_history",
+        "keep_last_audio",
+    ):
         if not isinstance(getattr(cfg, field), bool):
             raise SystemExit(f"{field} must be true or false")
     for field in ("stt_model", "cleanup_model", "ollama_url"):
@@ -273,6 +281,7 @@ DEFAULT_TOML = """\
 backend = "parakeet"   # parakeet (default, MLX) | whisper (needs voice2text[whisper])
 model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper-large-v3-turbo)
 streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
+live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)
 
 [cleanup]
 enabled = true

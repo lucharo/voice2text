@@ -141,13 +141,17 @@ launchd-without-bundle path has not been re-tested on this macOS version._
 default; in an app that exposes no text caret it sits at the bottom of the focused field or pane.
 **Bottom of screen** pins it there, and **Off** hides it.
 
-Ghostty 1.3.1 reports its focused pane but not where the cursor is inside it (its accessibility
-view has no caret-bounds call), so there the pill sits at the bottom of the pane you are typing in.
+The bubble sits at the caret in apps that report caret bounds through accessibility: native text
+views (TextEdit, Notes, Mail, Messages, Xcode) and, since 0.5.5, Chromium and Electron fields with
+text in them (Chrome, Brave, Claude, Slack), measured from the character before the caret. An empty
+Chromium field reports no caret, so the pill sits just below the field. Ghostty 1.3.1 reports its
+focused pane but not where the cursor is inside it (its accessibility view has no caret-bounds
+call), so there the pill sits at the bottom of the pane you are typing in.
 
-**Show live transcript** optionally adds words while you speak, off by default and available only
-when the engine can stream. Words appear about 1 s after you say them: between 5 s decoding chunks
-the engine previews the newest audio every second, for display only. Recording, transcription and cleanup use different waveforms without
-status labels. Placement and transcript visibility persist across launches. See the
+The live transcript is experimental and off by default since 0.5.5: `live_transcript = true` under
+`[transcription]` in `config.toml` turns it on. Words appear about 1 s after you say them, but an
+early wrong word can pull you into correcting yourself mid-sentence. Cleanup shows a live seconds
+counter. Placement persists across launches. See the
 [README pill controls](../../README.md#optional-menu-bar-app) for Esc and Undo behaviour.
 
 ### Sources
