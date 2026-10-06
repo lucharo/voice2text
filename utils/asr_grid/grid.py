@@ -137,6 +137,7 @@ def prepare() -> None:
     if LIBRISPEECH.exists():
         sets["ls-clean"] = librispeech_set("test-clean")
         sets["ls-other"] = librispeech_set("test-other")
+        sets["ls-long"] = librispeech_long_set()
     if FLEURS_ES.exists():
         sets["fleurs-es"] = fleurs_set()
     for name, clips in sets.items():
@@ -188,6 +189,48 @@ def librispeech_set(split: str) -> list[dict]:
         }
         for utt, path, text in sorted(rows[:SAMPLE])
     ]
+
+
+def librispeech_long_set() -> list[dict]:
+    """Labelled long clips: consecutive utterances of one chapter joined into one file.
+
+    Every other labelled clip is under 60 s, so v2t's 60 s rule never fires on them.
+    These, 60 to 300 s like the long dictations, put the stream and the chunk pass
+    against a real reference. 20 chapters from each test split, seeded.
+    """
+    import soundfile as sf
+
+    out_dir = private_dir(SETS / "ls-long")
+    rng = random.Random(SEED)
+    clips = []
+    for split in ("test-clean", "test-other"):
+        chapters = sorted(p for p in (LIBRISPEECH / split).glob("*/*") if p.is_dir())
+        for chapter in sorted(rng.sample(chapters, 20)):
+            target = rng.uniform(60, 300)
+            trans = next(chapter.glob("*.trans.txt"))
+            audio, texts = [], []
+            for line in trans.read_text().splitlines():
+                utt, text = line.split(" ", 1)
+                audio.append(sf.read(str(chapter / f"{utt}.flac"), dtype="float32")[0])
+                texts.append(text)
+                if sum(len(a) for a in audio) >= target * SAMPLE_RATE:
+                    break
+            joined = np.concatenate(audio)
+            if len(joined) < 60 * SAMPLE_RATE:
+                continue  # a chapter too short to reach the rule
+            clip_id = f"{chapter.parent.name}-{chapter.name}-long"
+            path = out_dir / f"{clip_id}.wav"
+            sf.write(str(path), joined, SAMPLE_RATE, subtype="PCM_16")
+            clips.append(
+                {
+                    "id": clip_id,
+                    "path": str(path),
+                    "duration_s": round(len(joined) / SAMPLE_RATE, 3),
+                    "lang": "en",
+                    "text": " ".join(texts),
+                }
+            )
+    return clips
 
 
 def fleurs_set() -> list[dict]:
