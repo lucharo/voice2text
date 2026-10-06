@@ -243,6 +243,15 @@ class ParakeetMLX:
             out.update(self._stream(load_audio(clip["path"])))
         return out
 
+    def decode(self, audio: np.ndarray) -> str:
+        """What `transcribe` does after reading the file (parakeet-mlx 0.5)."""
+        import mlx.core as mx
+        from parakeet_mlx.audio import get_logmel
+
+        model = self.stt.model
+        mel = get_logmel(mx.array(audio), model.preprocessor_config)  # float32, as load_audio
+        return model.generate(mel)[0].text.strip()
+
     def _stream(self, audio: np.ndarray) -> dict:
         stream = self.stt.stream()
         busy = [0.0]
@@ -454,8 +463,8 @@ def chunked(engine, audio: np.ndarray) -> dict:
 
 def run_chunked(system: str, set_name: str, limit: int | None) -> None:
     runtime, repo, mode = SYSTEMS[system]
-    if mode != "offline":
-        raise SystemExit(f"{system} streams already; `chunk` is for whole-file systems")
+    if mode == "stream":
+        raise SystemExit(f"{system} streams natively; `chunk` is for whole-file decoders")
     clips = [
         c
         for c in read_jsonl(SETS / f"{set_name}.jsonl")
