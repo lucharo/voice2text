@@ -704,7 +704,7 @@ final class Pill: NSObject {
         var atStart = false  // caret at index 0: an empty field
     }
     private var focus = Focus()
-    private var target: (x: CGFloat, box: NSRect)?  // the bubble's tail x and the box it sits beside
+    private var target: NSRect?  // the caret the bubble's tail points at, real or estimated
     private var pane: NSRect?
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
@@ -769,11 +769,12 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
-    /// A speech bubble beside the focused text box: below it when the box is in
-    /// the top half of the screen, above it otherwise, its tail at the caret (or
-    /// at the start of an empty field). A box taller than 40% of the screen is a
-    /// document or terminal pane: the bubble goes by the caret line, or without
-    /// a caret, the pill sits at the pane's bottom centre.
+    /// A speech bubble up and to the right of the caret, its tail curling down-left
+    /// at 45 degrees to just above it, so neither the caret nor the text beside it
+    /// is covered (placed on a design surface, 2026-10-06). Without room above, it
+    /// sits down and to the right instead. An empty field reports no caret, so one
+    /// is assumed at its start; a box taller than 40% of the screen with no caret
+    /// is a document or terminal pane, and the pill sits at its bottom centre.
     private func show() {
         let style = style
         let location = (focus.caret ?? focus.box).map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
@@ -784,10 +785,11 @@ final class Pill: NSObject {
         pane = nil
         if style == .cursorBubble {
             let tall = focus.box.map { $0.height > screen.visibleFrame.height * 0.4 } ?? true
-            if let box = focus.box, !tall {
-                target = (focus.caret?.midX ?? (focus.atStart ? box.minX + 16 : box.midX), box)
-            } else if let caret = focus.caret {
-                target = (caret.midX, caret)
+            if let caret = focus.caret {
+                target = caret
+            } else if let box = focus.box, !tall {
+                // A one-line caret's height, centred, at the start of an empty field.
+                target = NSRect(x: focus.atStart ? box.minX + 16 : box.midX, y: box.midY - 9, width: 1, height: 18)
             } else {
                 pane = focus.box
             }
@@ -813,13 +815,17 @@ final class Pill: NSObject {
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
         var x: CGFloat, y: CGFloat
         view.tailBelow = true
+        // The tail tip sits 3 pt right of the caret and 10 pt clear of it.
+        var tipX: CGFloat?
         if let target {
-            x = target.x - size.width / 2
-            var below = target.box.midY >= screen.frame.midY  // top half (Cocoa y grows up)
-            if below && target.box.minY - size.height - 6 < area.minY + 8 { below = false }
-            if !below && target.box.maxY + size.height + 6 > top - 8 { below = true }
-            y = below ? target.box.minY - size.height - 6 : target.box.maxY + 6
-            view.tailBelow = !below  // the tail points back at the box
+            let tail = view.hasTail ? 0 : PillView.tail  // keep the body still when the tail goes
+            tipX = target.midX + 3
+            x = tipX! - PillView.tipInset
+            y = target.maxY + 10 + tail
+            if y + size.height > top - 8 {  // no room above: down and to the right
+                y = target.minY - 10 - tail - size.height
+                view.tailBelow = false
+            }
         } else {
             let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
             x = base.midX - size.width / 2
@@ -827,7 +833,9 @@ final class Pill: NSObject {
         }
         x = min(max(x, area.minX + 8), area.maxX - size.width - 8)
         y = min(max(y, area.minY + 8), top - size.height - 8)
-        view.tailX = min(max((target?.x ?? (x + size.width / 2)) - x, 16), size.width - 16)
+        // The tail's base, as far along as keeps its tip on the caret after clamping.
+        view.tailX = min(max((tipX ?? (x + size.width / 2)) - x + PillView.tail + 3, PillView.tail + 9),
+                         size.width - 12)
         panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
         undoButton.frame = NSRect(x: size.width - 92, y: 6, width: 80, height: 22)
         panel.invalidateShadow()
@@ -933,7 +941,11 @@ final class PillView: NSView {
     private var bars = [CGFloat](repeating: 0, count: 64)
     private var loudest: Double?  // since the last tick
     var tailBelow = true
-    var tailX: CGFloat = 0
+    var tailX: CGFloat = 0  // the middle of the tail's base, from the bubble's left edge
+    var hasTail: Bool { style == .cursorBubble && phase != "cancelled" }
+    /// The tail tip's distance from the bubble's left edge with the base's middle
+    /// at its leftmost (tail + 9 pt in): the tip runs tail + 3 pt left of it.
+    static let tipInset: CGFloat = 6
 
     var compactSize: NSSize {
         // Reuse the waveform-only pill width when there are no words to show.
@@ -972,7 +984,7 @@ final class PillView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         var body = bounds
-        let bubble = style == .cursorBubble && phase != "cancelled"
+        let bubble = hasTail
         if bubble {
             body.size.height -= Self.tail
             if tailBelow { body.origin.y += Self.tail }
@@ -981,16 +993,18 @@ final class PillView: NSView {
         let capsule = NSBezierPath(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         let tail = NSBezierPath()
         if bubble {
-            // A Messages-style tail: a wide base inside the bubble, a convex
-            // sweep down to a point beside the caret and a concave curl back.
-            let s: CGFloat = tailBelow ? -1 : 1  // towards the box
+            // A Messages-style curl at 45 degrees: a base inside the bubble, a convex
+            // sweep out to a tip down-left of it (up-left below the caret), and a
+            // concave curl back.
+            let t = Self.tail, edge = tailBelow ? bounds.minY : bounds.maxY
+            let s: CGFloat = tailBelow ? 1 : -1  // from the tip's edge into the bubble
             let base = tailBelow ? body.minY + 3 : body.maxY - 3
-            let tip = NSPoint(x: tailX - 6, y: tailBelow ? bounds.minY : bounds.maxY)
-            tail.move(to: NSPoint(x: tailX + 9, y: base))
-            tail.curve(to: tip, controlPoint1: NSPoint(x: tailX + 8, y: base + s * 8),
-                       controlPoint2: NSPoint(x: tailX + 2, y: tip.y - s * 1))
-            tail.curve(to: NSPoint(x: tailX - 4, y: base), controlPoint1: NSPoint(x: tailX - 2, y: tip.y - s * 3),
-                       controlPoint2: NSPoint(x: tailX - 2, y: base + s * 5))
+            let tip = NSPoint(x: tailX - (t + 3), y: edge)
+            tail.move(to: NSPoint(x: tailX + 7, y: base))
+            tail.curve(to: tip, controlPoint1: NSPoint(x: tailX + 5, y: edge + s * 0.4 * t),
+                       controlPoint2: NSPoint(x: tailX - 0.4 * t, y: edge))
+            tail.curve(to: NSPoint(x: tailX - 5, y: base), controlPoint1: NSPoint(x: tailX - 0.3 * t, y: edge + s * 0.45 * t),
+                       controlPoint2: NSPoint(x: tailX - 4, y: base - s * 5))
             tail.close()
         }
         // Bubble and tail in one translucent layer, so their overlap is not darker.
@@ -1008,7 +1022,7 @@ final class PillView: NSView {
         NSGraphicsContext.saveGraphicsState()
         if bubble {
             let clip = NSBezierPath(rect: bounds)
-            clip.appendRect(NSRect(x: tailX - 4, y: tailBelow ? body.minY - 1 : body.maxY - 3, width: 13, height: 4))
+            clip.appendRect(NSRect(x: tailX - 5, y: tailBelow ? body.minY - 1 : body.maxY - 3, width: 12, height: 4))
             clip.windingRule = .evenOdd
             clip.addClip()
         }
