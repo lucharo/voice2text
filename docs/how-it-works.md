@@ -40,10 +40,10 @@ works that way.
 
 ## The pill
 
-With the [menu app](getting-started.md#the-menu-app-optional), a small speech bubble sits beside
-the text box you are typing in while you dictate, its tail pointing at the caret, or at the start of
-an empty field. It sits below the box when the box is in the top half of the screen, above it
-otherwise, and it never takes focus, so the paste lands where you were typing.
+With the [menu app](getting-started.md#the-menu-app-optional), a small speech bubble sits up and to
+the right of the caret while you dictate, its tail curling down-left to just above it, so it covers
+neither the caret nor the text beside it. Near the top of the screen it sits down and to the right
+instead. It never takes focus, so the paste lands where you were typing.
 
 | State | The pill shows |
 |---|---|
