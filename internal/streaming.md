@@ -76,8 +76,17 @@ returned MLX's buffer cache, which grew about 3.5 GB per long clip until the 48 
 table comes from the run that clears it between clips, with no swap-outs; the stream baseline ran
 before and after the piece runs and agreed (p50 0.50 s, then 0.46 s).
 
-_Created: 2026-10-06 · Verified: 2026-10-06._
+**Decision (Luis, 2026-10-06):** build pieces with v3, the model v2t already ships.
+
+**Worth watching: Parakeet Ultra.** Moondream's post-training of Parakeet v3 (September 2026): the
+same 0.6B architecture, CC-BY-4.0, so parakeet-mlx loads it as a drop-in. The MLX copy
+the grid used, `selcukkubur/parakeet-ultra-mlx`, is one person's conversion;
+`beshkenadze/parakeet-ultra-mlx-fp16` is the other (October 2026). It beats v3 when both stream
+(3.4% against 5.3% on ls-long) and ties it in pieces, so it is worth a look if v2t ever keeps the
+stream for some lengths, or once an official MLX release appears.
 
 ### Sources
 
 - [ASR grid README](../utils/asr_grid/README.md) — `grid.py chunk` and the `ls-long` set.
+
+_Created: 2026-10-06 · Verified: 2026-10-06._
