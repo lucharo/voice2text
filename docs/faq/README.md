@@ -137,18 +137,27 @@ launchd-without-bundle path has not been re-tested on this macOS version._
 
 ## How do I change between the pill styles?
 
-**Short answer:** Open the menu-bar waveform icon and choose **Pill**. **B · Near text cursor**
-is the default; **A · Bottom of screen** is the second option and the automatic fallback when an
-app exposes no text caret. **Off** hides the pill. The earlier C top-pill comparison is retired.
+**Short answer:** Open the menu-bar waveform icon and choose **Pill**. **Near text cursor** is the
+default; in an app that exposes no text caret it sits at the bottom of the focused field or pane.
+**Bottom of screen** pins it there, and **Off** hides it.
+
+Ghostty 1.3.1 reports its focused pane but not where the cursor is inside it (its accessibility
+view has no caret-bounds call), so there the pill sits at the bottom of the pane you are typing in.
 
 **Show live transcript** optionally adds words while you speak, off by default and available only
-when the engine can stream. Recording, transcription and cleanup use different waveforms without
+when the engine can stream. Words appear about 1 s after you say them: between 5 s decoding chunks
+the engine previews the newest audio every second, for display only. Recording, transcription and cleanup use different waveforms without
 status labels. Placement and transcript visibility persist across launches. See the
 [README pill controls](../../README.md#optional-menu-bar-app) for Esc and Undo behaviour.
 
 ### Sources
 
-- [Native menu and pill](../../v2t/native/Voice2Text.swift) — selector, defaults and rendering.
+- [Native menu and pill](../../v2t/native/Voice2Text.swift) — selector, defaults, caret and pane
+  anchors, rendering.
+- [Ghostty 1.3.1 surface view](https://github.com/ghostty-org/ghostty/blob/v1.3.1/macos/Sources/Ghostty/Surface%20View/SurfaceView_AppKit.swift)
+  — accessibility overrides, none for caret bounds.
+- [Streaming constants](../../v2t/backends.py) — `STREAM_CHUNK_S`, `PREVIEW_STEP_S` and the
+  2026-10-06 preview measurements.
 - [Engine status](../../v2t/app.py) and [smoke tests](../../tests/test_smoke.py) — streaming capability.
 
 _Created: 2026-10-05 · Updated: 2026-10-05 · Verified: 2026-10-05 · Scope: v0.5.0 source,

@@ -676,14 +676,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
-/// B is the default; A is also used when the focused app exposes no text caret.
+/// Near the text cursor is the default. Where the focused app exposes no caret
+/// (Ghostty), the pill sits at the bottom of the focused field or pane instead.
 enum PillStyle: String, CaseIterable {
     case cursorBubble = "caret", compactBottom = "bottom", off
 
     var title: String {
         switch self {
-        case .cursorBubble: "B · Near text cursor (default)"
-        case .compactBottom: "A · Bottom of screen"
+        case .cursorBubble: "Near text cursor (default)"
+        case .compactBottom: "Bottom of screen"
         case .off: "Off"
         }
     }
@@ -700,6 +701,8 @@ final class Pill: NSObject {
     private var visible = false
     private var anchor: NSRect?
     private var recordingAnchor: NSRect?
+    private var pane: NSRect?
+    private var recordingPane: NSRect?
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
@@ -739,6 +742,7 @@ final class Pill: NSObject {
     func update(phase: String, partial: String, streaming: Bool) {
         if phase == "recording" && view.phase != "recording" {
             recordingAnchor = Self.cursorAnchor()
+            recordingPane = recordingAnchor == nil ? Self.focusedFrame() : nil
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -759,13 +763,15 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
-    /// Above the insertion caret, with bottom centre as the explicit alternative
-    /// and the fallback on apps that expose no caret position.
+    /// Above the insertion caret, with bottom centre as the explicit alternative.
+    /// An app that exposes no caret gets the bottom centre of its focused field
+    /// or pane, else of the screen.
     private func show() {
         let style = style
         let pointer = NSEvent.mouseLocation
         anchor = style == .cursorBubble ? recordingAnchor : nil
-        let location = anchor.map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
+        pane = style == .cursorBubble ? recordingPane : nil
+        let location = (anchor ?? pane).map { NSPoint(x: $0.midX, y: $0.midY) } ?? pointer
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
         else { return }
         self.screen = screen
@@ -788,8 +794,9 @@ final class Pill: NSObject {
         var size = view.phase == "cancelled" ? NSSize(width: 196, height: 34) : view.compactSize
         size.width = min(size.width, area.width - 16)
         let top = min(area.maxY, screen.frame.maxY - screen.safeAreaInsets.top)
-        var x = area.midX - size.width / 2
-        var y = area.minY + 20
+        let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
+        var x = base.midX - size.width / 2
+        var y = base.minY + 20
         view.tailBelow = true
         if style == .cursorBubble, let anchor {
             x = anchor.midX - size.width / 2
@@ -838,6 +845,32 @@ final class Pill: NSObject {
             }
         }
         return nil
+    }
+
+    /// The focused element's frame in Cocoa coordinates: in a terminal that
+    /// exposes no caret it is the split pane being typed in.
+    private static func focusedFrame() -> NSRect? {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
+        else { return nil }
+        let element = focused as! AXUIElement
+        var position = CGPoint.zero, size = CGSize.zero
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(value as! AXValue, .cgPoint, &position)
+        else { return nil }
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
+              size.width >= 120, size.height >= 40,
+              let primary = NSScreen.screens.first
+        else { return nil }
+        return NSRect(x: position.x, y: primary.frame.maxY - position.y - size.height,
+                      width: size.width, height: size.height)
     }
 
     private func hide() {

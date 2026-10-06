@@ -572,6 +572,36 @@ class V2TSmokeTests(unittest.TestCase):
         stream.__enter__.assert_called_once()
         stream.__exit__.assert_called_once()
 
+    def test_parakeet_preview_decodes_the_tail_alone_and_leaves_the_stream(self):
+        stream = mock.MagicMock()
+        model = mock.Mock()
+        model.preprocessor_config.hop_length = 160
+        model.encoder_config.subsampling_factor = 8
+        model.transcribe_stream.return_value = stream
+        model.generate.return_value = [mock.Mock(text=" tail words ")]
+        fake_mx = types.SimpleNamespace(array=np.asarray)
+        audio_module = types.SimpleNamespace(
+            get_logmel=mock.Mock(side_effect=lambda pcm, cfg: ("mel", pcm.size))
+        )
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "mlx": mock.Mock(core=fake_mx),
+                "mlx.core": fake_mx,
+                "parakeet_mlx": mock.Mock(audio=audio_module),
+                "parakeet_mlx.audio": audio_module,
+            },
+        ):
+            live = backends.ParakeetStream(model)
+            text = live.preview(np.ones(16000, dtype=np.float32))
+            short = live.preview(np.ones(100, dtype=np.float32))
+
+        self.assertEqual((text, short), ("tail words", ""))
+        model.generate.assert_called_once_with(("mel", 16000))
+        stream.add_audio.assert_not_called()
+        self.assertEqual(live.text, "", "the streamed text is not the preview's")
+
     def _streaming_stt(
         self, feeds: list, partial: str = "so far", final: str = "final words"
     ):
@@ -596,6 +626,7 @@ class V2TSmokeTests(unittest.TestCase):
         stream.feed.side_effect = feed
         stream.close.side_effect = close
         stream.finish.side_effect = finish
+        stream.preview.return_value = ""
         stream.closed = False
         return mock.Mock(
             streaming=True, sample_rate=16000, stream=mock.Mock(return_value=stream)
@@ -655,6 +686,75 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             wavfile.read(config.last_audio_path())[1].shape, (chunk + 8000,)
         )  # the streamed recording's audio is kept too
+
+    def _hold_and_feed(self, voice, seconds_after_chunk: list[float]):
+        """Start a held recording on a worker thread, feed one stream chunk, then
+        each extra stretch of audio, waiting for the worker to drain each."""
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        worker = app.threading.Thread(target=voice.process_next)
+        worker.start()
+        self.addCleanup(worker.join)
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        statuses = []
+        for samples in [chunk] + [int(16000 * s) for s in seconds_after_chunk]:
+            voice.audio_callback(
+                np.full((samples, 1), 0.5, dtype=np.float32), samples, None, None
+            )
+            for _ in range(50):
+                if voice.live.fed == len(voice.live.frames):
+                    break
+                app.time.sleep(0.02)
+            app.time.sleep(0.25)  # one more pass of the worker's 0.1 s loop
+            statuses.append(config.read_status().get("partial"))
+        voice.record_start -= backends.STREAM_TAKEOVER_S
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()
+            worker.join(timeout=5)
+        voice.live = None
+        self.assertFalse(worker.is_alive())
+        return statuses, paste
+
+    def test_a_preview_shows_the_unpushed_audio_every_second_between_pushes(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        previews: list[int] = []
+        stream.preview.side_effect = lambda audio: previews.append(audio.size) or "tail"
+
+        statuses, paste = self._hold_and_feed(voice, [1.0, 0.5, 0.5])
+
+        self.assertEqual(
+            previews, [16000, 32000], "after 1 s unpushed, then 1 s more, never sooner"
+        )
+        self.assertEqual(statuses, ["so far", "so far tail", "so far tail", "so far tail"])
+        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        self.assertEqual(feeds, [chunk, 32000], "previews never reach the stream")
+        paste.assert_called_once_with("final words")
+
+    def test_a_failing_preview_stops_previews_but_not_the_recording(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        feeds: list[int] = []
+        voice.stt, stream = self._streaming_stt(feeds)
+        stream.preview.side_effect = RuntimeError("metal out of memory")
+
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        statuses, paste = self._hold_and_feed(voice, [1.0, 1.0])
+
+        self.assertEqual(stream.preview.call_count, 1, "off for the rest of the recording")
+        self.assertIn(
+            "Live preview off for this recording: metal out of memory\n", lines
+        )
+        self.assertEqual(statuses, ["so far", "so far", "so far"])
+        paste.assert_called_once_with("final words")
+        self.assertEqual(config.read_history()[-1]["streamed"], True)
 
     def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))

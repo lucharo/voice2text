@@ -283,10 +283,12 @@ want the menu.
 the engine is actually capturing (a flat line means the microphone is delivering nothing), then a
 ripple while it transcribes, then a pulse while it cleans up, without status words. It never takes
 focus, so the paste still lands where you were typing. **Pill** in the menu picks the placement:
-**B · Near text cursor** is the default; **A · Bottom of screen** is the second option and the
-automatic fallback when the focused app exposes no text caret; **Off** hides it. **Show live
-transcript** optionally displays words as you speak (off by default, available when the engine can
-stream; Parakeet updates every 5 s). These choices persist across launches. Press **Esc** to cancel
+**Near text cursor** is the default; in an app that exposes no text caret, such as Ghostty, it sits
+at the bottom of the focused field or pane instead. **Bottom of screen** pins it there; **Off** hides
+it. **Show live transcript** optionally displays words as you speak (off by default, available when
+the engine can stream). Parakeet decodes in 5 s chunks and previews the audio since the last chunk
+every second, so a word shows about 1 s after you say it; the preview is display only and never
+changes the pasted text. These choices persist across launches. Press **Esc** to cancel
 without pasting; **Undo** on the pill or in the menu recovers the captured audio and resumes
 hands-free recording. Press Fn to finish. The engine sends each state change
 and, while recording, the input level as datagrams to `~/.v2t/run/live.sock`, which the app binds;
