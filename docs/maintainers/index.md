@@ -46,8 +46,10 @@ the GitHub Release, and commits the new cask checksum to `main`.
 - `just bench` writes one file per Mac to `~/.v2t/benchmarks/results/`: transcription speed and
   cleanup latency per model. [benchmarks/README.md](https://github.com/lucharo/voice2text/blob/main/benchmarks/README.md)
   has the options.
-- `utils/asr_grid` compares speech models, streaming and not, on labelled clip sets.
+- `utils/asr_grid` compares speech models on labelled clip sets: whole-file, streaming, and in
+  30 s pieces (`grid.py chunk`), the way v2t transcribes from 60 s.
   `utils/asr_grid/plot_wait.py` draws the wait-vs-length chart on [How it works](../how-it-works.md).
+  Each benchmark's README says what it answers, its inputs and how to read the numbers.
 - `utils/cleanup_speed` times the cleanup paths against each other.
 
 ## Docs

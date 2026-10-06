@@ -75,11 +75,21 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
 STREAM_CHUNK_S = 5.0
 STREAM_CONTEXT = (256, 256)
 STREAM_DEPTH = 1
-# Streamed text differs from whole-file decoding (local attention, per-push
-# normalisation), and whole-file decoding costs ~11 ms per second of audio, so
-# under this many seconds it is about as quick as the last push and the app
-# takes it, giving exactly today's text; above, the streamed text wins seconds.
+# Under this many seconds the stream only feeds the live text and release decodes
+# the whole file: ~11 ms per second of audio, about as quick as a last push, and
+# the reference text. From here up, the recording is decoded whole in pieces of
+# about PIECE_S while the key is held (PieceDecoder), so release waits on the
+# last piece only, not on the whole dictation.
 STREAM_TAKEOVER_S = 60.0
+# Each piece ends at the quietest PIECE_QUIET_S within PIECE_SEARCH_S of its
+# PIECE_S mark (the splitter mlx-audio's Qwen3-ASR uses for long files), so a cut
+# is known PIECE_SEARCH_S after its mark. Measured 2026-10-06 on 40 labelled
+# clips of 65-286 s (utils/asr_grid, PR #40): 2.3% WER against 5.3% for the
+# 5 s stream this replaced, wait after release p50 0.28 s / p90 0.54 s against
+# 0.46 s / 0.75 s.
+PIECE_S = 30.0
+PIECE_SEARCH_S = 5.0
+PIECE_QUIET_S = 0.1
 # Between pushes, every PREVIEW_STEP_S seconds the audio not pushed yet (under
 # STREAM_CHUNK_S of it) is decoded on its own and shown after the streamed text,
 # for display only, so a word shows ~1 s after it is said instead of ~3 s.
@@ -87,7 +97,8 @@ STREAM_TAKEOVER_S = 60.0
 # preview; the streamed text identical with and without previews; 84% of the
 # preview's words survive into the final text (91% of the words a push adds),
 # the word at the seam with the last push least often (76%) until the next push
-# replaces it.
+# replaces it. From STREAM_TAKEOVER_S up the stream is closed, and the preview
+# decodes the audio after the last piece instead (at most PIECE_S + PIECE_SEARCH_S).
 PREVIEW_STEP_S = 1.0
 
 
@@ -155,6 +166,99 @@ class ChunkFeeder:
         self.sink(chunk)
 
 
+class PieceDecoder:
+    """Decode a recording whole, piece by piece, while it is still arriving.
+
+    `add(audio)` appends; `step()` decodes the next piece once its cut is known
+    and says whether it did; `finish()` decodes what is left and returns the
+    pieces' texts joined. `decode` turns 1-D float32 audio into text with the
+    model in full attention, so no ParakeetStream may be open. Pure numpy apart
+    from `decode`; the cuts match utils/asr_grid's `chunk_cuts`, which measured it.
+    """
+
+    def __init__(
+        self,
+        decode: Callable[[np.ndarray], str],
+        sample_rate: int,
+        piece_s: float = PIECE_S,
+        search_s: float = PIECE_SEARCH_S,
+    ):
+        self.decode = decode
+        self.piece = int(sample_rate * piece_s)
+        self.search = int(sample_rate * search_s)
+        self.window = max(1, int(sample_rate * PIECE_QUIET_S))
+        self._rest: list[np.ndarray] = []  # the audio after the last cut
+        self.pending_samples = 0
+        self.decoded_samples = 0
+        self.pieces = 0
+        self.texts: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return " ".join(self.texts)
+
+    def add(self, audio: np.ndarray) -> None:
+        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if flat.size:
+            self._rest.append(flat)
+            self.pending_samples += flat.size
+
+    def peek(self) -> np.ndarray:
+        """The audio after the last cut (possibly empty), left in place."""
+        if len(self._rest) > 1:
+            self._rest = [np.concatenate(self._rest)]
+        return self._rest[0] if self._rest else np.zeros(0, dtype=np.float32)
+
+    def step(self) -> bool:
+        """Decode the next piece if its cut is known; True when one was decoded."""
+        if self.pending_samples < self.piece + self.search:
+            return False
+        audio = self.peek()
+        lo = self.piece - self.search
+        region = audio[lo : lo + 2 * self.search]
+        energy = np.convolve(region**2, np.ones(self.window) / self.window, "valid")
+        self._decode(audio, lo + int(np.argmin(energy)) + self.window // 2)
+        return True
+
+    def finish(self) -> str:
+        """Decode every piece left, the last one up to the end; the joined text."""
+        while self.step():
+            pass
+        if self.pending_samples:
+            self._decode(self.peek(), self.pending_samples)
+        return self.text
+
+    def _decode(self, audio: np.ndarray, cut: int) -> None:
+        text = self.decode(audio[:cut]).strip()
+        if text:
+            self.texts.append(text)
+        self._rest = [audio[cut:]] if cut < audio.size else []
+        self.pending_samples = audio.size - cut
+        self.decoded_samples += cut
+        self.pieces += 1
+
+
+def _decode_pcm(model, pcm: np.ndarray) -> str:
+    """Parakeet on 1-D float32 audio already at the model's rate, no WAV round trip."""
+    import mlx.core as mx
+    from parakeet_mlx.audio import get_logmel
+
+    mel = get_logmel(mx.array(pcm), model.preprocessor_config)  # float32, as load_audio
+    return model.generate(mel)[0].text.strip()
+
+
+def release_cache() -> None:
+    """Hand MLX's cache of freed buffers back to the system.
+
+    MLX keeps freed buffers for reuse, and pieces and previews of differing lengths
+    rarely fit the ones kept: without this the cache grew to 20.5 GB over three long
+    recordings (65, 137 and 286 s, measured 2026-10-06), against 1.2 GB in use.
+    """
+    import mlx.core as mx
+
+    mx.clear_cache()
+
+
 class ParakeetStream:
     """One live Parakeet transcription: feed audio as it arrives, read the partial
     text, then close. Opening switches the shared model to local attention and
@@ -194,13 +298,10 @@ class ParakeetStream:
 
     def preview(self, audio: np.ndarray) -> str:
         """Decode `audio` on its own, for display only; the stream is untouched."""
-        from parakeet_mlx.audio import get_logmel
-
         pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
         if pcm.size < self._min_samples:
             return ""
-        mel = get_logmel(self._mx.array(pcm), self._model.preprocessor_config)
-        return self._model.generate(mel)[0].text.strip()
+        return _decode_pcm(self._model, pcm)
 
     def finish(self, audio: np.ndarray | None = None) -> str:
         """Push the last audio (the remainder on release, possibly empty) plus the
@@ -241,6 +342,16 @@ class ParakeetSTT:
 
     def transcribe(self, wav_path: str) -> str:
         return self.model.transcribe(wav_path).text.strip()
+
+    def decode(self, audio: np.ndarray) -> str:
+        """Whole-file decoding of audio at `sample_rate`; close any stream first."""
+        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if pcm.size < int(self.model.preprocessor_config.hop_length):
+            return ""  # under one hop the log-mel is empty and crashes Metal
+        try:
+            return _decode_pcm(self.model, pcm)
+        finally:
+            release_cache()
 
     def stream(self) -> ParakeetStream:
         return ParakeetStream(self.model)

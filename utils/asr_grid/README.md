@@ -8,7 +8,7 @@ dictation on this Mac?**
 
 | name | runtime | what it is |
 |---|---|---|
-| `parakeet-v3` | parakeet-mlx | v2t today: whole-file under 60 s, the local-attention stream from 60 s up |
+| `parakeet-v3` | parakeet-mlx | v2t up to 0.5.7: whole-file under 60 s, the local-attention stream from 60 s up. Since 0.5.8 v2t ships `parakeet-v3+chunked` (below) |
 | `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, run as a drop-in for v3 (same 60 s rule). The grid uses `selcukkubur/parakeet-ultra-mlx`; `beshkenadze/parakeet-ultra-mlx-fp16` is the other MLX conversion (October 2026) |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
@@ -66,14 +66,15 @@ transcripts, and `<date>-report.md`, which holds numbers only.
 
 - **Wait** is seconds from release to the final text: the whole-file decode for an offline
   system, the last push plus flush for a streaming one (everything earlier was fed and decoded
-  while "recording"). For `parakeet-v3` it follows v2t's own 60 s rule.
+  while "recording"). For `parakeet-v3` it follows v2t's 60 s rule as it was up to 0.5.7.
 - **`<system>+chunked`** gives a whole-file system the same 60 s rule. Under 60 s it is the
   whole-file run. From 60 s up, the recording is cut every ~30 s at the quietest 100 ms within 5 s
   of the mark (the splitter mlx-audio's Qwen3-ASR uses for long files), each piece is decoded as
   soon as its cut is known, and only the last piece is left after release. The wait counts any
   piece still queued at release. `grid.py chunk` writes these to `<system>.chunked.jsonl` beside
   the whole-file results; a chunked row is scored but never votes in the dictation consensus, so
-  adding one moves no other number.
+  adding one moves no other number. `parakeet-v3+chunked` is what v2t ships since 0.5.8: the app's
+  `PieceDecoder` cuts the same way, and gave the same text on the clips checked.
 - **RTF** is compute over audio. A streaming system needs it well under 1 to keep up live.
 - Streaming sessions are fed 0.5 s at a time and drained between feeds; the drain for mlx-audio
   sessions reads their queue state, which is pinned to mlx-audio 0.5.7.

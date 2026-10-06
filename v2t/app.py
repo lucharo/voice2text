@@ -682,16 +682,18 @@ class VoiceToText:
     def process_live(self, live: LiveTranscription) -> None:
         """Transcribe a recording while it is still going, then deliver it.
 
-        Runs on the processing thread. New frames go into the streaming
-        recogniser every STREAM_CHUNK_S seconds of audio and the partial text
-        goes to the log and the menu bar; with the experimental live transcript
-        on, every PREVIEW_STEP_S seconds in between the audio not pushed yet is
-        decoded on its own and shown after it, display only. Once the hotkey thread calls `finish`,
-        a recording longer than STREAM_TAKEOVER_S takes the streamed text (only
-        the remainder is left to decode); a shorter one is decoded whole-file,
-        which costs about the same there and gives the reference text.
+        Runs on the processing thread. Until STREAM_TAKEOVER_S of audio, new
+        frames go into the streaming recogniser every STREAM_CHUNK_S seconds and
+        the partial text goes to the log and the menu bar; with the experimental
+        live transcript on, every PREVIEW_STEP_S seconds in between the audio not
+        pushed yet is decoded on its own and shown after it, display only. A
+        recording released before then is decoded whole-file: about as quick
+        there, and the reference text. From STREAM_TAKEOVER_S the stream closes
+        and the recording is decoded whole in pieces of about PIECE_S as it
+        arrives, the audio after the last piece previewed for the partial text,
+        so once the hotkey thread calls `finish` only the last piece is left.
         """
-        next_state, error_message, stream = "idle", "", None
+        next_state, error_message, stream, pieces = "idle", "", None, None
         handed_back = False  # streaming broke while held: release decodes whole-file
         raw_text = None  # set once some decoder produced the text
         levels = None  # set once the recording's audio is in hand
@@ -701,17 +703,63 @@ class VoiceToText:
             self.refresh_dictionary()
             stream = self.stt.stream()
             feeder = backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
+            takeover = int(self.cfg.sample_rate * backends.STREAM_TAKEOVER_S)
             preview_step = int(self.cfg.sample_rate * backends.PREVIEW_STEP_S)
-            previewed = 0  # unpushed samples at the last preview
+            # From the takeover the partial text is a preview of the audio after the
+            # last piece: every push's worth of audio, or every preview step when the
+            # live transcript is on.
+            tail_step = (
+                preview_step
+                if self.cfg.live_transcript
+                else int(self.cfg.sample_rate * backends.STREAM_CHUNK_S)
+            )
+            tail_previews = True  # off for the recording once one fails
+            previewed = 0  # unpushed (or undecoded) samples at the last preview
             previewing = self.cfg.live_transcript  # previews exist only to be shown
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
                     return
+                if pieces is not None:
+                    for frame in live.frames[live.fed :]:
+                        live.fed += 1
+                        pieces.add(frame)
+                    if pieces.step():
+                        previewed = 0
+                        if not live.done.is_set():
+                            self._show_partial(pieces.text, pieces.decoded_samples)
+                    elif (
+                        tail_previews
+                        and not live.done.is_set()
+                        and pieces.pending_samples - previewed >= tail_step
+                    ):
+                        previewed = pieces.pending_samples
+                        try:
+                            tail = self.stt.decode(pieces.peek())
+                        except Exception as error:  # display only: never the recording
+                            logger.warning(f"Live preview off for this recording: {error}")
+                            tail_previews = False
+                        else:
+                            partial = f"{pieces.text} {tail}".strip()
+                            if self.cfg.live_transcript:
+                                self._set_state("recording", partial=partial)
+                            else:
+                                self._show_partial(
+                                    partial,
+                                    pieces.decoded_samples + pieces.pending_samples,
+                                )
+                    if live.done.is_set() and live.fed == len(live.frames):
+                        break
+                    live.done.wait(0.1)
+                    continue
                 pushed = False
                 for frame in live.frames[live.fed :]:
                     live.fed += 1
                     pushed = feeder.push(frame) or pushed
+                if feeder.sent_samples + feeder.pending_samples >= takeover:
+                    pieces, stream, previewed = self._pieces_from(stream, live), None, 0
+                    logger.info("Past the takeover: decoding the rest in pieces")
+                    continue
                 if pushed:
                     previewed = 0
                     if not live.done.is_set():  # after release: no more partials
@@ -742,9 +790,13 @@ class VoiceToText:
             audio = np.concatenate(live.frames, axis=0)
             self._keep_audio(audio)
             levels = audio_levels(audio, self.cfg.sample_rate)
-            streamed = live.duration >= backends.STREAM_TAKEOVER_S
+            # `streamed` (history's column): decoded while held, in pieces.
+            streamed = pieces is not None or live.duration >= backends.STREAM_TAKEOVER_S
             if streamed:
-                raw_text = stream.finish(feeder.take())
+                if pieces is None:  # released just past the mark, before the switch
+                    pieces, stream = self._pieces_from(stream, live), None
+                held = pieces.pieces
+                raw_text = pieces.finish()
             else:
                 stream.close()  # first: it holds the model in streaming attention
                 raw_text = self._transcribe_whole(audio)
@@ -757,7 +809,7 @@ class VoiceToText:
             logger.info(
                 f"Transcribed {len(raw_text)} characters ({stt_s:.2f}s after release, "
                 + (
-                    f"{feeder.chunks} chunks while recording)"
+                    f"{pieces.pieces} pieces, {held} decoded while recording)"
                     if streamed
                     else f"whole-file: under {backends.STREAM_TAKEOVER_S:.0f}s)"
                 )
@@ -834,6 +886,14 @@ class VoiceToText:
             if self.cancelled_job is live:
                 self.cancelled_job = None
                 self.processing = False
+
+    def _pieces_from(self, stream, live: LiveTranscription) -> backends.PieceDecoder:
+        """Close the stream and hand everything fed so far to a PieceDecoder."""
+        stream.close()  # first: it holds the model in streaming attention
+        pieces = backends.PieceDecoder(self.stt.decode, self.cfg.sample_rate)
+        if live.fed:
+            pieces.add(np.concatenate(live.frames[: live.fed], axis=0))
+        return pieces
 
     def _show_partial(self, text: str, samples: int) -> None:
         # The log never carries dictated text (0.3.0 guarantee); the tail goes
