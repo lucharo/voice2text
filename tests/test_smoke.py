@@ -483,7 +483,7 @@ class V2TSmokeTests(unittest.TestCase):
         release = app.threading.Event()
         self.addCleanup(release.set)
         stream = mock.Mock()
-        stream.stop.side_effect = lambda: release.wait(10)
+        stream.stop.side_effect = lambda: release.wait(3)
         with mock.patch.object(app.sd, "InputStream", return_value=stream):
             voice.start_recording(show=False)
         voice.frames.append(np.ones((1600, 1), dtype=np.float32))
@@ -535,6 +535,7 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_the_run_loop_restarts_the_engine_when_the_mic_is_stuck(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        deadline = app.time.perf_counter() + 5  # a loop that never restarts fails, not hangs
 
         class Listener:
             def __init__(self, **_callbacks):
@@ -547,7 +548,7 @@ class V2TSmokeTests(unittest.TestCase):
                 pass
 
             def is_alive(self):
-                return True
+                return app.time.perf_counter() < deadline
 
         restarts = []
 
@@ -567,6 +568,7 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(voice, "warmup", side_effect=stuck_mic),
             mock.patch.object(voice, "_restart_for_microphone", side_effect=restart),
             mock.patch.object(app.os, "_exit") as hard_exit,
+            contextlib.suppress(RuntimeError),  # the listener "died" at the deadline
         ):
             voice.run()
 
