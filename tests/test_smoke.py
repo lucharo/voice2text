@@ -502,6 +502,29 @@ class V2TSmokeTests(unittest.TestCase):
         frames, _duration = voice.jobs.get_nowait()
         self.assertEqual([f.shape for f in frames], [(1600, 1)], "the dictation still goes on")
 
+    def test_a_block_being_appended_when_the_key_is_released_is_kept(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        _stream, _release = self._hanging_mic(voice)
+        copying = app.threading.Event()
+
+        class SlowBlock:  # the audio callback is mid-append when the key comes up
+            shape = (1600, 1)
+
+            def copy(self):
+                copying.set()
+                app.time.sleep(0.2)
+                return np.full((1600, 1), 0.5, dtype=np.float32)
+
+        callback = app.threading.Thread(
+            target=voice.audio_callback, args=(SlowBlock(), 1600, None, None)
+        )
+        callback.start()
+        copying.wait(1)
+        voice.stop_recording()
+        callback.join()
+
+        self.assertEqual(len(voice.current_audio[0]), 2, "the in-flight block is in")
+
     def test_a_press_while_the_last_stop_runs_leaves_the_mic_closed(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         _stream, _release = self._hanging_mic(voice)

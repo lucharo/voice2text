@@ -114,9 +114,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return .terminateLater
     }
 
-    /// How long the engine gets to exit after SIGTERM before SIGKILL. Its own
-    /// shutdown waits up to 3 s (MIC_STUCK_S) for the microphone to stop.
-    static let engineExitGrace: TimeInterval = 5
+    /// How long the engine gets to exit after SIGTERM before SIGKILL. A healthy
+    /// engine finishes the dictation in hand first (cleanup measured 0.5 s median,
+    /// 2.1 s p90 over 201 dictations), and frees a stuck microphone itself within
+    /// 3 s (MIC_STUCK_S), so this only ends an engine that is truly hung.
+    static let engineExitGrace: TimeInterval = 30
 
     /// SIGTERM, then SIGKILL if the engine is still running after the grace period:
     /// a CoreAudio deadlock (PortAudio#1174) can leave it unable to exit, still

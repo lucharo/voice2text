@@ -306,6 +306,7 @@ class VoiceToText:
         self.frames: list[np.ndarray] = []
         self.live: LiveTranscription | None = None  # streaming recording in flight
         self.stream = None
+        self.frames_lock = threading.Lock()  # the audio callback's append vs. a stop
         self.mic_closer: threading.Thread | None = None  # the last stop, on its thread
         self.mic_closed_at = 0.0
         self.record_start = 0.0
@@ -473,10 +474,18 @@ class VoiceToText:
     def audio_callback(self, indata, frame_count, time_info, status):
         if status:
             logger.warning(f"Audio input: {status}")
-        if self.recording:
+        with self.frames_lock:  # a stop waits for a block already being appended
+            if not self.recording:
+                return
             self.frames.append(indata.copy())
-            if self.shown:  # a tap or a chord stays invisible
-                self._send_level(indata)
+        if self.shown:  # a tap or a chord stays invisible
+            self._send_level(indata)
+
+    def _end_capture(self) -> None:
+        """Stop taking frames. The stream itself stops later, on its own thread, so
+        this is what guarantees the last block is in `frames` before they are read."""
+        with self.frames_lock:
+            self.recording = False
 
     def _send_level(self, block: np.ndarray) -> None:
         """Send the input level (RMS, full scale 1) to the pill's waveform.
@@ -602,7 +611,7 @@ class VoiceToText:
             self._cancel_hold_timer()
             if not self.recording:
                 return
-            self.recording = False
+            self._end_capture()
             self.finalizing_recording = True
             try:
                 duration = time.perf_counter() - self.record_start
@@ -1199,7 +1208,7 @@ class VoiceToText:
             self._cancel_hold_timer()
             if not self.recording:
                 return
-            self.recording = False
+            self._end_capture()
             self.frames = []
             if self.live is not None:
                 live, self.live = self.live, None
@@ -1224,7 +1233,7 @@ class VoiceToText:
             self.last_tap_at = 0.0
             if self.recording:
                 duration = time.perf_counter() - self.record_start
-                self.recording = False
+                self._end_capture()
                 self._close_stream()
                 self.cancelled_audio = (list(self.frames), duration)
                 self.frames = []
@@ -1432,7 +1441,7 @@ class VoiceToText:
         self.jobs.put(None)
         with self.lifecycle_lock:
             self._cancel_hold_timer()
-            self.recording = False
+            self._end_capture()
             if self.live is not None:
                 live, self.live = self.live, None
                 live.cancel()
