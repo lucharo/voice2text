@@ -94,7 +94,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 unlink(path)
             }
         }
-        engine?.terminate()
+        if let engine, engine.isRunning {  // normally gone already: see applicationShouldTerminate
+            engine.terminate()
+            let deadline = Date().addingTimeInterval(Self.teardownGrace)
+            while engine.isRunning && Date() < deadline { usleep(50_000) }
+            if engine.isRunning { kill(engine.processIdentifier, SIGKILL) }
+        }
         logHandle?.closeFile()
         logHandle = nil
         if lockFD >= 0 { close(lockFD) }
@@ -105,8 +110,34 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         terminationPending = true
         phase = "stopping"
         render()
-        engine.terminate()
+        terminateEngine(engine)
         return .terminateLater
+    }
+
+    /// How long the engine may still run after it has cleared its status file, the
+    /// last step of its shutdown, before SIGKILL. Exiting from there takes
+    /// milliseconds; only a hung teardown (a CoreAudio deadlock, PortAudio#1174,
+    /// holding the microphone) is still running after this.
+    static let teardownGrace: TimeInterval = 5
+
+    /// SIGTERM, then SIGKILL only if the engine finished its work and cleared its
+    /// status but is still running `teardownGrace` later. Work in hand, however long
+    /// (an Ollama cleanup may take a minute), is never cut short.
+    private func terminateEngine(_ process: Process) {
+        process.terminate()
+        let pid = process.processIdentifier
+        let status = home.appendingPathComponent("run/status.json").path
+        var clearedAt: Date?
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+            guard process.isRunning else { timer.invalidate(); return }
+            guard !FileManager.default.fileExists(atPath: status) else { clearedAt = nil; return }
+            let since = clearedAt ?? Date()
+            clearedAt = since
+            if Date().timeIntervalSince(since) >= Self.teardownGrace {
+                kill(pid, SIGKILL)
+                timer.invalidate()
+            }
+        }
     }
 
     private func acquireAppLock() -> Bool {
@@ -326,7 +357,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func stop() {
-        engine?.terminate()
+        if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
     }

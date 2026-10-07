@@ -40,6 +40,17 @@ LEVEL_INTERVAL_S = 0.02  # the pill's waveform: at most one input level per 20 m
 # 4-10 s snackbar range.
 UNDO_WINDOW_S = 5.0
 Z_VK = 6  # kVK_ANSI_Z
+# PortAudio's stop can deadlock inside CoreAudio on macOS 26 (PortAudio#1174, open
+# as of 19.7: Pa_StopStream holds the AudioUnit lock while the HAL IO thread holds
+# its own and asks for the AudioUnit one). So the microphone stops on its own thread,
+# never on the hotkey listener's (2026-10-07: the listener froze inside
+# FinishStoppingStream, Fn and Esc died with it, and quitting the app left the mic
+# held). A healthy stop took 105 ms at the median and 110 ms at most over 20 cycles
+# on the built-in mic (2026-10-07); one still running after MIC_STUCK_S, thirty times
+# that, is the deadlock, and the engine restarts itself once idle to free the mic.
+MIC_STUCK_S = 3.0
+# How long a new press waits for the last stop before declining to open the mic.
+MIC_REOPEN_WAIT_S = 0.3
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -295,6 +306,9 @@ class VoiceToText:
         self.frames: list[np.ndarray] = []
         self.live: LiveTranscription | None = None  # streaming recording in flight
         self.stream = None
+        self.frames_lock = threading.Lock()  # the audio callback's append vs. a stop
+        self.mic_closer: threading.Thread | None = None  # the last stop, on its thread
+        self.mic_closed_at = 0.0
         self.record_start = 0.0
         self.was_playing = False
         self._warned_mic = False
@@ -387,8 +401,16 @@ class VoiceToText:
         self.shutdown_watcher.start()
 
     def _close_stream(self) -> None:
-        if self.stream is not None:
-            stream, self.stream = self.stream, None
+        """Stop and close the microphone on its own thread and return at once.
+
+        The callers run on the hotkey listener's event tap, which must never
+        block: a stop takes ~0.1 s even when healthy, and can deadlock.
+        """
+        if self.stream is None:
+            return
+        stream, self.stream = self.stream, None
+
+        def close() -> None:
             try:
                 stream.stop()
             except Exception as error:
@@ -397,6 +419,51 @@ class VoiceToText:
                 stream.close()
             except Exception as error:
                 logger.warning(f"Could not close audio input cleanly: {error}")
+
+        self.mic_closer = threading.Thread(target=close, name="v2t-mic-close", daemon=True)
+        self.mic_closed_at = time.perf_counter()
+        self.mic_closer.start()
+
+    def _await_mic_closed(self, timeout: float) -> bool:
+        """Wait up to `timeout` for the last stop; False while it is still running."""
+        closer = self.mic_closer
+        if closer is not None:
+            closer.join(timeout)
+            if closer.is_alive():
+                return False
+            if self.mic_closer is closer:
+                self.mic_closer = None
+        return True
+
+    def mic_stuck(self) -> bool:
+        """Whether the last stop has run past MIC_STUCK_S: the CoreAudio deadlock."""
+        return (
+            self.mic_closer is not None
+            and self.mic_closer.is_alive()
+            and time.perf_counter() - self.mic_closed_at >= MIC_STUCK_S
+        )
+
+    def _should_restart_for_microphone(self) -> bool:
+        """A stop still stuck once the dictation is delivered and any Undo has lapsed."""
+        with self.lifecycle_lock:
+            return (
+                not (self.stopping or self.recording or self.processing)
+                and self.cancelled_audio is None
+                and self.mic_stuck()
+            )
+
+    def _restart_for_microphone(self) -> None:
+        """Replace this process with a fresh engine: the only way to free a
+        CoreAudio deadlock. Same PID, so the menu app keeps tracking it; the
+        instance lock, sockets and microphone are released by the exec."""
+        logger.error(
+            "The microphone stop never finished (a macOS audio deadlock, "
+            "PortAudio#1174); restarting v2t to release it"
+        )
+        self._clear_status()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, sys.orig_argv)
 
     def _restore_media(self) -> None:
         if self.cfg.pause_music and self.was_playing:
@@ -407,10 +474,18 @@ class VoiceToText:
     def audio_callback(self, indata, frame_count, time_info, status):
         if status:
             logger.warning(f"Audio input: {status}")
-        if self.recording:
+        with self.frames_lock:  # a stop waits for a block already being appended
+            if not self.recording:
+                return
             self.frames.append(indata.copy())
-            if self.shown:  # a tap or a chord stays invisible
-                self._send_level(indata)
+        if self.shown:  # a tap or a chord stays invisible
+            self._send_level(indata)
+
+    def _end_capture(self) -> None:
+        """Stop taking frames. The stream itself stops later, on its own thread, so
+        this is what guarantees the last block is in `frames` before they are read."""
+        with self.frames_lock:
+            self.recording = False
 
     def _send_level(self, block: np.ndarray) -> None:
         """Send the input level (RMS, full scale 1) to the pill's waveform.
@@ -450,6 +525,10 @@ class VoiceToText:
         """
         with self.lifecycle_lock:
             if self.stopping or self.recording or self.processing:
+                return
+            # Re-initialising PortAudio while the last stop still runs would hang too.
+            if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
+                logger.warning("Microphone still stopping; not recording")
                 return
             self.frames = list(resume[0]) if resume else []
             self.shown = False
@@ -532,7 +611,7 @@ class VoiceToText:
             self._cancel_hold_timer()
             if not self.recording:
                 return
-            self.recording = False
+            self._end_capture()
             self.finalizing_recording = True
             try:
                 duration = time.perf_counter() - self.record_start
@@ -1129,7 +1208,7 @@ class VoiceToText:
             self._cancel_hold_timer()
             if not self.recording:
                 return
-            self.recording = False
+            self._end_capture()
             self.frames = []
             if self.live is not None:
                 live, self.live = self.live, None
@@ -1154,7 +1233,7 @@ class VoiceToText:
             self.last_tap_at = 0.0
             if self.recording:
                 duration = time.perf_counter() - self.record_start
-                self.recording = False
+                self._end_capture()
                 self._close_stream()
                 self.cancelled_audio = (list(self.frames), duration)
                 self.frames = []
@@ -1315,6 +1394,8 @@ class VoiceToText:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break
+                    if self._should_restart_for_microphone():
+                        self._restart_for_microphone()
                 if not self.stopping and not listener.is_alive():
                     raise RuntimeError("global hotkey listener stopped unexpectedly")
         except KeyboardInterrupt:
@@ -1360,11 +1441,12 @@ class VoiceToText:
         self.jobs.put(None)
         with self.lifecycle_lock:
             self._cancel_hold_timer()
-            self.recording = False
+            self._end_capture()
             if self.live is not None:
                 live, self.live = self.live, None
                 live.cancel()
         self._close_stream()
+        mic_free = self._await_mic_closed(MIC_STUCK_S)
         self._restore_media()
         self._clear_status()
         for fd in (self.shutdown_read_fd, self.shutdown_write_fd):
@@ -1374,6 +1456,13 @@ class VoiceToText:
         if self.instance_lock is not None:
             self.instance_lock.close()
             self.instance_lock = None
+        if not mic_free:
+            # sounddevice's exit hook terminates PortAudio, which would wait on the
+            # deadlocked CoreAudio lock forever and keep the microphone held.
+            logger.warning("Microphone stop still stuck; exiting without PortAudio teardown")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
 
 
 if __name__ == "__main__":

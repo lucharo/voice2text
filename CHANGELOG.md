@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.9
+
+- **A rare macOS audio freeze no longer takes Fn and Esc with it.** Stopping the microphone can deadlock inside CoreAudio on macOS 26 (a PortAudio bug, PortAudio#1174). v2t now stops the microphone off the key listener, so the keys keep working and the dictation still pastes. If the stop never finishes, v2t restarts itself once idle to free the microphone. Quitting the app now force-stops an engine that finished its work but is still stuck tearing down 5 s later, so the microphone is never left held; a dictation in hand always finishes first.
+
 ## 0.5.8
 
 - **Long dictations are more accurate and paste sooner.** From 60 s on, v2t transcribes the recording whole in pieces of about 30 s while you speak, each cut at the quietest moment near its mark, so letting go leaves only the last piece. On 40 labelled recordings of one to five minutes, 2.3% of words came out wrong, down from 5.3% with the running draft it replaces, and the text was ready 0.28 s after release at the median (0.46 s before). Under 60 s nothing changes.
