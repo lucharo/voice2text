@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.11
+
+- **The pill finds the caret on an empty line below text.** In Claude, Chrome, Brave and other Electron apps, a caret on a fresh line after text used to leave the bubble over the middle of the box. v2t now reads the caret where Chromium exposes it (its text markers) and otherwise places it at the start of the line below the text, a line per line break.
+- **The end of a dictation is one smooth step.** When the text is ready, the bubble stops following the caret and fades out as the paste lands, instead of lingering after it and jumping with the caret. The paste itself is as immediate as before. The engine reports a new `delivering` state for the paste.
+
 ## 0.5.10
 
 - **The pill follows the caret.** Move the caret or click into another field while you dictate, and the bubble moves there within half a second, so it always shows where the text will be pasted. The caret is re-read off the main thread, so a slow app cannot stall the menu app.

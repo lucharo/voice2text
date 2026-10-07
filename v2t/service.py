@@ -14,7 +14,7 @@ from pathlib import Path
 from . import config, menubar
 
 LABEL = menubar.BUNDLE_ID
-READY_STATES = {"idle", "recording", "transcribing", "cleaning"}
+READY_STATES = {"idle", "recording", "transcribing", "cleaning", "delivering"}
 START_TIMEOUT = 120
 STOP_TIMEOUT = 120
 FORCE_TIMEOUT = 5

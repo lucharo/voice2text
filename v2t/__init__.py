@@ -1,3 +1,3 @@
 """v2t — local, MLX-first voice-to-text with LLM cleanup."""
 
-__version__ = "0.5.10"
+__version__ = "0.5.11"
