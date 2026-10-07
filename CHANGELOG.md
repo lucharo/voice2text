@@ -2,7 +2,7 @@
 
 ## 0.5.9
 
-- **A rare macOS audio freeze no longer takes Fn and Esc with it.** Stopping the microphone can deadlock inside CoreAudio on macOS 26 (a PortAudio bug, PortAudio#1174). v2t now stops the microphone off the key listener, so the keys keep working and the dictation still pastes. If the stop never finishes, v2t restarts itself once idle to free the microphone. Quitting the app now force-stops an engine still hung 30 s after being asked to quit, so the microphone is never left held.
+- **A rare macOS audio freeze no longer takes Fn and Esc with it.** Stopping the microphone can deadlock inside CoreAudio on macOS 26 (a PortAudio bug, PortAudio#1174). v2t now stops the microphone off the key listener, so the keys keep working and the dictation still pastes. If the stop never finishes, v2t restarts itself once idle to free the microphone. Quitting the app now force-stops an engine that finished its work but is still stuck tearing down 5 s later, so the microphone is never left held; a dictation in hand always finishes first.
 
 ## 0.5.8
 

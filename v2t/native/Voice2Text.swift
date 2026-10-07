@@ -96,7 +96,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if let engine, engine.isRunning {  // normally gone already: see applicationShouldTerminate
             engine.terminate()
-            let deadline = Date().addingTimeInterval(Self.engineExitGrace)
+            let deadline = Date().addingTimeInterval(Self.teardownGrace)
             while engine.isRunning && Date() < deadline { usleep(50_000) }
             if engine.isRunning { kill(engine.processIdentifier, SIGKILL) }
         }
@@ -114,20 +114,29 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return .terminateLater
     }
 
-    /// How long the engine gets to exit after SIGTERM before SIGKILL. A healthy
-    /// engine finishes the dictation in hand first (cleanup measured 0.5 s median,
-    /// 2.1 s p90 over 201 dictations), and frees a stuck microphone itself within
-    /// 3 s (MIC_STUCK_S), so this only ends an engine that is truly hung.
-    static let engineExitGrace: TimeInterval = 30
+    /// How long the engine may still run after it has cleared its status file, the
+    /// last step of its shutdown, before SIGKILL. Exiting from there takes
+    /// milliseconds; only a hung teardown (a CoreAudio deadlock, PortAudio#1174,
+    /// holding the microphone) is still running after this.
+    static let teardownGrace: TimeInterval = 5
 
-    /// SIGTERM, then SIGKILL if the engine is still running after the grace period:
-    /// a CoreAudio deadlock (PortAudio#1174) can leave it unable to exit, still
-    /// holding the microphone.
+    /// SIGTERM, then SIGKILL only if the engine finished its work and cleared its
+    /// status but is still running `teardownGrace` later. Work in hand, however long
+    /// (an Ollama cleanup may take a minute), is never cut short.
     private func terminateEngine(_ process: Process) {
         process.terminate()
         let pid = process.processIdentifier
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.engineExitGrace) {
-            if process.isRunning { kill(pid, SIGKILL) }
+        let status = home.appendingPathComponent("run/status.json").path
+        var clearedAt: Date?
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+            guard process.isRunning else { timer.invalidate(); return }
+            guard !FileManager.default.fileExists(atPath: status) else { clearedAt = nil; return }
+            let since = clearedAt ?? Date()
+            clearedAt = since
+            if Date().timeIntervalSince(since) >= Self.teardownGrace {
+                kill(pid, SIGKILL)
+                timer.invalidate()
+            }
         }
     }
 
