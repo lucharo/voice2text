@@ -632,6 +632,30 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIsNotNone(audio_path)
         self.assertFalse(Path(audio_path).exists())
 
+    def test_the_pill_hears_delivering_just_before_the_paste(self):
+        voice = app.VoiceToText(config.Config(save_history=False))
+        voice.stt = mock.Mock(transcribe=lambda path: "raw words")
+        voice.cleaner = mock.Mock(model_id="cleaner")
+        voice.cleaner.cleanup.return_value = ("Clean words.", 0.1, 0.2)
+        voice.processing = True
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        sent = []
+
+        with (
+            mock.patch.object(
+                voice, "_send_live", side_effect=lambda event: sent.append(event["state"])
+            ),
+            mock.patch.object(
+                voice, "paste_to_cursor", side_effect=lambda _text: sent.append("paste")
+            ),
+        ):
+            voice.process_audio([np.ones((8, 1), dtype=np.float32)], 1.0)
+
+        self.assertEqual(
+            sent, ["transcribing", "cleaning", "delivering", "paste", "idle"]
+        )
+
     def _process_ones(self, cfg: config.Config, samples: int) -> None:
         voice = app.VoiceToText(cfg)
         voice.stt = mock.Mock(transcribe=lambda path: "raw words")

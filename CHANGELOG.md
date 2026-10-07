@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.11
+
+- **The pill points at the caret in Claude's message box**, including on an empty line below text, and in rich text fields in Chrome, Brave and other Electron apps. These fields report the caret only through Chromium's text markers, which v2t now reads; before, the bubble sat over the middle of the box. Where a field reports characters but no caret, a caret after a line break is placed at the start of the line below the text.
+- **The end of a dictation is one smooth step.** When the text is ready, the bubble stops following the caret and fades out as the paste lands, instead of lingering after it and jumping with the caret. The paste itself is as immediate as before. The engine reports a new `delivering` state for the paste.
+
 ## 0.5.10
 
 - **The pill follows the caret.** Move the caret or click into another field while you dictate, and the bubble moves there within half a second, so it always shows where the text will be pasted. The caret is re-read off the main thread, so a slow app cannot stall the menu app.

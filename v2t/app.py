@@ -1031,6 +1031,8 @@ class VoiceToText:
             # Serialize the final paste decision with Esc. Once pasted, Esc
             # belongs to the target app; never claim that a paste was cancelled.
             self.delivered = True
+            # The pill fades out as the paste lands, before the caret moves.
+            self._set_state("delivering")
             self.paste_to_cursor(cleaned_text)
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")

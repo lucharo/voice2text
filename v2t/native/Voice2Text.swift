@@ -484,6 +484,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "recording": ("waveform.circle.fill", heardWords > 0 ? "Recording… \(heardWords) words" : "Recording…", .systemRed)
         case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
         case "cleaning": ("ellipsis.circle", "Cleaning up…", nil)
+        case "delivering": ("ellipsis.circle", "Pasting…", nil)
         case "stopping": ("hourglass", "Stopping…", nil)
         case "permission-error": ("exclamationmark.triangle", "Permissions required", .systemOrange)
         case "awaiting-accessibility": ("hand.raised", "Turn on Voice2Text under Accessibility", .systemOrange)
@@ -733,7 +734,7 @@ final class Pill: NSObject {
     struct Focus: Equatable {
         var caret: NSRect?
         var box: NSRect?  // the focused element's frame
-        var atStart = false  // caret at index 0: an empty field
+        var atStart = false  // nothing but line breaks before the caret: an empty field
     }
     private var focus = Focus()
     /// Twice a second: a moved caret or a click into another field brings the
@@ -793,7 +794,9 @@ final class Pill: NSObject {
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
-        view.phase = phase
+        // The engine says "delivering" just before it pastes: the bubble stops
+        // following and fades out as the paste lands, still showing the cleanup.
+        if phase != "delivering" { view.phase = phase }
         view.partial = liveTranscript && phase == "recording" ? partial : ""
         undoButton.isHidden = phase != "cancelled"
         panel.ignoresMouseEvents = phase != "cancelled"
@@ -936,35 +939,79 @@ final class Pill: NSObject {
         let flip = { (rect: CGRect) in
             NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
         }
+        var frame: CGRect?  // the element's, in accessibility (top-left) coordinates
+        var position = CGPoint.zero, size = CGSize.zero
+        var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+           let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+           AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+           AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+           let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+           AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
+           size.width >= 120, size.height >= 20 {
+            frame = CGRect(origin: position, size: size)
+            result.box = flip(CGRect(origin: position, size: size))
+        }
         var selected: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
             var range = CFRange()
             if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
-                result.atStart = range.location == 0
-                // Native text views answer for the empty range at the caret.
-                // Chromium (Chrome, Electron apps such as Claude) answers a
-                // zero-height rect there, so measure the character before it.
-                if let rect = bounds(element, CFRange(location: range.location, length: 0)) {
-                    result.caret = flip(rect)
-                } else if range.location > 0,
-                          let rect = bounds(element, CFRange(location: range.location - 1, length: 1)) {
-                    result.caret = flip(CGRect(x: rect.maxX, y: rect.minY, width: 1, height: rect.height))
-                }
+                result.caret = caret(element, range, in: frame).map(flip)
+                // Enter pressed in an empty field leaves only line breaks to measure.
+                result.atStart = range.location == 0 || result.caret == nil && range.location <= 64
+                    && string(element, CFRange(location: 0, length: range.location))?.allSatisfy(\.isNewline) == true
             }
         }
-        var position = CGPoint.zero, size = CGSize.zero
-        var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
-              let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
-              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
-              size.width >= 120, size.height >= 20
-        else { return result }
-        result.box = flip(CGRect(origin: position, size: size))
         return result
+    }
+
+    /// The caret at the start of `range`, in accessibility coordinates. Native
+    /// text views and Chromium text areas answer for the empty range there.
+    /// Chromium's rich text fields do not (measured 2026-10-07): Chrome, Brave and
+    /// Claude's message box answer through text markers only, and some fields
+    /// for whole characters only, so the character before the caret is measured.
+    /// The caret sits at its right edge or, past line breaks, at the start of a
+    /// line below it: a line break itself has no usable bounds.
+    private static func caret(_ element: AXUIElement, _ range: CFRange, in frame: CGRect?) -> CGRect? {
+        let location = range.location
+        if let rect = bounds(element, CFRange(location: location, length: 0)) { return rect }
+        // The marker is the document's selection, so it must sit in this field.
+        if range.length == 0, let rect = markerCaret(element),
+           frame.map({ $0.insetBy(dx: -4, dy: -4).contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
+            return rect
+        }
+        guard location > 0 else { return nil }
+        // Enough text to reach back past the line breaks to where the line of text
+        // before them starts.
+        let start = max(0, location - 512)
+        let before = string(element, CFRange(location: start, length: location - start)) ?? ""
+        let breaks = before.reversed().prefix(while: \.isNewline)
+        guard !breaks.isEmpty else {
+            guard let rect = bounds(element, CFRange(location: location - 1, length: 1)) else { return nil }
+            return CGRect(x: rect.maxX, y: rect.minY, width: 1, height: rect.height)
+        }
+        let text = before.dropLast(breaks.count)
+        guard let last = text.last else { return nil }  // only line breaks: the empty-field estimate
+        let lastLength = last.utf16.count
+        let lastStart = location - breaks.reduce(0) { $0 + $1.utf16.count } - lastLength
+        guard let rect = bounds(element, CFRange(location: lastStart, length: lastLength)) else { return nil }
+        // Where that line of text starts: its left edge, else the empty-field estimate's.
+        let newline = text.lastIndex(where: \.isNewline)
+        let lineStart = newline.map { start + text[...$0].utf16.count } ?? (start == 0 ? 0 : nil)
+        let first = lineStart.flatMap { bounds(element, CFRange(location: $0, length: 1)) }
+        let left = first?.minX ?? frame.map { $0.minX + 16 } ?? rect.minX
+        // The line pitch, from the line above it when that has text: the glyph
+        // height alone falls short of it (15 pt for 22 pt lines).
+        var pitch = rect.height
+        if let newline, let first, newline > text.startIndex,
+           case let above = text[text.index(before: newline)], !above.isNewline,
+           let prior = bounds(element, CFRange(location: start + text[..<newline].utf16.count - above.utf16.count,
+                                               length: above.utf16.count)),
+           first.minY > prior.minY {
+            pitch = first.minY - prior.minY
+        }
+        return CGRect(x: left, y: rect.minY + pitch * CGFloat(breaks.count), width: 1, height: rect.height)
     }
 
     /// The screen rect of `range` in `element`, or nil when the app has none.
@@ -972,27 +1019,70 @@ final class Pill: NSObject {
         var range = range
         guard let selection = AXValueCreate(.cfRange, &range) else { return nil }
         var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success
+        else { return nil }
+        return rect(value)
+    }
+
+    /// The caret by text markers (Chromium, WebKit): the empty range at it,
+    /// else the character before it, or after a line break the line it starts.
+    /// For a moment after accessibility is switched on, Chromium answers line
+    /// or paragraph boxes and steps markers a whole box at a time; those are
+    /// refused, and the next read finds the caret.
+    private static func markerCaret(_ element: AXUIElement) -> CGRect? {
+        var selected: CFTypeRef?, previous: CFTypeRef?, text: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &selected) == .success,
+              let selected, CFGetTypeID(selected) == AXTextMarkerRangeGetTypeID()
+        else { return nil }
+        let caret = AXTextMarkerRangeCopyStartMarker(selected as! AXTextMarkerRange)
+        let here = markerBounds(element, AXTextMarkerRangeCreate(nil, caret, caret))
+        if let here, here.width < 1 { return here }
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXPreviousTextMarkerForTextMarker" as CFString, caret, &previous) == .success,
+              let previous, CFGetTypeID(previous) == AXTextMarkerGetTypeID()
+        else { return nil }
+        let before = AXTextMarkerRangeCreate(nil, previous as! AXTextMarker, caret)
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXStringForTextMarkerRange" as CFString, before, &text) == .success,
+              let string = text as? String, string.count == 1, let character = string.first
+        else { return nil }
+        if character.isNewline { return here.map { CGRect(x: $0.minX, y: $0.minY, width: 1, height: $0.height) } }
+        return markerBounds(element, before).map { CGRect(x: $0.maxX, y: $0.minY, width: 1, height: $0.height) }
+    }
+
+    /// The screen rect of a text-marker range, or nil when the app has none.
+    private static func markerBounds(_ element: AXUIElement, _ range: AXTextMarkerRange) -> CGRect? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXBoundsForTextMarkerRange" as CFString, range, &value) == .success
+        else { return nil }
+        return rect(value)
+    }
+
+    /// A rect an accessibility query answered, or nil when it has no height.
+    private static func rect(_ value: CFTypeRef?) -> CGRect? {
         var rect = CGRect.zero
-        guard AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, selection, &value) == .success,
-              let value, CFGetTypeID(value) == AXValueGetTypeID(),
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID(),
               AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0
         else { return nil }
         return rect
     }
 
-    private static var electronEnabled = Set<pid_t>()
-    private static let electronLock = NSLock()  // focused() runs on the main thread and in follow()
+    /// The text of `range` in `element`, or nil when the app has none.
+    private static func string(_ element: AXUIElement, _ range: CFRange) -> String? {
+        var range = range
+        guard let selection = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, selection, &value) == .success
+        else { return nil }
+        return value as? String
+    }
 
     /// Electron builds its accessibility tree only for an assistive client
     /// that asks: AXManualAccessibility on the app element (Electron docs,
     /// "Accessibility"). Without it the focused element may carry no text
-    /// ranges. Native apps reject the attribute, which is harmless.
+    /// ranges. Asked on every read, not once per app: Claude was found
+    /// answering line boxes only, minutes after v2t had asked (2026-10-07).
+    /// Native apps reject the attribute, which is harmless.
     private static func enableElectronAccessibility() {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
-        electronLock.lock()
-        let fresh = electronEnabled.insert(pid).inserted
-        electronLock.unlock()
-        guard fresh else { return }
         AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
 

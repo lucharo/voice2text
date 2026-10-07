@@ -98,7 +98,7 @@ mode, any launch error, and any warning about the last dictation (a silent micro
 | `off` | No engine is running |
 | `loading-stt`, `loading-cleanup` | Starting: loading the transcription or cleanup model |
 | `idle` | Loaded and ready |
-| `recording`, `transcribing`, `cleaning` | Working on a dictation |
+| `recording`, `transcribing`, `cleaning`, `delivering` | Working on a dictation; `delivering` is the paste |
 | `cancelled`, `stopping` | A dictation was cancelled, or the engine is shutting down |
 | `launch-error` | The last start failed; the error field says why |
 

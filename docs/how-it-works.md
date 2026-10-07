@@ -43,8 +43,9 @@ With the [menu app](getting-started.md#the-menu-app-optional), a small speech bu
 the right of the caret while you dictate, its tail curling down-left to just above it, so it covers
 neither the caret nor the text beside it. Near the top of the screen it sits down and to the right
 instead. It follows the caret: click into another field or move the caret while you dictate and the
-bubble moves there within half a second, which is also where the text will be pasted. It never takes
-focus, so the paste lands where you are typing.
+bubble moves there within half a second, which is also where the text will be pasted. When the text
+is ready, the bubble fades out as it pastes, so the caret moving after the paste never drags it. It
+never takes focus, so the paste lands where you are typing.
 
 | State | The pill shows |
 |---|---|
@@ -55,8 +56,8 @@ focus, so the paste lands where you are typing.
 - **Pill** in the menu picks where it sits: **Near text cursor** (the default), **Bottom of
   screen**, or **Off**.
 - The tail finds the caret in native text views (TextEdit, Notes, Mail), and in Chrome, Brave and
-  Electron apps such as Slack once the field has text; an empty Chromium field reports no caret, so
-  the tail points at the field's start. In a tall pane with no caret, such as a Ghostty split, the
+  Electron apps such as Claude and Slack, including on an empty line below text; an empty field that
+  reports no caret gets the tail at its start. In a tall pane with no caret, such as a Ghostty split, the
   pill sits at the bottom of the pane.
 - After Esc, the cancelled pill shows an **Undo ⌘Z** chip for 5 s. The chip, Cmd+Z or **Undo Cancel** in the menu brings the
   dictation back and carries on recording; after 5 s the audio is dropped and Cmd+Z goes to the app
