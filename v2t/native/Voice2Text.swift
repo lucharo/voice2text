@@ -94,7 +94,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 unlink(path)
             }
         }
-        engine?.terminate()
+        if let engine, engine.isRunning {  // normally gone already: see applicationShouldTerminate
+            engine.terminate()
+            let deadline = Date().addingTimeInterval(Self.engineExitGrace)
+            while engine.isRunning && Date() < deadline { usleep(50_000) }
+            if engine.isRunning { kill(engine.processIdentifier, SIGKILL) }
+        }
         logHandle?.closeFile()
         logHandle = nil
         if lockFD >= 0 { close(lockFD) }
@@ -105,8 +110,23 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         terminationPending = true
         phase = "stopping"
         render()
-        engine.terminate()
+        terminateEngine(engine)
         return .terminateLater
+    }
+
+    /// How long the engine gets to exit after SIGTERM before SIGKILL. Its own
+    /// shutdown waits up to 3 s (MIC_STUCK_S) for the microphone to stop.
+    static let engineExitGrace: TimeInterval = 5
+
+    /// SIGTERM, then SIGKILL if the engine is still running after the grace period:
+    /// a CoreAudio deadlock (PortAudio#1174) can leave it unable to exit, still
+    /// holding the microphone.
+    private func terminateEngine(_ process: Process) {
+        process.terminate()
+        let pid = process.processIdentifier
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.engineExitGrace) {
+            if process.isRunning { kill(pid, SIGKILL) }
+        }
     }
 
     private func acquireAppLock() -> Bool {
@@ -326,7 +346,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func stop() {
-        engine?.terminate()
+        if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
     }

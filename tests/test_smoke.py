@@ -469,11 +469,120 @@ class V2TSmokeTests(unittest.TestCase):
             voice.start_recording()
 
         self.assertFalse(voice.recording)
+        self.assertTrue(voice._await_mic_closed(1.0))  # the stop runs on its own thread
         stream.stop.assert_called_once()
         stream.close.assert_called_once()
         self.assertNotIn(
             ["nowplaying-cli", "pause"], [call.args[0] for call in run.call_args_list]
         )
+
+    def _hanging_mic(self, voice):
+        """Open the microphone on a stream whose stop() hangs, like the CoreAudio
+        deadlock (PortAudio#1174), until the returned event is set."""
+        config.ensure_dirs()
+        release = app.threading.Event()
+        self.addCleanup(release.set)
+        stream = mock.Mock()
+        stream.stop.side_effect = lambda: release.wait(10)
+        with mock.patch.object(app.sd, "InputStream", return_value=stream):
+            voice.start_recording(show=False)
+        voice.frames.append(np.ones((1600, 1), dtype=np.float32))
+        return stream, release
+
+    def test_a_hanging_mic_stop_never_blocks_the_hotkey_thread(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        stream, _release = self._hanging_mic(voice)
+
+        started = app.time.perf_counter()
+        voice.stop_recording()
+        took = app.time.perf_counter() - started
+
+        self.assertLess(took, 0.5, "the hotkey callback returned while stop() hangs")
+        stream.stop.assert_called_once()
+        frames, _duration = voice.jobs.get_nowait()
+        self.assertEqual([f.shape for f in frames], [(1600, 1)], "the dictation still goes on")
+
+    def test_a_press_while_the_last_stop_runs_leaves_the_mic_closed(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        _stream, _release = self._hanging_mic(voice)
+        voice.cancel_recording()
+
+        with (
+            mock.patch.object(app, "MIC_REOPEN_WAIT_S", 0.05),
+            mock.patch.object(app.sd, "InputStream") as input_stream,
+        ):
+            voice.start_recording(show=False)
+
+        input_stream.assert_not_called()
+        self.assertFalse(voice.recording)
+
+    def test_a_stop_stuck_past_the_limit_restarts_the_engine_once_idle(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        _stream, _release = self._hanging_mic(voice)
+        voice.cancel_recording()
+        before = voice._should_restart_for_microphone()  # a slow stop, not yet stuck
+
+        with mock.patch.object(app, "MIC_STUCK_S", 0.0):
+            voice.processing = True
+            while_busy = voice._should_restart_for_microphone()
+            voice.processing = False
+            when_idle = voice._should_restart_for_microphone()
+            with mock.patch.object(app.os, "execv") as execv:
+                voice._restart_for_microphone()
+
+        self.assertEqual((before, while_busy, when_idle), (False, False, True))
+        execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_the_run_loop_restarts_the_engine_when_the_mic_is_stuck(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return True
+
+        restarts = []
+
+        def restart():
+            restarts.append(True)
+            voice.stopping = True  # what exec would end: leave the loop
+
+        def stuck_mic():
+            self._hanging_mic(voice)
+            voice.cancel_recording()
+
+        with (
+            mock.patch.object(app, "MIC_STUCK_S", 0.0),
+            mock.patch.object(app, "_listener", return_value=Listener()),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal"),
+            mock.patch.object(voice, "warmup", side_effect=stuck_mic),
+            mock.patch.object(voice, "_restart_for_microphone", side_effect=restart),
+            mock.patch.object(app.os, "_exit") as hard_exit,
+        ):
+            voice.run()
+
+        self.assertEqual(restarts, [True])
+        hard_exit.assert_called_once_with(0)  # shutdown skips PortAudio's exit hook
+
+    def test_shutdown_with_a_healthy_mic_exits_normally(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        config.ensure_dirs()
+        stream = voice.stream = mock.Mock()
+
+        with mock.patch.object(app.os, "_exit") as hard_exit:
+            voice.shutdown()
+
+        hard_exit.assert_not_called()
+        stream.close.assert_called_once()  # shutdown waited for the stop to finish
 
     def test_transcription_pipeline_pastes_cleanup_and_deletes_audio(self):
         voice = app.VoiceToText(config.Config(save_history=False))
