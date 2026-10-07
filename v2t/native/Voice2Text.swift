@@ -728,13 +728,21 @@ final class Pill: NSObject {
     private let view = PillView()
     private var ticker: Timer?
     private var visible = false
-    /// What the focused app reported when the recording started.
-    struct Focus {
+    /// What the focused app reports: read when the recording starts, then again
+    /// every `followInterval` while the pill shows, so it follows the caret.
+    struct Focus: Equatable {
         var caret: NSRect?
         var box: NSRect?  // the focused element's frame
         var atStart = false  // caret at index 0: an empty field
     }
     private var focus = Focus()
+    /// Twice a second: a moved caret or a click into another field brings the
+    /// bubble along within half a second, for two accessibility reads a second.
+    private static let followInterval: TimeInterval = 0.5
+    private var follower: Timer?
+    private var following = false  // a read in flight; a hung app skips polls, never stacks them
+    private var followGeneration = 0  // bumped on hide and on a new recording: stale reads are dropped
+    private let followQueue = DispatchQueue(label: "voice2text.pill.follow")
     private var target: NSRect?  // the caret the bubble's tail points at, real or estimated
     private var pane: NSRect?
     private var screen: NSScreen?
@@ -779,6 +787,8 @@ final class Pill: NSObject {
     /// Words show only with the experimental `live_transcript` config key on.
     func update(phase: String, partial: String, liveTranscript: Bool) {
         if phase == "recording" && view.phase != "recording" {
+            followGeneration += 1
+            following = false
             focus = Self.focused()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
@@ -807,10 +817,50 @@ final class Pill: NSObject {
     /// is assumed at its start; a box taller than 40% of the screen with no caret
     /// is a document or terminal pane, and the pill sits at its bottom centre.
     private func show() {
+        guard place() else { return }
+        position()
+        panel.invalidateShadow()
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+        visible = true
+        // Half the original 20 Hz history speed, with two-sample smoothing.
+        let ticker = Timer(timeInterval: 2.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
+        RunLoop.main.add(ticker, forMode: .common)
+        self.ticker = ticker
+        let follower = Timer(timeInterval: Self.followInterval, repeats: true) { [weak self] _ in self?.follow() }
+        RunLoop.main.add(follower, forMode: .common)
+        self.follower = follower
+    }
+
+    /// Re-read the focus off the main thread (a hung app would block it for an AX
+    /// timeout) and move the bubble when the caret or the field changed. The
+    /// Undo chip stays put: it belongs to the dictation just cancelled.
+    private func follow() {
+        guard visible, !following, view.phase != "cancelled", style == .cursorBubble else { return }
+        following = true
+        let generation = followGeneration
+        followQueue.async { [weak self] in
+            let read = Self.readFocus()  // nil: the lookup failed, which is not a move
+            DispatchQueue.main.async {
+                guard let self, generation == self.followGeneration else { return }
+                self.following = false
+                guard let now = read, self.visible, self.view.phase != "cancelled", now != self.focus
+                else { return }
+                self.focus = now
+                if self.place() { self.position() }
+            }
+        }
+    }
+
+    /// Where the bubble anchors for the current focus: the screen, the caret
+    /// (real or assumed), or a tall pane. False when there is no screen.
+    @discardableResult
+    private func place() -> Bool {
         let style = style
         let location = (focus.caret ?? focus.box).map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
-        else { return }
+        else { return false }
         self.screen = screen
         target = nil
         pane = nil
@@ -826,16 +876,7 @@ final class Pill: NSObject {
             }
         }
         view.style = style == .cursorBubble && target == nil ? .compactBottom : style
-        position()
-        panel.invalidateShadow()
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
-        visible = true
-        // Half the original 20 Hz history speed, with two-sample smoothing.
-        let ticker = Timer(timeInterval: 2.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
-        RunLoop.main.add(ticker, forMode: .common)
-        self.ticker = ticker
+        return true
     }
 
     private func position() {
@@ -876,8 +917,12 @@ final class Pill: NSObject {
     /// element's frame (in a terminal such as Ghostty, the split being typed in),
     /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
     /// main thread for one AX timeout, not two.
-    private static func focused() -> Focus {
-        // Capture once at recording start; never follow the cursor while speaking.
+    private static func focused() -> Focus { readFocus() ?? Focus() }
+
+    /// As `focused()`, but nil when the focused element could not be read at all
+    /// (an AX error or timeout), so a follow-up read keeps the last good focus.
+    private static func readFocus() -> Focus? {
+        // Read at recording start, then by follow() off the main thread.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         enableElectronAccessibility()
         let system = AXUIElementCreateSystemWide()
@@ -885,7 +930,7 @@ final class Pill: NSObject {
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
               let primary = NSScreen.screens.first
-        else { return Focus() }
+        else { return nil }
         let element = focused as! AXUIElement
         var result = Focus()
         let flip = { (rect: CGRect) in
@@ -936,15 +981,18 @@ final class Pill: NSObject {
     }
 
     private static var electronEnabled = Set<pid_t>()
+    private static let electronLock = NSLock()  // focused() runs on the main thread and in follow()
 
     /// Electron builds its accessibility tree only for an assistive client
     /// that asks: AXManualAccessibility on the app element (Electron docs,
     /// "Accessibility"). Without it the focused element may carry no text
     /// ranges. Native apps reject the attribute, which is harmless.
     private static func enableElectronAccessibility() {
-        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-              !electronEnabled.contains(pid) else { return }
-        electronEnabled.insert(pid)
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        electronLock.lock()
+        let fresh = electronEnabled.insert(pid).inserted
+        electronLock.unlock()
+        guard fresh else { return }
         AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
 
@@ -953,6 +1001,10 @@ final class Pill: NSObject {
         visible = false
         ticker?.invalidate()
         ticker = nil
+        follower?.invalidate()
+        follower = nil
+        followGeneration += 1
+        following = false
         NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 }) { [weak self] in
             guard let self, !self.visible else { return }
             self.panel.orderOut(nil)

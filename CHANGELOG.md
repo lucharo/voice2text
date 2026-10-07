@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.10
+
+- **The pill follows the caret.** Move the caret or click into another field while you dictate, and the bubble moves there within half a second, so it always shows where the text will be pasted. The caret is re-read off the main thread, so a slow app cannot stall the menu app.
+
 ## 0.5.9
 
 - **A rare macOS audio freeze no longer takes Fn and Esc with it.** Stopping the microphone can deadlock inside CoreAudio on macOS 26 (a PortAudio bug, PortAudio#1174). v2t now stops the microphone off the key listener, so the keys keep working and the dictation still pastes. If the stop never finishes, v2t restarts itself once idle to free the microphone. Quitting the app now force-stops an engine that finished its work but is still stuck tearing down 5 s later, so the microphone is never left held; a dictation in hand always finishes first.
