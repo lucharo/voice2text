@@ -741,6 +741,7 @@ final class Pill: NSObject {
     private static let followInterval: TimeInterval = 0.5
     private var follower: Timer?
     private var following = false  // a read in flight; a hung app skips polls, never stacks them
+    private var followGeneration = 0  // bumped on hide and on a new recording: stale reads are dropped
     private let followQueue = DispatchQueue(label: "voice2text.pill.follow")
     private var target: NSRect?  // the caret the bubble's tail points at, real or estimated
     private var pane: NSRect?
@@ -786,6 +787,8 @@ final class Pill: NSObject {
     /// Words show only with the experimental `live_transcript` config key on.
     func update(phase: String, partial: String, liveTranscript: Bool) {
         if phase == "recording" && view.phase != "recording" {
+            followGeneration += 1
+            following = false
             focus = Self.focused()
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
@@ -836,12 +839,14 @@ final class Pill: NSObject {
     private func follow() {
         guard visible, !following, view.phase != "cancelled", style == .cursorBubble else { return }
         following = true
+        let generation = followGeneration
         followQueue.async { [weak self] in
-            let now = Self.focused()
+            let read = Self.readFocus()  // nil: the lookup failed, which is not a move
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, generation == self.followGeneration else { return }
                 self.following = false
-                guard self.visible, self.view.phase != "cancelled", now != self.focus else { return }
+                guard let now = read, self.visible, self.view.phase != "cancelled", now != self.focus
+                else { return }
                 self.focus = now
                 if self.place() { self.position() }
             }
@@ -912,7 +917,11 @@ final class Pill: NSObject {
     /// element's frame (in a terminal such as Ghostty, the split being typed in),
     /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
     /// main thread for one AX timeout, not two.
-    private static func focused() -> Focus {
+    private static func focused() -> Focus { readFocus() ?? Focus() }
+
+    /// As `focused()`, but nil when the focused element could not be read at all
+    /// (an AX error or timeout), so a follow-up read keeps the last good focus.
+    private static func readFocus() -> Focus? {
         // Read at recording start, then by follow() off the main thread.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         enableElectronAccessibility()
@@ -921,7 +930,7 @@ final class Pill: NSObject {
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
               let primary = NSScreen.screens.first
-        else { return Focus() }
+        else { return nil }
         let element = focused as! AXUIElement
         var result = Focus()
         let flip = { (rect: CGRect) in
@@ -994,6 +1003,8 @@ final class Pill: NSObject {
         ticker = nil
         follower?.invalidate()
         follower = nil
+        followGeneration += 1
+        following = false
         NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 }) { [weak self] in
             guard let self, !self.visible else { return }
             self.panel.orderOut(nil)
