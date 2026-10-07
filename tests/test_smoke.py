@@ -476,14 +476,14 @@ class V2TSmokeTests(unittest.TestCase):
             ["nowplaying-cli", "pause"], [call.args[0] for call in run.call_args_list]
         )
 
-    def _hanging_mic(self, voice):
+    def _hanging_mic(self, voice, hold_s: float = 3):
         """Open the microphone on a stream whose stop() hangs, like the CoreAudio
-        deadlock (PortAudio#1174), until the returned event is set."""
+        deadlock (PortAudio#1174), until the returned event is set or `hold_s` passes."""
         config.ensure_dirs()
         release = app.threading.Event()
         self.addCleanup(release.set)
         stream = mock.Mock()
-        stream.stop.side_effect = lambda: release.wait(3)
+        stream.stop.side_effect = lambda: release.wait(hold_s)
         with mock.patch.object(app.sd, "InputStream", return_value=stream):
             voice.start_recording(show=False)
         voice.frames.append(np.ones((1600, 1), dtype=np.float32))
@@ -580,7 +580,7 @@ class V2TSmokeTests(unittest.TestCase):
             voice.stopping = True  # what exec would end: leave the loop
 
         def stuck_mic():
-            self._hanging_mic(voice)
+            self._hanging_mic(voice, hold_s=30)  # still stuck when shutdown checks
             voice.cancel_recording()
 
         with (
