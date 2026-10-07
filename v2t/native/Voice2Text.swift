@@ -734,7 +734,7 @@ final class Pill: NSObject {
     struct Focus: Equatable {
         var caret: NSRect?
         var box: NSRect?  // the focused element's frame
-        var atStart = false  // caret at index 0: an empty field
+        var atStart = false  // nothing but line breaks before the caret: an empty field
     }
     private var focus = Focus()
     /// Twice a second: a moved caret or a click into another field brings the
@@ -957,8 +957,10 @@ final class Pill: NSObject {
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
             var range = CFRange()
             if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
-                result.atStart = range.location == 0
                 result.caret = caret(element, range, in: frame).map(flip)
+                // Enter pressed in an empty field leaves only line breaks to measure.
+                result.atStart = range.location == 0 || result.caret == nil && range.location <= 64
+                    && string(element, CFRange(location: 0, length: range.location))?.allSatisfy(\.isNewline) == true
             }
         }
         return result
