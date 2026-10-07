@@ -42,7 +42,9 @@ works that way.
 With the [menu app](getting-started.md#the-menu-app-optional), a small speech bubble sits up and to
 the right of the caret while you dictate, its tail curling down-left to just above it, so it covers
 neither the caret nor the text beside it. Near the top of the screen it sits down and to the right
-instead. It never takes focus, so the paste lands where you were typing.
+instead. It follows the caret: click into another field or move the caret while you dictate and the
+bubble moves there within half a second, which is also where the text will be pasted. It never takes
+focus, so the paste lands where you are typing.
 
 | State | The pill shows |
 |---|---|
