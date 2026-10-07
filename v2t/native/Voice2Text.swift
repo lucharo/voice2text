@@ -966,17 +966,18 @@ final class Pill: NSObject {
 
     /// The caret at the start of `range`, in accessibility coordinates. Native
     /// text views and Chromium text areas answer for the empty range there.
-    /// Chromium's rich text fields do not (measured 2026-10-07): Chrome and Brave
-    /// answer through text markers only, and Electron apps such as Claude for
-    /// whole characters only, so the character before the caret is measured. The
-    /// caret sits at its right edge or, past line breaks, at the start of a line
-    /// below it: a line break itself has no usable bounds.
+    /// Chromium's rich text fields do not (measured 2026-10-07): Chrome, Brave and
+    /// Claude's message box answer through text markers only, and some fields
+    /// for whole characters only, so the character before the caret is measured.
+    /// The caret sits at its right edge or, past line breaks, at the start of a
+    /// line below it: a line break itself has no usable bounds.
     private static func caret(_ element: AXUIElement, _ range: CFRange, in frame: CGRect?) -> CGRect? {
         let location = range.location
         if let rect = bounds(element, CFRange(location: location, length: 0)) { return rect }
-        if range.length == 0, let rect = markerBounds(element),
+        // The marker is the document's selection, so it must sit in this field.
+        if range.length == 0, let rect = markerCaret(element),
            frame.map({ $0.insetBy(dx: -4, dy: -4).contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
-            return CGRect(x: rect.minX, y: rect.minY, width: 1, height: rect.height)
+            return rect
         }
         guard location > 0 else { return nil }
         // Enough text to reach back past the line breaks to where the line of text
@@ -1021,12 +1022,34 @@ final class Pill: NSObject {
         return rect(value)
     }
 
-    /// The screen rect of the selection by text markers (Chromium, WebKit).
-    private static func markerBounds(_ element: AXUIElement) -> CGRect? {
-        var marker: CFTypeRef?, value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &marker) == .success,
-              let marker,
-              AXUIElementCopyParameterizedAttributeValue(element, "AXBoundsForTextMarkerRange" as CFString, marker, &value) == .success
+    /// The caret by text markers (Chromium, WebKit): the empty range at it,
+    /// else the character before it, or after a line break the line it starts.
+    /// For a moment after accessibility is switched on, Chromium answers line
+    /// or paragraph boxes and steps markers a whole box at a time; those are
+    /// refused, and the next read finds the caret.
+    private static func markerCaret(_ element: AXUIElement) -> CGRect? {
+        var selected: CFTypeRef?, previous: CFTypeRef?, text: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &selected) == .success,
+              let selected, CFGetTypeID(selected) == AXTextMarkerRangeGetTypeID()
+        else { return nil }
+        let caret = AXTextMarkerRangeCopyStartMarker(selected as! AXTextMarkerRange)
+        let here = markerBounds(element, AXTextMarkerRangeCreate(nil, caret, caret))
+        if let here, here.width < 1 { return here }
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXPreviousTextMarkerForTextMarker" as CFString, caret, &previous) == .success,
+              let previous, CFGetTypeID(previous) == AXTextMarkerGetTypeID()
+        else { return nil }
+        let before = AXTextMarkerRangeCreate(nil, previous as! AXTextMarker, caret)
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXStringForTextMarkerRange" as CFString, before, &text) == .success,
+              let string = text as? String, string.count == 1, let character = string.first
+        else { return nil }
+        if character.isNewline { return here.map { CGRect(x: $0.minX, y: $0.minY, width: 1, height: $0.height) } }
+        return markerBounds(element, before).map { CGRect(x: $0.maxX, y: $0.minY, width: 1, height: $0.height) }
+    }
+
+    /// The screen rect of a text-marker range, or nil when the app has none.
+    private static func markerBounds(_ element: AXUIElement, _ range: AXTextMarkerRange) -> CGRect? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXBoundsForTextMarkerRange" as CFString, range, &value) == .success
         else { return nil }
         return rect(value)
     }
@@ -1050,19 +1073,14 @@ final class Pill: NSObject {
         return value as? String
     }
 
-    private static var electronEnabled = Set<pid_t>()
-    private static let electronLock = NSLock()  // focused() runs on the main thread and in follow()
-
     /// Electron builds its accessibility tree only for an assistive client
     /// that asks: AXManualAccessibility on the app element (Electron docs,
     /// "Accessibility"). Without it the focused element may carry no text
-    /// ranges. Native apps reject the attribute, which is harmless.
+    /// ranges. Asked on every read, not once per app: Claude was found
+    /// answering line boxes only, minutes after v2t had asked (2026-10-07).
+    /// Native apps reject the attribute, which is harmless.
     private static func enableElectronAccessibility() {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
-        electronLock.lock()
-        let fresh = electronEnabled.insert(pid).inserted
-        electronLock.unlock()
-        guard fresh else { return }
         AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
 
