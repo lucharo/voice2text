@@ -85,6 +85,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        pill.teardown()
         if let liveSource {  // a second launch that lost the lock never bound it
             liveSource.cancel()
             // A copy that handed over to /Applications quits after the new copy
@@ -805,7 +806,7 @@ final class Pill: NSObject {
         if phase == "recording" && view.phase != "recording" {
             followGeneration += 1
             following = false
-            focus = Self.focused()
+            focus = followQueue.sync { Self.focused() }  // waits out a read still in flight
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -817,7 +818,7 @@ final class Pill: NSObject {
         panel.ignoresMouseEvents = phase != "cancelled"
         guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
             hide()
-            Self.releaseAccessibility()
+            followQueue.async { Self.releaseAccessibility() }
             return
         }
         if !visible { show(); log("shown") }
@@ -942,7 +943,7 @@ final class Pill: NSObject {
     /// As `focused()`, but nil when the focused element could not be read at all
     /// (an AX error or timeout), so a follow-up read keeps the last good focus.
     private static func readFocus() -> Focus? {
-        // Read at recording start, then by follow() off the main thread.
+        // Always on followQueue: at recording start (the main thread waits) and by follow().
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         let app = NSWorkspace.shared.frontmostApplication
         if let app { requestAccessibility(app) }
@@ -1114,8 +1115,9 @@ final class Pill: NSObject {
 
     /// Apps asked for their accessibility tree in this dictation, and whether
     /// v2t switched on AXEnhancedUserInterface there and must switch it off.
+    /// Touched only on `followQueue`, which runs every read, request and release
+    /// in order, so a release can never overtake the request it undoes.
     private static var asked: [pid_t: Bool] = [:]
-    private static let askedLock = NSLock()
 
     /// Electron and Chromium build their accessibility tree only for an assistive
     /// client that asks, and only 2 s after the last request: each request restarts
@@ -1128,36 +1130,34 @@ final class Pill: NSObject {
     /// slowly, so it is on only while dictating. Native apps reject both, harmlessly.
     private static func requestAccessibility(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
-        askedLock.lock()
-        let first = asked[pid] == nil
-        if first { asked[pid] = false }
-        askedLock.unlock()
-        guard first else { return }
-        // The lock is not held across these calls: a hung app blocks each for an AX timeout.
+        guard asked[pid] == nil else { return }
+        asked[pid] = false
         let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, 1)  // a hung app holds the queue for 1 s, not 6
         AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         var enhanced: CFTypeRef?
         AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced)
         guard isBrowserEngine(app), (enhanced as? Bool) != true else { return }
         // Chromium answers an error to this write even though it applies it.
         AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-        askedLock.lock()
-        let released = asked[pid] == nil  // the dictation ended meanwhile
-        if !released { asked[pid] = true }
-        askedLock.unlock()
-        if released { AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse) }
+        asked[pid] = true
     }
 
     /// Switch AXEnhancedUserInterface back off where v2t switched it on, once the
     /// dictation ends, and forget which apps were asked.
     private static func releaseAccessibility() {
-        askedLock.lock()
-        let switchedOn = asked.filter(\.value).map(\.key)
-        asked = [:]
-        askedLock.unlock()
-        for pid in switchedOn {
-            AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXEnhancedUserInterface" as CFString, kCFBooleanFalse)
+        for (pid, switchedOn) in asked where switchedOn {
+            let element = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(element, 1)
+            AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse)
         }
+        asked = [:]
+    }
+
+    /// On quit, mid-dictation included: no browser is left with the VoiceOver switch on.
+    func teardown() {
+        hide()
+        followQueue.sync { Self.releaseAccessibility() }
     }
 
     /// A Chromium browser ships "<Name> Framework.framework" (Electron apps ship
