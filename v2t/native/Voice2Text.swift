@@ -1084,12 +1084,31 @@ final class Pill: NSObject {
         guard AXUIElementCopyParameterizedAttributeValue(element, "AXPreviousTextMarkerForTextMarker" as CFString, caret, &previous) == .success,
               let previous, CFGetTypeID(previous) == AXTextMarkerGetTypeID()
         else { return nil }
+        // The character before may sit outside the field, in a label (Claude's empty
+        // box, 2026-10-08: the caret's marker named the field as its editable
+        // ancestor, the one before it none): refused unless both name the same field.
+        if let field = editableAncestor(element, of: caret),
+           editableAncestor(element, of: previous as! AXTextMarker).map({ !CFEqual(field, $0) }) ?? true {
+            return nil
+        }
         let before = AXTextMarkerRangeCreate(nil, previous as! AXTextMarker, caret)
         guard AXUIElementCopyParameterizedAttributeValue(element, "AXStringForTextMarkerRange" as CFString, before, &text) == .success,
               let string = text as? String, string.count == 1, let character = string.first
         else { return nil }
         if character.isNewline { return here.map { CGRect(x: $0.minX, y: $0.minY, width: 1, height: $0.height) } }
         return markerBounds(element, before).map { CGRect(x: $0.maxX, y: $0.minY, width: 1, height: $0.height) }
+    }
+
+    /// The editable element (text field, rich editor) holding `marker`, or nil
+    /// when it is not in one or the app does not say.
+    private static func editableAncestor(_ element: AXUIElement, of marker: AXTextMarker) -> AXUIElement? {
+        var holder: CFTypeRef?, ancestor: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, "AXUIElementForTextMarker" as CFString, marker, &holder) == .success,
+              let holder, CFGetTypeID(holder) == AXUIElementGetTypeID(),
+              AXUIElementCopyAttributeValue(holder as! AXUIElement, "AXEditableAncestor" as CFString, &ancestor) == .success,
+              let ancestor, CFGetTypeID(ancestor) == AXUIElementGetTypeID()
+        else { return nil }
+        return (ancestor as! AXUIElement)
     }
 
     /// The screen rect of a text-marker range, or nil when the app has none.
@@ -1128,6 +1147,8 @@ final class Pill: NSObject {
     private static var asked: [pid_t: Bool] = [:]
     /// Apps whose switch-off timed out (a busy or hung browser): retried when the next dictation ends.
     private static var unreleased: Set<pid_t> = []
+    /// Apps whose switch-on timed out: whether it took is read on the next poll.
+    private static var unconfirmed: Set<pid_t> = []
 
     /// Electron and Chromium build their accessibility tree only for an assistive
     /// client that asks, and only 2 s after the last request: each request restarts
@@ -1140,22 +1161,46 @@ final class Pill: NSObject {
     /// slowly, so it is on only while dictating. Native apps reject both, harmlessly.
     private static func requestAccessibility(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
-        guard asked[pid] == nil else { return }
         let element = AXUIElementCreateApplication(pid)
+        if unconfirmed.contains(pid) {
+            confirmEnhanced(element, pid)
+            return
+        }
+        guard asked[pid] == nil else { return }
         // A busy app (Slack just launched) times out: ask again on the next read.
         guard AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue) != .cannotComplete
         else { return }
-        asked[pid] = false
+        guard isBrowserEngine(app) else {
+            asked[pid] = false
+            return
+        }
+        // Only a switch read as off is v2t's to turn on and later off: an unreadable
+        // one may belong to another assistive app, so it is read again next time.
         var enhanced: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced)
-        guard isBrowserEngine(app), (enhanced as? Bool) != true else { return }
+        guard AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced) == .success
+        else { return }
+        guard (enhanced as? Bool) != true else {
+            asked[pid] = false
+            return
+        }
+        asked[pid] = true  // v2t's from here, even if the write below times out after applying
         unreleased.remove(pid)
         // Chromium answers an error to this write even though it applies it, so
-        // only a timeout counts as not applied.
+        // only a timeout leaves it unknown; the next read checks it.
         if AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) == .cannotComplete {
-            asked[pid] = nil
-        } else {
-            asked[pid] = true
+            unconfirmed.insert(pid)
+        }
+    }
+
+    /// After a timed-out write: switch AXEnhancedUserInterface on if it did not
+    /// take, without repeating a write that did (each restarts the 2 s countdown).
+    private static func confirmEnhanced(_ element: AXUIElement, _ pid: pid_t) {
+        var enhanced: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced) == .success
+        else { return }
+        if (enhanced as? Bool) == true
+            || AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) != .cannotComplete {
+            unconfirmed.remove(pid)
         }
     }
 
@@ -1164,6 +1209,7 @@ final class Pill: NSObject {
     private static func releaseAccessibility() {
         unreleased.formUnion(asked.filter(\.value).keys)
         asked = [:]
+        unconfirmed = []
         for pid in unreleased {
             let gone = NSRunningApplication(processIdentifier: pid) == nil
             if gone || AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXEnhancedUserInterface" as CFString,
