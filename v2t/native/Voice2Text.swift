@@ -759,7 +759,8 @@ final class Pill: NSObject {
     private var following = false  // a read in flight; a hung app skips polls, never stacks them
     private var dictating = false  // from recording until the pill is put away: accessibility to release
     private var followGeneration = 0  // bumped on hide and on a new recording: stale reads are dropped
-    private let followQueue = DispatchQueue(label: "voice2text.pill.follow")
+    private static let followQueue = DispatchQueue(label: "voice2text.pill.follow")
+    private var followQueue: DispatchQueue { Self.followQueue }
     private var target: NSRect?  // the caret the bubble's tail points at, real or estimated
     private var pane: NSRect?
     private var screen: NSScreen?
@@ -807,8 +808,8 @@ final class Pill: NSObject {
         if phase == "recording" && view.phase != "recording" {
             followGeneration += 1
             following = false
-            dictating = true
-            focus = followQueue.sync { Self.focused() }  // waits out a read still in flight
+            let tracking = style == .cursorBubble
+            focus = followQueue.sync { Self.focused(requestingAccessibility: tracking) }  // waits out a read in flight
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
@@ -819,6 +820,9 @@ final class Pill: NSObject {
         undoButton.isHidden = phase != "cancelled"
         panel.ignoresMouseEvents = phase != "cancelled"
         let active = ["recording", "transcribing", "cleaning", "cancelled"].contains(phase)
+        // Armed for any active phase, including one first seen mid-dictation (the menu
+        // app opened while the engine was already transcribing).
+        if active { dictating = true }
         guard style != .off, active else {
             hide()
             // Once per dictation, when it ends (not when the pill is switched off
@@ -944,11 +948,16 @@ final class Pill: NSObject {
     /// element's frame (in a terminal such as Ghostty, the split being typed in),
     /// in Cocoa coordinates. One focused-element lookup, so a hung app blocks the
     /// main thread for one AX timeout, not two.
-    private static func focused() -> Focus { readFocus() ?? Focus() }
+    private static func focused(requestingAccessibility: Bool) -> Focus {
+        readFocus(requestingAccessibility: requestingAccessibility) ?? Focus()
+    }
 
     /// As `focused()`, but nil when the focused element could not be read at all
     /// (an AX error or timeout), so a follow-up read keeps the last good focus.
-    private static func readFocus() -> Focus? {
+    /// Apps are asked for their accessibility tree only when the pill tracks the
+    /// caret: Bottom of screen and Off need no caret, and the browser switch slows
+    /// window managers.
+    private static func readFocus(requestingAccessibility: Bool = true) -> Focus? {
         // Always on followQueue: at recording start (the main thread waits) and by follow().
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
         let system = AXUIElementCreateSystemWide()
@@ -957,7 +966,7 @@ final class Pill: NSObject {
         // recording start waiting on it, for 1 s, not 6.
         AXUIElementSetMessagingTimeout(system, 1)
         let app = NSWorkspace.shared.frontmostApplication
-        if let app { requestAccessibility(app) }
+        if let app, requestingAccessibility { requestAccessibility(app) }
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
@@ -1239,6 +1248,8 @@ final class Pill: NSObject {
 
     /// Switch AXEnhancedUserInterface back off where v2t switched it on, once the
     /// dictation ends, and forget which apps were asked.
+    private static var retryScheduled = false
+
     private static func releaseAccessibility() {
         unreleased.formUnion(asked.filter(\.value).keys)
         asked = [:]
@@ -1249,6 +1260,15 @@ final class Pill: NSObject {
                                                     kCFBooleanFalse) != .cannotComplete {
                 unreleased.remove(pid)
             }
+        }
+        // A browser that recovers while v2t is idle is switched off on a later
+        // pass: one pending at a time, every 5 s, until none is left. A dictation
+        // that starts meanwhile takes the app over (requestAccessibility).
+        guard !unreleased.isEmpty, !retryScheduled else { return }
+        retryScheduled = true
+        followQueue.asyncAfter(deadline: .now() + 5) {
+            retryScheduled = false
+            if asked.isEmpty { releaseAccessibility() }
         }
     }
 
