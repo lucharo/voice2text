@@ -945,9 +945,13 @@ final class Pill: NSObject {
     private static func readFocus() -> Focus? {
         // Always on followQueue: at recording start (the main thread waits) and by follow().
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
+        let system = AXUIElementCreateSystemWide()
+        // On the system-wide element this sets every AX call in v2t (Apple,
+        // AXUIElementSetMessagingTimeout): a hung app holds the queue, and a
+        // recording start waiting on it, for 1 s, not 6.
+        AXUIElementSetMessagingTimeout(system, 1)
         let app = NSWorkspace.shared.frontmostApplication
         if let app { requestAccessibility(app) }
-        let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
@@ -1118,6 +1122,8 @@ final class Pill: NSObject {
     /// Touched only on `followQueue`, which runs every read, request and release
     /// in order, so a release can never overtake the request it undoes.
     private static var asked: [pid_t: Bool] = [:]
+    /// Apps whose switch-off timed out (a busy or hung browser): retried at each idle update.
+    private static var unreleased: Set<pid_t> = []
 
     /// Electron and Chromium build their accessibility tree only for an assistive
     /// client that asks, and only 2 s after the last request: each request restarts
@@ -1131,27 +1137,36 @@ final class Pill: NSObject {
     private static func requestAccessibility(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
         guard asked[pid] == nil else { return }
-        asked[pid] = false
         let element = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(element, 1)  // a hung app holds the queue for 1 s, not 6
-        AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // A busy app (Slack just launched) times out: ask again on the next read.
+        guard AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue) != .cannotComplete
+        else { return }
+        asked[pid] = false
         var enhanced: CFTypeRef?
         AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced)
         guard isBrowserEngine(app), (enhanced as? Bool) != true else { return }
-        // Chromium answers an error to this write even though it applies it.
-        AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-        asked[pid] = true
+        unreleased.remove(pid)
+        // Chromium answers an error to this write even though it applies it, so
+        // only a timeout counts as not applied.
+        if AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) == .cannotComplete {
+            asked[pid] = nil
+        } else {
+            asked[pid] = true
+        }
     }
 
     /// Switch AXEnhancedUserInterface back off where v2t switched it on, once the
     /// dictation ends, and forget which apps were asked.
     private static func releaseAccessibility() {
-        for (pid, switchedOn) in asked where switchedOn {
-            let element = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(element, 1)
-            AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse)
-        }
+        unreleased.formUnion(asked.filter(\.value).keys)
         asked = [:]
+        for pid in unreleased {
+            let gone = NSRunningApplication(processIdentifier: pid) == nil
+            if gone || AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXEnhancedUserInterface" as CFString,
+                                                    kCFBooleanFalse) != .cannotComplete {
+                unreleased.remove(pid)
+            }
+        }
     }
 
     /// On quit, mid-dictation included: no browser is left with the VoiceOver switch on.
