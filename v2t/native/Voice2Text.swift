@@ -757,6 +757,7 @@ final class Pill: NSObject {
     private static let followInterval: TimeInterval = 0.5
     private var follower: Timer?
     private var following = false  // a read in flight; a hung app skips polls, never stacks them
+    private var dictating = false  // from recording until the pill is put away: accessibility to release
     private var followGeneration = 0  // bumped on hide and on a new recording: stale reads are dropped
     private let followQueue = DispatchQueue(label: "voice2text.pill.follow")
     private var target: NSRect?  // the caret the bubble's tail points at, real or estimated
@@ -806,6 +807,7 @@ final class Pill: NSObject {
         if phase == "recording" && view.phase != "recording" {
             followGeneration += 1
             following = false
+            dictating = true
             focus = followQueue.sync { Self.focused() }  // waits out a read still in flight
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
@@ -818,7 +820,9 @@ final class Pill: NSObject {
         panel.ignoresMouseEvents = phase != "cancelled"
         guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
             hide()
-            followQueue.async { Self.releaseAccessibility() }
+            // Once per dictation, not on every idle refresh: a pass blocked by a
+            // hung browser must not queue up behind the next.
+            if dictating { dictating = false; followQueue.async { Self.releaseAccessibility() } }
             return
         }
         if !visible { show(); log("shown") }
@@ -1122,7 +1126,7 @@ final class Pill: NSObject {
     /// Touched only on `followQueue`, which runs every read, request and release
     /// in order, so a release can never overtake the request it undoes.
     private static var asked: [pid_t: Bool] = [:]
-    /// Apps whose switch-off timed out (a busy or hung browser): retried at each idle update.
+    /// Apps whose switch-off timed out (a busy or hung browser): retried when the next dictation ends.
     private static var unreleased: Set<pid_t> = []
 
     /// Electron and Chromium build their accessibility tree only for an assistive
