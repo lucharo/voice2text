@@ -66,6 +66,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         item.menu = menu
         pill.onUndo = { [weak self] in self?.undoDictation() }
+        pill.onLog = { [weak self] in self?.appendLog($0) }
         menu.delegate = self
         listenForLiveEvents()
         render()
@@ -659,6 +660,18 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         kill(pid_t(pid), SIGUSR1)
     }
 
+    /// A line in the engine's log, in its format, appended (O_APPEND) so it
+    /// interleaves whole with the engine's own lines.
+    private func appendLog(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        let line = "\(formatter.string(from: Date())) | INFO     | menu app - \(message)\n"
+        let fd = open(home.appendingPathComponent("run/v2t.log").path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        _ = line.withCString { write(fd, $0, strlen($0)) }
+    }
+
     @objc private func copyLast() {
         guard let last = lastTranscription else { return }
         let pasteboard = NSPasteboard.general
@@ -735,6 +748,7 @@ final class Pill: NSObject {
         var caret: NSRect?
         var box: NSRect?  // the focused element's frame
         var atStart = false  // nothing but line breaks before the caret: an empty field
+        var source = ""  // the app, the element's role and how the caret was found, for the log
     }
     private var focus = Focus()
     /// Twice a second: a moved caret or a click into another field brings the
@@ -748,6 +762,7 @@ final class Pill: NSObject {
     private var pane: NSRect?
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
+    var onLog: ((String) -> Void)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     var style: PillStyle {
         get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
@@ -802,9 +817,10 @@ final class Pill: NSObject {
         panel.ignoresMouseEvents = phase != "cancelled"
         guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
             hide()
+            Self.releaseAccessibility()
             return
         }
-        if !visible { show() }
+        if !visible { show(); log("shown") }
         else { position() }
         view.needsDisplay = true
     }
@@ -852,6 +868,7 @@ final class Pill: NSObject {
                 else { return }
                 self.focus = now
                 if self.place() { self.position() }
+                self.log("moved")
             }
         }
     }
@@ -927,7 +944,8 @@ final class Pill: NSObject {
     private static func readFocus() -> Focus? {
         // Read at recording start, then by follow() off the main thread.
         // Apple: kAXBoundsForRangeParameterizedAttribute returns screen coordinates.
-        enableElectronAccessibility()
+        let app = NSWorkspace.shared.frontmostApplication
+        if let app { requestAccessibility(app) }
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -936,6 +954,12 @@ final class Pill: NSObject {
         else { return nil }
         let element = focused as! AXUIElement
         var result = Focus()
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        result.source = "\(app?.bundleIdentifier ?? "?") \(role as? String ?? "?")"
+        // A focused button or option can carry a text range (Claude's question
+        // panel, 2026-10-08) but is not where the text goes.
+        if let role = role as? String, nonText.contains(role) { return result }
         let flip = { (rect: CGRect) in
             NSRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
         }
@@ -961,7 +985,15 @@ final class Pill: NSObject {
                 // Enter pressed in an empty field leaves only line breaks to measure.
                 result.atStart = range.location == 0 || result.caret == nil && range.location <= 64
                     && string(element, CFRange(location: 0, length: range.location))?.allSatisfy(\.isNewline) == true
+                result.source += result.caret == nil ? " no-caret" : " caret"
             }
+        } else if let rect = markerCaret(element), frame.map({ $0.contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
+            // Firefox and Zen report the page itself as focused, with no text range,
+            // and answer the caret of the field being typed in by text markers.
+            result.caret = flip(rect)
+            result.source += " marker"
+        } else {
+            result.source += " no-text"
         }
         return result
     }
@@ -977,7 +1009,7 @@ final class Pill: NSObject {
         let location = range.location
         if let rect = bounds(element, CFRange(location: location, length: 0)) { return rect }
         // The marker is the document's selection, so it must sit in this field.
-        if range.length == 0, let rect = markerCaret(element),
+        if range.length == 0, let rect = markerCaret(element, measureBefore: location > 0),
            frame.map({ $0.insetBy(dx: -4, dy: -4).contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
             return rect
         }
@@ -1029,7 +1061,7 @@ final class Pill: NSObject {
     /// For a moment after accessibility is switched on, Chromium answers line
     /// or paragraph boxes and steps markers a whole box at a time; those are
     /// refused, and the next read finds the caret.
-    private static func markerCaret(_ element: AXUIElement) -> CGRect? {
+    private static func markerCaret(_ element: AXUIElement, measureBefore: Bool = true) -> CGRect? {
         var selected: CFTypeRef?, previous: CFTypeRef?, text: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &selected) == .success,
               let selected, CFGetTypeID(selected) == AXTextMarkerRangeGetTypeID()
@@ -1037,6 +1069,9 @@ final class Pill: NSObject {
         let caret = AXTextMarkerRangeCopyStartMarker(selected as! AXTextMarkerRange)
         let here = markerBounds(element, AXTextMarkerRangeCreate(nil, caret, caret))
         if let here, here.width < 1 { return here }
+        // At the field's start the character before belongs to whatever precedes
+        // the field (a label), so an empty field gets the start-of-field estimate.
+        guard measureBefore else { return nil }
         guard AXUIElementCopyParameterizedAttributeValue(element, "AXPreviousTextMarkerForTextMarker" as CFString, caret, &previous) == .success,
               let previous, CFGetTypeID(previous) == AXTextMarkerGetTypeID()
         else { return nil }
@@ -1075,15 +1110,72 @@ final class Pill: NSObject {
         return value as? String
     }
 
-    /// Electron builds its accessibility tree only for an assistive client
-    /// that asks: AXManualAccessibility on the app element (Electron docs,
-    /// "Accessibility"). Without it the focused element may carry no text
-    /// ranges. Asked on every read, not once per app: Claude was found
-    /// answering line boxes only, minutes after v2t had asked (2026-10-07).
-    /// Native apps reject the attribute, which is harmless.
-    private static func enableElectronAccessibility() {
-        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
-        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    private static let nonText: Set<String> = ["AXButton", "AXRadioButton", "AXCheckBox", "AXLink", "AXMenuItem", "AXPopUpButton"]
+
+    /// Apps asked for their accessibility tree in this dictation, and whether
+    /// v2t switched on AXEnhancedUserInterface there and must switch it off.
+    private static var asked: [pid_t: Bool] = [:]
+    private static let askedLock = NSLock()
+
+    /// Electron and Chromium build their accessibility tree only for an assistive
+    /// client that asks, and only 2 s after the last request: each request restarts
+    /// the countdown (electron_application.mm, enableScreenReaderCompleteModeAfterDelay).
+    /// So each app is asked once per dictation, never on every read, or the tree
+    /// never comes while the pill shows. Electron apps (Slack, Claude) take
+    /// AXManualAccessibility; Chromium browsers reject it and, like Gecko ones
+    /// (Firefox, Zen), take only AXEnhancedUserInterface, the VoiceOver switch.
+    /// That one makes window managers such as Amethyst move the app's windows
+    /// slowly, so it is on only while dictating. Native apps reject both, harmlessly.
+    private static func requestAccessibility(_ app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        askedLock.lock()
+        let first = asked[pid] == nil
+        if first { asked[pid] = false }
+        askedLock.unlock()
+        guard first else { return }
+        // The lock is not held across these calls: a hung app blocks each for an AX timeout.
+        let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        var enhanced: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, "AXEnhancedUserInterface" as CFString, &enhanced)
+        guard isBrowserEngine(app), (enhanced as? Bool) != true else { return }
+        // Chromium answers an error to this write even though it applies it.
+        AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        askedLock.lock()
+        let released = asked[pid] == nil  // the dictation ended meanwhile
+        if !released { asked[pid] = true }
+        askedLock.unlock()
+        if released { AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse) }
+    }
+
+    /// Switch AXEnhancedUserInterface back off where v2t switched it on, once the
+    /// dictation ends, and forget which apps were asked.
+    private static func releaseAccessibility() {
+        askedLock.lock()
+        let switchedOn = asked.filter(\.value).map(\.key)
+        asked = [:]
+        askedLock.unlock()
+        for pid in switchedOn {
+            AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXEnhancedUserInterface" as CFString, kCFBooleanFalse)
+        }
+    }
+
+    /// A Chromium browser ships "<Name> Framework.framework" (Electron apps ship
+    /// "Electron Framework.framework" and take AXManualAccessibility); a Gecko
+    /// browser ships the XUL library.
+    private static func isBrowserEngine(_ app: NSRunningApplication) -> Bool {
+        guard let bundle = app.bundleURL else { return false }
+        if FileManager.default.fileExists(atPath: bundle.appendingPathComponent("Contents/MacOS/XUL").path) { return true }
+        let frameworks = (try? FileManager.default.contentsOfDirectory(atPath: bundle.appendingPathComponent("Contents/Frameworks").path)) ?? []
+        return frameworks.contains { $0.hasSuffix(" Framework.framework") && $0 != "Electron Framework.framework" }
+    }
+
+    /// One line in the engine's log per show and move: where the bubble went and
+    /// why, positions only, never text.
+    private func log(_ event: String) {
+        let at = { (rect: NSRect?) in rect.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "none" }
+        onLog?("pill \(event): \(focus.source.isEmpty ? "no focus" : focus.source), caret \(at(focus.caret)), box \(at(focus.box)), "
+            + "frame \(at(visible ? panel.frame : nil)), screen \(at(screen?.frame)), on active space \(panel.isOnActiveSpace)")
     }
 
     private func hide() {

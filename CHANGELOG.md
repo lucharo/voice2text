@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.12
+
+- **The pill finds the caret in Slack, Brave, Firefox and Zen.** Before, v2t asked Electron apps for their accessibility tree every half second, and each request restarts Electron's 2 s countdown before the tree is built, so in Slack it never arrived and the pill sat at the bottom of the screen. Now each app is asked once per dictation. Browsers ignored that request altogether; they are now asked through the switch VoiceOver uses, on only while you dictate, because it slows window managers such as Amethyst. Firefox and Zen report the caret on the page rather than on the field, and v2t now reads it there.
+- **An empty field gets the bubble at its start**, not at the right edge of the label above it, and a focused button or option no longer counts as a text field (seen in Claude's question panel).
+- **The log records where the pill went.** Each time it appears or moves, `~/.v2t/run/v2t.log` gets the app, the focused element's role, how the caret was found and the pill's frame: positions only, never text. Full-screen apps (#46) could not be reproduced on 0.5.11: the pill showed over full-screen Claude, so the next sighting will be in the log.
+
 ## 0.5.11
 
 - **The pill points at the caret in Claude's message box**, including on an empty line below text, and in rich text fields in Chrome, Brave and other Electron apps. These fields report the caret only through Chromium's text markers, which v2t now reads; before, the bubble sat over the middle of the box. Where a field reports characters but no caret, a caret after a line break is placed at the start of the line below the text.
