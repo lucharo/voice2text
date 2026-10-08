@@ -1209,9 +1209,9 @@ final class Pill: NSObject {
             return
         }
         guard asked[pid] == nil else { return }
-        // A busy app (Slack just launched) times out: ask again on the next read.
-        guard AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue) != .cannotComplete
-        else { return }
+        // Not repeated even when the reply times out: a busy Electron app (Slack just
+        // launched) may have applied it, and a repeat restarts its 2 s countdown.
+        AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         guard isBrowserEngine(app) else {
             asked[pid] = false
             return
