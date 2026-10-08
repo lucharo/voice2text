@@ -818,11 +818,13 @@ final class Pill: NSObject {
         view.partial = liveTranscript && phase == "recording" ? partial : ""
         undoButton.isHidden = phase != "cancelled"
         panel.ignoresMouseEvents = phase != "cancelled"
-        guard style != .off, ["recording", "transcribing", "cleaning", "cancelled"].contains(phase) else {
+        let active = ["recording", "transcribing", "cleaning", "cancelled"].contains(phase)
+        guard style != .off, active else {
             hide()
-            // Once per dictation, not on every idle refresh: a pass blocked by a
-            // hung browser must not queue up behind the next.
-            if dictating { dictating = false; followQueue.async { Self.releaseAccessibility() } }
+            // Once per dictation, when it ends (not when the pill is switched off
+            // mid-dictation, nor on every idle refresh: a pass blocked by a hung
+            // browser must not queue up behind the next).
+            if !active && dictating { dictating = false; followQueue.async { Self.releaseAccessibility() } }
             return
         }
         if !visible { show(); log("shown") }
@@ -1001,6 +1003,14 @@ final class Pill: NSObject {
             // and answer the caret of the field being typed in by text markers.
             result.caret = flip(rect)
             result.source += " marker"
+        } else if let field = markerField(element), let fieldFrame = Self.frame(field) {
+            // No measurable caret, but the marker names its field: the field stands in
+            // for the page, with the empty-field estimate when it holds no text.
+            result.box = flip(fieldFrame)
+            var count: CFTypeRef?
+            result.atStart = AXUIElementCopyAttributeValue(field, kAXNumberOfCharactersAttribute as CFString, &count) == .success
+                && (count as? Int) == 0
+            result.source += " marker-field"
         } else {
             result.source += " no-text"
         }
@@ -1097,6 +1107,29 @@ final class Pill: NSObject {
         else { return nil }
         if character.isNewline { return here.map { CGRect(x: $0.minX, y: $0.minY, width: 1, height: $0.height) } }
         return markerBounds(element, before).map { CGRect(x: $0.maxX, y: $0.minY, width: 1, height: $0.height) }
+    }
+
+    /// The editable element holding the caret's text marker, or nil.
+    private static func markerField(_ element: AXUIElement) -> AXUIElement? {
+        var selected: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &selected) == .success,
+              let selected, CFGetTypeID(selected) == AXTextMarkerRangeGetTypeID()
+        else { return nil }
+        return editableAncestor(element, of: AXTextMarkerRangeCopyStartMarker(selected as! AXTextMarkerRange))
+    }
+
+    /// An element's frame in accessibility (top-left) coordinates, or nil.
+    private static func frame(_ element: AXUIElement) -> CGRect? {
+        var position = CGPoint.zero, size = CGSize.zero
+        var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size), size.height > 0
+        else { return nil }
+        return CGRect(origin: position, size: size)
     }
 
     /// The editable element (text field, rich editor) holding `marker`, or nil
