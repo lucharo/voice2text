@@ -968,8 +968,14 @@ final class Pill: NSObject {
         let app = NSWorkspace.shared.frontmostApplication
         if let app, requestingAccessibility { requestAccessibility(app) }
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
+        // The system-wide lookup can fail with kAXErrorCannotComplete where asking
+        // the frontmost app directly works (measured from a child of Claude.app,
+        // 2026-10-12), so the app is asked next.
+        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) != .success, let app {
+            AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier),
+                                          kAXFocusedUIElementAttribute as CFString, &focused)
+        }
+        guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(),
               let primary = NSScreen.screens.first
         else { return nil }
         let element = focused as! AXUIElement
@@ -996,8 +1002,14 @@ final class Pill: NSObject {
             frame = CGRect(origin: position, size: size)
             result.box = flip(CGRect(origin: position, size: size))
         }
+        // Only an editable element has a caret: a click in plain text (Claude's
+        // transcript, 2026-10-12) leaves a selection there, which is not where
+        // the text goes.
+        var ancestor: CFTypeRef?
+        let editable = (role as? String).map(textRoles.contains) == true
+            || AXUIElementCopyAttributeValue(element, "AXEditableAncestor" as CFString, &ancestor) == .success
         var selected: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+        if editable, AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
             var range = CFRange()
             if AXValueGetValue(selected as! AXValue, .cfRange, &range) {
@@ -1007,19 +1019,22 @@ final class Pill: NSObject {
                     && string(element, CFRange(location: 0, length: range.location))?.allSatisfy(\.isNewline) == true
                 result.source += result.caret == nil ? " no-caret" : " caret"
             }
-        } else if let rect = markerCaret(element), frame.map({ $0.contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
+        } else if let field = markerField(element) {
             // Firefox and Zen report the page itself as focused, with no text range,
-            // and answer the caret of the field being typed in by text markers.
-            result.caret = flip(rect)
-            result.source += " marker"
-        } else if let field = markerField(element), let fieldFrame = Self.frame(field) {
-            // No measurable caret, but the marker names its field: the field stands in
-            // for the page, with the empty-field estimate when it holds no text.
-            result.box = flip(fieldFrame)
-            var count: CFTypeRef?
-            result.atStart = AXUIElementCopyAttributeValue(field, kAXNumberOfCharactersAttribute as CFString, &count) == .success
-                && (count as? Int) == 0
-            result.source += " marker-field"
+            // and answer the caret of the field being typed in by text markers; the
+            // marker must sit in an editable field.
+            if let rect = markerCaret(element), frame.map({ $0.contains(CGPoint(x: rect.minX, y: rect.midY)) }) ?? true {
+                result.caret = flip(rect)
+                result.source += " marker"
+            } else if let fieldFrame = Self.frame(field) {
+                // No measurable caret: the field stands in for the page, with the
+                // empty-field estimate when it holds no text.
+                result.box = flip(fieldFrame)
+                var count: CFTypeRef?
+                result.atStart = AXUIElementCopyAttributeValue(field, kAXNumberOfCharactersAttribute as CFString, &count) == .success
+                    && (count as? Int) == 0
+                result.source += " marker-field"
+            }
         } else {
             result.source += " no-text"
         }
@@ -1180,6 +1195,7 @@ final class Pill: NSObject {
         return value as? String
     }
 
+    private static let textRoles: Set<String> = ["AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"]
     private static let nonText: Set<String> = ["AXButton", "AXRadioButton", "AXCheckBox", "AXLink", "AXMenuItem", "AXPopUpButton"]
 
     /// Apps asked for their accessibility tree in this dictation, and whether
