@@ -749,6 +749,7 @@ final class Pill: NSObject {
         var caret: NSRect?
         var box: NSRect?  // the focused element's frame
         var atStart = false  // nothing but line breaks before the caret: an empty field
+        var editable = false  // a text field or rich editor: only these get an estimated caret
         var source = ""  // the app, the element's role and how the caret was found, for the log
     }
     private var focus = Focus()
@@ -899,12 +900,12 @@ final class Pill: NSObject {
             let tall = focus.box.map { $0.height > screen.visibleFrame.height * 0.4 } ?? true
             if let caret = focus.caret {
                 target = caret
-            } else if let box = focus.box, !tall {
+            } else if let box = focus.box, !tall, focus.editable {
                 // A one-line caret's height, centred, at the start of an empty field.
                 target = NSRect(x: focus.atStart ? box.minX + 16 : box.midX, y: box.midY - 9, width: 1, height: 18)
-            } else {
-                pane = focus.box
-            }
+            } else if tall {
+                pane = focus.box  // a terminal or document pane: its bottom
+            }  // anything else not editable (page text, a label): the bottom of the screen
         }
         view.style = style == .cursorBubble && target == nil ? .compactBottom : style
         return true
@@ -1008,6 +1009,7 @@ final class Pill: NSObject {
         var ancestor: CFTypeRef?
         let editable = (role as? String).map(textRoles.contains) == true
             || AXUIElementCopyAttributeValue(element, "AXEditableAncestor" as CFString, &ancestor) == .success
+        result.editable = editable
         var selected: CFTypeRef?
         if editable, AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
            let selected, CFGetTypeID(selected) == AXValueGetTypeID() {
@@ -1030,6 +1032,7 @@ final class Pill: NSObject {
                 // No measurable caret: the field stands in for the page, with the
                 // empty-field estimate when it holds no text.
                 result.box = flip(fieldFrame)
+                result.editable = true
                 var count: CFTypeRef?
                 result.atStart = AXUIElementCopyAttributeValue(field, kAXNumberOfCharactersAttribute as CFString, &count) == .success
                     && (count as? Int) == 0
