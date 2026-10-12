@@ -55,10 +55,16 @@ never takes focus, so the paste lands where you are typing.
 
 - **Pill** in the menu picks where it sits: **Near text cursor** (the default), **Bottom of
   screen**, or **Off**.
-- The tail finds the caret in native text views (TextEdit, Notes, Mail), and in Chrome, Brave and
-  Electron apps such as Claude and Slack, including on an empty line below text; an empty field that
-  reports no caret gets the tail at its start. In a tall pane with no caret, such as a Ghostty split, the
+- The tail finds the caret in native text views (TextEdit, Notes, Mail), in Electron apps such as
+  Claude and Slack, and in Chrome, Brave, Firefox and Zen, including on an empty line below text; an
+  empty field gets the tail at its start. In a tall pane with no caret, such as a Ghostty split, the
   pill sits at the bottom of the pane.
+- Apps built on Chromium or Firefox expose their text fields only to an assistive app that asks,
+  about 2 s after it asks, so in a freshly opened app the tail can take that long to arrive. Browsers
+  are asked through the switch VoiceOver uses, which makes tiling window managers such as Amethyst move
+  their windows slowly, so v2t turns it on only while you dictate.
+- Each time the pill appears or moves, the log (`~/.v2t/run/v2t.log`) records the app, what it
+  reported and where the pill went: positions only, never text.
 - After Esc, the cancelled pill shows an **Undo ⌘Z** chip for 5 s. The chip, Cmd+Z or **Undo Cancel** in the menu brings the
   dictation back and carries on recording; after 5 s the audio is dropped and Cmd+Z goes to the app
   as usual.

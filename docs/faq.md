@@ -48,6 +48,16 @@ Open the menu-bar icon and choose **Pill**:
 The choice persists across launches. The live transcript is experimental and off;
 `live_transcript = true` under `[transcription]` in the [config](reference/config.md) turns it on.
 
+## Why is the pill at the bottom of the screen instead of at my cursor?
+
+Near text cursor puts the bubble at the caret of the focused text field. With no field focused, as
+after clicking plain text on a page or a button, there is no caret, so the pill sits at the bottom
+of the screen; it also sits at the bottom of a pane in a terminal such as Ghostty, which does not report its caret.
+Slack, browsers and other Chromium or Firefox apps build what the pill reads about 2 s after v2t
+asks, so the first dictation in a freshly opened app can start at the bottom and move to the caret.
+Each time the pill appears or moves, `~/.v2t/run/v2t.log` records the app, the focused element's
+role and how the caret was found (`caret`, `marker`, `no-caret`, `no-text`).
+
 ## Can I install the menu app on a managed work Mac?
 
 Yes. The Homebrew app is signed with a Developer ID certificate, notarised by Apple and stapled, so
