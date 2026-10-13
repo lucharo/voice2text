@@ -14,7 +14,10 @@ Everything is in `~/.v2t/`, or `$V2T_HOME`, or `$XDG_CONFIG_HOME/v2t`, in that o
 
 ## Keys
 
-Every key is optional; these are the defaults.
+Every key is optional; these are the defaults. The menu app's **Settings** submenu switches
+streaming, live words, cleanup, its mode, the hotkey, history and the kept recording: each switch
+rewrites that one line here and restarts the engine after the dictation in progress. Edit the rest
+by hand, or with `v2t config set section.key value`.
 
 ```toml
 [transcription]
