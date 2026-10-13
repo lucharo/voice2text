@@ -41,6 +41,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var needsRestart: Bool {
         staleEnginePID != nil && status["pid"] as? Int == staleEnginePID && !engineCanReload
     }
+    /// A setting changed while our engine was between processes (a reload in
+    /// progress holds no lock yet): signal the replacement once it holds one.
+    private var reloadWhenReady = false
 
     /// The running engine reloads on SIGHUP and reads the config.toml these switches write
     /// (not one from --config, and no flags overriding it).
@@ -378,9 +381,19 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // itself once nothing is in hand, so a dictation is never cut off.
         if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
             if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+        } else if engine != nil {
+            reloadWhenReady = true
         }
         rendered = ""
         render()
+    }
+
+    /// The change saved while the engine restarted reaches the replacement, which
+    /// may already have read the old config.toml.
+    private func sendPendingReload() {
+        guard reloadWhenReady, engine != nil, let pid = status["pid"] as? Int, engineOwnsLock(pid) else { return }
+        reloadWhenReady = false
+        if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
     }
 
     private func launchEngine() {
@@ -470,6 +483,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         pill.update(phase: phase, partial: status["partial"] as? String ?? "",
                     liveTranscript: status["live_transcript"] as? Bool ?? false)
+        sendPendingReload()
         render()
     }
 
@@ -827,7 +841,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle("Save History", "behavior.save_history")
         toggle("Keep Last Recording", "behavior.keep_last_audio")
         if needsRestart {
-            let note = externalEngine ? "Restart v2t in its terminal to apply" : "Stop and start v2t to apply"
+            let running = status["config"] as? String
+            let note = status["reload"] as? Bool == false ? "This v2t's launch flags override these settings"
+                : running.map { "This v2t reads \(($0 as NSString).abbreviatingWithTildeInPath)" }
+                ?? (externalEngine ? "Restart v2t in its terminal to apply" : "Stop and start v2t to apply")
             submenu.addItem(.separator())
             let item = NSMenuItem(title: note, action: nil, keyEquivalent: "")
             item.attributedTitle = secondary(note)
@@ -865,7 +882,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Opens config.toml in the default text editor, writing the commented
     /// template first when there is no file yet.
     @objc private func editConfig() {
-        let file = configFile ?? home.appendingPathComponent("config.toml")
+        let custom = pythonExecutable.flatMap { engineEnvironment(python: $0)["V2T_CONFIG"] }
+        let file = configFile ?? custom.map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("config.toml")
         if !FileManager.default.fileExists(atPath: file.path), let python = pythonExecutable {
             let initialise = Process()
             initialise.executableURL = URL(fileURLWithPath: python)
