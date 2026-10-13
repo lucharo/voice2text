@@ -37,7 +37,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var configDate: Date?
     /// The engine that was running, too old to reload itself, when a setting changed.
     private var staleEnginePID: Int?
-    private var needsRestart: Bool { staleEnginePID != nil && status["pid"] as? Int == staleEnginePID }
+    private var needsRestart: Bool {
+        staleEnginePID != nil && status["pid"] as? Int == staleEnginePID && status["reload"] as? Bool != true
+    }
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
