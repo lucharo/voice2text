@@ -3,6 +3,7 @@
 ## 0.5.14
 
 - **Settings in the menu.** A new Settings submenu turns on or off transcribe-while-holding, live words in the bubble (experimental), cleanup and its casual or strict mode, history and the kept recording, and picks the hotkey. Each switch rewrites one line of `config.toml`, keeping your comments, and v2t restarts once the dictation in progress ends so the change applies. `v2t config set cleanup.mode strict` does the same from a terminal, and `v2t config --json` prints every setting.
+- **Copy Last Transcription copies your last dictation.** It read the old history file, which stopped growing when history moved to `history/history.sqlite`, so it showed and copied a dictation from weeks before. It now reads the database.
 - **Config Folder shows where it is.** It opens a submenu with the folder's path, Open in Finder, Copy Path and Edit config.toml, which writes the commented template first if there is no file yet.
 
 ## 0.5.13
