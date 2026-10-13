@@ -38,7 +38,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The engine that was running, too old to reload itself, when a setting changed.
     private var staleEnginePID: Int?
     private var needsRestart: Bool {
-        staleEnginePID != nil && status["pid"] as? Int == staleEnginePID && status["reload"] as? Bool != true
+        staleEnginePID != nil && status["pid"] as? Int == staleEnginePID && !engineCanReload
+    }
+
+    /// The running engine reloads on SIGHUP and reads the config.toml these switches write
+    /// (not one from --config, and no flags overriding it).
+    private var engineCanReload: Bool {
+        guard status["reload"] as? Bool == true, let running = status["config"] as? String, let configFile else { return false }
+        return URL(fileURLWithPath: running).resolvingSymlinksInPath().path == configFile.resolvingSymlinksInPath().path
     }
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
@@ -369,7 +376,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The engine reads config.toml once, at start. SIGHUP asks it to restart
         // itself once nothing is in hand, so a dictation is never cut off.
         if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
-            if status["reload"] as? Bool == true { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+            if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
         }
         rendered = ""
         render()

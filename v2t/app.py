@@ -296,6 +296,9 @@ class VoiceToText:
         self.processing = False
         self.reload_requested = threading.Event()  # SIGHUP: a setting changed
         self.reloading = False
+        # False when launched with flags that override config.toml: a reload
+        # would reapply them, so the menu must not promise a change applies.
+        self.reloadable = True
         self.cancel_requested = False
         self.escape_consumed = False
         self.delivered = False
@@ -369,7 +372,8 @@ class VoiceToText:
                 **self.status_details,
                 "streaming": self.can_stream(),
                 "live_transcript": self.cfg.live_transcript and self.can_stream(),
-                "reload": True,  # the menu app may send SIGHUP after a setting changes
+                "reload": self.reloadable,  # the menu app may send SIGHUP after a setting changes
+                "config": str(config.config_path()),
                 "error": clean_error,
                 "warning": self.warning,
             }
@@ -496,6 +500,8 @@ class VoiceToText:
         engine reads it once, at start. Same PID, as for the microphone restart."""
         logger.info("Settings changed; restarting v2t to apply them")
         self._await_mic_closed(MIC_STUCK_S)  # the last dictation's stop, if still running
+        if self.stopping:  # a Stop that arrived meanwhile wins: shut down, don't restart
+            return
         self._clear_status()
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1401,6 +1407,9 @@ class VoiceToText:
                 )
 
     def run(self):
+        # Before the lock: the menu signals whichever process holds it, and an
+        # unhandled SIGHUP would kill a replacement that has not set this yet.
+        signal.signal(signal.SIGHUP, self.request_reload)
         try:
             self.instance_lock = config.acquire_instance_lock()
         except BlockingIOError:
@@ -1413,7 +1422,6 @@ class VoiceToText:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGUSR1, self.request_undo)
-        signal.signal(signal.SIGHUP, self.request_reload)
         try:
             self.warmup()
             self.startup_complete = True

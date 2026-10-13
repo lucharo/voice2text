@@ -96,7 +96,9 @@ def cmd_run(argv: list[str]) -> int:
     if os.environ.get("V2T_LAUNCH_CONTEXT") != "menubar":
         if app.check_and_request_permissions():
             _restart_after_microphone_grant()
-    app.VoiceToText(cfg).run()
+    voice = app.VoiceToText(cfg)
+    voice.reloadable = all(value is None for value in overrides.values())
+    voice.run()
     return 0
 
 

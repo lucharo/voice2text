@@ -627,6 +627,63 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(reloads, [True])
         self.assertTrue(write_status.call_args_list[0].args[0]["reload"])
 
+    def test_a_stop_during_a_reload_shuts_down_instead_of_restarting(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.startup_complete = True  # reloads happen only once the engine is up
+
+        def stop_arrives(_timeout):
+            voice._handle_signal(signal.SIGTERM)
+            return True
+
+        with (
+            mock.patch.object(voice, "_await_mic_closed", side_effect=stop_arrives),
+            mock.patch.object(app.os, "execv") as execv,
+        ):
+            voice._reload()
+
+        execv.assert_not_called()
+
+    def test_sighup_is_handled_before_the_instance_lock_is_taken(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        handlers = {}
+        handled_at_lock = []
+
+        def lock():
+            handled_at_lock.append(signal.SIGHUP in handlers)
+            raise BlockingIOError  # stop run() here, as a second engine would
+
+        with (
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(app.config, "acquire_instance_lock", side_effect=lock),
+            self.assertRaises(SystemExit),
+        ):
+            voice.run()
+
+        self.assertEqual(handled_at_lock, [True])
+
+    def test_an_engine_launched_with_overriding_flags_does_not_offer_reload(self):
+        reloadable = {}
+
+        class Voice:
+            def __init__(self, cfg):
+                self.reloadable = True
+
+            def run(self):
+                reloadable[tuple(argv)] = self.reloadable
+
+        for argv in ([], ["--config", str(Path(self.tempdir.name) / "other.toml")], ["--strict"]):
+            with (
+                mock.patch.dict(os.environ, {"V2T_LAUNCH_CONTEXT": "menubar"}),
+                mock.patch.object(app, "VoiceToText", Voice),
+            ):
+                cli.cmd_run(list(argv))
+
+        self.assertEqual(reloadable, {
+            (): True,
+            ("--config", str(Path(self.tempdir.name) / "other.toml")): True,  # the menu compares paths
+            ("--strict",): False,
+        })
+
     def test_the_run_loop_restarts_the_engine_when_the_mic_is_stuck(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         deadline = app.time.perf_counter() + 5  # a loop that never restarts fails, not hangs
@@ -1398,6 +1455,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "streaming": False,
                     "live_transcript": False,
                     "reload": True,
+                    "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
                     "words": 2,
@@ -1423,6 +1481,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "streaming": False,
                 "live_transcript": False,
                 "reload": True,
+                "config": str(config.config_path()),
                 "error": "",
                 "warning": "",
             },
@@ -1458,6 +1517,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "streaming": available,
                     "live_transcript": available and live,
                     "reload": True,
+                    "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
                 }
@@ -2089,6 +2149,15 @@ class V2TSmokeTests(unittest.TestCase):
             config.config_path().read_text(),
             '["cleanup"]\n\'enabled\' = false  # on\n"model" = "qwen"  # local\n',
         )
+
+    def test_config_set_refuses_layouts_it_cannot_edit_and_leaves_the_file_alone(self):
+        for text in ('cleanup.mode = "casual"\n', '[cleanup]\nmodel = """multi\nline"""\n'):
+            config.write_config(text)
+            setting = "cleanup.mode" if text.startswith("cleanup.") else "cleanup.model"
+            with self.subTest(text=text), self.assertRaises(SystemExit) as refused:
+                config.set_value(setting, "strict")
+            self.assertIn(f"could not write {setting}", str(refused.exception))
+            self.assertEqual(config.config_path().read_text(), text)
 
     def test_config_set_writes_any_unicode_path(self):
         config.set_value("transcription.model", "/models/whisper-🎙️-ünï")
