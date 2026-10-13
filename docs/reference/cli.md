@@ -114,6 +114,8 @@ mode, any launch error, and any warning about the last dictation (a silent micro
 |---|---|
 | `--init` | Write a commented `config.toml` if there is none |
 | `--path` | Print the paths only |
+| `--json` | Print the paths and every setting as JSON |
+| `set KEY VALUE` | Change one setting, e.g. `v2t config set cleanup.mode strict`; only that line of `config.toml` changes |
 
 ## menubar
 

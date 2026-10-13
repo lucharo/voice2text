@@ -294,6 +294,11 @@ class VoiceToText:
         self.cleaner = None  # loaded in run() if cleanup is enabled
         self.recording = False
         self.processing = False
+        self.reload_requested = threading.Event()  # SIGHUP: a setting changed
+        self.reloading = False
+        # False when launched with flags that override config.toml: a reload
+        # would reapply them, so the menu must not promise a change applies.
+        self.reloadable = True
         self.cancel_requested = False
         self.escape_consumed = False
         self.delivered = False
@@ -367,6 +372,8 @@ class VoiceToText:
                 **self.status_details,
                 "streaming": self.can_stream(),
                 "live_transcript": self.cfg.live_transcript and self.can_stream(),
+                "reload": self.reloadable,  # the menu app may send SIGHUP after a setting changes
+                "config": str(config.config_path()),
                 "error": clean_error,
                 "warning": self.warning,
             }
@@ -465,6 +472,41 @@ class VoiceToText:
         sys.stderr.flush()
         os.execv(sys.executable, sys.orig_argv)
 
+    def request_reload(self, _signum=None, _frame=None) -> None:
+        """SIGHUP, sent by the menu app after it changes a setting in config.toml."""
+        self.reload_requested.set()
+
+    def _begin_reload(self) -> bool:
+        """Claim the restart once nothing is in hand: no recording (a held key
+        records from the press, before anything shows), no queued or running
+        transcription, no Undo window and no double-tap pending. New recordings
+        are refused from here, so none can be cut off by the exec."""
+        with self.lifecycle_lock:
+            if (
+                not self.reload_requested.is_set()
+                or self.stopping
+                or self.recording
+                or self.processing
+                or self.cancelled_audio is not None
+                or not self.jobs.empty()
+                or time.perf_counter() - self.last_tap_at < self.DOUBLE_TAP_S
+            ):
+                return False
+            self.reloading = True
+            return True
+
+    def _reload(self) -> None:
+        """Replace this process with one that reads the new config.toml; the
+        engine reads it once, at start. Same PID, as for the microphone restart."""
+        logger.info("Settings changed; restarting v2t to apply them")
+        self._await_mic_closed(MIC_STUCK_S)  # the last dictation's stop, if still running
+        if self.stopping:  # a Stop that arrived meanwhile wins: shut down, don't restart
+            return
+        self._clear_status()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, sys.orig_argv)
+
     def _restore_media(self) -> None:
         if self.cfg.pause_music and self.was_playing:
             subprocess.run(["nowplaying-cli", "play"], check=False)
@@ -524,7 +566,7 @@ class VoiceToText:
         log, no music paused, no streaming), so a tap or a chord leaves no trace.
         """
         with self.lifecycle_lock:
-            if self.stopping or self.recording or self.processing:
+            if self.stopping or self.reloading or self.recording or self.processing:
                 return
             # Re-initialising PortAudio while the last stop still runs would hang too.
             if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
@@ -1365,6 +1407,9 @@ class VoiceToText:
                 )
 
     def run(self):
+        # Before the lock: the menu signals whichever process holds it, and an
+        # unhandled SIGHUP would kill a replacement that has not set this yet.
+        signal.signal(signal.SIGHUP, self.request_reload)
         try:
             self.instance_lock = config.acquire_instance_lock()
         except BlockingIOError:
@@ -1398,6 +1443,8 @@ class VoiceToText:
                         break
                     if self._should_restart_for_microphone():
                         self._restart_for_microphone()
+                    if self._begin_reload():
+                        self._reload()
                 if not self.stopping and not listener.is_alive():
                     raise RuntimeError("global hotkey listener stopped unexpectedly")
         except KeyboardInterrupt:

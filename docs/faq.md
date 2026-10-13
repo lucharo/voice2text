@@ -45,8 +45,9 @@ Open the menu-bar icon and choose **Pill**:
 - **Bottom of screen**: always there.
 - **Off**: no pill.
 
-The choice persists across launches. The live transcript is experimental and off;
-`live_transcript = true` under `[transcription]` in the [config](reference/config.md) turns it on.
+The choice persists across launches. The live transcript is experimental and off; **Settings →
+Live Words in Bubble** turns it on, as does `live_transcript = true` under `[transcription]` in the
+[config](reference/config.md).
 
 ## Why is the pill at the bottom of the screen instead of at my cursor?
 
@@ -57,6 +58,15 @@ Slack, browsers and other Chromium or Firefox apps build what the pill reads abo
 asks, so the first dictation in a freshly opened app can start at the bottom and move to the caret.
 Each time the pill appears or moves, `~/.v2t/run/v2t.log` records the app, the focused element's
 role and how the caret was found (`caret`, `marker`, `no-caret`, `no-text`).
+
+## The pill stopped showing at all. What happened?
+
+Most likely it is showing on another desktop. After the menu app had run for about a day, its pill
+window was once found pinned to Desktop 1, so on any other desktop or over a full-screen app it
+never appeared. The log gives it away: each `pill shown` line in `~/.v2t/run/v2t.log` ends with
+`on active space false`. Since 0.5.13 the pill rebuilds itself when that happens, and the log says
+`pill rebuilt`. On an older version, quit the menu app and open it again. Restarting the Mac or
+reinstalling is not needed.
 
 ## Can I install the menu app on a managed work Mac?
 

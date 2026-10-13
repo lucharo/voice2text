@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.14
+
+- **Settings in the menu.** A new Settings submenu turns on or off transcribe-while-holding, live words in the bubble (experimental), cleanup and its casual or strict mode, history and the kept recording, and picks the hotkey. Each switch rewrites one line of `config.toml`, keeping your comments, and v2t restarts once the dictation in progress ends so the change applies. `v2t config set cleanup.mode strict` does the same from a terminal, and `v2t config --json` prints every setting.
+- **Copy Last Transcription copies your last dictation.** It read the old history file, which stopped growing when history moved to `history/history.sqlite`, so it showed and copied a dictation from weeks before. It now reads the database.
+- **Config Folder shows where it is.** It opens a submenu with the folder's path, Open in Finder, Copy Path and Edit config.toml, which writes the commented template first if there is no file yet.
+
 ## 0.5.13
 
 - **The bubble shows on every desktop again.** After a day of running, the bubble could end up stuck on one desktop (one macOS Space), so on any other desktop, or over a full-screen app, which macOS runs as its own desktop, it never appeared, though the log said it had. Quitting and reopening v2t cleared it. Now, when the bubble finds itself off the desktop you are on, v2t replaces it with a fresh one, which joins every desktop, and logs `pill rebuilt`. Possibly the cause of #46, which only showed up after the app had been running a while.

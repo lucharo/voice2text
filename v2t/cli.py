@@ -15,6 +15,7 @@ v2t setup           guided first-run config (pick models, detect Ollama)
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -95,7 +96,9 @@ def cmd_run(argv: list[str]) -> int:
     if os.environ.get("V2T_LAUNCH_CONTEXT") != "menubar":
         if app.check_and_request_permissions():
             _restart_after_microphone_grant()
-    app.VoiceToText(cfg).run()
+    voice = app.VoiceToText(cfg)
+    voice.reloadable = all(value is None for value in overrides.values())
+    voice.run()
     return 0
 
 
@@ -516,8 +519,30 @@ def cmd_config(argv: list[str]) -> int:
         "--init", action="store_true", help="write a commented config.toml if absent"
     )
     p.add_argument("--path", action="store_true", help="print paths only")
+    p.add_argument(
+        "--json", action="store_true", help="paths and settings as JSON (the menu app reads this)"
+    )
+    p.add_argument(
+        "set", nargs="*", metavar="set SECTION.KEY VALUE",
+        help="change one setting in config.toml, e.g. `v2t config set cleanup.mode strict`",
+    )
     a = p.parse_args(argv)
 
+    if a.set:
+        if len(a.set) != 3 or a.set[0] != "set":
+            p.error("usage: v2t config set SECTION.KEY VALUE")
+        cfg = config.set_value(a.set[1], a.set[2])
+        if not a.json:
+            print(f"{a.set[1]} = {config.settings(cfg)[a.set[1]]!r}  ({config.config_path()})")
+            return 0
+    if a.json:
+        cfg = cfg if a.set else config.load()
+        print(json.dumps({
+            "home": str(config.home()),
+            "config": str(config.config_path()),
+            "settings": config.settings(cfg),
+        }))
+        return 0
     if a.init:
         print(f"wrote {config.write_default()}")
         return 0

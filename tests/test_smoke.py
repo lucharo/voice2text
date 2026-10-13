@@ -14,6 +14,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import threading
 import tomllib
 import types
 import unittest
@@ -555,6 +556,133 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual((before, while_busy, when_idle), (False, False, True))
         execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_a_reload_waits_until_nothing_is_in_hand_then_refuses_new_recordings(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        unrequested = voice._begin_reload()
+        voice.request_reload()
+        busy = {}
+        for name, arrange, undo in (
+            ("recording", lambda: setattr(voice, "recording", True), lambda: setattr(voice, "recording", False)),
+            ("processing", lambda: setattr(voice, "processing", True), lambda: setattr(voice, "processing", False)),
+            ("queued", lambda: voice.jobs.put(("frames", 1.0)), lambda: voice.jobs.get_nowait()),
+            ("undo window", lambda: setattr(voice, "cancelled_audio", ("frames", 1.0)), lambda: setattr(voice, "cancelled_audio", None)),
+            ("double tap", lambda: setattr(voice, "last_tap_at", app.time.perf_counter()), lambda: setattr(voice, "last_tap_at", 0.0)),
+        ):
+            arrange()
+            busy[name] = voice._begin_reload()
+            undo()
+
+        idle = voice._begin_reload()
+        with mock.patch.object(app.sd, "InputStream") as input_stream:
+            voice.start_recording(show=False)
+        with mock.patch.object(app.os, "execv") as execv:
+            voice._reload()
+
+        self.assertEqual(
+            (unrequested, busy, idle),
+            (False, {"recording": False, "processing": False, "queued": False, "undo window": False, "double tap": False}, True),
+        )
+        input_stream.assert_not_called()
+        execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_the_run_loop_reloads_on_sighup_and_status_says_it_can(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        deadline = app.time.perf_counter() + 5  # a loop that never reloads fails, not hangs
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return app.time.perf_counter() < deadline
+
+        handlers = {}
+        reloads = []
+
+        def reload():
+            reloads.append(True)
+            voice.stopping = True  # what exec would end: leave the loop
+
+        def warmup():
+            handlers[signal.SIGHUP](signal.SIGHUP, None)  # the menu app's signal arrives
+
+        with (
+            mock.patch.object(app, "_listener", return_value=Listener()),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(voice, "warmup", side_effect=warmup),
+            mock.patch.object(voice, "_reload", side_effect=reload),
+            mock.patch.object(app.config, "write_status") as write_status,
+            contextlib.suppress(RuntimeError),
+        ):
+            voice.run()
+
+        self.assertEqual(reloads, [True])
+        self.assertTrue(write_status.call_args_list[0].args[0]["reload"])
+
+    def test_a_stop_during_a_reload_shuts_down_instead_of_restarting(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.startup_complete = True  # reloads happen only once the engine is up
+
+        def stop_arrives(_timeout):
+            voice._handle_signal(signal.SIGTERM)
+            return True
+
+        with (
+            mock.patch.object(voice, "_await_mic_closed", side_effect=stop_arrives),
+            mock.patch.object(app.os, "execv") as execv,
+        ):
+            voice._reload()
+
+        execv.assert_not_called()
+
+    def test_sighup_is_handled_before_the_instance_lock_is_taken(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        handlers = {}
+        handled_at_lock = []
+
+        def lock():
+            handled_at_lock.append(signal.SIGHUP in handlers)
+            raise BlockingIOError  # stop run() here, as a second engine would
+
+        with (
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(app.config, "acquire_instance_lock", side_effect=lock),
+            self.assertRaises(SystemExit),
+        ):
+            voice.run()
+
+        self.assertEqual(handled_at_lock, [True])
+
+    def test_an_engine_launched_with_overriding_flags_does_not_offer_reload(self):
+        reloadable = {}
+
+        class Voice:
+            def __init__(self, cfg):
+                self.reloadable = True
+
+            def run(self):
+                reloadable[tuple(argv)] = self.reloadable
+
+        for argv in ([], ["--config", str(Path(self.tempdir.name) / "other.toml")], ["--strict"]):
+            with (
+                mock.patch.dict(os.environ, {"V2T_LAUNCH_CONTEXT": "menubar"}),
+                mock.patch.object(app, "VoiceToText", Voice),
+            ):
+                cli.cmd_run(list(argv))
+
+        self.assertEqual(reloadable, {
+            (): True,
+            ("--config", str(Path(self.tempdir.name) / "other.toml")): True,  # the menu compares paths
+            ("--strict",): False,
+        })
 
     def test_the_run_loop_restarts_the_engine_when_the_mic_is_stuck(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -1326,6 +1454,8 @@ class V2TSmokeTests(unittest.TestCase):
                     "mode": "casual",
                     "streaming": False,
                     "live_transcript": False,
+                    "reload": True,
+                    "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
                     "words": 2,
@@ -1350,6 +1480,8 @@ class V2TSmokeTests(unittest.TestCase):
                 "mode": "casual",
                 "streaming": False,
                 "live_transcript": False,
+                "reload": True,
+                "config": str(config.config_path()),
                 "error": "",
                 "warning": "",
             },
@@ -1384,6 +1516,8 @@ class V2TSmokeTests(unittest.TestCase):
                     "mode": "casual",
                     "streaming": available,
                     "live_transcript": available and live,
+                    "reload": True,
+                    "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
                 }
@@ -1957,6 +2091,141 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("uv tool install voice2text", output.getvalue())
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
+
+    def test_config_set_without_a_file_starts_from_the_template_and_changes_one_line(self):
+        config.set_value("cleanup.mode", "strict")
+
+        written = config.config_path().read_text().splitlines()
+        template = config.DEFAULT_TOML.splitlines()
+        changed = [(old, new) for old, new in zip(template, written) if old != new]
+        self.assertEqual(len(written), len(template))
+        self.assertEqual(changed, [(
+            'mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)',
+            'mode = "strict"        # casual (punctuation + fillers only, default) | strict (restructures)',
+        )])
+        self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
+
+    def test_config_set_adds_a_missing_key_to_its_section_and_a_missing_section_at_the_end(self):
+        config.write_config('[cleanup]\nenabled = true\n\n[hotkey]\nkey = "fn"\n')
+
+        config.set_value("cleanup.mode", "strict")
+        config.set_value("behavior.keep_last_audio", "false")
+
+        self.assertEqual(
+            config.config_path().read_text(),
+            '[cleanup]\nenabled = true\nmode = "strict"\n\n[hotkey]\nkey = "fn"\n\n'
+            "[behavior]\nkeep_last_audio = false\n",
+        )
+
+    def test_config_set_parses_booleans_and_integers(self):
+        config.set_value("transcription.live_transcript", "true")
+        config.set_value("audio.sample_rate", "48000")
+
+        self.assertEqual(
+            {k: v for k, v in config.settings().items() if k in ("transcription.live_transcript", "audio.sample_rate")},
+            {"transcription.live_transcript": True, "audio.sample_rate": 48000},
+        )
+
+    def test_config_set_refuses_bad_values_and_leaves_the_file_alone(self):
+        config.write_config('[hotkey]\nkey = "fn"\n')
+        for setting, value, message in (
+            ("hotkey.key", "bogus", "invalid hotkey 'bogus'"),
+            ("cleanup.enabled", "yes", "cleanup.enabled must be true or false"),
+            ("audio.sample_rate", "fast", "audio.sample_rate must be an integer"),
+            ("nope.key", "1", "unknown setting 'nope.key'"),
+        ):
+            with self.subTest(setting=setting), self.assertRaises(SystemExit) as refused:
+                config.set_value(setting, value)
+            self.assertIn(message, str(refused.exception))
+        self.assertEqual(config.config_path().read_text(), '[hotkey]\nkey = "fn"\n')
+
+    def test_config_set_finds_quoted_sections_and_keys(self):
+        config.write_config('["cleanup"]\n\'enabled\' = true  # on\n"model" = \'my model # v1\'  # local\n')
+
+        config.set_value("cleanup.enabled", "false")
+        config.set_value("cleanup.model", "qwen")
+
+        self.assertEqual(
+            config.config_path().read_text(),
+            '["cleanup"]\n\'enabled\' = false  # on\n"model" = "qwen"  # local\n',
+        )
+
+    def test_config_set_refuses_layouts_it_cannot_edit_and_leaves_the_file_alone(self):
+        for text in ('cleanup.mode = "casual"\n', '[cleanup]\nmodel = """multi\nline"""\n'):
+            config.write_config(text)
+            setting = "cleanup.mode" if text.startswith("cleanup.") else "cleanup.model"
+            with self.subTest(text=text), self.assertRaises(SystemExit) as refused:
+                config.set_value(setting, "strict")
+            self.assertIn(f"could not write {setting}", str(refused.exception))
+            self.assertEqual(config.config_path().read_text(), text)
+
+    def test_config_set_writes_any_unicode_path(self):
+        config.set_value("transcription.model", "/models/whisper-🎙️-ünï")
+
+        self.assertEqual(config.settings()["transcription.model"], "/models/whisper-🎙️-ünï")
+
+    def test_config_setters_take_turns_so_neither_change_is_lost(self):
+        config.write_config('[cleanup]\nmode = "casual"\n\n[hotkey]\nkey = "fn"\n')
+        first_read, release = threading.Event(), threading.Event()
+        real_set_line = config._set_line
+
+        def slow_first_writer(text, section, key, literal):
+            if section == "cleanup":  # the first setter has read the file; hold it there
+                first_read.set()
+                release.wait(2)
+            return real_set_line(text, section, key, literal)
+
+        with mock.patch.object(config, "_set_line", side_effect=slow_first_writer):
+            first = threading.Thread(target=config.set_value, args=("cleanup.mode", "strict"))
+            first.start()
+            first_read.wait(2)
+            second = threading.Thread(target=config.set_value, args=("hotkey.key", "cmd_r"))
+            second.start()
+            second.join(0.3)  # without the lock it reads the old file and finishes here
+            release.set()
+            first.join(2)
+            second.join(2)
+
+        self.assertEqual(
+            {k: v for k, v in config.settings().items() if k in ("cleanup.mode", "hotkey.key")},
+            {"cleanup.mode": "strict", "hotkey.key": "cmd_r"},
+        )
+
+    def test_config_set_writes_through_a_symlinked_config(self):
+        target = Path(self.tempdir.name) / "dotfiles-config.toml"
+        target.write_text('[hotkey]\nkey = "fn"\n')
+        config.config_path().symlink_to(target)
+
+        config.set_value("hotkey.key", "cmd_r")
+
+        self.assertTrue(config.config_path().is_symlink())
+        self.assertEqual(target.read_text(), '[hotkey]\nkey = "cmd_r"\n')
+
+    def test_config_json_prints_paths_and_every_setting_after_a_set(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = cli.cmd_config(["set", "hotkey.key", "alt_r", "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "home": self.tempdir.name,
+            "config": str(config.config_path()),
+            "settings": {
+                "transcription.backend": "parakeet", "transcription.model": "",
+                "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
+                "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
+                "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
+                "behavior.pause_music": False, "behavior.save_history": True,
+                "behavior.keep_last_audio": True, "ollama.url": "http://localhost:11434",
+            },
+        })
+
+    def test_config_set_needs_a_key_and_a_value(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+            cli.cmd_config(["set", "hotkey.key"])
+
+        self.assertEqual(refused.exception.code, 2)
+        self.assertFalse(config.config_path().exists())
 
     def test_setup_help_prints_usage_and_asks_nothing(self):
         output = io.StringIO()

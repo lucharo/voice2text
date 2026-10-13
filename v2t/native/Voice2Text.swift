@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import SQLite3
 
 @main
 struct Voice2TextApp {
@@ -30,6 +31,26 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var liveSource: DispatchSourceRead?
     private var liveSocketID: (device: dev_t, inode: ino_t)?
     private var menuIsOpen = false
+    /// config.toml as `v2t config --json` reports it, keyed `section.key`; empty
+    /// when no engine is installed to ask. Re-read when the file's date changes.
+    private var settings: [String: Any] = [:]
+    private var configFile: URL?
+    private var configDate: Date?
+    /// The engine that was running, too old to reload itself, when a setting changed.
+    private var staleEnginePID: Int?
+    private var needsRestart: Bool {
+        staleEnginePID != nil && status["pid"] as? Int == staleEnginePID && !engineCanReload
+    }
+    /// A setting changed while our engine was between processes (a reload in
+    /// progress holds no lock yet): signal the replacement once it holds one.
+    private var reloadWhenReady = false
+
+    /// The running engine reloads on SIGHUP and reads the config.toml these switches write
+    /// (not one from --config, and no flags overriding it).
+    private var engineCanReload: Bool {
+        guard status["reload"] as? Bool == true, let running = status["config"] as? String, let configFile else { return false }
+        return URL(fileURLWithPath: running).resolvingSymlinksInPath().path == configFile.resolvingSymlinksInPath().path
+    }
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
@@ -296,16 +317,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func launchEngine() {
-        guard engine == nil else { return }
-        guard let python = pythonExecutable else {
-            phase = "no-engine"
-            render()
-            return
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-m", "v2t"]
+    /// The engine's environment, shared by `v2t config` calls so both see one config.
+    private func engineEnvironment(python: String) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["V2T_HOME"] = home.path
         environment["V2T_LAUNCH_CONTEXT"] = "menubar"
@@ -316,7 +329,84 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
            FileManager.default.fileExists(atPath: path) {
             environment["V2T_CONFIG"] = path
         }
-        process.environment = environment
+        return environment
+    }
+
+    /// Runs `v2t config <arguments> --json` (about 60 ms) and takes the settings it
+    /// prints; when a `set` is refused (a bad value) the engine's message goes to the log.
+    @discardableResult
+    private func runConfig(_ arguments: [String]) -> Bool {
+        guard let python = pythonExecutable else { settings = [:]; return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-m", "v2t", "config"] + arguments + ["--json"]
+        process.environment = engineEnvironment(python: python)
+        let output = Pipe(), errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        do { try process.run() } catch { return false }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let read = value["settings"] as? [String: Any], let path = value["config"] as? String
+        else {
+            // An engine older than the menu has no --json: no Settings row, no log line.
+            if !arguments.isEmpty {
+                appendLog("config \(arguments.joined(separator: " ")) refused: \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+            return false
+        }
+        settings = read
+        configFile = URL(fileURLWithPath: path)
+        configDate = modified(configFile)
+        return true
+    }
+
+    /// Read fresh each time: a URL caches its resource values, so a hand edit would go unseen.
+    private func modified(_ url: URL?) -> Date? {
+        url.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.modificationDate] as? Date }
+    }
+
+    /// Re-read the settings when config.toml was edited by hand since the last read.
+    private func loadSettings() {
+        if settings.isEmpty || modified(configFile) != configDate { runConfig([]) }
+    }
+
+    @objc private func chooseSetting(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
+        guard runConfig(["set", pair[0], pair[1]]) else { NSSound.beep(); return }
+        // The engine reads config.toml once, at start. SIGHUP asks it to restart
+        // itself once nothing is in hand, so a dictation is never cut off.
+        if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
+            if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+        } else if engine != nil {
+            reloadWhenReady = true
+        }
+        rendered = ""
+        render()
+    }
+
+    /// The change saved while the engine restarted reaches the replacement, which
+    /// may already have read the old config.toml.
+    private func sendPendingReload() {
+        guard reloadWhenReady, engine != nil, let pid = status["pid"] as? Int, engineOwnsLock(pid) else { return }
+        reloadWhenReady = false
+        if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+    }
+
+    private func launchEngine() {
+        guard engine == nil else { return }
+        guard let python = pythonExecutable else {
+            phase = "no-engine"
+            render()
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-m", "v2t"]
+        process.environment = engineEnvironment(python: python)
         let log = home.appendingPathComponent("run/v2t.log")
         if let size = try? log.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 1_048_576 {
             let previous = log.deletingPathExtension().appendingPathExtension("log.1")
@@ -335,6 +425,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let shouldQuit = self.terminationPending
+                self.reloadWhenReady = false  // the next engine reads the latest config.toml itself
                 self.engine = nil
                 self.logHandle?.closeFile()
                 self.logHandle = nil
@@ -353,6 +444,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try process.run()
         } catch {
             engine = nil
+            reloadWhenReady = false
             phase = "error"
             render()
         }
@@ -393,6 +485,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         pill.update(phase: phase, partial: status["partial"] as? String ?? "",
                     liveTranscript: status["live_transcript"] as? Bool ?? false)
+        sendPendingReload()
         render()
     }
 
@@ -474,7 +567,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -573,7 +666,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pillStyles.addItem(row)
         }
         add("Pill", image: symbol("capsule")).submenu = pillStyles
-        add("Config Folder", action: #selector(openConfig), image: symbol("gearshape"))
+        if !settings.isEmpty { add("Settings", image: symbol("slider.horizontal.3")).submenu = settingsMenu() }
+        add("Config Folder", image: symbol("gearshape")).submenu = configMenu()
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
         add("Dictionary", action: #selector(openDictionary), image: symbol("character.book.closed"))
         add("Log", action: #selector(openLog), image: symbol("doc.text"))
@@ -584,6 +678,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         loadLastTranscription()
+        loadSettings()
         rendered = ""
         render()
         menuIsOpen = true
@@ -631,22 +726,23 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return flat.count <= limit ? flat : String(flat.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    /// The `clean` text of the newest history record, read from the file's tail
-    /// so a long history stays cheap. Bytes are split on newlines before decoding
-    /// so a window boundary inside a multi-byte character cannot break the read.
+    /// The `clean` text of the newest dictation in the SQLite history. The old
+    /// transcriptions.jsonl stopped growing when history moved there (#25), so
+    /// reading it showed a dictation from weeks before.
     private func loadLastTranscription() {
-        let url = home.appendingPathComponent("history/transcriptions.jsonl")
-        guard let handle = try? FileHandle(forReadingFrom: url) else { lastTranscription = nil; return }
-        defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-        let window: UInt64 = 64 * 1024
-        try? handle.seek(toOffset: size > window ? size - window : 0)
-        guard let data = try? handle.readToEnd(),
-              let line = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true).last,
-              let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let clean = record["clean"] as? String, !clean.isEmpty
-        else { lastTranscription = nil; return }
-        lastTranscription = clean
+        lastTranscription = nil
+        var db: OpaquePointer?
+        let path = home.appendingPathComponent("history/history.sqlite").path
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 200)  // the engine may be writing the row this moment
+        var row: OpaquePointer?
+        let query = "SELECT clean FROM transcriptions WHERE clean IS NOT NULL AND clean != '' ORDER BY id DESC LIMIT 1"
+        guard sqlite3_prepare_v2(db, query, -1, &row, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(row) }
+        if sqlite3_step(row) == SQLITE_ROW, let text = sqlite3_column_text(row, 0) {
+            lastTranscription = String(cString: text)
+        }
     }
 
     @objc private func choosePill(_ sender: NSMenuItem) {
@@ -703,7 +799,118 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         render()
     }
 
+    /// Each switch writes one line of config.toml through `v2t config set`, so
+    /// the file stays the one place settings live.
+    private func settingsMenu() -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false  // rows that depend on another switch grey out
+        func row(_ title: String, _ key: String, _ value: String, on: Bool, enabled: Bool = true, indent: Int = 0) {
+            let item = NSMenuItem(title: title, action: #selector(chooseSetting(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [key, value]
+            item.state = on ? .on : .off
+            item.isEnabled = enabled
+            item.indentationLevel = indent
+            submenu.addItem(item)
+        }
+        func toggle(_ title: String, _ key: String, enabled: Bool = true) {
+            let on = settings[key] as? Bool ?? false
+            row(title, key, on ? "false" : "true", on: on, enabled: enabled)
+        }
+        let streaming = settings["transcription.streaming_mode"] as? String == "hacky"
+        row("Transcribe While Holding", "transcription.streaming_mode", streaming ? "off" : "hacky", on: streaming)
+        toggle("Live Words in Bubble (Experimental)", "transcription.live_transcript", enabled: streaming)
+        submenu.addItem(.separator())
+        let cleanup = settings["cleanup.enabled"] as? Bool ?? false
+        toggle("Clean Up Text", "cleanup.enabled")
+        let mode = settings["cleanup.mode"] as? String
+        row("Casual", "cleanup.mode", "casual", on: mode == "casual", enabled: cleanup, indent: 1)
+        row("Strict", "cleanup.mode", "strict", on: mode == "strict", enabled: cleanup, indent: 1)
+        submenu.addItem(.separator())
+        let keys = NSMenu()
+        let hotkey = settings["hotkey.key"] as? String
+        for (value, title) in Self.hotkeys {
+            let item = NSMenuItem(title: title, action: #selector(chooseSetting(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["hotkey.key", value]
+            item.state = value == hotkey ? .on : .off
+            keys.addItem(item)
+        }
+        let hotkeyRow = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
+        hotkeyRow.submenu = keys
+        submenu.addItem(hotkeyRow)
+        submenu.addItem(.separator())
+        toggle("Save History", "behavior.save_history")
+        toggle("Keep Last Recording", "behavior.keep_last_audio")
+        if needsRestart {
+            let running = status["config"] as? String
+            let note = status["reload"] as? Bool == false ? "This v2t's launch flags override these settings"
+                : running.map { "This v2t reads \(($0 as NSString).abbreviatingWithTildeInPath)" }
+                ?? (externalEngine ? "Restart v2t in its terminal to apply" : "Stop and start v2t to apply")
+            submenu.addItem(.separator())
+            let item = NSMenuItem(title: note, action: nil, keyEquivalent: "")
+            item.attributedTitle = secondary(note)
+            item.isEnabled = false
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    private static let hotkeys = [
+        ("fn", "fn (Globe)"), ("cmd_r", "Right Command"), ("cmd_l", "Left Command"),
+        ("alt_r", "Right Option"), ("alt_l", "Left Option"), ("ctrl_r", "Right Control"), ("ctrl_l", "Left Control"),
+    ]
+
+    private func configMenu() -> NSMenu {
+        let submenu = NSMenu()
+        let path = (home.path as NSString).abbreviatingWithTildeInPath
+        let location = NSMenuItem(title: path, action: nil, keyEquivalent: "")
+        location.attributedTitle = secondary(path)
+        submenu.addItem(location)
+        for (title, action) in [("Open in Finder", #selector(openConfig)), ("Copy Path", #selector(copyConfigPath)),
+                                ("Edit config.toml", #selector(editConfig))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
     @objc private func openConfig() { NSWorkspace.shared.open(home) }
+    @objc private func copyConfigPath() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(home.path, forType: .string)
+    }
+
+    /// The file `v2t config` reported, else the engine's own rule: an inherited
+    /// V2T_CONFIG, else the baked one if it exists, else home/config.toml.
+    private var editableConfigFile: URL {
+        if let configFile { return configFile }
+        let baked = (Bundle.main.object(forInfoDictionaryKey: "V2TConfig") as? String)
+            .flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+        let custom = ProcessInfo.processInfo.environment["V2T_CONFIG"] ?? baked
+        return custom.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+            ?? home.appendingPathComponent("config.toml")
+    }
+
+    /// Opens config.toml in the default text editor, writing the commented
+    /// template first when there is no file yet.
+    @objc private func editConfig() {
+        let file = editableConfigFile
+        if !FileManager.default.fileExists(atPath: file.path), let python = pythonExecutable {
+            let initialise = Process()
+            initialise.executableURL = URL(fileURLWithPath: python)
+            initialise.arguments = ["-m", "v2t", "config", "--init"]
+            initialise.environment = engineEnvironment(python: python)
+            initialise.standardOutput = FileHandle.nullDevice
+            try? initialise.run()
+            initialise.waitUntilExit()
+        }
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-t", file.path]
+        try? open.run()
+    }
     @objc private func openHistory() { NSWorkspace.shared.open(home.appendingPathComponent("history")) }
     @objc private func openDictionary() {
         let url = home.appendingPathComponent("dictionary.txt")
