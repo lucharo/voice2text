@@ -1958,6 +1958,89 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
+    def test_config_set_without_a_file_starts_from_the_template_and_changes_one_line(self):
+        config.set_value("cleanup.mode", "strict")
+
+        written = config.config_path().read_text().splitlines()
+        template = config.DEFAULT_TOML.splitlines()
+        changed = [(old, new) for old, new in zip(template, written) if old != new]
+        self.assertEqual(len(written), len(template))
+        self.assertEqual(changed, [(
+            'mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)',
+            'mode = "strict"        # casual (punctuation + fillers only, default) | strict (restructures)',
+        )])
+        self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
+
+    def test_config_set_adds_a_missing_key_to_its_section_and_a_missing_section_at_the_end(self):
+        config.write_config('[cleanup]\nenabled = true\n\n[hotkey]\nkey = "fn"\n')
+
+        config.set_value("cleanup.mode", "strict")
+        config.set_value("behavior.keep_last_audio", "false")
+
+        self.assertEqual(
+            config.config_path().read_text(),
+            '[cleanup]\nenabled = true\nmode = "strict"\n\n[hotkey]\nkey = "fn"\n\n'
+            "[behavior]\nkeep_last_audio = false\n",
+        )
+
+    def test_config_set_parses_booleans_and_integers(self):
+        config.set_value("transcription.live_transcript", "true")
+        config.set_value("audio.sample_rate", "48000")
+
+        self.assertEqual(
+            {k: v for k, v in config.settings().items() if k in ("transcription.live_transcript", "audio.sample_rate")},
+            {"transcription.live_transcript": True, "audio.sample_rate": 48000},
+        )
+
+    def test_config_set_refuses_bad_values_and_leaves_the_file_alone(self):
+        config.write_config('[hotkey]\nkey = "fn"\n')
+        for setting, value, message in (
+            ("hotkey.key", "bogus", "invalid hotkey 'bogus'"),
+            ("cleanup.enabled", "yes", "cleanup.enabled must be true or false"),
+            ("audio.sample_rate", "fast", "audio.sample_rate must be an integer"),
+            ("nope.key", "1", "unknown setting 'nope.key'"),
+        ):
+            with self.subTest(setting=setting), self.assertRaises(SystemExit) as refused:
+                config.set_value(setting, value)
+            self.assertIn(message, str(refused.exception))
+        self.assertEqual(config.config_path().read_text(), '[hotkey]\nkey = "fn"\n')
+
+    def test_config_set_writes_through_a_symlinked_config(self):
+        target = Path(self.tempdir.name) / "dotfiles-config.toml"
+        target.write_text('[hotkey]\nkey = "fn"\n')
+        config.config_path().symlink_to(target)
+
+        config.set_value("hotkey.key", "cmd_r")
+
+        self.assertTrue(config.config_path().is_symlink())
+        self.assertEqual(target.read_text(), '[hotkey]\nkey = "cmd_r"\n')
+
+    def test_config_json_prints_paths_and_every_setting_after_a_set(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = cli.cmd_config(["set", "hotkey.key", "alt_r", "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "home": self.tempdir.name,
+            "config": str(config.config_path()),
+            "settings": {
+                "transcription.backend": "parakeet", "transcription.model": "",
+                "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
+                "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
+                "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
+                "behavior.pause_music": False, "behavior.save_history": True,
+                "behavior.keep_last_audio": True, "ollama.url": "http://localhost:11434",
+            },
+        })
+
+    def test_config_set_needs_a_key_and_a_value(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+            cli.cmd_config(["set", "hotkey.key"])
+
+        self.assertEqual(refused.exception.code, 2)
+        self.assertFalse(config.config_path().exists())
+
     def test_setup_help_prints_usage_and_asks_nothing(self):
         output = io.StringIO()
         with (

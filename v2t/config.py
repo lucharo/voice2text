@@ -15,6 +15,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import socket
 import sqlite3
 import tempfile
@@ -322,6 +323,84 @@ def write_config(text: str, path: Path | None = None) -> Path:
     path.write_text(text)
     path.chmod(0o600)
     return path
+
+
+def settings(cfg: Config | None = None) -> dict:
+    """The effective config keyed as the file spells it: `cleanup.mode`."""
+    cfg = cfg or load()
+    return {
+        f"{section}.{key}": getattr(cfg, field)
+        for section, mapping in _SECTIONS.items()
+        for key, field in mapping.items()
+    }
+
+
+def set_value(setting: str, raw: str) -> Config:
+    """Set one `section.key` in config.toml, as the menu app's switches do.
+
+    Only that line changes, so comments and other keys survive; a missing file
+    starts from the commented template. The value is parsed to the default's
+    type and the whole config validated before anything is written.
+    """
+    section, _, key = setting.partition(".")
+    field = _SECTIONS.get(section, {}).get(key)
+    if field is None:
+        known = ", ".join(f"{s}.{k}" for s, m in _SECTIONS.items() for k in m)
+        raise SystemExit(f"unknown setting {setting!r}; choose: {known}")
+    default = getattr(Config(), field)
+    if isinstance(default, bool):
+        if raw not in ("true", "false"):
+            raise SystemExit(f"{setting} must be true or false")
+        value, literal = raw == "true", raw
+    elif isinstance(default, int):
+        try:
+            value = int(raw)
+        except ValueError:
+            raise SystemExit(f"{setting} must be an integer") from None
+        literal = str(value)
+    else:
+        value, literal = raw, json.dumps(raw)  # a JSON string is a TOML basic string
+    cfg = load({field: value})
+    path = config_path().resolve()  # a symlinked config (dotfiles) keeps its link
+    text = _set_line(path.read_text() if path.exists() else DEFAULT_TOML, section, key, literal)
+    if tomllib.loads(text).get(section, {}).get(key) != value:
+        raise SystemExit(f"could not write {setting} to {path}")
+    _config_parent(path)
+    fd, temp = tempfile.mkstemp(dir=path.parent)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+    return cfg
+
+
+_SECTION_HEADER = re.compile(r"\s*\[([^\]]+)\]\s*(#.*)?$")
+
+
+def _set_line(text: str, section: str, key: str, literal: str) -> str:
+    """Replace `key`'s value in `[section]`, keeping its trailing comment; add the
+    key at the end of the section, or the section at the end of the file."""
+    lines = text.splitlines()
+    assignment = re.compile(rf'(\s*{re.escape(key)}\s*=\s*)("(?:[^"\\]|\\.)*"|[^\s#]+)(.*)$')
+    current, last_in_section = None, None
+    for index, line in enumerate(lines):
+        if header := _SECTION_HEADER.match(line):
+            current = header.group(1).strip()
+            if current == section:
+                last_in_section = index
+            continue
+        if current != section:
+            continue
+        if match := assignment.match(line):
+            lines[index] = match.group(1) + literal + match.group(3)
+            return "\n".join(lines) + "\n"
+        if line.strip():
+            last_in_section = index
+    if last_in_section is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + [f"[{section}]", f"{key} = {literal}"]
+    else:
+        lines.insert(last_in_section + 1, f"{key} = {literal}")
+    return "\n".join(lines) + "\n"
 
 
 # --- history: one big table, one row per dictation or file transcription ----
