@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import SQLite3
 
 @main
 struct Voice2TextApp {
@@ -709,22 +710,23 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return flat.count <= limit ? flat : String(flat.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    /// The `clean` text of the newest history record, read from the file's tail
-    /// so a long history stays cheap. Bytes are split on newlines before decoding
-    /// so a window boundary inside a multi-byte character cannot break the read.
+    /// The `clean` text of the newest dictation in the SQLite history. The old
+    /// transcriptions.jsonl stopped growing when history moved there (#25), so
+    /// reading it showed a dictation from weeks before.
     private func loadLastTranscription() {
-        let url = home.appendingPathComponent("history/transcriptions.jsonl")
-        guard let handle = try? FileHandle(forReadingFrom: url) else { lastTranscription = nil; return }
-        defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-        let window: UInt64 = 64 * 1024
-        try? handle.seek(toOffset: size > window ? size - window : 0)
-        guard let data = try? handle.readToEnd(),
-              let line = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true).last,
-              let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let clean = record["clean"] as? String, !clean.isEmpty
-        else { lastTranscription = nil; return }
-        lastTranscription = clean
+        lastTranscription = nil
+        var db: OpaquePointer?
+        let path = home.appendingPathComponent("history/history.sqlite").path
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 200)  // the engine may be writing the row this moment
+        var row: OpaquePointer?
+        let query = "SELECT clean FROM transcriptions WHERE clean IS NOT NULL AND clean != '' ORDER BY id DESC LIMIT 1"
+        guard sqlite3_prepare_v2(db, query, -1, &row, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(row) }
+        if sqlite3_step(row) == SQLITE_ROW, let text = sqlite3_column_text(row, 0) {
+            lastTranscription = String(cString: text)
+        }
     }
 
     @objc private func choosePill(_ sender: NSMenuItem) {
