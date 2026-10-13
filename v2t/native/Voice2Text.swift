@@ -425,6 +425,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let shouldQuit = self.terminationPending
+                self.reloadWhenReady = false  // the next engine reads the latest config.toml itself
                 self.engine = nil
                 self.logHandle?.closeFile()
                 self.logHandle = nil
@@ -443,6 +444,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try process.run()
         } catch {
             engine = nil
+            reloadWhenReady = false
             phase = "error"
             render()
         }
@@ -879,11 +881,22 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(home.path, forType: .string)
     }
+
+    /// The file `v2t config` reported, else the engine's own rule: an inherited
+    /// V2T_CONFIG, else the baked one if it exists, else home/config.toml.
+    private var editableConfigFile: URL {
+        if let configFile { return configFile }
+        let baked = (Bundle.main.object(forInfoDictionaryKey: "V2TConfig") as? String)
+            .flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+        let custom = ProcessInfo.processInfo.environment["V2T_CONFIG"] ?? baked
+        return custom.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+            ?? home.appendingPathComponent("config.toml")
+    }
+
     /// Opens config.toml in the default text editor, writing the commented
     /// template first when there is no file yet.
     @objc private func editConfig() {
-        let custom = pythonExecutable.flatMap { engineEnvironment(python: $0)["V2T_CONFIG"] }
-        let file = configFile ?? custom.map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("config.toml")
+        let file = editableConfigFile
         if !FileManager.default.fileExists(atPath: file.path), let python = pythonExecutable {
             let initialise = Process()
             initialise.executableURL = URL(fileURLWithPath: python)
