@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.13
+
+- **The bubble shows on every desktop again.** After a day of running, the bubble could end up stuck on one desktop (one macOS Space), so on any other desktop, or over a full-screen app, which macOS runs as its own desktop, it never appeared, though the log said it had. Quitting and reopening v2t cleared it. Now, when the bubble finds itself off the desktop you are on, v2t replaces it with a fresh one, which joins every desktop, and logs `pill rebuilt`. Possibly the cause of #46, which only showed up after the app had been running a while.
+
 ## 0.5.12
 
 - **The pill finds the caret in Slack, Brave, Firefox and Zen.** Before, v2t asked Electron apps for their accessibility tree every half second, and each request restarts Electron's 2 s countdown before the tree is built, so in Slack it never arrived and the pill sat at the bottom of the screen. Now each app is asked once per dictation. Browsers ignored that request altogether; they are now asked through the switch VoiceOver uses, on only while you dictate, because it slows window managers such as Amethyst. Firefox and Zen report the caret on the page rather than on the field, and v2t now reads it there.
