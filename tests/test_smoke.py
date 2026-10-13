@@ -14,6 +14,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import threading
 import tomllib
 import types
 import unittest
@@ -555,6 +556,76 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual((before, while_busy, when_idle), (False, False, True))
         execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_a_reload_waits_until_nothing_is_in_hand_then_refuses_new_recordings(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        unrequested = voice._begin_reload()
+        voice.request_reload()
+        busy = {}
+        for name, arrange, undo in (
+            ("recording", lambda: setattr(voice, "recording", True), lambda: setattr(voice, "recording", False)),
+            ("processing", lambda: setattr(voice, "processing", True), lambda: setattr(voice, "processing", False)),
+            ("queued", lambda: voice.jobs.put(("frames", 1.0)), lambda: voice.jobs.get_nowait()),
+            ("undo window", lambda: setattr(voice, "cancelled_audio", ("frames", 1.0)), lambda: setattr(voice, "cancelled_audio", None)),
+            ("double tap", lambda: setattr(voice, "last_tap_at", app.time.perf_counter()), lambda: setattr(voice, "last_tap_at", 0.0)),
+        ):
+            arrange()
+            busy[name] = voice._begin_reload()
+            undo()
+
+        idle = voice._begin_reload()
+        with mock.patch.object(app.sd, "InputStream") as input_stream:
+            voice.start_recording(show=False)
+        with mock.patch.object(app.os, "execv") as execv:
+            voice._reload()
+
+        self.assertEqual(
+            (unrequested, busy, idle),
+            (False, {"recording": False, "processing": False, "queued": False, "undo window": False, "double tap": False}, True),
+        )
+        input_stream.assert_not_called()
+        execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_the_run_loop_reloads_on_sighup_and_status_says_it_can(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        deadline = app.time.perf_counter() + 5  # a loop that never reloads fails, not hangs
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return app.time.perf_counter() < deadline
+
+        handlers = {}
+        reloads = []
+
+        def reload():
+            reloads.append(True)
+            voice.stopping = True  # what exec would end: leave the loop
+
+        def warmup():
+            handlers[signal.SIGHUP](signal.SIGHUP, None)  # the menu app's signal arrives
+
+        with (
+            mock.patch.object(app, "_listener", return_value=Listener()),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(voice, "warmup", side_effect=warmup),
+            mock.patch.object(voice, "_reload", side_effect=reload),
+            mock.patch.object(app.config, "write_status") as write_status,
+            contextlib.suppress(RuntimeError),
+        ):
+            voice.run()
+
+        self.assertEqual(reloads, [True])
+        self.assertTrue(write_status.call_args_list[0].args[0]["reload"])
 
     def test_the_run_loop_restarts_the_engine_when_the_mic_is_stuck(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -1326,6 +1397,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "mode": "casual",
                     "streaming": False,
                     "live_transcript": False,
+                    "reload": True,
                     "error": "",
                     "warning": "",
                     "words": 2,
@@ -1350,6 +1422,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "mode": "casual",
                 "streaming": False,
                 "live_transcript": False,
+                "reload": True,
                 "error": "",
                 "warning": "",
             },
@@ -1384,6 +1457,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "mode": "casual",
                     "streaming": available,
                     "live_transcript": available and live,
+                    "reload": True,
                     "error": "",
                     "warning": "",
                 }
@@ -2004,6 +2078,49 @@ class V2TSmokeTests(unittest.TestCase):
                 config.set_value(setting, value)
             self.assertIn(message, str(refused.exception))
         self.assertEqual(config.config_path().read_text(), '[hotkey]\nkey = "fn"\n')
+
+    def test_config_set_finds_quoted_sections_and_keys(self):
+        config.write_config('["cleanup"]\n\'enabled\' = true  # on\n"mode" = \'casual\'\n')
+
+        config.set_value("cleanup.enabled", "false")
+        config.set_value("cleanup.mode", "strict")
+
+        self.assertEqual(
+            config.config_path().read_text(),
+            '["cleanup"]\n\'enabled\' = false  # on\n"mode" = "strict"\n',
+        )
+
+    def test_config_set_writes_any_unicode_path(self):
+        config.set_value("transcription.model", "/models/whisper-🎙️-ünï")
+
+        self.assertEqual(config.settings()["transcription.model"], "/models/whisper-🎙️-ünï")
+
+    def test_config_setters_take_turns_so_neither_change_is_lost(self):
+        config.write_config('[cleanup]\nmode = "casual"\n\n[hotkey]\nkey = "fn"\n')
+        first_read, release = threading.Event(), threading.Event()
+        real_set_line = config._set_line
+
+        def slow_first_writer(text, section, key, literal):
+            if section == "cleanup":  # the first setter has read the file; hold it there
+                first_read.set()
+                release.wait(2)
+            return real_set_line(text, section, key, literal)
+
+        with mock.patch.object(config, "_set_line", side_effect=slow_first_writer):
+            first = threading.Thread(target=config.set_value, args=("cleanup.mode", "strict"))
+            first.start()
+            first_read.wait(2)
+            second = threading.Thread(target=config.set_value, args=("hotkey.key", "cmd_r"))
+            second.start()
+            second.join(0.3)  # without the lock it reads the old file and finishes here
+            release.set()
+            first.join(2)
+            second.join(2)
+
+        self.assertEqual(
+            {k: v for k, v in config.settings().items() if k in ("cleanup.mode", "hotkey.key")},
+            {"cleanup.mode": "strict", "hotkey.key": "cmd_r"},
+        )
 
     def test_config_set_writes_through_a_symlinked_config(self):
         target = Path(self.tempdir.name) / "dotfiles-config.toml"

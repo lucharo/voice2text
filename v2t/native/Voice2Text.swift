@@ -35,8 +35,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settings: [String: Any] = [:]
     private var configFile: URL?
     private var configDate: Date?
-    /// A setting changed while the engine runs: it restarts, once idle, to apply it.
-    private var restartPending = false
+    /// The engine that was running, too old to reload itself, when a setting changed.
+    private var staleEnginePID: Int?
+    private var needsRestart: Bool { staleEnginePID != nil && status["pid"] as? Int == staleEnginePID }
 
     // Info.plist bakes the installing user's paths. A bundle built and signed on
     // another Mac (the only way to get a non-ad-hoc signature onto a managed
@@ -363,18 +364,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func chooseSetting(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
         guard runConfig(["set", pair[0], pair[1]]) else { NSSound.beep(); return }
-        if engine != nil { restartPending = true }
+        // The engine reads config.toml once, at start. SIGHUP asks it to restart
+        // itself once nothing is in hand, so a dictation is never cut off.
+        if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
+            if status["reload"] as? Bool == true { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+        }
         rendered = ""
-        restartIfIdle()
         render()
-    }
-
-    /// The engine reads its config once, at start: restart it between dictations.
-    private func restartIfIdle() {
-        guard restartPending, let engine, phase == "idle" else { return }
-        appendLog("restarting the engine to apply a setting")
-        terminateEngine(engine)
-        phase = "stopping"
     }
 
     private func launchEngine() {
@@ -406,16 +402,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let shouldQuit = self.terminationPending
-                let restart = self.restartPending
-                self.restartPending = false
                 self.engine = nil
                 self.logHandle?.closeFile()
                 self.logHandle = nil
                 self.phase = "off"
                 if shouldQuit {
                     NSApp.reply(toApplicationShouldTerminate: true)
-                } else if restart {
-                    self.start()
                 } else {
                     self.refresh()
                 }
@@ -434,7 +426,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func stop() {
-        restartPending = false
         if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
@@ -469,7 +460,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         pill.update(phase: phase, partial: status["partial"] as? String ?? "",
                     liveTranscript: status["live_transcript"] as? Bool ?? false)
-        restartIfIdle()
         render()
     }
 
@@ -551,7 +541,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(restartPending)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -825,9 +815,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         submenu.addItem(.separator())
         toggle("Save History", "behavior.save_history")
         toggle("Keep Last Recording", "behavior.keep_last_audio")
-        let note = externalEngine ? "Restart v2t in its terminal to apply"
-            : restartPending ? "Applies after this dictation" : nil
-        if let note {
+        if needsRestart {
+            let note = externalEngine ? "Restart v2t in its terminal to apply" : "Stop and start v2t to apply"
             submenu.addItem(.separator())
             let item = NSMenuItem(title: note, action: nil, keyEquivalent: "")
             item.attributedTitle = secondary(note)

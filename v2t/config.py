@@ -359,33 +359,47 @@ def set_value(setting: str, raw: str) -> Config:
             raise SystemExit(f"{setting} must be an integer") from None
         literal = str(value)
     else:
-        value, literal = raw, json.dumps(raw)  # a JSON string is a TOML basic string
-    cfg = load({field: value})
-    path = config_path().resolve()  # a symlinked config (dotfiles) keeps its link
-    text = _set_line(path.read_text() if path.exists() else DEFAULT_TOML, section, key, literal)
-    if tomllib.loads(text).get(section, {}).get(key) != value:
-        raise SystemExit(f"could not write {setting} to {path}")
-    _config_parent(path)
-    fd, temp = tempfile.mkstemp(dir=path.parent)
-    with os.fdopen(fd, "w") as handle:
-        handle.write(text)
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+        # A JSON string is a TOML basic string; ensure_ascii would write an emoji
+        # as a surrogate pair, which TOML rejects.
+        value, literal = raw, json.dumps(raw, ensure_ascii=False)
+    # One writer at a time: two setters reading the same file would each put
+    # back the other's old value.
+    with open(_private_dir(run_dir()) / "config.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        cfg = load({field: value})
+        path = config_path().resolve()  # a symlinked config (dotfiles) keeps its link
+        text = _set_line(path.read_text() if path.exists() else DEFAULT_TOML, section, key, literal)
+        try:
+            written = tomllib.loads(text).get(section, {}).get(key)
+        except tomllib.TOMLDecodeError as error:
+            raise SystemExit(f"could not write {setting} to {path}: {error}") from None
+        if written != value:
+            raise SystemExit(f"could not write {setting} to {path}")
+        _config_parent(path)
+        fd, temp = tempfile.mkstemp(dir=path.parent)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
     return cfg
 
 
-_SECTION_HEADER = re.compile(r"\s*\[([^\]]+)\]\s*(#.*)?$")
+# `[cleanup]`, `["cleanup"]` or `['cleanup']`; not `[[arrays]]`.
+_SECTION_HEADER = re.compile(r"""\s*\[\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))\s*\]\s*(#.*)?$""")
 
 
 def _set_line(text: str, section: str, key: str, literal: str) -> str:
     """Replace `key`'s value in `[section]`, keeping its trailing comment; add the
     key at the end of the section, or the section at the end of the file."""
     lines = text.splitlines()
-    assignment = re.compile(rf'(\s*{re.escape(key)}\s*=\s*)("(?:[^"\\]|\\.)*"|[^\s#]+)(.*)$')
+    name = re.escape(key)
+    assignment = re.compile(
+        rf"""(\s*(?:{name}|"{name}"|'{name}')\s*=\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s#]+)(.*)$"""
+    )
     current, last_in_section = None, None
     for index, line in enumerate(lines):
         if header := _SECTION_HEADER.match(line):
-            current = header.group(1).strip()
+            current = next(group for group in header.groups()[:3] if group)
             if current == section:
                 last_in_section = index
             continue
