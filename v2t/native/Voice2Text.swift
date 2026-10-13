@@ -738,8 +738,7 @@ enum PillStyle: String, CaseIterable {
 /// cleans up. The panel never becomes key and ignores the mouse, so focus,
 /// and with it the paste, stays in the app the user is typing in.
 final class Pill: NSObject {
-    private let panel = NSPanel(
-        contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    private var panel = Pill.makePanel()
     private let view = PillView()
     private var ticker: Timer?
     private var visible = false
@@ -773,8 +772,9 @@ final class Pill: NSObject {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "pillPlacement"); hide() }
     }
 
-    override init() {
-        super.init()
+    private static func makePanel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -783,6 +783,11 @@ final class Pill: NSObject {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        return panel
+    }
+
+    override init() {
+        super.init()
         panel.contentView = view
         // Drawn as a light chip: an inline bezel reads as disabled in a panel
         // that is never key.
@@ -853,6 +858,20 @@ final class Pill: NSObject {
         panel.invalidateShadow()
         panel.alphaValue = 0
         panel.orderFrontRegardless()
+        // A day-old panel was found pinned to one desktop despite joining all
+        // of them, so it never showed on the others (2026-10-13, cause unknown);
+        // a new panel joins every desktop.
+        if !panel.isOnActiveSpace {
+            log("rebuilt: was off the active space")
+            let stale = panel
+            panel = Self.makePanel()
+            panel.ignoresMouseEvents = stale.ignoresMouseEvents
+            stale.orderOut(nil)
+            panel.contentView = view
+            position()
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+        }
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
         visible = true
         // Half the original 20 Hz history speed, with two-sample smoothing.
