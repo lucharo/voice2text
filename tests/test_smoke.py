@@ -2080,14 +2080,14 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(config.config_path().read_text(), '[hotkey]\nkey = "fn"\n')
 
     def test_config_set_finds_quoted_sections_and_keys(self):
-        config.write_config('["cleanup"]\n\'enabled\' = true  # on\n"mode" = \'casual\'\n')
+        config.write_config('["cleanup"]\n\'enabled\' = true  # on\n"model" = \'my model # v1\'  # local\n')
 
         config.set_value("cleanup.enabled", "false")
-        config.set_value("cleanup.mode", "strict")
+        config.set_value("cleanup.model", "qwen")
 
         self.assertEqual(
             config.config_path().read_text(),
-            '["cleanup"]\n\'enabled\' = false  # on\n"mode" = "strict"\n',
+            '["cleanup"]\n\'enabled\' = false  # on\n"model" = "qwen"  # local\n',
         )
 
     def test_config_set_writes_any_unicode_path(self):
