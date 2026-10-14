@@ -331,6 +331,9 @@ class ParakeetMLX:
         from v2t import backends
 
         self.backends = backends
+        # v2t quantizes Parakeet to PARAKEET_BITS at load since 0.5.15; the grid's
+        # parakeet-mlx rows are bf16, so this process keeps full precision
+        backends._quantized = lambda model: model
         if (Path(_snapshot(repo)) / "config.json").exists():
             self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
         else:
