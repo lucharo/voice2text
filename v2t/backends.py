@@ -22,6 +22,17 @@ T = TypeVar("T")
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
 
+# Parakeet's Linear layers are quantized to this many bits at load (group size 64),
+# all but the encoder's self-attention: streaming swaps that module for a new one
+# and loads the old weights into it, which quantized weights do not fit. The
+# convolutions stay bf16. On 450 labelled clips (LibriSpeech clean and other,
+# FLEURS Spanish; M4 Pro, 2026-10-14) this took the weights in memory from 1254 to
+# 867 MB and the decode ~30% faster (per-clip ratio 0.71, interleaved), with WER
+# 2.03 / 4.28 / 5.40% against 1.94 / 4.21 / 5.42% in bf16. Quantizing attention too
+# (749 MB, ratio 0.68) breaks streaming; 4-bit (479 MB) cost 0.3 to 0.5 points and
+# was no faster than 8-bit.
+PARAKEET_BITS = 8
+
 
 def cached_locally(repo_id: str) -> bool:
     """True when the Hugging Face cache already holds a snapshot of this model."""
@@ -247,6 +258,23 @@ def _decode_pcm(model, pcm: np.ndarray) -> str:
     return model.generate(mel)[0].text.strip()
 
 
+def _quantized(model):
+    """Quantize Parakeet's Linear layers to PARAKEET_BITS in place (see there)."""
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    nn.quantize(
+        model,
+        group_size=64,
+        bits=PARAKEET_BITS,
+        class_predicate=lambda path, m: isinstance(m, nn.Linear)
+        and m.weight.shape[-1] % 64 == 0
+        and "self_attn" not in path,
+    )
+    mx.eval(model.parameters())
+    return model
+
+
 def release_cache() -> None:
     """Hand MLX's cache of freed buffers back to the system.
 
@@ -333,7 +361,7 @@ class ParakeetSTT:
                 "parakeet-mlx missing — reinstall voice2text (Apple Silicon only)."
             ) from e
         repo = model or self.default_model
-        self.model = load_cache_first(repo, lambda: from_pretrained(repo))
+        self.model = _quantized(load_cache_first(repo, lambda: from_pretrained(repo)))
 
     @property
     def sample_rate(self) -> int:
