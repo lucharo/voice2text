@@ -55,6 +55,12 @@ STREAM_FEED_S = 0.5  # audio handed to a streaming session between drains
 TAKEOVER_S = 60  # v2t keeps the streamed text from here up (backends.STREAM_TAKEOVER_S)
 CHUNK_S = 30  # the `chunked` pass: decode each ~30 s piece while recording
 CHUNK_SEARCH_S = 5  # cut at the quietest 100 ms within this many seconds of the mark
+# Whole-file Parakeet attention grows with the square of the length: measured
+# 2026-10-14, 6.8 GB at 336 s and over 18 GB (31 GB unchecked, which took the Mac
+# down) at 738 s. Clips longer than this (eight `wispr` dictations, ls-long's
+# longest) go through the runtime's own long-file chunking, in pieces this long,
+# for the systems added from 2026-10-14; the earlier rows decoded them whole.
+WHOLE_FILE_MAX_S = 300
 
 # name -> runtime, repository, mode. `offline` decodes the whole clip after
 # release; `hacky` is v2t as shipped (Parakeet's local-attention stream, 5 s
@@ -334,7 +340,12 @@ class ParakeetMLX:
 
     def run(self, clip: dict) -> dict:
         t0 = time.perf_counter()
-        text = self.stt.transcribe(clip["path"])
+        if self.mode == "hacky" or clip["duration_s"] <= WHOLE_FILE_MAX_S:
+            text = self.stt.transcribe(clip["path"])
+        else:  # parakeet-mlx's own chunking (15 s overlap, its default)
+            text = self.stt.model.transcribe(
+                clip["path"], chunk_duration=WHOLE_FILE_MAX_S
+            ).text.strip()
         out = {"offline": text, "offline_s": time.perf_counter() - t0}
         if self.mode == "hacky":
             out.update(self._stream(load_audio(clip["path"])))
@@ -465,8 +476,12 @@ class MLXAudio:
         if "parakeet" in type(self.model).__name__.lower():
             import mlx.core as mx
 
-            # its generate takes a path or an mx.array
-            return self.model.generate(mx.array(audio)).text.strip()
+            # its generate takes a path or an mx.array; past WHOLE_FILE_MAX_S, its
+            # own chunking (2 s overlap, its default)
+            long = len(audio) > WHOLE_FILE_MAX_S * SAMPLE_RATE
+            return self.model.generate(
+                mx.array(audio), chunk_duration=WHOLE_FILE_MAX_S if long else None
+            ).text.strip()
         if "cohere" in type(self.model).__module__:
             # no language detection: it must be told (defaults to English)
             return self.model.generate(audio, language=self.lang).text.strip()
