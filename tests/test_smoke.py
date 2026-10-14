@@ -760,6 +760,90 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIsNotNone(audio_path)
         self.assertFalse(Path(audio_path).exists())
 
+    def test_whole_file_decoding_hands_parakeet_the_array_without_a_wav(self):
+        voice = app.VoiceToText(config.Config(save_history=False))
+        decoded = []
+        voice.stt = types.SimpleNamespace(
+            sample_rate=16000,
+            decode=lambda audio: decoded.append(audio) or "raw words",
+            transcribe=mock.Mock(side_effect=AssertionError("no WAV round trip")),
+        )
+        audio = np.ones((8, 1), dtype=np.float32)
+
+        text = voice._transcribe_whole(audio)
+
+        self.assertEqual(text, "raw words")
+        self.assertEqual(len(decoded), 1)
+        self.assertIs(decoded[0], audio)
+
+    def test_whole_file_decoding_writes_a_wav_when_the_rates_differ(self):
+        voice = app.VoiceToText(config.Config(save_history=False, sample_rate=48000))
+        seen = []
+
+        def transcribe(path):
+            seen.append(wavfile.read(path)[0])
+            return "raw words"
+
+        voice.stt = types.SimpleNamespace(
+            sample_rate=16000,
+            decode=mock.Mock(side_effect=AssertionError("audio is not at 16 kHz")),
+            transcribe=transcribe,
+        )
+
+        text = voice._transcribe_whole(np.ones((8, 1), dtype=np.float32))
+
+        self.assertEqual((text, seen), ("raw words", [48000]))
+
+    def test_parakeet_loads_its_model_quantized(self):
+        loaded = mock.Mock(name="bf16")
+        fake = types.SimpleNamespace(from_pretrained=mock.Mock(return_value=loaded))
+
+        with (
+            mock.patch.dict(sys.modules, {"parakeet_mlx": fake}),
+            mock.patch.object(backends, "cached_locally", return_value=False),
+            mock.patch.object(backends, "_quantized", return_value="q8") as quantize,
+        ):
+            stt = backends.ParakeetSTT("org/parakeet")
+
+        fake.from_pretrained.assert_called_once_with("org/parakeet")
+        quantize.assert_called_once_with(loaded)
+        self.assertEqual(stt.model, "q8")
+
+    def test_parakeet_quantizes_linear_layers_that_fit_the_group_outside_attention(self):
+        class Linear:
+            def __init__(self, inputs):
+                self.weight = np.zeros((4, inputs))
+
+        fake_nn = types.SimpleNamespace(Linear=Linear, quantize=mock.Mock())
+        fake_mx = types.SimpleNamespace(eval=mock.Mock())
+        model = mock.Mock()
+        mlx = types.SimpleNamespace(core=fake_mx, nn=fake_nn)
+
+        with mock.patch.dict(
+            sys.modules, {"mlx": mlx, "mlx.core": fake_mx, "mlx.nn": fake_nn}
+        ):
+            self.assertIs(backends._quantized(model), model)
+
+        kwargs = fake_nn.quantize.call_args.kwargs
+        picks = kwargs.pop("class_predicate")
+        self.assertEqual(
+            (fake_nn.quantize.call_args.args, kwargs),
+            ((model,), {"group_size": 64, "bits": backends.PARAKEET_BITS}),
+        )
+        self.assertEqual(
+            [
+                picks(path, m)
+                for path, m in (
+                    ("encoder.layers.0.feed_forward1.linear1", Linear(1024)),
+                    ("joint.joint_net.2", Linear(80)),
+                    ("encoder.layers.0.self_attn.linear_q", Linear(1024)),
+                    ("encoder.layers.0.conv", object()),
+                )
+            ],
+            [True, False, False, False],
+        )
+        fake_mx.eval.assert_called_once_with(model.parameters())
+
     def test_the_pill_hears_delivering_just_before_the_paste(self):
         voice = app.VoiceToText(config.Config(save_history=False))
         voice.stt = mock.Mock(transcribe=lambda path: "raw words")
@@ -1277,8 +1361,8 @@ class V2TSmokeTests(unittest.TestCase):
         voice.stt, stream = self._streaming_stt(feeds)
         order: list[str] = []
         stream.close.side_effect = lambda: order.append("close") or "streamed words"
-        voice.stt.transcribe = mock.Mock(
-            side_effect=lambda path: order.append("whole") or "whole-file words"
+        voice.stt.decode = mock.Mock(
+            side_effect=lambda audio: order.append("whole") or "whole-file words"
         )
         chunk = int(16000 * backends.STREAM_CHUNK_S)
 
@@ -1351,8 +1435,10 @@ class V2TSmokeTests(unittest.TestCase):
         self.addCleanup(lock.close)
         feeds: list[int] = []
         voice.stt, stream = self._streaming_stt(feeds)
-        voice.stt.decode.side_effect = RuntimeError("metal out of memory")  # the last piece
-        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        voice.stt.decode.side_effect = [  # the last piece fails, then the whole file
+            RuntimeError("metal out of memory"),
+            "whole-file words",
+        ]
         chunk = int(16000 * backends.STREAM_CHUNK_S)
 
         with mock.patch.object(app.sd, "InputStream"):
@@ -1369,7 +1455,11 @@ class V2TSmokeTests(unittest.TestCase):
             self.assertTrue(voice.process_next(timeout=0))
 
         self.assertEqual(feeds, [chunk], "nothing pushed after release")
-        voice.stt.decode.assert_called_once()  # the piece decode raised
+        self.assertEqual(
+            [c.args[0].shape for c in voice.stt.decode.call_args_list],
+            [(chunk + 8000,), (chunk + 8000, 1)],
+            "the piece, then the whole recording",
+        )
         self.assertTrue(stream.closed, "stream released before the fallback decode")
         paste.assert_called_once_with("whole-file words")
         self.assertEqual(config.read_status()["state"], "idle")
@@ -1385,7 +1475,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.addCleanup(lock.close)
         voice.stt, stream = self._streaming_stt([])
         stream.feed.side_effect = RuntimeError("metal out of memory")
-        voice.stt.transcribe = mock.Mock(return_value="whole-file words")
+        voice.stt.decode = mock.Mock(return_value="whole-file words")
         chunk = int(16000 * backends.STREAM_CHUNK_S)
 
         with mock.patch.object(app.sd, "InputStream"):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.15
+
+- **Text arrives sooner after you let go, and Parakeet takes a third less memory.** Under a minute, v2t wrote each recording to a temporary WAV that parakeet-mlx read back through ffmpeg; it now hands the model the audio directly (the same text on 443 of 450 clips; the rest differ by the WAV's 16-bit rounding). Parakeet's feed-forward and output layers now load quantized to 8 bits, which takes the model from 1254 to 867 MB in memory and decodes about 30% faster. Together the median wait after release on short clips fell from 0.166 s to about 0.09 s on an M4 Pro. Word error rate moved from 1.94 / 4.21 / 5.42% to 2.03 / 4.28 / 5.40% on LibriSpeech clean, LibriSpeech other and FLEURS Spanish (450 clips), and long dictations in pieces stayed at 2.3%. The self-attention layers stay at full precision because streaming rebuilds them while you hold the key.
+
 ## 0.5.14
 
 - **Settings in the menu.** A new Settings submenu turns on or off transcribe-while-holding, live words in the bubble (experimental), cleanup and its casual or strict mode, history and the kept recording, and picks the hotkey. Each switch rewrites one line of `config.toml`, keeping your comments, and v2t restarts once the dictation in progress ends so the change applies. `v2t config set cleanup.mode strict` does the same from a terminal, and `v2t config --json` prints every setting.

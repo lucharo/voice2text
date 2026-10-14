@@ -789,7 +789,16 @@ class VoiceToText:
             temp_path.unlink(missing_ok=True)
 
     def _transcribe_whole(self, audio: np.ndarray) -> str:
-        """Whole-file decoding of one recording, through a temporary WAV."""
+        """Whole-file decoding of one recording.
+
+        A backend that decodes arrays at the capture rate (Parakeet) gets the audio
+        as it is: the temporary WAV, read back through ffmpeg, cost 0.166 s against
+        0.121 s median per short clip with the same text (450 clips, 2026-10-14).
+        Anything else goes through a temporary WAV.
+        """
+        rate = getattr(self.stt, "sample_rate", None)
+        if isinstance(rate, int) and rate == self.cfg.sample_rate:
+            return self.stt.decode(audio)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             wavfile.write(
                 f.name, self.cfg.sample_rate, (audio * 32767).astype(np.int16)
@@ -1365,18 +1374,8 @@ class VoiceToText:
         self._set_state("loading-stt")
         t0 = time.perf_counter()
         self.stt = backends.make_stt(self.cfg.backend, self.cfg.stt_model)
-        temp_path = None
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            wavfile.write(
-                f.name,
-                self.cfg.sample_rate,
-                np.zeros(self.cfg.sample_rate, dtype=np.int16),
-            )
-            temp_path = f.name
-        try:
-            self.stt.transcribe(temp_path)
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
+        # one second of silence through the path dictations take
+        self._transcribe_whole(np.zeros(self.cfg.sample_rate, dtype=np.float32))
         logger.success(f"{self.cfg.backend} ready ({time.perf_counter() - t0:.1f}s)")
         if self.can_stream():
             logger.info(
