@@ -14,11 +14,16 @@ dictation on this Mac?**
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |
 | `qwen3-asr-1.7b` (and `-8bit`) | mlx-audio | best open model on the 2026 Open ASR Leaderboard, offline |
+| `cohere-transcribe` | mlx-audio | Cohere Transcribe 03-2026, 2B, Apache-2.0, offline, told each clip's language (it has no language detection). Full precision from `viethang/cohere-transcribe-03-2026`, an ungated mirror of the gated `CohereLabs` checkpoint, because mlx-audio reads that layout; the MLX conversions on the Hub (`beshkenadze/*`, `mlx-community/*`) use mlx-audio-swift or mlx-speech tensor names and come out as noise (2026-10-14) |
+| `parakeet-redux` | mlx-audio | Moondream's ternary (1.58-bit) Parakeet v3, 178 MB, offline. Phone candidate |
+| `phonon-2` (and `-packed`) | fermion-research | Fermion's Parakeet v3 retrained at ~2.1 bits, 164 MB, English only, through its own MLX engine (on mlx-audio's Parakeet graph) in an env of its own. `phonon-2` is the engine's default, which dequantises the encoder to fp16; `-packed` keeps it packed (`FERMION_P2_FAST=tdt16`), the memory a phone would need. Phone candidate |
+| `parakeet-unified-en` | parakeet-mlx | NVIDIA's English Parakeet Unified, offline mode only: `littlebearlabs/parakeet-unified-en-0.6b-mlx` (fp32, NeMo layout) mapped onto stock parakeet-mlx by `grid.load_nemo_layout` and cast to bf16 like every parakeet-mlx row. Its streaming mode is not run |
+
+Each cell from 2026-10-14 also records MLX's peak memory per clip (weights included), the
+report's `peak` column.
 
 Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
 
-- `nvidia/parakeet-unified-en-0.6b`: the int8 MLX build targets a separate C++ engine and the
-  other conversions are 3–6-bit mixes.
 - `nvidia/nemotron-speech-streaming-en-0.6b` via `nemotron-asr-mlx` 0.2.0: its streaming path
   lacks the pre-encode cache and dropped words (45% WER streamed against 20% whole-file on the
   same 28 s LibriSpeech clip). mlx-audio's Nemotron session expects the multilingual prompt layer,
@@ -39,7 +44,10 @@ Each runtime lives in its own environment so their pins never meet v2t's lock:
 ```bash
 uv venv ~/.v2t/eval/grid-envs/mlxaudio && VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio \
   uv pip install mlx-audio==0.5.7 soundfile whisper-normalizer
-VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper run in v2t's own venv
+VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio uv pip install sentencepiece  # Cohere's tokenizer
+VIRTUAL_ENV=.venv uv pip install whisper-normalizer rapidfuzz pyyaml  # Parakeet and Whisper run in v2t's own venv
+uv venv ~/.v2t/eval/grid-envs/phonon && VIRTUAL_ENV=~/.v2t/eval/grid-envs/phonon \
+  uv pip install 'fermion-research[mlx]==0.2.11' soundfile whisper-normalizer rapidfuzz
 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py prepare
 .venv/bin/python utils/asr_grid/grid.py run --system parakeet-v3 --set ls-clean
@@ -48,6 +56,7 @@ VIRTUAL_ENV=.venv uv pip install whisper-normalizer      # Parakeet and Whisper 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py report
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/report_html.py --headline "..."
 .venv/bin/python utils/asr_grid/plot_wait.py               # the README's wait-vs-length chart
+uv run --script utils/asr_grid/plot_pareto.py              # WER vs size and vs wait, short sets
 ```
 
 Run cells one at a time: two models on the GPU contaminate each other's timings. Check `df -h /`
