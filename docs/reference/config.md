@@ -49,7 +49,7 @@ url = "http://localhost:11434"
 
 | Key | Values | Does |
 |---|---|---|
-| `transcription.backend` | `parakeet`, `whisper` | Transcription engine; `whisper` needs `voice2text[whisper]` |
+| `transcription.backend` | `parakeet`, `parakeet-coreml`, `whisper` | Transcription engine; `whisper` needs `voice2text[whisper]`. `parakeet-coreml` (experimental) keeps MLX Parakeet for the live text and decodes on the Neural Engine on release; it needs `voice2text[coreml]` and FluidAudio's Parakeet v3 Core ML files in `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3` |
 | `transcription.model` | repo id | Blank means `parakeet-tdt-0.6b-v3` or `whisper-large-v3-turbo` |
 | `transcription.streaming_mode` | `hacky`, `off` | Transcribe while the key is held; see [How it works](../how-it-works.md#what-happens-while-you-hold-the-key) |
 | `transcription.live_transcript` | `true`, `false` | Experimental: show the words on the pill while you speak (streaming only) |

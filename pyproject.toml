@@ -21,6 +21,7 @@ dependencies = [
 # optional alternative STT backend.
 [project.optional-dependencies]
 whisper = ["mlx-whisper"]
+coreml = ["coremltools>=9"]  # the experimental parakeet-coreml backend
 
 [project.scripts]
 v2t = "v2t.cli:main"
