@@ -55,6 +55,12 @@ STREAM_FEED_S = 0.5  # audio handed to a streaming session between drains
 TAKEOVER_S = 60  # v2t keeps the streamed text from here up (backends.STREAM_TAKEOVER_S)
 CHUNK_S = 30  # the `chunked` pass: decode each ~30 s piece while recording
 CHUNK_SEARCH_S = 5  # cut at the quietest 100 ms within this many seconds of the mark
+# Whole-file Parakeet attention grows with the square of the length: measured
+# 2026-10-14, 6.8 GB at 336 s and over 18 GB (31 GB unchecked, which took the Mac
+# down) at 738 s. Clips longer than this (eight `wispr` dictations, ls-long's
+# longest) go through the runtime's own long-file chunking, in pieces this long,
+# for the systems added from 2026-10-14; the earlier rows decoded them whole.
+WHOLE_FILE_MAX_S = 300
 
 # name -> runtime, repository, mode. `offline` decodes the whole clip after
 # release; `hacky` is v2t as shipped (Parakeet's local-attention stream, 5 s
@@ -92,7 +98,35 @@ SYSTEMS = {
         "mlx-community/whisper-large-v3-turbo",
         "offline",
     ),
+    # Cohere Transcribe 03-2026 (2B, Apache-2.0), told the clip's language. mlx-audio
+    # reads the original Transformers checkpoint; CohereLabs gates it behind a login,
+    # so this is an ungated mirror (same weights hash as a second mirror, same
+    # config and tokenizer as the original). The MLX conversions on the Hub
+    # (beshkenadze/*, mlx-community/*) use mlx-audio-swift or mlx-speech tensor
+    # names, which mlx-audio's Python loader silently leaves unloaded.
+    "cohere-transcribe": (
+        "mlx-audio",
+        "viethang/cohere-transcribe-03-2026",
+        "offline",
+    ),
+    # Moondream's ternary (1.58-bit) Parakeet v3, 178 MB
+    "parakeet-redux": ("mlx-audio", "moondream/parakeet-redux", "offline"),
+    # NVIDIA's English Parakeet Unified, offline (full-context) mode only, from the
+    # fp32 MLX conversion cast to bf16 like every other parakeet-mlx row
+    "parakeet-unified-en": (
+        "parakeet-mlx",
+        "littlebearlabs/parakeet-unified-en-0.6b-mlx",
+        "offline",
+    ),
+    # Fermion's Parakeet v3 retrained at ~2.1 bits (164 MB), English only, through
+    # its own MLX runtime (fermion-research, on mlx-audio's Parakeet graph) at its
+    # defaults, which dequantise the encoder to fp16 after load...
+    "phonon-2": ("fermion", "FermionResearch/Phonon-2", "offline"),
+    # ...and with the encoder kept packed (FERMION_P2_FAST=tdt16, its bit-exact
+    # path): the memory a phone would need
+    "phonon-2-packed": ("fermion", "FermionResearch/Phonon-2#tdt16", "offline"),
 }
+ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleurs-es
 
 
 # --- text -------------------------------------------------------------------
@@ -275,6 +309,16 @@ def release_cache() -> None:
     mx.clear_cache()
 
 
+def measured(work) -> dict:
+    """`work()`'s result plus MLX's peak memory while it ran (weights included,
+    since they stay resident), in GB."""
+    import mlx.core as mx
+
+    mx.reset_peak_memory()
+    result = work()
+    return {**result, "peak_mem_gb": round(mx.get_peak_memory() / 1e9, 3)}
+
+
 # --- runtimes -----------------------------------------------------------------
 
 
@@ -287,12 +331,24 @@ class ParakeetMLX:
         from v2t import backends
 
         self.backends = backends
-        self.stt = backends.ParakeetSTT(repo)
+        # v2t quantizes Parakeet to PARAKEET_BITS at load since 0.5.15; the grid's
+        # parakeet-mlx rows are bf16, so this process keeps full precision
+        backends._quantized = lambda model: model
+        if (Path(_snapshot(repo)) / "config.json").exists():
+            self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
+        else:
+            self.stt = backends.ParakeetSTT.__new__(backends.ParakeetSTT)
+            self.stt.model = load_nemo_layout(_snapshot(repo))
         self.mode = mode
 
     def run(self, clip: dict) -> dict:
         t0 = time.perf_counter()
-        text = self.stt.transcribe(clip["path"])
+        if self.mode == "hacky" or clip["duration_s"] <= WHOLE_FILE_MAX_S:
+            text = self.stt.transcribe(clip["path"])
+        else:  # parakeet-mlx's own chunking (15 s overlap, its default)
+            text = self.stt.model.transcribe(
+                clip["path"], chunk_duration=WHOLE_FILE_MAX_S
+            ).text.strip()
         out = {"offline": text, "offline_s": time.perf_counter() - t0}
         if self.mode == "hacky":
             out.update(self._stream(load_audio(clip["path"])))
@@ -332,6 +388,55 @@ class ParakeetMLX:
                 "stream_feed_s": busy[0], "stream_busy_s": busy[0] + wait}
 
 
+def _snapshot(repo: str) -> str:
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(repo)  # offline: the cached snapshot's path
+
+
+def load_nemo_layout(folder: str):
+    """A Parakeet checkpoint kept in NeMo's own layout (model_config.yaml, PyTorch
+    LSTM names and conv layouts), as littlebearlabs publishes Parakeet Unified,
+    loaded into stock parakeet-mlx and cast to bf16 like `from_pretrained`.
+
+    The renaming follows MarkChen1214's compatibility loader for the same
+    checkpoint: fold the two LSTM biases, drop batch counters and the stored
+    featuriser, transpose conv kernels to MLX's channel-last order.
+    """
+    import mlx.core as mx
+    import yaml
+    from mlx.utils import tree_flatten, tree_unflatten
+    from parakeet_mlx.utils import from_config
+
+    folder = Path(folder)
+    model = from_config(yaml.safe_load((folder / "model_config.yaml").read_text()))
+    weights = dict(mx.load(str(folder / "model.safetensors")))
+    lstm = "decoder.prediction.dec_rnn.lstm."
+    for layer in range(2):
+        weights[f"{lstm}{layer}.Wx"] = weights.pop(f"{lstm}weight_ih_l{layer}")
+        weights[f"{lstm}{layer}.Wh"] = weights.pop(f"{lstm}weight_hh_l{layer}")
+        weights[f"{lstm}{layer}.bias"] = weights.pop(
+            f"{lstm}bias_ih_l{layer}"
+        ) + weights.pop(f"{lstm}bias_hh_l{layer}")
+    for key in list(weights):
+        if key.endswith(".num_batches_tracked") or key.startswith(
+            "preprocessor.featurizer."
+        ):
+            del weights[key]
+    expected = dict(tree_flatten(model.parameters()))
+    for key in expected.keys() & weights.keys():
+        if expected[key].shape != weights[key].shape:
+            order = {3: (0, 2, 1), 4: (0, 2, 3, 1)}[weights[key].ndim]
+            weights[key] = weights[key].transpose(*order)
+    model.load_weights(list(weights.items()), strict=True)
+    model.update(
+        tree_unflatten(
+            [(k, v.astype(mx.bfloat16)) for k, v in tree_flatten(model.parameters())]
+        )
+    )
+    return model
+
+
 class MLXWhisper:
     def __init__(self, repo: str, mode: str):
         sys.path.insert(0, str(REPO))
@@ -359,8 +464,10 @@ class MLXAudio:
 
         self.model = load(repo)
         self.mode = mode
+        self.lang = "en"  # the `chunk` sets are English
 
     def run(self, clip: dict) -> dict:
+        self.lang = clip["lang"]
         audio = load_audio(clip["path"])
         if self.mode == "offline":
             t0 = time.perf_counter()
@@ -372,8 +479,15 @@ class MLXAudio:
         if "parakeet" in type(self.model).__name__.lower():
             import mlx.core as mx
 
-            # its generate takes a path or an mx.array
-            return self.model.generate(mx.array(audio)).text.strip()
+            # its generate takes a path or an mx.array; past WHOLE_FILE_MAX_S, its
+            # own chunking (2 s overlap, its default)
+            long = len(audio) > WHOLE_FILE_MAX_S * SAMPLE_RATE
+            return self.model.generate(
+                mx.array(audio), chunk_duration=WHOLE_FILE_MAX_S if long else None
+            ).text.strip()
+        if "cohere" in type(self.model).__module__:
+            # no language detection: it must be told (defaults to English)
+            return self.model.generate(audio, language=self.lang).text.strip()
         return self.model.generate(audio).text.strip()
 
     def _session(self, audio_s: float):
@@ -429,19 +543,56 @@ class MLXAudio:
         }
 
 
+class Fermion:
+    """Phonon-2 through fermion-research's MLX engine, as `fermion transcribe` runs
+    it: one decode up to 35 s, longer audio cut at pauses into 25-35 s windows.
+
+    The container is unpacked from the Hugging Face snapshot into
+    ~/.v2t/eval/grid-models, so the package's own cache (~/.cache/fermion) is
+    never written. `repo#levers` sets FERMION_P2_FAST before loading.
+    """
+
+    def __init__(self, repo: str, mode: str):
+        repo, _, levers = repo.partition("#")
+        if levers:
+            os.environ["FERMION_P2_FAST"] = levers
+        folder = EVAL / "grid-models" / repo.split("/")[-1].lower()
+        if not (folder / "model.fermion").exists():
+            from fermion._speech import fetch
+
+            archive = next(Path(_snapshot(repo)).glob("*.tar.zst"))
+            fetch._unpack(archive, private_dir(folder.parent) / folder.name)
+        import fermion
+
+        self.model = fermion.load_speech(str(folder))
+
+    def run(self, clip: dict) -> dict:
+        audio = load_audio(clip["path"])
+        t0 = time.perf_counter()
+        text = self.decode(audio)
+        return {"offline": text, "offline_s": time.perf_counter() - t0}
+
+    def decode(self, audio: np.ndarray) -> str:
+        return self.model.transcribe_array(audio)[0].strip()
+
+
 RUNTIMES = {
+    "fermion": Fermion,
     "parakeet-mlx": ParakeetMLX,
     "mlx-whisper": MLXWhisper,
     "mlx-audio": MLXAudio,
 }
 
 
-def run(system: str, set_name: str, limit: int | None) -> None:
+def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -> None:
     runtime, repo, mode = SYSTEMS[system]
+    if system in ENGLISH_ONLY and set_name == "fleurs-es":
+        raise SystemExit(f"{system} is English only")
     clips = read_jsonl(SETS / f"{set_name}.jsonl")
     if not clips:
         raise SystemExit(f"no clips for {set_name}; run `prepare` first")
-    out_path = private_dir(RESULTS / set_name) / f"{system}.jsonl"
+    # a tagged run (a timing baseline) goes beside the cell, never into it
+    out_path = private_dir(RESULTS / set_name) / f"{system}.jsonl{'.' + tag if tag else ''}"
     done = {r["id"] for r in read_jsonl(out_path)}
     todo = [c for c in clips if c["id"] not in done][:limit]
     print(
@@ -461,7 +612,7 @@ def run(system: str, set_name: str, limit: int | None) -> None:
             result = {
                 "id": clip["id"],
                 "duration_s": clip["duration_s"],
-                **engine.run(clip),
+                **measured(lambda: engine.run(clip)),
             }
             out.write(json.dumps(result) + "\n")
             out.flush()
@@ -534,13 +685,15 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
     if not todo:
         return
     engine = RUNTIMES[runtime](repo, mode)
-    engine.decode(load_audio(min(clips, key=lambda c: c["duration_s"])["path"]))  # warm-up
+    warm = load_audio(min(clips, key=lambda c: c["duration_s"])["path"])
+    engine.decode(warm[: CHUNK_S * SAMPLE_RATE])  # warm-up, one piece long
     release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
         for n, clip in enumerate(todo, 1):
             result = {"id": clip["id"], "duration_s": clip["duration_s"]}
-            result.update(chunked(engine, load_audio(clip["path"])))
+            audio = load_audio(clip["path"])
+            result.update(measured(lambda: chunked(engine, audio)))
             out.write(json.dumps(result) + "\n")
             out.flush()
             release_cache()
@@ -608,8 +761,26 @@ def chunked_cells(set_name: str, cells: dict, common: list[str]) -> dict:
 
 
 def family(system: str) -> str:
-    """parakeet-v3 and parakeet-ultra are one family; so are the two Qwen3-ASR builds."""
-    return system.split("-")[0]
+    """parakeet-v3, its fine-tunes and its low-bit retrains (Ultra, Redux, Phonon-2) are
+    one family; so are the two Qwen3-ASR builds."""
+    head = system.split("-")[0]
+    return "parakeet" if head == "phonon" else head
+
+
+def incomplete_cells(set_name: str) -> dict[str, tuple[int, int]]:
+    """Cells of a set that miss clips of its manifest: system -> (done, total).
+
+    `score_set` scores the clips every cell finished, so one cell cut short (or an
+    empty file left by a crash) shrinks or empties every row of the set.
+    """
+    ids = {c["id"] for c in read_jsonl(SETS / f"{set_name}.jsonl")}
+    out = {}
+    for path in sorted((RESULTS / set_name).glob("*.jsonl")):
+        if path.stem in SYSTEMS:
+            done = len(ids & {r["id"] for r in read_jsonl(path)})
+            if done < len(ids):
+                out[path.stem] = (done, len(ids))
+    return out
 
 
 def score_set(set_name: str) -> list[dict]:
@@ -675,6 +846,7 @@ def score_set(set_name: str) -> list[dict]:
             for cid in common
         )
         audio = sum(clips[cid]["duration_s"] for cid in common)
+        peaks = [rows_by_id[cid].get("peak_mem_gb") for cid in common]
         rows.append(
             {
                 "system": system,
@@ -692,6 +864,8 @@ def score_set(set_name: str) -> list[dict]:
                 "busy_s": busy,
                 "audio_s": audio,
                 "rtf": busy / audio if audio else float("nan"),
+                # recorded since 2026-10-14; older cells have none
+                "peak_gb": max(peaks) if None not in peaks else None,
             }
         )
     return sorted(rows, key=lambda r: r["wer"])
@@ -702,7 +876,8 @@ def report() -> None:
     lines.append(
         "WER: labelled sets against their references; `wispr` against the leave-one-out "
         "consensus of the other systems plus Wispr's ASR (agreement, not truth). Wait: "
-        "seconds from release to final text. RTF: compute / audio."
+        "seconds from release to final text. RTF: compute / audio. Peak: MLX's peak "
+        "memory on the worst clip, weights included (cells from 2026-10-14 on)."
     )
     for set_path in sorted(SETS.glob("*.jsonl")):
         rows = score_set(set_path.stem)
@@ -712,13 +887,14 @@ def report() -> None:
             "",
             f"## {set_path.stem} ({rows[0]['n']} clips)",
             "",
-            "| system | mode | WER | wait p50 | p90 | max | RTF |",
-            "|---|---|--:|--:|--:|--:|--:|",
+            "| system | mode | WER | wait p50 | p90 | max | RTF | peak |",
+            "|---|---|--:|--:|--:|--:|--:|--:|",
         ]
         for r in rows:
+            peak = "–" if r["peak_gb"] is None else f"{r['peak_gb']:.2f} GB"
             lines.append(
                 f"| {r['system']} | {r['mode']} | {r['wer']:.1%} | {r['wait_p50']:.2f}s "
-                f"| {r['wait_p90']:.2f}s | {r['wait_max']:.2f}s | {r['rtf']:.3f} |"
+                f"| {r['wait_p90']:.2f}s | {r['wait_max']:.2f}s | {r['rtf']:.3f} | {peak} |"
             )
     path = GRID / f"{date.today().isoformat()}-report.md"
     path.write_text("\n".join(lines) + "\n")
@@ -735,6 +911,7 @@ def main(argv: list[str]) -> int:
     r.add_argument("--system", choices=sorted(SYSTEMS), required=True)
     r.add_argument("--set", dest="set_name", required=True)
     r.add_argument("--limit", type=int)
+    r.add_argument("--tag", help="write <system>.jsonl.<tag>, which the report ignores")
     c = sub.add_parser("chunk", help="a whole-file system, piece by piece, on clips from 60 s")
     c.add_argument("--system", choices=sorted(SYSTEMS), required=True)
     c.add_argument("--set", dest="set_name", required=True)
@@ -745,7 +922,7 @@ def main(argv: list[str]) -> int:
     if a.command == "prepare":
         prepare()
     elif a.command == "run":
-        run(a.system, a.set_name, a.limit)
+        run(a.system, a.set_name, a.limit, a.tag)
     elif a.command == "chunk":
         run_chunked(a.system, a.set_name, a.limit)
     else:

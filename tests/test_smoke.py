@@ -71,6 +71,25 @@ class V2TSmokeTests(unittest.TestCase):
             with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"):
                 self.assertEqual(grid.score_set("fixture"), [])
 
+    def test_grid_flags_empty_and_partial_cells_beside_complete_ones(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "fixture").mkdir(parents=True)
+            (root / "sets").mkdir()
+            clips = [{"id": f"c{i}", "text": "hi", "lang": "en", "duration_s": 5} for i in range(3)]
+            (root / "sets" / "fixture.jsonl").write_text("".join(json.dumps(c) + "\n" for c in clips))
+            cells = root / "results" / "fixture"
+            (cells / "parakeet-v3.jsonl").write_text("".join(json.dumps({"id": c["id"]}) + "\n" for c in clips))
+            (cells / "phonon-2.jsonl").write_text(json.dumps({"id": "c0"}) + "\n")
+            (cells / "cohere-transcribe.jsonl").touch()
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"):
+                self.assertEqual(
+                    grid.incomplete_cells("fixture"),
+                    {"cohere-transcribe": (0, 3), "phonon-2": (1, 3)},
+                )
+
     def test_cleanup_report_only_uses_the_saved_configuration(self):
         from utils.cleanup_speed import bench_cleanup
 
