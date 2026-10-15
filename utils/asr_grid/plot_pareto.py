@@ -55,7 +55,7 @@ OFF = {
     ("wait", "parakeet-ultra"): (8, -14),
     ("wait", "qwen3-asr-1.7b-8bit"): (-60, -18),
     ("wait", "qwen3-asr-1.7b"): (2, -18),
-    ("wait", "phonon-2"): (8, -32),
+    ("wait", "phonon-2"): (-10, -48),
     ("wait", "cohere-transcribe"): (8, -14),
 }
 YMAX = 5.6
@@ -205,7 +205,7 @@ def main() -> None:
             marker="D",
             ms=8,
             color="#9aa5b1",
-            label="added 2026-10-14 (waits on a loaded Mac, ~15-30% slow)",
+            label="added 2026-10-14 (short-set waits rerun 10-15, load 9-23)",
         ),
         plt.Line2D(
             [],
