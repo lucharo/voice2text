@@ -685,7 +685,8 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
     if not todo:
         return
     engine = RUNTIMES[runtime](repo, mode)
-    engine.decode(load_audio(min(clips, key=lambda c: c["duration_s"])["path"]))  # warm-up
+    warm = load_audio(min(clips, key=lambda c: c["duration_s"])["path"])
+    engine.decode(warm[: CHUNK_S * SAMPLE_RATE])  # warm-up, one piece long
     release_cache()
     with out_path.open("a") as out:
         os.chmod(out_path, 0o600)
@@ -760,8 +761,10 @@ def chunked_cells(set_name: str, cells: dict, common: list[str]) -> dict:
 
 
 def family(system: str) -> str:
-    """parakeet-v3 and parakeet-ultra are one family; so are the two Qwen3-ASR builds."""
-    return system.split("-")[0]
+    """parakeet-v3, its fine-tunes and its low-bit retrains (Ultra, Redux, Phonon-2) are
+    one family; so are the two Qwen3-ASR builds."""
+    head = system.split("-")[0]
+    return "parakeet" if head == "phonon" else head
 
 
 def incomplete_cells(set_name: str) -> dict[str, tuple[int, int]]:

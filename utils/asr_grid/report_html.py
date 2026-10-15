@@ -139,7 +139,7 @@ footer{margin-top:40px;font-size:12px;color:var(--fg3);border-top:1px solid var(
 <li>Error = word error rate after Whisper's text normalisation. Your dictations have no reference, so each system is scored against the transcript the other systems and Wispr Flow's own ASR agree with most (leave-one-out medoid). Low disagreement means "sounds like the rest", not "correct".</li>
 <li>Chunked = a batch model given v2t's 60 s rule: from 60 s up, each ~30 s piece (cut at the quietest 100 ms within 5 s of the mark) is decoded while you speak, so on release only the last piece is left; under 60 s it is the whole-file run. Chunked runs never vote in the consensus, so adding them moves no other number.</li>
 <li>RTF = compute over audio; a streaming system needs it well under 1 to keep up live.</li>
-<li>Not run: parakeet-unified-en and the English Nemotron streaming model; no faithful MLX runtime exists for either (see utils/asr_grid/README.md).</li>
+<li>Not run: the English Nemotron streaming model; no faithful MLX runtime exists for it. parakeet-unified-en runs in offline mode only, its fp32 MLX conversion mapped onto parakeet-mlx (see utils/asr_grid/README.md).</li>
 </ul></details>
 <footer>ASR grid report · generated __STAMP__ · voice2text branch claude/cool-mendel-f8031c, utils/asr_grid · private: ~/.v2t/eval/grid/__FILE__</footer>
 </main><div class="tip" id="tip"></div>
