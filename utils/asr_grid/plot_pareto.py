@@ -32,7 +32,8 @@ SETS = ("ls-clean", "ls-other", "fleurs-es")
 # (the mlx-audio runs of v3 and Whisper are the same weights as their originals,
 # and phonon-2-packed is phonon-2's weights with the encoder left packed)
 SYSTEMS = {
-    "parakeet-v3": ("Parakeet v3 (shipped)", 2.508),
+    # bf16: v2t loads it 8-bit since 0.5.15, which the grid turns off
+    "parakeet-v3": ("Parakeet v3 (bf16 reference)", 2.508),
     "parakeet-ultra": ("Parakeet Ultra", 1.254),
     "whisper-turbo": ("Whisper large-v3 turbo", 1.614),
     "nemotron-3.5-stream": ("Nemotron 3.5 streaming", 1.276),
@@ -61,10 +62,21 @@ OFF = {
 YMAX = 5.6
 
 
-def points() -> tuple[dict[str, dict], float]:
-    rows = {s: {r["system"]: r for r in grid.score_set(s)} for s in SETS}
+def points() -> tuple[dict[str, dict], float | None]:
+    # only cells that finished every clip of their set: score_set scores the clips
+    # common to the cells present, so a cell cut short would shrink every row
+    sizes = {s: len(grid.read_jsonl(grid.SETS / f"{s}.jsonl")) for s in SETS}
+    rows = {}
+    for s in SETS:
+        rows[s] = {r["system"]: r for r in grid.score_set(s)}
+        partial = {r["n"] for r in rows[s].values()} - {sizes[s]}
+        if partial:
+            raise SystemExit(
+                f"{s}: a cell covers {partial} of {sizes[s]} clips; finish it"
+            )
     # what an English-only mean is comparable with: v3 on the same two sets
-    v3_en = 100 * float(np.mean([rows[s]["parakeet-v3"]["wer"] for s in SETS[:2]]))
+    v3 = [rows[s]["parakeet-v3"]["wer"] for s in SETS[:2] if "parakeet-v3" in rows[s]]
+    v3_en = 100 * float(np.mean(v3)) if len(v3) == 2 else None
     out = {}
     for system, (label, gb) in SYSTEMS.items():
         cells = [rows[s][system] for s in SETS if system in rows[s]]
@@ -87,10 +99,9 @@ def points() -> tuple[dict[str, dict], float]:
             f"{label:38} {gb:6.3f} GB  WER {wer:.2f}%  wait p50 {wait:.3f}s"
             + (f"  peak {peak:.2f} GB" if peak else "")
         )
-    if "phonon-2-packed" in rows["ls-clean"] and "phonon-2" in out:
-        out["phonon-2"]["packed_peak"] = max(
-            rows[s]["phonon-2-packed"]["peak_gb"] for s in SETS[:2]
-        )
+    packed = [rows[s].get("phonon-2-packed") for s in SETS[:2]]
+    if "phonon-2" in out and all(packed):
+        out["phonon-2"]["packed_peak"] = max(c["peak_gb"] for c in packed)
     return out, v3_en
 
 
@@ -164,17 +175,18 @@ def main() -> None:
                 fontsize=9.5,
                 fontweight="bold" if shipped or system in PHONE else "normal",
             )
-        ax.axhline(v3_en, ls="--", lw=1, color="#264653", alpha=0.6, zorder=0)
-        ax.annotate(
-            f"Parakeet v3 on the two English sets only: {v3_en:.2f}%",
-            (0.01 if key == "gb" else 0.99, v3_en),
-            xycoords=("axes fraction", "data"),
-            xytext=(0, 4),
-            textcoords="offset points",
-            fontsize=9,
-            color="#264653",
-            ha="left" if key == "gb" else "right",
-        )
+        if v3_en is not None:
+            ax.axhline(v3_en, ls="--", lw=1, color="#264653", alpha=0.6, zorder=0)
+            ax.annotate(
+                f"Parakeet v3 on the two English sets only: {v3_en:.2f}%",
+                (0.01 if key == "gb" else 0.99, v3_en),
+                xycoords=("axes fraction", "data"),
+                xytext=(0, 4),
+                textcoords="offset points",
+                fontsize=9,
+                color="#264653",
+                ha="left" if key == "gb" else "right",
+            )
         ax.set_xscale("log")
         ax.xaxis.set_minor_formatter(plt.NullFormatter())
         ticks = [0.1, 0.2, 0.5, 1, 2, 5] if key == "gb" else [0.05, 0.1, 0.2, 0.5, 1]
