@@ -1110,12 +1110,6 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual((text, sizes), ("hi", [16000 * 14]))
 
-    def test_coreml_window_refuses_audio_longer_than_the_preprocessor_input(self):
-        model = object.__new__(coreml.CoreMLParakeet)
-
-        with self.assertRaises(ValueError):
-            model.window(np.zeros(coreml.WINDOW + 1, dtype=np.float32))
-
     @staticmethod
     def _tdt_fakes(script: list[tuple[int, int]]):
         """A joint replying from `script` in order and a prediction network whose

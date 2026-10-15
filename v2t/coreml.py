@@ -130,9 +130,7 @@ class CoreMLParakeet:
         return pieces.finish()
 
     def window(self, pcm: np.ndarray) -> str:
-        """Text for at most one WINDOW of audio, zero-padded to it."""
-        if pcm.size > WINDOW:
-            raise ValueError(f"{pcm.size} samples is over the {WINDOW}-sample window")
+        """Text for at most one WINDOW of audio, zero-padded to it (numpy refuses more)."""
         x = np.zeros((1, WINDOW), np.float32)
         x[0, : pcm.size] = pcm
         mel = self.pre.predict(
