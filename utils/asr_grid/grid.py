@@ -764,6 +764,22 @@ def family(system: str) -> str:
     return system.split("-")[0]
 
 
+def incomplete_cells(set_name: str) -> dict[str, tuple[int, int]]:
+    """Cells of a set that miss clips of its manifest: system -> (done, total).
+
+    `score_set` scores the clips every cell finished, so one cell cut short (or an
+    empty file left by a crash) shrinks or empties every row of the set.
+    """
+    ids = {c["id"] for c in read_jsonl(SETS / f"{set_name}.jsonl")}
+    out = {}
+    for path in sorted((RESULTS / set_name).glob("*.jsonl")):
+        if path.stem in SYSTEMS:
+            done = len(ids & {r["id"] for r in read_jsonl(path)})
+            if done < len(ids):
+                out[path.stem] = (done, len(ids))
+    return out
+
+
 def score_set(set_name: str) -> list[dict]:
     """One row per system on the clips every system finished, so rows compare.
 

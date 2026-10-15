@@ -63,17 +63,12 @@ YMAX = 5.6
 
 
 def points() -> tuple[dict[str, dict], float | None]:
-    # only cells that finished every clip of their set: score_set scores the clips
-    # common to the cells present, so a cell cut short would shrink every row
-    sizes = {s: len(grid.read_jsonl(grid.SETS / f"{s}.jsonl")) for s in SETS}
+    # only sets whose every cell finished every clip (see grid.incomplete_cells)
     rows = {}
     for s in SETS:
+        if short := grid.incomplete_cells(s):
+            raise SystemExit(f"{s}: unfinished cells {short}; finish or remove them")
         rows[s] = {r["system"]: r for r in grid.score_set(s)}
-        partial = {r["n"] for r in rows[s].values()} - {sizes[s]}
-        if partial:
-            raise SystemExit(
-                f"{s}: a cell covers {partial} of {sizes[s]} clips; finish it"
-            )
     # what an English-only mean is comparable with: v3 on the same two sets
     v3 = [rows[s]["parakeet-v3"]["wer"] for s in SETS[:2] if "parakeet-v3" in rows[s]]
     v3_en = 100 * float(np.mean(v3)) if len(v3) == 2 else None
