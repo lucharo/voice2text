@@ -33,7 +33,7 @@ def cmd_run(argv: list[str]) -> int:
     p.add_argument("--config", help="path to a config.toml")
     p.add_argument(
         "--backend",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "parakeet-coreml", "whisper"],
         help="override transcription backend",
     )
     p.add_argument("--model", help="override STT model")
@@ -285,7 +285,7 @@ def cmd_transcribe(argv: list[str]) -> int:
     p.add_argument("--config", help="path to a config.toml")
     p.add_argument(
         "--backend",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "parakeet-coreml", "whisper"],
         help="override transcription backend",
     )
     p.add_argument("--model", help="override STT model")
