@@ -10,6 +10,7 @@ dictation on this Mac?**
 |---|---|---|
 | `parakeet-v3` | parakeet-mlx | v2t up to 0.5.7: whole-file under 60 s, the local-attention stream from 60 s up. Since 0.5.8 v2t ships `parakeet-v3+chunked` (below) |
 | `parakeet-ultra` | parakeet-mlx | Moondream's v3 fine-tune (Sept 2026), same architecture, run as a drop-in for v3 (same 60 s rule). The grid uses `selcukkubur/parakeet-ultra-mlx`; `beshkenadze/parakeet-ultra-mlx-fp16` is the other MLX conversion (October 2026) |
+| `parakeet-v3-coreml` | coremltools | v2t's opt-in `parakeet-coreml` decode: FluidAudio's Parakeet v3 Core ML files on the Neural Engine, whole-file. Needs `coremltools` in the environment (`uv sync --extra coreml`) and the files in FluidAudio's cache |
 | `whisper-turbo` | mlx-whisper | v2t's alternative backend |
 | `nemotron-3.5-stream` | mlx-audio | cache-aware streaming Nemotron 3.5, multilingual |
 | `voxtral-rt-4bit` | mlx-audio | Mistral Voxtral Mini 4B Realtime, natively streaming, 4-bit |

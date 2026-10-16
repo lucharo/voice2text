@@ -1,6 +1,7 @@
 """Speech-to-text backends and text-cleanup engines, both pluggable.
 
-STT: parakeet (default) or whisper, both MLX. Cleanup: mlx (in-process via
+STT: parakeet (default) or whisper, both MLX, or parakeet-coreml (opt-in: MLX
+while the key is held, Core ML on the Neural Engine on release). Cleanup: mlx (in-process via
 mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 `v2t config`/`v2t bench` work without a model loaded.
 """
@@ -385,6 +386,26 @@ class ParakeetSTT:
         return ParakeetStream(self.model)
 
 
+class ParakeetCoreMLSTT(ParakeetSTT):
+    """Opt-in: MLX Parakeet for the live text while the key is held, Core ML on the
+    Neural Engine (v2t/coreml.py) for every decode of a whole recording or piece."""
+
+    def __init__(self, model: str = ""):
+        from .coreml import CoreMLParakeet
+
+        self.coreml = CoreMLParakeet()  # first: its missing-files error is instant
+        super().__init__(model)
+
+    def transcribe(self, wav_path: str) -> str:
+        from parakeet_mlx.audio import load_audio
+
+        return self.decode(np.array(load_audio(Path(wav_path), self.sample_rate)))
+
+    def decode(self, audio: np.ndarray) -> str:
+        """Whole-file decoding of 16 kHz audio on Core ML; streams may stay open."""
+        return self.coreml.decode(np.asarray(audio, dtype=np.float32).reshape(-1))
+
+
 def _complete_snapshot(path: str) -> str:
     """A snapshot directory that actually contains weights, else OSError
     (which load_cache_first turns into an online retry)."""
@@ -428,7 +449,11 @@ class WhisperSTT:
         ].strip()
 
 
-STT = {"parakeet": ParakeetSTT, "whisper": WhisperSTT}
+STT = {
+    "parakeet": ParakeetSTT,
+    "parakeet-coreml": ParakeetCoreMLSTT,
+    "whisper": WhisperSTT,
+}
 
 
 def make_stt(backend: str, model: str = ""):
@@ -894,7 +919,7 @@ def short_model(name: str) -> str:
 
 if __name__ == "__main__":
     # ponytail: pure-logic checks only; live model calls are covered by `v2t bench`.
-    assert set(STT) == {"parakeet", "whisper"}
+    assert set(STT) == {"parakeet", "parakeet-coreml", "whisper"}
     assert set(CLEANUP) == {"mlx", "ollama"}
     assert ParakeetSTT.streaming and not WhisperSTT.streaming
     sent: list[int] = []
