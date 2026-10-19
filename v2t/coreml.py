@@ -1,13 +1,17 @@
 """Parakeet v3 on Core ML (the Neural Engine), for the `parakeet-coreml` backend.
 
 FluidAudio's compiled model files run through coremltools, with greedy TDT decoding
-written here; no Swift. Only whole-audio decoding: the encoder takes a fixed 15 s
-window, so the live text while the key is held stays on MLX (backends.ParakeetStream).
+written here; no Swift, no MLX. The encoder takes one fixed 15 s window, so audio is
+decoded in pieces of at most one window, cut at quiet moments; the live text while
+the key is held is those pieces plus a decode of the audio after the last one
+(backends.ParakeetCoreMLSTT.pieces, app.process_live).
 
-Measured on an M4 Pro, 2026-10-15 (#52, #55): on 450 labelled clips (LibriSpeech
-clean and other, FLEURS Spanish) 2.00 / 4.66 / 5.67% WER against 2.03 / 4.28 / 5.40%
-for MLX 8-bit; the wait after release 0.66x MLX's (per-clip median ratio,
-interleaved in one process), shorter on 96% of clips; loads in 0.4 s.
+Measured on an M4 Pro (#56): on 450 labelled clips (LibriSpeech clean and other,
+FLEURS Spanish) 2.00 / 4.66 / 5.67% WER against 2.03 / 4.28 / 5.40% for MLX 8-bit,
+the decode 0.64x MLX's (per-clip median ratio, interleaved), shorter on every clip;
+peak memory 0.34 GB against 2.6 GB. The four models load in 0.1 to 0.3 s once
+compiled; `import coremltools` adds 1.3 to 1.6 s, as it also imports scikit-learn,
+which parakeet-mlx's librosa installs (and torch when that is installed).
 
 The pure parts (`tdt_greedy`, `detokenize`, the window cutting through PieceDecoder)
 need neither coremltools nor the model files, so the tests run without them.

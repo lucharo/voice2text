@@ -162,10 +162,12 @@ dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, int
 15 s, and decodes them while you speak, so release waits only for the last piece.
 
 - **Memory:** about 0.34 GB at its peak, against about 2.6 GB for MLX 8-bit.
-- **Start-up:** the models load in 0.1 to 0.3 s. The 3.3 to 4.9 s measured on 19 October was
-  `import coremltools` pulling in torch and scikit-learn, which only the maintainers' environment
-  has; with coremltools alone the import took 0.69 s. The first load after the model files change
-  recompiles them for the Neural Engine, which took 28.8 s once.
+- **Start-up:** the models load in 0.1 to 0.3 s once compiled, but `import coremltools` takes
+  another 1.3 to 1.6 s, because it also imports scikit-learn, which every v2t install has
+  through parakeet-mlx (and torch, where installed: that made it 3.3 to 4.9 s in the
+  maintainers' environment on 19 October). That is about what MLX takes to load (1.4 to 2.7 s).
+  The first load after the model files change recompiles them for the Neural Engine, which took
+  28.8 s once.
 - **Errors:** up to 0.4 points higher than MLX 8-bit on LibriSpeech other, FLEURS Spanish and long
   recordings.
 

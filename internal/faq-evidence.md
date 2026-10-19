@@ -54,7 +54,9 @@ deferred. The cleanup model's 4.4 s is the larger target.
 Core ML 3.3 to 4.9 s against 1.4 to 2.7 s for MLX. Split up the same day (#56, `loadparts.py`): `import coremltools` took 3.3 to 4.9 s
 because it also imports torch, scikit-learn and scipy when installed (v2t's dev env has torch
 through mlx-whisper); the four models then loaded in 0.1 to 0.3 s together, so the compile cache
-is reused. With coremltools 9.0 alone, `import coremltools` took 0.69 s warm and 6.97 s cold. Draft #56's own run on 2026-10-15, under load
+is reused. With coremltools 9.0 alone, `import coremltools` took 0.69 s warm and 6.97 s cold;
+with scikit-learn and scipy installed too, as every v2t install has them (parakeet-mlx → librosa →
+scikit-learn, uv.lock), it took 1.27 to 1.57 s warm and 20.5 s cold. Draft #56's own run on 2026-10-15, under load
 about 19, gave Core ML 2.8 to 3.8 s, MLX 8-bit 0.9 to 6.0 s and both models 4.1 to 5.4 s. The
 first Neural Engine load after the model files change recompiles and took 28.8 s.
 
