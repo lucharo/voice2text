@@ -181,8 +181,8 @@ them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 
   to 0.6 s on them and 1.6 s (median) on real dictations.
 - **Whisper large-v3-turbo** matches Parakeet on short clips but waits about 1 s, and makes more
   errors on long recordings.
-- **Voxtral** (4-bit, streaming) waits about 0.7 s and makes more errors on short clips and real
-  dictations.
+- **Voxtral** (4-bit, streaming) waits about 0.7 s, makes more errors on the labelled short clips,
+  and disagrees more with the other models on real dictations.
 - **Nemotron** (streaming) waits less (0.07 s) but makes far more errors: 3.1 / 8.3 / 8.8%.
 - **Parakeet Redux** and **Phonon-2** are much smaller downloads (178 MB and 164 MB) and somewhat
   less accurate. They are candidates for a phone.

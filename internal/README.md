@@ -31,8 +31,10 @@ as a `launchctl submit` job: a child of the Claude app loses Metal when the app 
   against shipped speed with an interleaved A/B, not with grid waits.
 - **Whole-file decoding needs much more memory as recordings get longer**
   ([#53](https://github.com/lucharo/voice2text/issues/53)): 3.8 GB at 160 s, 7.9 GB at 336 s, over
-  30 GB at 738 s. The grid chunks anything over `WHOLE_FILE_MAX_S` (300 s); run new models under a
-  memory cap.
+  30 GB at 738 s. The grid's parakeet-mlx runtime chunks clips over `WHOLE_FILE_MAX_S` (300 s)
+  only for systems not in `hacky` mode: `parakeet-v3` and `parakeet-ultra` still decode every clip
+  whole first, so rerunning them on long `wispr` clips can hit the same blow-up. Run every system,
+  new or old, under a memory cap.
 - **Core ML / ANE probes:** the FluidAudio CLI builds with the Command Line Tools, no Xcode needed.
   The first ANE load after the model files change recompiles (about 29 s), so report load
   separately. Keep probe scripts under `~/.v2t/eval/`, not `/tmp`.

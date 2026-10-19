@@ -311,10 +311,10 @@ wait:
 | System | WER | Wait p50 (ls-clean) | ls-long | Notes |
 |---|---|--:|--:|---|
 | parakeet-v3 (bf16 reference) | 1.9 / 4.2 / 5.4% | 0.14 s | 2.3% (30 s pieces) | Ships; 0.5.15's 8-bit is quicker |
-| cohere-transcribe | 1.4 / 2.7 / 4.9% | 0.18 s | 1.5% | Peak about 4.8 GB; 29% on `wispr` |
+| cohere-transcribe | 1.4 / 2.7 / 4.9% | 0.18 s | 1.5% | Peak about 4.8 GB; 29% `wispr` disagreement |
 | qwen3-asr-1.7b-8bit | 1.6 / 4.2 / 5.0% | 0.35 s | 2.1% whole, 2.2% chunked | `wispr` p50 1.65 s whole |
 | whisper-turbo | 1.8 / 4.5 / 5.0% | 1.48 s | 5.0% whole, 2.7% chunked | |
-| voxtral-rt-4bit | 2.5 / 6.4 / 5.4% | 0.70 s | 2.2% | 17.1% on `wispr` |
+| voxtral-rt-4bit | 2.5 / 6.4 / 5.4% | 0.70 s | 2.2% | 17.1% `wispr` disagreement |
 | nemotron-3.5-stream | 3.1 / 8.3 / 8.8% | 0.07 s | 4.2% | |
 | parakeet-redux | 2.5 / 5.5 / 5.7% | 0.10 s | 3.0% chunked | 178 MB download |
 | phonon-2 | 2.3 / 5.0 / – | 0.05 s | 4.3% whole | 164 MB, English only |
@@ -322,7 +322,8 @@ wait:
 Cohere Transcribe has no language detection and transcribes silence, as its model card warns. On 5
 `wispr` dictations (17 to 803 s) where every other system and Wispr's own ASR heard almost nothing,
 it invented about 7,000 words of repeated text, which is its whole 29%. It would need voice
-detection in front of it. The ls-long and `wispr` waits come from the loaded 2026-10-14 run and
+detection in front of it. `wispr` has no ground truth: its percentages are disagreement with the
+other systems' consensus, not errors. The ls-long and `wispr` waits come from the loaded 2026-10-14 run and
 read 15 to 30% high; the short-set waits were rerun on a quieter Mac on 2026-10-15.
 
 ### Sources
