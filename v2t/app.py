@@ -822,6 +822,8 @@ class VoiceToText:
         and the recording is decoded whole in pieces of about PIECE_S as it
         arrives, the audio after the last piece previewed for the partial text,
         so once the hotkey thread calls `finish` only the last piece is left.
+        A backend with no streaming recogniser (`pieces_only`, Core ML) decodes in
+        its own pieces from the first second, and its previews follow the same way.
         """
         next_state, error_message, stream, pieces = "idle", "", None, None
         handed_back = False  # streaming broke while held: release decodes whole-file
@@ -831,8 +833,16 @@ class VoiceToText:
             if live.cancelled:
                 return
             self.refresh_dictionary()
-            stream = self.stt.stream()
-            feeder = backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
+            pieces_only = getattr(self.stt, "pieces_only", False) is True
+            if pieces_only:
+                pieces = self.stt.pieces()
+            else:
+                stream = self.stt.stream()
+            feeder = (
+                None
+                if stream is None
+                else backends.ChunkFeeder(stream.feed, self.cfg.sample_rate)
+            )
             takeover = int(self.cfg.sample_rate * backends.STREAM_TAKEOVER_S)
             preview_step = int(self.cfg.sample_rate * backends.PREVIEW_STEP_S)
             # From the takeover the partial text is a preview of the audio after the
@@ -922,7 +932,11 @@ class VoiceToText:
             levels = audio_levels(audio, self.cfg.sample_rate)
             # `streamed` (history's column): decoded while held, in pieces.
             streamed = pieces is not None or live.duration >= backends.STREAM_TAKEOVER_S
-            if streamed:
+            if pieces_only:
+                held = pieces.pieces
+                streamed = held > 0
+                raw_text = pieces.finish()  # the same text as one whole-file decode
+            elif streamed:
                 if pieces is None:  # released just past the mark, before the switch
                     pieces, stream = self._pieces_from(stream, live), None
                 held = pieces.pieces
@@ -941,6 +955,8 @@ class VoiceToText:
                 + (
                     f"{pieces.pieces} pieces, {held} decoded while recording)"
                     if streamed
+                    else "whole-file: one window)"
+                    if pieces_only
                     else f"whole-file: under {backends.STREAM_TAKEOVER_S:.0f}s)"
                 )
             )

@@ -1243,38 +1243,39 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertIn("voice2text[coreml]", str(caught.exception))
 
-    def test_parakeet_coreml_streams_on_mlx_and_decodes_on_core_ml(self):
+    def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
         decoded: list[np.ndarray] = []
-        core_ml = mock.Mock(decode=lambda pcm: decoded.append(pcm) or "core ml words")
-        fake = types.SimpleNamespace(from_pretrained=mock.Mock(return_value="mlx"))
+        windows: list[int] = []
+        core_ml = mock.Mock(
+            decode=lambda pcm: decoded.append(pcm) or "core ml words",
+            window=lambda pcm: windows.append(pcm.size) or "w",
+        )
 
         with (
-            mock.patch.object(coreml, "CoreMLParakeet", return_value=core_ml),
-            mock.patch.dict(sys.modules, {"parakeet_mlx": fake}),
-            mock.patch.object(backends, "cached_locally", return_value=False),
-            mock.patch.object(backends, "_quantized", side_effect=lambda m: m),
-            mock.patch.object(backends, "ParakeetStream", return_value="stream") as stream,
+            mock.patch.object(coreml, "CoreMLParakeet", return_value=core_ml) as load,
+            mock.patch.dict(sys.modules, {"parakeet_mlx": None, "mlx": None}),
         ):
-            stt = backends.make_stt("parakeet-coreml", "org/parakeet")
+            stt = backends.make_stt("parakeet-coreml")
             text = stt.decode(np.ones((16000, 1), dtype=np.float64))
-            live = stt.stream()
+            pieces = stt.pieces()
+            pieces.add(np.ones(16000 * 20, dtype=np.float32))
+            stepped = pieces.step()
 
-        self.assertEqual((text, live), ("core ml words", "stream"))
-        stream.assert_called_once_with("mlx")
+        load.assert_called_once_with(coreml.COREML_DIR)
+        self.assertEqual(text, "core ml words")
         self.assertEqual([(a.shape, a.dtype) for a in decoded], [((16000,), np.float32)])
-        self.assertTrue(stt.streaming)
+        # one window cut within 3 s of the 12 s mark, known once 15 s are in
+        self.assertEqual((stepped, windows), (True, [16000 * 9 + 800]))
+        self.assertEqual(
+            (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
+        )
+        self.assertFalse(hasattr(stt, "stream"))
 
-    def test_parakeet_coreml_fails_on_missing_files_before_loading_mlx(self):
-        fake = types.SimpleNamespace(from_pretrained=mock.Mock())
+    def test_parakeet_coreml_reads_its_files_from_a_configured_folder(self):
+        with mock.patch.object(coreml, "CoreMLParakeet") as load:
+            backends.ParakeetCoreMLSTT("~/models/parakeet-coreml")
 
-        with (
-            mock.patch.object(coreml, "CoreMLParakeet", side_effect=SystemExit("no files")),
-            mock.patch.dict(sys.modules, {"parakeet_mlx": fake}),
-            self.assertRaises(SystemExit),
-        ):
-            backends.ParakeetCoreMLSTT()
-
-        fake.from_pretrained.assert_not_called()
+        load.assert_called_once_with(Path.home() / "models/parakeet-coreml")
 
     def test_config_accepts_the_parakeet_coreml_backend(self):
         config._validate(config.Config(backend="parakeet-coreml"))  # no SystemExit
@@ -1522,6 +1523,67 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("piece piece piece")
         record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("piece piece piece", True))
+
+    def _pieces_only_stt(self, voice, decoded: list):
+        """A Core ML-shaped STT: no stream(), pieces() of the default 30 s rule
+        (its pieces answer 'p' and land on `decoded`), and decode() for previews."""
+        stt = mock.Mock(
+            spec=["streaming", "pieces_only", "sample_rate", "pieces", "decode"],
+            streaming=True, pieces_only=True, sample_rate=16000,
+        )
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(
+            lambda piece: decoded.append(piece.size) or "p", 16000
+        )
+        stt.decode.return_value = "tail"
+        voice.stt = stt
+        return stt
+
+    def test_a_pieces_only_backend_decodes_in_pieces_from_the_start_with_no_stream(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        decoded: list[int] = []
+        self._pieces_only_stt(voice, decoded)
+
+        statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        self.assertEqual(decoded, list(self._PIECE_SIZES), "each piece once, the last on release")
+        self.assertEqual(statuses[1], "p tail", "the pieces so far plus a preview of the rest")
+        self.assertTrue(
+            any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
+        )
+        self.assertNotIn("Past the takeover: decoding the rest in pieces\n", lines)
+        paste.assert_called_once_with("p p p")
+        record = config.read_history()[-1]
+        self.assertEqual((record["raw"], record["streamed"]), ("p p p", True))
+
+    def test_a_short_pieces_only_recording_is_one_decode_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        decoded: list[int] = []
+        stt = self._pieces_only_stt(voice, decoded)
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        worker = app.threading.Thread(target=voice.process_next)
+        worker.start()
+        self.addCleanup(worker.join)
+        audio = np.full((16000 * 3, 1), 0.5, dtype=np.float32)
+        voice.audio_callback(audio, len(audio), None, None)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()
+            worker.join(timeout=5)
+        voice.live = None
+
+        self.assertEqual(decoded, [16000 * 3])
+        stt.decode.assert_not_called()  # no preview: under one push's worth of audio
+        self.assertTrue(any("whole-file: one window)" in line for line in lines))
+        paste.assert_called_once_with("p")
+        self.assertFalse(config.read_history()[-1]["streamed"])
 
     def _pieces_or_tail(self, voice, tail, pieces: list | None = None):
         """decode() answers 'piece' for a piece (its size goes on `pieces`) and

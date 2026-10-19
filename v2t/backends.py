@@ -1,7 +1,7 @@
 """Speech-to-text backends and text-cleanup engines, both pluggable.
 
-STT: parakeet (default) or whisper, both MLX, or parakeet-coreml (opt-in: MLX
-while the key is held, Core ML on the Neural Engine on release). Cleanup: mlx (in-process via
+STT: parakeet (default) or whisper, both MLX, or parakeet-coreml (opt-in: Core
+ML on the Neural Engine, no MLX). Cleanup: mlx (in-process via
 mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 `v2t config`/`v2t bench` work without a model loaded.
 """
@@ -386,24 +386,58 @@ class ParakeetSTT:
         return ParakeetStream(self.model)
 
 
-class ParakeetCoreMLSTT(ParakeetSTT):
-    """Opt-in: MLX Parakeet for the live text while the key is held, Core ML on the
-    Neural Engine (v2t/coreml.py) for every decode of a whole recording or piece."""
+class ParakeetCoreMLSTT:
+    """Opt-in: Parakeet v3 on the Neural Engine through Core ML (v2t/coreml.py), no MLX.
+
+    Core ML has no streaming attention and its encoder takes one 15 s window, so
+    there is no stream(): while the key is held the app decodes the recording in
+    pieces of at most one window as their cuts become known (`pieces()`), and
+    previews the audio after the last piece. The text on release is the same as
+    decoding the whole recording at once, since the cuts are the same.
+    """
+
+    default_model = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
+    streaming = True  # the app decodes it while held, in pieces
+    pieces_only = True  # ...from the start, with no streaming recogniser
 
     def __init__(self, model: str = ""):
-        from .coreml import CoreMLParakeet
+        from .coreml import COREML_DIR, CoreMLParakeet
 
-        self.coreml = CoreMLParakeet()  # first: its missing-files error is instant
-        super().__init__(model)
+        # `model` is a folder of the Core ML files; blank means FluidAudio's cache
+        self.coreml = CoreMLParakeet(Path(model).expanduser() if model else COREML_DIR)
+
+    @property
+    def sample_rate(self) -> int:
+        from .coreml import SAMPLE_RATE
+
+        return SAMPLE_RATE
+
+    def pieces(self) -> PieceDecoder:
+        """A PieceDecoder whose every piece fits one window, for a held recording."""
+        from .coreml import PIECE_S, PIECE_SEARCH_S
+
+        return PieceDecoder(self.coreml.window, self.sample_rate, PIECE_S, PIECE_SEARCH_S)
 
     def transcribe(self, wav_path: str) -> str:
-        from parakeet_mlx.audio import load_audio
-
-        return self.decode(np.array(load_audio(Path(wav_path), self.sample_rate)))
+        return self.decode(read_audio(wav_path, self.sample_rate))
 
     def decode(self, audio: np.ndarray) -> str:
-        """Whole-file decoding of 16 kHz audio on Core ML; streams may stay open."""
+        """Whole-file decoding of audio at `sample_rate`, any length."""
         return self.coreml.decode(np.asarray(audio, dtype=np.float32).reshape(-1))
+
+
+def read_audio(path: str, rate: int) -> np.ndarray:
+    """Mono float32 at `rate` from anything ffmpeg reads (parakeet-mlx's
+    load_audio, without importing MLX)."""
+    import subprocess
+
+    out = subprocess.run(
+        ["ffmpeg", "-nostdin", "-i", str(path), "-threads", "0", "-f", "s16le",
+         "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(rate), "-"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    return np.frombuffer(out, np.int16).astype(np.float32) / 32768.0
 
 
 def _complete_snapshot(path: str) -> str:
@@ -899,6 +933,7 @@ def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:1143
 
 _LABELS = {
     "parakeet-tdt-0.6b-v3": "parakeet-v3",
+    "parakeet-tdt-0.6b-v3-coreml": "parakeet-v3-coreml",
     "parakeet-tdt-0.6b-v2": "parakeet-v2",
     "whisper-large-v3-turbo": "whisper-turbo",
     "Qwen2.5-1.5B-Instruct-4bit": "Qwen2.5-1.5B",
