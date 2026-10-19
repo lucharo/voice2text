@@ -71,6 +71,7 @@ never takes focus, so the paste lands where you are typing.
 
 ## Startup
 
-- Both models load from the local cache in about 2 s.
+- Parakeet usually loads from the local cache in about 2 s and the cleanup model in about 4 s, so a
+  start takes about 6 s; on a busy Mac Parakeet can take up to about 15 s.
 - v2t never asks Hugging Face for updates once a model is cached, so a slow or blocked network
   cannot stall startup. Only the first download needs a connection.
