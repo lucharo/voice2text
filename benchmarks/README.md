@@ -64,4 +64,6 @@ to the grid.
 - Cleanup inputs: three filler-laden raw transcriptions (see `v2t/bench.py`).
 - TTFT comes from streaming generation (mlx-lm or the Ollama HTTP API) and timing the first token.
 
+- These clips measure speed only. Accuracy comes from the ASR grid ([`utils/asr_grid`](../utils/asr_grid/README.md)); how to time fairly on a loaded Mac, and how to benchmark on an iPhone, are in [`internal/README.md`](../internal/README.md#benchmarks).
+
 See `results/` for collected runs.
