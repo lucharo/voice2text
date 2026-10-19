@@ -1,6 +1,6 @@
 [project]
 name = "voice2text"
-version = "0.5.15"
+version = "0.5.16"
 description = "Local, MLX-first voice-to-text with LLM cleanup"
 readme = "README.md"
 license = "GPL-2.0-only"
@@ -21,6 +21,7 @@ dependencies = [
 # optional alternative STT backend.
 [project.optional-dependencies]
 whisper = ["mlx-whisper"]
+coreml = ["coremltools>=9"]  # the experimental parakeet-coreml backend
 
 [project.scripts]
 v2t = "v2t.cli:main"

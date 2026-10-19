@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.16
+
+- **Experimental: transcribe on the Neural Engine.** Set `backend = "parakeet-coreml"` and install `voice2text[coreml]` to run Parakeet v3 on the Mac's Neural Engine through Core ML, with no MLX: the live words while you hold the key and the final text both come from it. While you speak, the recording is decoded in pieces of up to 15 s cut at quiet moments, and the rest is previewed every second, so on release only the last piece is left. On an M4 Pro, replaying 40 real dictations of 8 s to 5 min, the wait after release was 0.058 s at the median against 0.29 s for the default, and v2t took 0.34 GB at its peak against 2.6 GB. Words wrong on 450 labelled clips: 2.00 / 4.66 / 5.67% on LibriSpeech clean, LibriSpeech other and FLEURS Spanish, against 2.03 / 4.28 / 5.40%; on 40 recordings of one to five minutes, 2.50% against 2.3%. It reads FluidAudio's converted model files from `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`, or the folder set as `model`, and does not download them. The default backend is unchanged.
+
 ## 0.5.15
 
 - **Text arrives sooner after you let go, and Parakeet takes a third less memory.** Under a minute, v2t wrote each recording to a temporary WAV that parakeet-mlx read back through ffmpeg; it now hands the model the audio directly (the same text on 443 of 450 clips; the rest differ by the WAV's 16-bit rounding). Parakeet's feed-forward and output layers now load quantized to 8 bits, which takes the model from 1254 to 867 MB in memory and decodes about 30% faster. Together the median wait after release on short clips fell from 0.166 s to about 0.09 s on an M4 Pro. Word error rate moved from 1.94 / 4.21 / 5.42% to 2.03 / 4.28 / 5.40% on LibriSpeech clean, LibriSpeech other and FLEURS Spanish (450 clips), and long dictations in pieces stayed at 2.3%. The self-attention layers stay at full precision because streaming rebuilds them while you hold the key.

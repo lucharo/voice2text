@@ -27,7 +27,7 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    backend: str = "parakeet"  # parakeet | whisper
+    backend: str = "parakeet"  # parakeet | parakeet-coreml | whisper
     stt_model: str = ""  # blank = the backend's own default
     streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
     live_transcript: bool = False  # experimental: streamed words in the pill while speaking
@@ -247,7 +247,7 @@ def load(overrides: dict | None = None) -> Config:
 
 def _validate(cfg: Config) -> None:
     choices = {
-        "backend": {"parakeet", "whisper"},
+        "backend": {"parakeet", "parakeet-coreml", "whisper"},
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
         "streaming_mode": {"off", "hacky"},
@@ -280,6 +280,7 @@ DEFAULT_TOML = """\
 
 [transcription]
 backend = "parakeet"   # parakeet (default, MLX) | whisper (needs voice2text[whisper])
+                       # | parakeet-coreml (experimental: Neural Engine, no MLX, needs voice2text[coreml])
 model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper-large-v3-turbo)
 streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)

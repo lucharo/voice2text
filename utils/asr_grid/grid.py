@@ -69,6 +69,13 @@ WHOLE_FILE_MAX_S = 300
 SYSTEMS = {
     "parakeet-v3": ("parakeet-mlx", "mlx-community/parakeet-tdt-0.6b-v3", "hacky"),
     "parakeet-ultra": ("parakeet-mlx", "selcukkubur/parakeet-ultra-mlx", "hacky"),
+    # v2t's opt-in parakeet-coreml decode: FluidAudio's Parakeet v3 Core ML files on
+    # the Neural Engine (v2t/coreml.py), whole-file; the repo is where they come from
+    "parakeet-v3-coreml": (
+        "parakeet-coreml",
+        "FluidInference/parakeet-tdt-0.6b-v3-coreml",
+        "offline",
+    ),
     "whisper-turbo": ("mlx-whisper", "mlx-community/whisper-large-v3-turbo", "offline"),
     "nemotron-3.5-stream": (
         "mlx-audio",
@@ -455,6 +462,26 @@ class MLXWhisper:
         )["text"].strip()
 
 
+class ParakeetCoreML:
+    """v2t's Core ML decode (backends.ParakeetCoreMLSTT.decode) without the MLX
+    model it keeps for the live text; reads FluidAudio's files, never the repo."""
+
+    def __init__(self, repo: str, mode: str):
+        sys.path.insert(0, str(REPO))
+        from v2t.coreml import CoreMLParakeet
+
+        self.model = CoreMLParakeet()
+
+    def run(self, clip: dict) -> dict:
+        audio = load_audio(clip["path"])
+        t0 = time.perf_counter()
+        text = self.decode(audio)
+        return {"offline": text, "offline_s": time.perf_counter() - t0}
+
+    def decode(self, audio: np.ndarray) -> str:
+        return self.model.decode(audio)
+
+
 class MLXAudio:
     """mlx-audio 0.5.7: `generate` for offline models, a streaming session
     (feed / step / close) for natively streaming ones."""
@@ -581,6 +608,7 @@ RUNTIMES = {
     "parakeet-mlx": ParakeetMLX,
     "mlx-whisper": MLXWhisper,
     "mlx-audio": MLXAudio,
+    "parakeet-coreml": ParakeetCoreML,
 }
 
 

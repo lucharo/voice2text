@@ -24,7 +24,7 @@ from unittest import mock
 import numpy as np
 from scipy.io import wavfile
 
-from v2t import app, backends, bench, cli, config, menubar, permissions, service
+from v2t import app, backends, bench, cli, config, coreml, menubar, permissions, service
 
 
 class V2TSmokeTests(unittest.TestCase):
@@ -1071,6 +1071,215 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(pieces.finish(), "first third")
         self.assertEqual(pieces.pieces, 3)
 
+    @staticmethod
+    def _coreml_with_window(window) -> coreml.CoreMLParakeet:
+        """A CoreMLParakeet whose one-window decode is `window`; no model files."""
+        model = object.__new__(coreml.CoreMLParakeet)
+        model.window = window
+        return model
+
+    def test_coreml_cuts_long_audio_at_the_pause_nearest_each_12_s_mark(self):
+        audio = self._speech_with_pauses(40, (10.0, 21.0, 31.5))
+        sizes: list[int] = []
+        model = self._coreml_with_window(
+            lambda piece: sizes.append(piece.size) or f"w{len(sizes)}"
+        )
+
+        text = model.decode(audio)
+
+        # each cut: the middle of the silent 0.1 s within 9-15 s of the last cut
+        self.assertEqual(sizes, [160800, 176000, 168000, 135200])
+        self.assertEqual(text, "w1 w2 w3 w4")
+
+    def test_coreml_never_hands_a_window_more_than_15_s(self):
+        noise = np.random.default_rng(0).uniform(-1, 1, 16000 * 100).astype(np.float32)
+        for samples in (coreml.WINDOW, coreml.WINDOW + 1, noise.size):
+            sizes: list[int] = []
+            model = self._coreml_with_window(lambda piece: sizes.append(piece.size) or "")
+
+            model.decode(noise[:samples])
+
+            self.assertLessEqual(max(sizes), coreml.WINDOW, samples)
+            self.assertEqual(sum(sizes), samples)
+
+    def test_coreml_decodes_audio_under_one_window_in_one_piece(self):
+        sizes: list[int] = []
+        model = self._coreml_with_window(lambda piece: sizes.append(piece.size) or "hi")
+
+        text = model.decode(np.full((16000 * 14, 1), 0.5, dtype=np.float32))
+
+        self.assertEqual((text, sizes), ("hi", [16000 * 14]))
+
+    @staticmethod
+    def _tdt_fakes(script: list[tuple[int, int]]):
+        """A joint replying from `script` in order and a prediction network whose
+        output and state name the token and step; both record their calls."""
+        replies = iter(script)
+        joint_calls: list[tuple[int, str]] = []
+        predict_calls: list[tuple[int, str]] = []
+
+        def joint(t, out):
+            joint_calls.append((t, out))
+            return next(replies)
+
+        def predict(token, state):
+            predict_calls.append((token, state))
+            return f"out:{token}", f"s{len(predict_calls)}"
+
+        return joint, predict, joint_calls, predict_calls
+
+    def test_tdt_greedy_follows_durations_and_steps_past_a_zero_length_blank(self):
+        blank = coreml.BLANK
+        joint, predict, joint_calls, predict_calls = self._tdt_fakes(
+            [(5, 0), (6, 2), (blank, 0), (7, 1)]
+        )
+
+        tokens = coreml.tdt_greedy(4, joint, predict, "s0")
+
+        self.assertEqual(tokens, [5, 6, 7])
+        # 5 with duration 0 stays on frame 0; 6 jumps two frames; the blank's 0 is one
+        self.assertEqual(
+            joint_calls,
+            [(0, f"out:{blank}"), (0, "out:5"), (2, "out:6"), (3, "out:6")],
+        )
+        # the blank starts the network off and is never fed back
+        self.assertEqual(
+            predict_calls, [(blank, "s0"), (5, "s1"), (6, "s2"), (7, "s3")]
+        )
+
+    def test_tdt_greedy_moves_on_after_max_symbols_tokens_on_one_frame(self):
+        joint, predict, joint_calls, _ = self._tdt_fakes([(9, 0)] * 6 + [(1, 0)] * 20)
+
+        tokens = coreml.tdt_greedy(2, joint, predict, None, max_symbols=3)
+
+        self.assertEqual(tokens, [9] * 6)
+        self.assertEqual([t for t, _ in joint_calls], [0, 0, 0, 1, 1, 1])
+
+    def test_detokenize_joins_word_pieces_and_drops_unknown_ids(self):
+        vocab = {1: "\u2581hel", 2: "lo", 3: "\u2581world"}
+
+        self.assertEqual(coreml.detokenize([1, 2, 99, 3], vocab), "hello world")
+
+    def test_coreml_window_feeds_each_model_its_inputs_and_threads_the_decoder_state(self):
+        blank = coreml.BLANK
+        seen: dict[str, list] = {"pre": [], "enc": [], "dec": [], "joint": []}
+
+        def fake(name, reply):
+            def predict(inputs):
+                seen[name].append(inputs)
+                return reply(inputs)
+
+            return types.SimpleNamespace(predict=predict)
+
+        frames = np.arange(4, dtype=np.float32).reshape(1, 1, 4)  # frame t holds t
+        script = {0: (10, 1), 1: (blank, 1), 2: (11, 2)}  # frame 3 is skipped
+        model = object.__new__(coreml.CoreMLParakeet)
+        model.pre = fake("pre", lambda i: {"mel": "MEL", "mel_length": np.array([7])})
+        model.enc = fake(
+            "enc", lambda i: {"encoder": frames, "encoder_length": np.array([4])}
+        )
+        model.dec = fake(
+            "dec",
+            lambda i: {
+                "decoder": i["targets"],
+                "h_out": i["h_in"] + 1,
+                "c_out": i["c_in"] + 2,
+            },
+        )
+        model.joint = fake(
+            "joint", lambda i: dict(zip(("token_id", "duration"), map(
+                np.array, script[int(i["encoder_step"].item())]
+            )))
+        )
+        model.vocab = {10: "\u2581hello", 11: "\u2581world"}
+        pcm = np.full(16000, 0.25, dtype=np.float32)
+
+        text = model.window(pcm)
+
+        self.assertEqual(text, "hello world")
+        (pre,) = seen["pre"]
+        self.assertEqual(pre["audio_signal"].shape, (1, coreml.WINDOW))
+        self.assertEqual(float(pre["audio_signal"][0, :16000].min()), 0.25)
+        self.assertEqual(float(np.abs(pre["audio_signal"][0, 16000:]).max()), 0.0)
+        self.assertEqual(pre["audio_length"].tolist(), [16000])
+        (enc,) = seen["enc"]
+        self.assertEqual((enc["mel"], enc["mel_length"].dtype), ("MEL", np.int32))
+        self.assertEqual(
+            [(int(d["targets"].item()), float(d["h_in"].max()), float(d["c_in"].max()))
+             for d in seen["dec"]],
+            [(blank, 0.0, 0.0), (10, 1.0, 2.0), (11, 2.0, 4.0)],
+        )
+        self.assertEqual(seen["dec"][0]["h_in"].shape, coreml.DECODER_STATE)
+        self.assertEqual(
+            [(int(j["encoder_step"].item()), int(j["decoder_step"].item()))
+             for j in seen["joint"]],
+            [(0, blank), (1, 10), (2, 10)],
+        )
+
+    def test_coreml_without_its_model_files_names_the_missing_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for name in coreml.FILES[:3]:
+                (folder / name).mkdir()
+
+            with self.assertRaises(SystemExit) as caught:
+                coreml.CoreMLParakeet(folder)
+
+        message = str(caught.exception)
+        self.assertIn("missing: JointDecisionv3.mlmodelc, parakeet_v3_vocab.json", message)
+        self.assertIn("FluidInference/parakeet-tdt-0.6b-v3-coreml", message)
+
+    def test_coreml_without_coremltools_names_the_extra(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for name in coreml.FILES:
+                (folder / name).touch()
+
+            with (
+                mock.patch.dict(sys.modules, {"coremltools": None}),
+                self.assertRaises(SystemExit) as caught,
+            ):
+                coreml.CoreMLParakeet(folder)
+
+        self.assertIn("voice2text[coreml]", str(caught.exception))
+
+    def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
+        decoded: list[np.ndarray] = []
+        windows: list[int] = []
+        core_ml = mock.Mock(
+            decode=lambda pcm: decoded.append(pcm) or "core ml words",
+            window=lambda pcm: windows.append(pcm.size) or "w",
+        )
+
+        with (
+            mock.patch.object(coreml, "CoreMLParakeet", return_value=core_ml) as load,
+            mock.patch.dict(sys.modules, {"parakeet_mlx": None, "mlx": None}),
+        ):
+            stt = backends.make_stt("parakeet-coreml")
+            text = stt.decode(np.ones((16000, 1), dtype=np.float64))
+            pieces = stt.pieces()
+            pieces.add(np.ones(16000 * 20, dtype=np.float32))
+            stepped = pieces.step()
+
+        load.assert_called_once_with(coreml.COREML_DIR)
+        self.assertEqual(text, "core ml words")
+        self.assertEqual([(a.shape, a.dtype) for a in decoded], [((16000,), np.float32)])
+        # one window cut within 3 s of the 12 s mark, known once 15 s are in
+        self.assertEqual((stepped, windows), (True, [16000 * 9 + 800]))
+        self.assertEqual(
+            (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
+        )
+        self.assertFalse(hasattr(stt, "stream"))
+
+    def test_parakeet_coreml_reads_its_files_from_a_configured_folder(self):
+        with mock.patch.object(coreml, "CoreMLParakeet") as load:
+            backends.ParakeetCoreMLSTT("~/models/parakeet-coreml")
+
+        load.assert_called_once_with(Path.home() / "models/parakeet-coreml")
+
+    def test_config_accepts_the_parakeet_coreml_backend(self):
+        config._validate(config.Config(backend="parakeet-coreml"))  # no SystemExit
+
     def _streaming_stt(
         self, feeds: list, partial: str = "so far", final: str = "final words"
     ):
@@ -1314,6 +1523,67 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("piece piece piece")
         record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("piece piece piece", True))
+
+    def _pieces_only_stt(self, voice, decoded: list):
+        """A Core ML-shaped STT: no stream(), pieces() of the default 30 s rule
+        (its pieces answer 'p' and land on `decoded`), and decode() for previews."""
+        stt = mock.Mock(
+            spec=["streaming", "pieces_only", "sample_rate", "pieces", "decode"],
+            streaming=True, pieces_only=True, sample_rate=16000,
+        )
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(
+            lambda piece: decoded.append(piece.size) or "p", 16000
+        )
+        stt.decode.return_value = "tail"
+        voice.stt = stt
+        return stt
+
+    def test_a_pieces_only_backend_decodes_in_pieces_from_the_start_with_no_stream(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        decoded: list[int] = []
+        self._pieces_only_stt(voice, decoded)
+
+        statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        self.assertEqual(decoded, list(self._PIECE_SIZES), "each piece once, the last on release")
+        self.assertEqual(statuses[1], "p tail", "the pieces so far plus a preview of the rest")
+        self.assertTrue(
+            any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
+        )
+        self.assertNotIn("Past the takeover: decoding the rest in pieces\n", lines)
+        paste.assert_called_once_with("p p p")
+        record = config.read_history()[-1]
+        self.assertEqual((record["raw"], record["streamed"]), ("p p p", True))
+
+    def test_a_short_pieces_only_recording_is_one_decode_on_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        decoded: list[int] = []
+        stt = self._pieces_only_stt(voice, decoded)
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        with mock.patch.object(app.sd, "InputStream"):
+            voice.start_recording()
+        worker = app.threading.Thread(target=voice.process_next)
+        worker.start()
+        self.addCleanup(worker.join)
+        audio = np.full((16000 * 3, 1), 0.5, dtype=np.float32)
+        voice.audio_callback(audio, len(audio), None, None)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.stop_recording()
+            worker.join(timeout=5)
+        voice.live = None
+
+        self.assertEqual(decoded, [16000 * 3])
+        stt.decode.assert_not_called()  # no preview: under one push's worth of audio
+        self.assertTrue(any("whole-file: one window)" in line for line in lines))
+        paste.assert_called_once_with("p")
+        self.assertFalse(config.read_history()[-1]["streamed"])
 
     def _pieces_or_tail(self, voice, tail, pieces: list | None = None):
         """decode() answers 'piece' for a piece (its size goes on `pieces`) and

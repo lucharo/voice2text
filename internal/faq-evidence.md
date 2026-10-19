@@ -51,7 +51,12 @@ deferred. The cleanup model's 4.4 s is the larger target.
 
 **Core ML start-up (correction).** An earlier figure of 0.4 s for loading Core ML Parakeet
 (issue #55 body, the 2026-10-15 prototype comment on #52) was wrong. Remeasured on 2026-10-19:
-Core ML 3.3 to 4.9 s against 1.4 to 2.7 s for MLX. Draft #56's own run on 2026-10-15, under load
+Core ML 3.3 to 4.9 s against 1.4 to 2.7 s for MLX. Split up the same day (#56, `loadparts.py`): `import coremltools` took 3.3 to 4.9 s
+because it also imports torch, scikit-learn and scipy when installed (v2t's dev env has torch
+through mlx-whisper); the four models then loaded in 0.1 to 0.3 s together, so the compile cache
+is reused. With coremltools 9.0 alone, `import coremltools` took 0.69 s warm and 6.97 s cold;
+with scikit-learn and scipy installed too, as every v2t install has them (parakeet-mlx → librosa →
+scikit-learn, uv.lock), it took 1.27 to 1.57 s warm and 20.5 s cold. Draft #56's own run on 2026-10-15, under load
 about 19, gave Core ML 2.8 to 3.8 s, MLX 8-bit 0.9 to 6.0 s and both models 4.1 to 5.4 s. The
 first Neural Engine load after the model files change recompiles and took 28.8 s.
 
@@ -261,7 +266,8 @@ _Created: 2026-10-19 · Verified: 2026-10-19 · Scope: v0.5.15._
 
 ## Does v2t use the Neural Engine?
 
-**Short answer:** Not as of 2026-10-19. MLX uses only the GPU and CPU; the Neural Engine needs Core
+**Short answer:** Opt-in from 0.5.16 (`backend = "parakeet-coreml"`, #56), with no MLX; the
+default stays MLX (#59 proposes switching). Before #56: MLX uses only the GPU and CPU; the Neural Engine needs Core
 ML and a converted model (FluidInference's Parakeet v3 Core ML files, used by FluidAudio). All
 figures are on the M4 Pro, 450 short clips:
 
@@ -286,6 +292,11 @@ figures are on the M4 Pro, 450 short clips:
   alone at 341 / 336 MB, and `parakeet-coreml` at 2630 / 2073 MB, because it keeps MLX loaded for
   the live text. It is not a memory saving until the live text moves to Core ML, which is why
   Luis kept #56 a draft on 2026-10-16. Between dictations it sits 0.2 to 0.8 GB above MLX alone.
+  Round 2 of #56 (2026-10-19) moved the live text to Core ML pieces and dropped MLX: 299 to 300 MB
+  after load and 336 to 337 MB at peak, and 360 MB at peak over a 40-dictation live replay, against
+  4149 MB for v0.5.15's live path. The same replay: release wait 0.058 s against 0.294 s, preview
+  words kept in the final text 97.2% against 94.9%. Whole transcription of ls-long, interleaved:
+  0.88 s against 1.36 s per recording, 2.45% against 2.28% WER.
 - **Start-up:** see the startup entry above (Core ML 3.3 to 4.9 s against MLX 1.4 to 2.7 s on
   2026-10-19; the 0.4 s figure is wrong).
 - **Size of the gain:** FluidAudio quotes about 150 times real time against v2t's 77 times (108 times

@@ -141,29 +141,35 @@ Neural Engine (below).
 
 ## Does v2t use the Neural Engine?
 
-Not yet (19 October 2026). v2t runs Parakeet through MLX, which uses only the GPU and CPU. The
-Neural Engine is reachable only through Core ML, with a converted model such as the Parakeet v3
-that [FluidAudio](https://github.com/FluidInference/FluidAudio) ships.
+Only if you opt in, from 0.5.16. By default v2t runs Parakeet through MLX, which uses only the GPU
+and CPU. The Neural Engine is reachable only through Core ML, with a converted model such as the
+Parakeet v3 that [FluidAudio](https://github.com/FluidInference/FluidAudio) ships. Set
+`backend = "parakeet-coreml"` and install `voice2text[coreml]`, and v2t runs that model on the
+Neural Engine with no MLX at all; it reads FluidAudio's files and does not download them yet
+([#59](https://github.com/lucharo/voice2text/issues/59) would make it the default).
 
-Measured on an M4 Pro, 450 labelled clips, the two run alternately clip by clip:
+Measured on an M4 Pro, each pair run alternately clip by clip:
 
-| Date | Comparison | Median wait | Errors |
+| Date | Comparison | Median wait or time | Errors |
 |---|---|--:|---|
-| 15 Oct 2026 | FluidAudio on the Neural Engine against MLX 8-bit, 3 rounds | 0.114 s against 0.172 s, quicker on 90% of clips | 6.5% against 4.9% on dictations over 15 s |
-| 15 Oct 2026 | Draft [#56](https://github.com/lucharo/voice2text/pull/56) against 0.5.15, 3 rounds | 0.054 s against 0.091 s, quicker on every clip | 5.25% against 4.94% over 15 s |
+| 15 Oct 2026 | FluidAudio on the Neural Engine against MLX 8-bit, 450 clips, 3 rounds | 0.114 s against 0.172 s, quicker on 90% of clips | 6.5% against 4.9% on dictations over 15 s |
+| 15 Oct 2026 | `parakeet-coreml` against 0.5.15, 450 short clips, 3 rounds | 0.054 s against 0.091 s, quicker on every clip | 2.00 / 4.66 / 5.67% against 2.03 / 4.28 / 5.40% |
+| 19 Oct 2026 | Same, 40 recordings of 1 to 5 minutes, whole transcription | 0.88 s against 1.36 s, quicker on every one | 2.45% against 2.28% |
+| 19 Oct 2026 | Same, 40 real dictations replayed with the live transcript on | 0.058 s against 0.29 s after release | – |
 
 FluidAudio's model decodes in fixed 15 s windows, which is where its extra errors on longer
-dictations come from. Draft #56 cuts long audio at quiet moments instead. It adds a
-`parakeet-coreml` backend, off by default, that uses Core ML for the final text and keeps MLX for
-the live transcript. That has costs today:
+dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, into pieces of up to
+15 s, and decodes them while you speak, so release waits only for the last piece.
 
-- **Memory:** no saving yet. Core ML alone peaked at about 0.34 GB, but #56 also loads MLX, so its
-  peak equals MLX's, about 2.6 GB.
-- **Start-up:** Core ML took 3.3 to 4.9 s to load against 1.4 to 2.7 s for MLX (19 October 2026).
-
-The saving is tens of milliseconds a dictation. Power, fan noise and a free GPU are the larger
-gains. #56 stays a draft until the live transcript also runs on Core ML, and
-[#55](https://github.com/lucharo/voice2text/issues/55) tracks the work.
+- **Memory:** about 0.34 GB at its peak, against about 2.6 GB for MLX 8-bit.
+- **Start-up:** the models load in 0.1 to 0.3 s once compiled, but `import coremltools` takes
+  another 1.3 to 1.6 s, because it also imports scikit-learn, which every v2t install has
+  through parakeet-mlx (and torch, where installed: that made it 3.3 to 4.9 s in the
+  maintainers' environment on 19 October). That is about what MLX takes to load (1.4 to 2.7 s).
+  The first load after the model files change recompiles them for the Neural Engine, which took
+  28.8 s once.
+- **Errors:** up to 0.4 points higher than MLX 8-bit on LibriSpeech other, FLEURS Spanish and long
+  recordings.
 
 ## Why does v2t use Parakeet v3 and not Cohere, Qwen3-ASR, Whisper or Voxtral?
 
