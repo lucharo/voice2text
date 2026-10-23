@@ -132,6 +132,9 @@ SYSTEMS = {
     # ...and with the encoder kept packed (FERMION_P2_FAST=tdt16, its bit-exact
     # path): the memory a phone would need
     "phonon-2-packed": ("fermion", "FermionResearch/Phonon-2#tdt16", "offline"),
+    # Wispr Flow's cloud service through the desktop app's own gRPC route, run by
+    # wispr_api.py (not `run`): one request per clip after release
+    "wispr-flow-api": ("wispr-cloud", "flow_api.v1.TranscriptionService/Transcribe", "offline"),
 }
 ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleurs-es
 
@@ -614,6 +617,8 @@ RUNTIMES = {
 
 def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -> None:
     runtime, repo, mode = SYSTEMS[system]
+    if runtime not in RUNTIMES:
+        raise SystemExit(f"{system} runs through its own script: uv run --script utils/asr_grid/wispr_api.py run --set {set_name}")
     if system in ENGLISH_ONLY and set_name == "fleurs-es":
         raise SystemExit(f"{system} is English only")
     clips = read_jsonl(SETS / f"{set_name}.jsonl")
@@ -917,7 +922,7 @@ def score_wispr_flow() -> list[dict]:
     cells = {
         p.stem: {r["id"]: r for r in read_jsonl(p)}
         for p in sorted((RESULTS / "wispr").glob("*.jsonl"))
-        if p.stem in SYSTEMS
+        if p.stem in SYSTEMS and family(p.stem) != "wispr"  # Wispr never votes for Wispr
     }
     if not cells:
         return []

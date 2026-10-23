@@ -297,3 +297,9 @@ model = "wispr-flow"
 engine = "cloud"
 precision = "fallback ASR"
 note = "Dictations where Wispr used its fallback ASR (usedFallbackAsr), as when its websocket is blocked on the VPN and it retries."
+
+[systems.wispr-flow-api]
+model = "wispr-flow"
+engine = "cloud"
+precision = "API, raw ASR"
+note = "Wispr's own service called clip by clip through the app's gRPC route (utils/asr_grid/wispr_api.py), formatting off. Wait: the request's round trip, sent after release, so not the app's streamed stop-to-paste time."
