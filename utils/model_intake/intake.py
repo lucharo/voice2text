@@ -59,7 +59,8 @@ def _(
     _bullets = [
         ("WER", ("is words wrong per hundred reference words, lower is better. Short clips: the mean of "
                  "LibriSpeech clean, other and FLEURS Spanish (English-only models: the two English sets, drawn hollow).")),
-        ("Your dictations", "have no ground truth: WER there is disagreement with the other systems' consensus."),
+        ("Your dictations", ("have no ground truth: the number there is disagreement with the local consensus, the medoid "
+                             "of the local models' transcripts (mostly Parakeet variants). Wispr Flow is scored the same way.")),
         ("Wait", "is the median seconds from releasing the hotkey to the final text, one M4 Pro, one model at a time."),
         ("Disk", "is the weight files the engine reads, as published."),
         ("Reported", "numbers come from models.toml, each with its source and the date it was read."),
@@ -378,7 +379,7 @@ def _(VIEWS, mo):
     page = mo.ui.tabs({"Overview": "", "Size × speed × accuracy": "", "Reported vs ours": "", "Engines": "", "Table": ""})
     # Candidate views for the three dimensions at once, lettered so Luis can pick one.
     tradeoff_variant = mo.ui.radio(
-        options=["A · bubbles", "B · parallel axes", "C · aligned bars"], value="A · bubbles", inline=True,
+        options=["A · bubbles", "B · parallel axes", "C · aligned bars"], value="B · parallel axes", inline=True,
     )
     return page, rescore, tradeoff_variant, view
 
@@ -597,7 +598,7 @@ def _(
     # a cluster of points stays readable where full labels would overlap.
     _f = view_frame.sort("wer").with_row_index("rank", offset=1)
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
-    _ylabel = "disagreement with the consensus (%)" if view.value == "wispr" else "WER (%), lower is better"
+    _ylabel = "disagreement with the local consensus (%)" if view.value == "wispr" else "WER (%), lower is better"
 
 
     def _scatter(x, title, fmt):
@@ -970,7 +971,7 @@ def _(
             "x": alt.X("wait_p50:Q", title="wait after release, median (s, log)",
                        scale=alt.Scale(type="log", nice=False, padding=24), axis=alt.Axis(grid=False, labelFlush=True, format="~g")),
             "y": alt.Y("wer:Q", scale=alt.Scale(zero=False, nice=True, padding=16),
-                       title="disagreement with the consensus (%)" if view.value == "wispr" else "WER (%), lower is better"),
+                       title="disagreement with the local consensus (%)" if view.value == "wispr" else "WER (%), lower is better"),
         }
         _chart = alt.layer(
             alt.Chart(_frame).mark_circle(opacity=0.45, stroke="white", strokeWidth=1).encode(
@@ -990,8 +991,8 @@ def _(
             "Down and left is better; a smaller bubble is a smaller download. A cloud reference has no size and is drawn at the smallest bubble.")
         _frame_for_key = _f
     elif _variant == "B":
-        # Every axis points the same way: best (least) at the top, so a line that stays high is good on
-        # all three. Disk and wait on log scales, WER linear.
+        # Every axis points the same way: values grow upwards, so the best (least) sits at the bottom
+        # and a line that stays low is good on all three. Disk and wait on log scales, WER linear.
         _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
         _rows, _ticks = [], []
         for _i, (_col, _name, _log, _unit) in enumerate(_axes):
@@ -1000,10 +1001,10 @@ def _(
             _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
             for _r in _sized.iter_rows(named=True):
                 _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
-                              "axis": _i, "axis_name": _name, "y": 1 - (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
-            for _v, _yy in ((min(_vals), 1.0), (max(_vals), 0.0)):
+                              "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
+            for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
                 _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
-            _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · less is better ↑", "align": "center"})
+            _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · lower is better ↓", "align": "center"})
         _long = pl.DataFrame(_rows)
         _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
         _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
@@ -1026,9 +1027,9 @@ def _(
         )
         _body = chart_ui(_chart, 420)
         _legend = legend_row(_status_legend)
-        _title, _note = "B · parallel axes: one line per run, best at the top of every axis", (
-            "Each axis is scaled to its own range with its smallest value at the top (size and wait on log scales), "
-            "so a line that stays high is good on all three. Cloud references have no size and are left out.")
+        _title, _note = "B · parallel axes: one line per run, best at the bottom of every axis", (
+            "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
+            "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
         _frame_for_key = _sized
     else:
         # One row per run, three bars sharing the row: drawn as HTML, so it is exact at any width.
