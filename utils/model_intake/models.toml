@@ -177,10 +177,21 @@ reported = [
   { source = "aa", metric = "aa-wer", value = 4.57 },
 ]
 
+[models.wispr-flow]
+label = "Wispr Flow"
+short = "Wispr Flow"
+creator = "Wispr"
+licence = "proprietary (cloud)"
+card = "https://wisprflow.ai"
+note = "Cloud dictation app: the reference v2t is measured against. No local weights."
+reported = []
+
 # --- systems ------------------------------------------------------------------
 # disk_gb: the weight files the engine reads, summed from the Hugging Face API
 # (https://huggingface.co/api/models/<repo>?blobs=true), read 2026-10-23.
 # v2t: "default" (what v2t ships), "opt-in" (a backend you can choose), or leave it out.
+# engine "cloud" marks a hosted reference with no weights on disk (no disk_gb); its rows
+# come from grid.score_wispr_flow, not from a grid cell.
 
 [systems.parakeet-v3]
 model = "parakeet-tdt-0.6b-v3"
@@ -274,3 +285,15 @@ engine = "mlx-audio"
 precision = "16-bit"
 disk_gb = 4.132
 note = "The original checkpoint, from an ungated mirror; told each clip's language."
+
+[systems.wispr-flow]
+model = "wispr-flow"
+engine = "cloud"
+precision = "normal path"
+note = "Your dictations where Wispr used its normal ASR. Wait: Wispr's own stop-to-paste time, formatting included."
+
+[systems.wispr-flow-fallback]
+model = "wispr-flow"
+engine = "cloud"
+precision = "fallback ASR"
+note = "Dictations where Wispr used its fallback ASR (usedFallbackAsr), as when its websocket is blocked on the VPN and it retries."

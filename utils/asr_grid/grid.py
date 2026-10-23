@@ -899,6 +899,67 @@ def score_set(set_name: str) -> list[dict]:
     return sorted(rows, key=lambda r: r["wer"])
 
 
+WISPR_FLOW = {"wispr-flow": False, "wispr-flow-fallback": True}  # row -> usedFallbackAsr
+
+
+def score_wispr_flow() -> list[dict]:
+    """Wispr Flow's own ASR on the `wispr` set, as rows shaped like `score_set`'s.
+
+    Its transcript is scored against the medoid of every grid system's transcript (it
+    never votes for itself), on the clips every cell finished. The clips split on Wispr's
+    own `usedFallbackAsr` flag (from the bench export): `wispr-flow` is its normal path,
+    `wispr-flow-fallback` the dictations where it fell back to another ASR, which is
+    what happens when its websocket is blocked. Wait is Wispr's own `e2eLatency`, stop to
+    paste, so it includes its formatting pass; clips without one have no wait.
+    """
+    clips = {c["id"]: c for c in read_jsonl(SETS / "wispr.jsonl")}
+    meta = {r["id"]: r for r in read_jsonl(WISPR / "results.jsonl")}
+    cells = {
+        p.stem: {r["id"]: r for r in read_jsonl(p)}
+        for p in sorted((RESULTS / "wispr").glob("*.jsonl"))
+        if p.stem in SYSTEMS
+    }
+    if not cells:
+        return []
+    common = sorted(
+        cid
+        for cid in set(clips).intersection(*[set(rows) for rows in cells.values()])
+        if clips[cid].get("wispr_asr") and cid in meta
+    )
+    rows = []
+    for name, fallback in WISPR_FLOW.items():
+        ids = [cid for cid in common if bool(meta[cid].get("wispr_fallback_asr")) == fallback]
+        errors = words = 0
+        for cid in ids:
+            voters = {s: normalise(final_text(s, cells[s][cid]), "en") for s in cells}
+            names = list(voters)
+            ref = min(names, key=lambda c: sum(edits(voters[c], voters[o]) for o in names if o != c))
+            errors += edits(voters[ref], normalise(clips[cid]["wispr_asr"], "en"))
+            words += len(voters[ref])
+        if not words:
+            continue
+        waits = [meta[cid]["wispr_e2e_ms"] / 1000 for cid in ids if meta[cid].get("wispr_e2e_ms")]
+        rows.append(
+            {
+                "system": name,
+                "mode": "cloud",
+                "n": len(ids),
+                "errors": errors,
+                "words": words,
+                "wer": errors / words,
+                "waits": waits,
+                "wait_p50": q(waits, 0.5) if waits else float("nan"),
+                "wait_p90": q(waits, 0.9) if waits else float("nan"),
+                "wait_max": max(waits) if waits else float("nan"),
+                "busy_s": float("nan"),
+                "audio_s": sum(clips[cid]["duration_s"] for cid in ids),
+                "rtf": float("nan"),
+                "peak_gb": None,
+            }
+        )
+    return rows
+
+
 def report() -> None:
     lines = [f"# ASR grid, {date.today().isoformat()}", ""]
     lines.append(

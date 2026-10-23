@@ -28,18 +28,16 @@ app = marimo.App(width="full", app_title="STT model intake")
 
 @app.cell(hide_code=True)
 def _(
-    GUTTER,
-    INK,
-    INK_2,
-    LONDON,
-    THEME_CSS,
-    ZoneInfo,
     board,
     bullets,
     datetime,
     engines_page,
     gaps_note,
+    GUTTER,
     html,
+    INK,
+    INK_2,
+    LONDON,
     mo,
     overview_panels,
     overview_tiles,
@@ -48,9 +46,12 @@ def _(
     rescore,
     score_meta,
     table_page,
+    THEME_CSS,
     tile_row,
     tip,
+    tradeoff_page,
     view,
+    ZoneInfo,
 ):
     # The page: a header (title, when the results were scored, a hover help, the view and
     # rescore), the page tabs, then every page mounted, the inactive ones hidden by
@@ -99,7 +100,10 @@ def _(
             narrow=("minmax(0,1fr)", '"speed" "disk"'),
         )
     )
-    _pages = {"Overview": _overview, "Reported vs ours": reported_page, "Engines": engines_page, "Table": table_page}
+    _pages = {
+        "Overview": _overview, "Size × speed × accuracy": tradeoff_page, "Reported vs ours": reported_page,
+        "Engines": engines_page, "Table": table_page,
+    }
     _body = mo.Html(
         "<style>.si-pages{position:relative}"
         ".si-page.si-off{position:absolute;left:0;right:0;top:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none}</style>"
@@ -116,6 +120,7 @@ def _():
     import hashlib
     import html
     import json
+    import math
     import statistics
     import sys
     import textwrap
@@ -137,6 +142,7 @@ def _():
         hashlib,
         html,
         json,
+        math,
         mo,
         pl,
         statistics,
@@ -174,12 +180,20 @@ def _(mo, sys, tomllib):
         "mlx-whisper": "mlx-whisper",
         "coreml": "Core ML",
         "fermion": "Fermion",
+        "cloud": "Cloud",
     }
-    SHAPES = ["circle", "square", "diamond", "triangle-up", "cross"]
+    SHAPES = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"]
     # v2t status: what it ships, what you can opt into, the rest. Palette blue, orange and a
     # neutral grey, never a red-green pair; the shape carries the engine.
-    STATUS = ["v2t default", "v2t opt-in", "not in v2t"]
-    STATUS_COLORS = ["#eb6834", "#2a78d6", "#898781"]
+    # A cloud reference (Wispr Flow) is aqua, the third slot of the same validated palette.
+    STATUS = ["v2t default", "v2t opt-in", "not in v2t", "cloud reference"]
+    STATUS_COLORS = ["#eb6834", "#2a78d6", "#898781", "#1baf7a"]
+
+
+    def status_of(system):
+        if SYSTEMS[system]["engine"] == "cloud":
+            return STATUS[3]
+        return {"default": STATUS[0], "opt-in": STATUS[1]}.get(SYSTEMS[system].get("v2t"), STATUS[2])
     return (
         ENGINES,
         LONDON,
@@ -192,6 +206,7 @@ def _(mo, sys, tomllib):
         SYSTEMS,
         VIEWS,
         grid,
+        status_of,
     )
 
 
@@ -318,6 +333,8 @@ def _(html, mo, textwrap):
             mark = f'<polygon points="6,1 11,6 6,11 1,6" style="{style}" stroke-width="1.6"/>'
         elif shape == "triangle-up":
             mark = f'<polygon points="6,1 11,11 1,11" style="{style}" stroke-width="1.6"/>'
+        elif shape == "triangle-down":
+            mark = f'<polygon points="1,1 11,1 6,11" style="{style}" stroke-width="1.6"/>'
         elif shape == "cross":
             mark = f'<path d="M4 1h4v3h3v4h-3v3h-4v-3h-3v-4h3z" style="{style}" stroke-width="1.2"/>'
         else:
@@ -358,8 +375,12 @@ def _(VIEWS, mo):
     view = mo.ui.dropdown(options=VIEWS, value="Short clips, labelled (mean of 3 sets)", label="Clips")
     rescore = mo.ui.button(label="re-read results", value=0, on_click=lambda v: (v or 0) + 1)
     # Tabs with empty panels as the page selector only; every page stays mounted (see the top cell).
-    page = mo.ui.tabs({"Overview": "", "Reported vs ours": "", "Engines": "", "Table": ""})
-    return page, rescore, view
+    page = mo.ui.tabs({"Overview": "", "Size × speed × accuracy": "", "Reported vs ours": "", "Engines": "", "Table": ""})
+    # Candidate views for the three dimensions at once, lettered so Luis can pick one.
+    tradeoff_variant = mo.ui.radio(
+        options=["A · bubbles", "B · parallel axes", "C · aligned bars"], value="A · bubbles", inline=True,
+    )
+    return page, rescore, tradeoff_variant, view
 
 
 @app.cell(hide_code=True)
@@ -369,7 +390,10 @@ def _(Path, grid, hashlib, json, pl, rescore, time):
     # rerun or a scoring change rescores; anything else reads the cache.
     _ = rescore.value  # the button re-checks the key
     _cache = grid.private_dir(grid.GRID / ".intake-cache")
-    _files = sorted(grid.RESULTS.glob("*/*.jsonl")) + sorted(grid.SETS.glob("*.jsonl")) + [Path(grid.__file__)]
+    _files = (
+        sorted(grid.RESULTS.glob("*/*.jsonl")) + sorted(grid.SETS.glob("*.jsonl"))
+        + [p for p in (grid.WISPR / "results.jsonl",) if p.exists()] + [Path(grid.__file__)]
+    )
     _key = hashlib.sha256(
         "\n".join(f"{p}:{p.stat().st_size}:{p.stat().st_mtime_ns}" for p in _files).encode()
     ).hexdigest()[:16]
@@ -391,7 +415,7 @@ def _(Path, grid, hashlib, json, pl, rescore, time):
                 continue
             if _short := grid.incomplete_cells(_set):
                 _incomplete[_set] = _short
-            for _r in grid.score_set(_set):
+            for _r in grid.score_set(_set) + (grid.score_wispr_flow() if _set == "wispr" else []):
                 _rows.append({
                     "set": _set, "system": _r["system"], "base": _r["system"].removesuffix(grid.CHUNKED),
                     "chunked": _r["system"].endswith(grid.CHUNKED), "mode": _r["mode"], "n": _r["n"],
@@ -418,7 +442,7 @@ def _(ENGINES, MODELS, SYSTEMS, bullets, grid, scores, tip):
     _no_entry = sorted(_ran - set(SYSTEMS))
     _never_ran = sorted(set(SYSTEMS) - _ran)
     _bad = sorted(s for s, v in SYSTEMS.items() if v["model"] not in MODELS or v["engine"] not in ENGINES)
-    _not_in_grid = sorted(set(SYSTEMS) - set(grid.SYSTEMS))
+    _not_in_grid = sorted(set(SYSTEMS) - set(grid.SYSTEMS) - set(grid.WISPR_FLOW))
     _facts = []
     if _no_entry:
         _facts.append(f"ran in the grid, no models.toml entry (not drawn): {', '.join(_no_entry)}")
@@ -439,14 +463,15 @@ def _(ENGINES, MODELS, SYSTEMS, bullets, grid, scores, tip):
 @app.cell(hide_code=True)
 def _(
     ENGINES,
-    MODELS,
-    SHORT,
-    STATUS,
-    SYSTEMS,
     grid,
+    MODELS,
     pl,
     scores,
+    SHORT,
     statistics,
+    STATUS,
+    status_of,
+    SYSTEMS,
     view,
 ):
     # The selected view as one row per system: WER, wait, disk and its registry facts. The
@@ -503,8 +528,6 @@ def _(
         return out + (" · pieces" if chunked else "")
 
 
-    def _status(system):
-        return {"default": STATUS[0], "opt-in": STATUS[1]}.get(SYSTEMS[system].get("v2t"), STATUS[2])
 
 
     _facts = [
@@ -516,10 +539,10 @@ def _(
             "model_label": MODELS[SYSTEMS[r["base"]]["model"]]["label"],
             "engine": ENGINES[SYSTEMS[r["base"]]["engine"]],
             "precision": SYSTEMS[r["base"]]["precision"],
-            "disk_gb": SYSTEMS[r["base"]]["disk_gb"],
-            "params_b": MODELS[SYSTEMS[r["base"]]["model"]]["params_b"],
+            "disk_gb": SYSTEMS[r["base"]].get("disk_gb"),
+            "params_b": MODELS[SYSTEMS[r["base"]]["model"]].get("params_b"),
             "licence": MODELS[SYSTEMS[r["base"]]["model"]]["licence"],
-            "status": _status(r["base"]),
+            "status": status_of(r["base"]),
             "note": SYSTEMS[r["base"]].get("note", ""),
         }
         for r in _frame.iter_rows(named=True)
@@ -578,9 +601,11 @@ def _(
 
 
     def _scatter(x, title, fmt):
-        front = pareto(_f, x)
-        lo, hi = _f[x].log().min(), _f[x].log().max()
-        frame = _f.with_columns(
+        # a cloud system has nothing on disk (and a clip without a wait has no wait): left out
+        src = _f.filter(pl.col(x).is_not_null() & (pl.col(x) > 0))
+        front = pareto(src, x)
+        lo, hi = src[x].log().min(), src[x].log().max()
+        frame = src.with_columns(
             pl.col("system").is_in(front).alias("front"),
             (pl.col("system").is_in(front) | (pl.col("status") == STATUS[0])).alias("labelled"),
             # labels in the right part of the plot sit left of their point, so none runs past
@@ -663,8 +688,9 @@ def _(
     else:
         _dtile = tile("–", "v2t default", "not run on these clips")
     overview_tiles = [
-        tile(f"{_models} / {_f.height}", "models / systems", "drawn in this view",
-             note="One model can run as several systems: other engines or precisions."),
+        tile(f"{_models} models · {_f.height} runs", "drawn in this view", "a run: one model, one engine, one precision",
+             note=bullets("A model is one set of weights; a run is that model on one engine at one precision",
+                          "Parakeet v3, for instance, runs three ways: parakeet-mlx, mlx-audio and Core ML")),
         _dtile,
         tile(f"{_best['wer']:.2f}%", "lowest WER", _best["label"],
              note=bullets(_best["label"], "English-only models (hollow) are left out: their mean covers fewer sets") if view.value == "short" else _best["label"]) if _best else tile("–", "lowest WER"),
@@ -675,24 +701,25 @@ def _(
 
 @app.cell(hide_code=True)
 def _(
-    CHART_REF,
-    ENGINES,
-    INK,
-    INK_2,
-    MODELS,
-    SOURCES,
-    STATUS,
-    STATUS_COLORS,
-    SYSTEMS,
     alt,
     board,
+    CHART_REF,
     chart_ui,
     dot,
+    ENGINES,
     html,
+    INK,
+    INK_2,
     legend_row,
+    MODELS,
     panel,
     pl,
     scores,
+    SOURCES,
+    STATUS,
+    STATUS_COLORS,
+    status_of,
+    SYSTEMS,
     tip,
 ):
     # Reported vs ours on the datasets both cover: LibriSpeech clean and other (the leaderboard's
@@ -700,7 +727,6 @@ def _(
     # against its model's reported number, so an engine or precision that costs accuracy shows
     # as a gap even where the model itself is fine.
     _sets = {"ls-clean": "LibriSpeech clean", "ls-other": "LibriSpeech other", "fleurs-es": "FLEURS Spanish"}
-    _status = lambda s: {"default": STATUS[0], "opt-in": STATUS[1]}.get(SYSTEMS[s].get("v2t"), STATUS[2])
 
 
     def _rep(model, metric):
@@ -722,7 +748,7 @@ def _(
             _label = MODELS[_s["model"]]["label"] + (f" · {ENGINES[_s['engine']]} {_s['precision']}" if _twins else "")
             _rows.append({
                 "label": _label, "ours": _r["wer"], "reported": _rp["value"], "gap": _r["wer"] - _rp["value"],
-                "status": _status(_r["base"]), "source": SOURCES[_rp["source"]]["name"],
+                "status": status_of(_r["base"]), "source": SOURCES[_rp["source"]]["name"],
             })
         _frame = pl.DataFrame(_rows, schema={
             "label": pl.Utf8, "ours": pl.Float64, "reported": pl.Float64, "gap": pl.Float64, "status": pl.Utf8, "source": pl.Utf8,
@@ -777,6 +803,7 @@ def _(
     _body = ""
     for _id, _m in sorted(MODELS.items(), key=lambda kv: _best_ours.get(kv[0], (99,))[0]):
         _o = _best_ours.get(_id)
+        _params = f"{_m['params_b']:g}B" if "params_b" in _m else "–"
         _en = " (EN, 2 sets)" if _o and _o[1] < 3 else ""
         _ours = (f'<td{tip(f"best system: {_o[2]}; mean of {_o[1]} sets")} style="text-align:right;cursor:help">{_o[0]:.2f}{_en}</td>'
                  if _o else f'<td style="color:{INK_2};text-align:right">not run</td>')
@@ -784,7 +811,7 @@ def _(
             "<tr style='border-top:1px solid var(--si-border)'>"
             f'<td style="padding:3px 8px"><a href="{html.escape(_m["card"])}" target="_blank" style="color:{INK}">{html.escape(_m["label"])}</a></td>'
             f'<td style="padding:3px 8px;color:{INK_2}">{html.escape(_m["creator"])}</td>'
-            f'<td style="text-align:right;padding:3px 8px">{_m["params_b"]:g}B</td>'
+            f'<td style="text-align:right;padding:3px 8px">{_params}</td>'
             f'<td style="padding:3px 8px;color:{INK_2}">{html.escape(_m["licence"])}</td>'
             f'<td style="text-align:right;padding:3px 8px">{_m.get("languages", "–")}</td>'
             + _cell(_id, "oasr-avg") + _cell(_id, "aa-wer") + _ours + "</tr>"
@@ -845,6 +872,7 @@ def _(
     _hdr += "".join(f'<th style="padding:4px 8px;color:{INK_2};font-weight:500;text-align:left">{html.escape(e)}</th>' for e in ENGINES.values())
     _rows = ""
     for _id, _m in MODELS.items():
+        _params = f"{_m['params_b']:g}B" if "params_b" in _m else "–"
         _cells = ""
         for _eng in ENGINES:
             _systems = [s for s, v in SYSTEMS.items() if v["model"] == _id and v["engine"] == _eng]
@@ -859,7 +887,9 @@ def _(
                           f'border-radius:3px;padding:0 4px">v2t {_v2t}</span>') if _v2t else ""
                 if _hit.height:
                     _r = _hit.row(0, named=True)
-                    _note = f"{_s}\n• WER {_r['wer']:.2f}%\n• wait p50 {_r['wait_p50']:.2f} s\n• disk {SYSTEMS[_s]['disk_gb']:.3f} GB"
+                    _disk = SYSTEMS[_s].get("disk_gb")
+                    _note = (f"{_s}\n• WER {_r['wer']:.2f}%\n• wait p50 {_r['wait_p50']:.2f} s"
+                             + (f"\n• disk {_disk:.3f} GB" if _disk else "\n• cloud: nothing on disk"))
                     _parts.append(
                         f'<div{tip(_note)} style="background:{_tint(_r["wer"])};border-radius:4px;padding:2px 6px;margin:1px 0;cursor:help">'
                         f'<b>{_r["wer"]:.2f}%</b> · {_r["wait_p50"]:.2f} s <span style="color:{INK_2}">{html.escape(SYSTEMS[_s]["precision"])}</span>{_badge}</div>'
@@ -870,7 +900,7 @@ def _(
         _rows += (
             "<tr style='border-top:1px solid var(--si-border)'>"
             f'<td style="padding:4px 8px;white-space:nowrap"><a href="{html.escape(_m["card"])}" target="_blank" style="color:{INK}">{html.escape(_m["label"])}</a></td>'
-            f'<td style="padding:4px 8px">{_m["params_b"]:g}B</td><td style="padding:4px 8px;color:{INK_2}">{html.escape(_m["licence"])}</td>'
+            f'<td style="padding:4px 8px">{_params}</td><td style="padding:4px 8px;color:{INK_2}">{html.escape(_m["licence"])}</td>'
             f"{_cells}</tr>"
         )
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
@@ -886,6 +916,164 @@ def _(
 
 
 @app.cell(hide_code=True)
+def _(
+    CHART_REF,
+    INK,
+    INK_2,
+    STATUS,
+    STATUS_COLORS,
+    VIEWS,
+    alt,
+    chart_ui,
+    dot,
+    html,
+    legend_row,
+    math,
+    panel,
+    pl,
+    tip,
+    tradeoff_variant,
+    view,
+    view_frame,
+):
+    # Size, speed and accuracy at once, three candidate views behind a lettered switch.
+    # Every view uses the systems with all three numbers; a cloud reference has no size, so
+    # it appears in A only, at the smallest bubble, and is named as such.
+    _view_name = next(k for k, v in VIEWS.items() if v == view.value)
+    _f = view_frame.filter(pl.col("wait_p50").is_not_null()).sort("wer").with_row_index("rank", offset=1)
+    _sized = _f.filter(pl.col("disk_gb").is_not_null())
+    _variant = tradeoff_variant.value[0]
+    _color = alt.Color("status:N", scale=alt.Scale(domain=STATUS, range=STATUS_COLORS), legend=None)
+    _tt = [
+        alt.Tooltip("label:N", title="system"), alt.Tooltip("wer:Q", format=".2f", title="WER %"),
+        alt.Tooltip("wait_p50:Q", format=".2f", title="wait p50 (s)"), alt.Tooltip("disk_gb:Q", format=".3f", title="disk (GB)"),
+        alt.Tooltip("engine:N"), alt.Tooltip("precision:N"), alt.Tooltip("status:N", title="v2t"),
+    ]
+    _status_legend = [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS)]
+
+
+    def _key(frame):
+        parts = []
+        for r in frame.iter_rows(named=True):
+            size = "cloud" if r["disk_gb"] is None else f"{r['disk_gb']:.2g} GB"
+            parts.append(
+                f'<span style="white-space:nowrap"><span style="color:{STATUS_COLORS[STATUS.index(r["status"])]};font-weight:600">'
+                f'{r["rank"]}</span> {html.escape(r["short"])} '
+                f'<span style="color:{INK_2}">{r["wer"]:.2f}% · {r["wait_p50"]:.2f} s · {size}</span></span>'
+            )
+        return f'<div style="display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;margin-top:4px">{"".join(parts)}</div>'
+
+
+    if _variant == "A":
+        _frame = _f.with_columns(pl.col("disk_gb").fill_null(0.02).alias("size_gb"))
+        _enc = {
+            "x": alt.X("wait_p50:Q", title="wait after release, median (s, log)",
+                       scale=alt.Scale(type="log", nice=False, padding=24), axis=alt.Axis(grid=False, labelFlush=True, format="~g")),
+            "y": alt.Y("wer:Q", scale=alt.Scale(zero=False, nice=True, padding=16),
+                       title="disagreement with the consensus (%)" if view.value == "wispr" else "WER (%), lower is better"),
+        }
+        _chart = alt.layer(
+            alt.Chart(_frame).mark_circle(opacity=0.45, stroke="white", strokeWidth=1).encode(
+                **_enc, color=_color, tooltip=_tt,
+                size=alt.Size("size_gb:Q", scale=alt.Scale(type="sqrt", range=[30, 2200], domain=[0, 4.2]), legend=None),
+            ),
+            alt.Chart(_frame).mark_text(fontSize=10, fontWeight=600, color=CHART_REF).encode(**_enc, text="rank:Q"),
+        )
+        _body = chart_ui(_chart, 420)
+        _sizes = "".join(
+            f'<span style="display:inline-flex;align-items:center;gap:4px"><svg width="{2 * r + 2}" height="{2 * r + 2}">'
+            f'<circle cx="{r + 1}" cy="{r + 1}" r="{r}" style="fill:none;stroke:{CHART_REF}"/></svg>{gb} GB</span>'
+            for gb, r in ((0.2, 3), (1, 7), (4, 13))
+        )
+        _legend = legend_row(_status_legend) + f'<div style="display:flex;gap:14px;align-items:center;font-size:11px;color:{INK_2}">bubble area = weights on disk {_sizes}</div>'
+        _title, _note = "A · bubbles: WER against wait, area is size on disk", (
+            "Down and left is better; a smaller bubble is a smaller download. A cloud reference has no size and is drawn at the smallest bubble.")
+        _frame_for_key = _f
+    elif _variant == "B":
+        # Each axis runs best at the bottom: disk and wait on log scales, WER linear.
+        _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
+        _rows, _ticks = [], []
+        for _i, (_col, _name, _log, _unit) in enumerate(_axes):
+            _vals = _sized[_col].to_list()
+            _t = (lambda v: math.log(v)) if _log else (lambda v: v)
+            _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
+            for _r in _sized.iter_rows(named=True):
+                _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
+                              "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
+            for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
+                _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
+            _ticks.append({"axis": _i, "y": 1.08, "text": _name, "align": "center"})
+        _long = pl.DataFrame(_rows)
+        _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
+        _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
+        _chart = alt.layer(
+            alt.Chart(pl.DataFrame({"axis": [0, 1, 2], "y0": [0.0] * 3, "y1": [1.0] * 3}))
+            .mark_rule(color=CHART_REF, strokeWidth=1).encode(x=_x, y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12])), y2="y1:Q"),
+            alt.Chart(_long.filter(pl.col("status") != STATUS[0])).mark_line(strokeWidth=1.6, opacity=0.75).encode(
+                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+            alt.Chart(_long.filter(pl.col("status") == STATUS[0])).mark_line(strokeWidth=4, opacity=0.9).encode(
+                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+            alt.Chart(_long).mark_point(filled=True, size=40).encode(x=_x, y=_y, color=_color, tooltip=_tt),
+            alt.Chart(_long.filter(pl.col("axis") == 2)).mark_text(align="left", dx=8, fontSize=10, fontWeight=600, color=CHART_REF)
+            .encode(x=_x, y=_y, text="rank:Q"),
+            *[
+                alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
+                .mark_text(align=a, dx=-7 if a == "right" else 0, fontSize=11, color=CHART_REF)
+                .encode(x=_x, y=_y, text="text:N")
+                for a in ("right", "center")
+            ],
+        )
+        _body = chart_ui(_chart, 420)
+        _legend = legend_row(_status_legend)
+        _title, _note = "B · parallel axes: one line per run across size, wait and WER", (
+            "Each axis is scaled to its own range, best at the bottom (size and wait on log scales). A line that "
+            "stays low is good on all three. Cloud references have no size and are left out.")
+        _frame_for_key = _sized
+    else:
+        # One row per run, three bars sharing the row: drawn as HTML, so it is exact at any width.
+        _logmax = {c: math.log(_sized[c].max() / _sized[c].min()) or 1 for c in ("disk_gb", "wait_p50")}
+        _wmax = _sized["wer"].max()
+
+
+        def _bar(frac, color, text, note):
+            return (
+                f'<td{tip(note)} style="padding:2px 8px;min-width:0"><div style="display:flex;align-items:center;gap:6px">'
+                f'<div style="flex:1;height:10px;background:var(--si-track);border-radius:3px;overflow:hidden">'
+                f'<div style="width:{max(2, 100 * frac):.1f}%;height:100%;background:{color}"></div></div>'
+                f'<span style="font-size:11px;color:{INK};white-space:nowrap;width:52px;text-align:right">{text}</span></div></td>'
+            )
+
+
+        _trs = ""
+        for _r in _sized.iter_rows(named=True):
+            _c = STATUS_COLORS[STATUS.index(_r["status"])]
+            _trs += (
+                "<tr style='border-top:1px solid var(--si-border)'>"
+                f'<td style="padding:2px 8px;font-size:12px;white-space:nowrap"><b style="color:{_c}">{_r["rank"]}</b> {html.escape(_r["short"])}</td>'
+                + _bar(_r["wer"] / _wmax, _c, f'{_r["wer"]:.2f}%', "WER, linear from zero")
+                + _bar(0.08 + 0.92 * math.log(_r["wait_p50"] / _sized["wait_p50"].min()) / _logmax["wait_p50"], _c,
+                       f'{_r["wait_p50"]:.2f} s', "wait, log scale")
+                + _bar(0.08 + 0.92 * math.log(_r["disk_gb"] / _sized["disk_gb"].min()) / _logmax["disk_gb"], _c,
+                       f'{_r["disk_gb"]:.2g} GB', "size on disk, log scale")
+                + "</tr>"
+            )
+        _hdr = "".join(f'<th style="text-align:left;padding:3px 8px;color:{INK_2};font-weight:500">{h}</th>'
+                       for h in ("run, by WER", "WER (shorter is better)", "wait (log)", "size on disk (log)"))
+        _body = (f'<table style="border-collapse:collapse;width:100%;table-layout:fixed;color:{INK}">'
+                 f'<colgroup><col style="width:28%"><col><col><col></colgroup><thead><tr>{_hdr}</tr></thead><tbody>{_trs}</tbody></table>')
+        _legend = legend_row(_status_legend)
+        _title, _note = "C · aligned bars: each run's WER, wait and size side by side", (
+            "Rows sorted by WER. Shorter is better in every column; wait and size bars are log-scaled. Cloud references have no size and are left out.")
+        _frame_for_key = _sized
+    tradeoff_page = (
+        f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:12px;color:{INK_2}">'
+        f"Candidate view {tradeoff_variant}</div>"
+        + panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_frame_for_key) if _variant != "C" else "")
+    )
+    return (tradeoff_page,)
+
+
+@app.cell(hide_code=True)
 def _(MODELS, SYSTEMS, VIEWS, mo, pl, scores):
     # Table: every system on every set, the numbers behind the charts.
     _names = {v: k for k, v in VIEWS.items()}
@@ -898,7 +1086,7 @@ def _(MODELS, SYSTEMS, VIEWS, mo, pl, scores):
         [
             {
                 "system": s, "model": MODELS[v["model"]]["label"], "engine": v["engine"], "precision": v["precision"],
-                "disk GB": v["disk_gb"], "v2t": v.get("v2t", ""),
+                "disk GB": v.get("disk_gb"), "v2t": v.get("v2t", ""),
             }
             for s, v in SYSTEMS.items()
         ],
