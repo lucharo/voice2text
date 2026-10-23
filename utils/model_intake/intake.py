@@ -990,7 +990,8 @@ def _(
             "Down and left is better; a smaller bubble is a smaller download. A cloud reference has no size and is drawn at the smallest bubble.")
         _frame_for_key = _f
     elif _variant == "B":
-        # Each axis runs best at the bottom: disk and wait on log scales, WER linear.
+        # Every axis points the same way: best (least) at the top, so a line that stays high is good on
+        # all three. Disk and wait on log scales, WER linear.
         _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
         _rows, _ticks = [], []
         for _i, (_col, _name, _log, _unit) in enumerate(_axes):
@@ -999,10 +1000,10 @@ def _(
             _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
             for _r in _sized.iter_rows(named=True):
                 _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
-                              "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
-            for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
+                              "axis": _i, "axis_name": _name, "y": 1 - (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
+            for _v, _yy in ((min(_vals), 1.0), (max(_vals), 0.0)):
                 _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
-            _ticks.append({"axis": _i, "y": 1.08, "text": _name, "align": "center"})
+            _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · less is better ↑", "align": "center"})
         _long = pl.DataFrame(_rows)
         _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
         _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
@@ -1018,16 +1019,16 @@ def _(
             .encode(x=_x, y=_y, text="rank:Q"),
             *[
                 alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
-                .mark_text(align=a, dx=-7 if a == "right" else 0, fontSize=11, color=CHART_REF)
+                .mark_text(align=a, dx=-10 if a == "right" else 0, fontSize=11, color=CHART_REF)
                 .encode(x=_x, y=_y, text="text:N")
                 for a in ("right", "center")
             ],
         )
         _body = chart_ui(_chart, 420)
         _legend = legend_row(_status_legend)
-        _title, _note = "B · parallel axes: one line per run across size, wait and WER", (
-            "Each axis is scaled to its own range, best at the bottom (size and wait on log scales). A line that "
-            "stays low is good on all three. Cloud references have no size and are left out.")
+        _title, _note = "B · parallel axes: one line per run, best at the top of every axis", (
+            "Each axis is scaled to its own range with its smallest value at the top (size and wait on log scales), "
+            "so a line that stays high is good on all three. Cloud references have no size and are left out.")
         _frame_for_key = _sized
     else:
         # One row per run, three bars sharing the row: drawn as HTML, so it is exact at any width.
