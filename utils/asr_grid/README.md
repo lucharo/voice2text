@@ -72,6 +72,11 @@ and rsync that folder into `~/.cache/huggingface/hub`.
 Everything is written under `~/.v2t/eval/grid` (owner-only): manifests, per-clip results with
 transcripts, and `<date>-report.md`, which holds numbers only.
 
+For every finished cell on one screen (WER against wait and against disk, our numbers against
+the Open ASR Leaderboard's, which engine runs which model), run `just intake`: the notebook in
+[`../model_intake`](../model_intake/intake.py) scores these results with `score_set` and reads its
+model facts from [`models.toml`](../model_intake/models.toml), where a new model is onboarded.
+
 ## Reading the numbers
 
 - **Wait** is seconds from release to the final text: the whole-file decode for an offline

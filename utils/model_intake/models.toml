@@ -1,0 +1,276 @@
+# Speech-to-text model intake registry. Read by intake.py beside it.
+#
+# Two tables (`short` is the name drawn on the charts):
+#   [models.<id>]   one set of weights as its creator published it: who made it, size,
+#                   licence, and the error rates other people report for it.
+#   [systems.<id>]  one row of utils/asr_grid/grid.py's SYSTEMS (same key): that model
+#                   run through one engine at one precision, what it costs on disk, and
+#                   whether v2t ships it.
+#
+# Onboarding a model: add its [models] entry with every reported number you can find
+# (each one names a [sources] entry), add the system to grid.py's SYSTEMS and run its
+# cells, then add the [systems] entry here. The notebook picks both up on its next load.
+# Quote a key that holds a dot ([models."qwen3-asr-1.7b"]): TOML reads a bare dot as nesting.
+#
+# Reported metrics use the grid's set names where the dataset is the same one:
+#   ls-clean, ls-other   LibriSpeech test (we score a seeded 150-clip sample of each)
+#   fleurs-es            FLEURS Spanish test (we score 150 clips of es_419)
+#   oasr-avg             Open ASR Leaderboard English short-form average, 9 datasets
+#   aa-wer               Artificial Analysis AA-WER v2 index (AgentTalk, VoxPopuli, Earnings22)
+# Values are WER in percent.
+
+[sources.oasr_en]
+name = "Open ASR Leaderboard, English short-form"
+url = "https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/f3f994901b393d72e65efc239d1f0bfa395de6c1/english_short_latest.csv"
+read = "2026-10-23"
+note = "Full test sets, the model's reference implementation on a GPU, Whisper normalisation."
+
+[sources.oasr_es]
+name = "Open ASR Leaderboard, Spanish"
+url = "https://huggingface.co/datasets/hf-audio/multilingual_evals/blob/3589b3c077cb16c935e52bdd15c7fb0a3f175f7a/multilingual_es.csv"
+read = "2026-10-23"
+note = "FLEURS WER column."
+
+[sources.aa]
+name = "Artificial Analysis Speech to Text leaderboard"
+url = "https://artificialanalysis.ai/speech-to-text"
+read = "2026-10-23"
+note = "AA-WER v2, non-streaming. Measured through a hosted API, which can differ from the open weights."
+
+# --- models -------------------------------------------------------------------
+
+[models."parakeet-tdt-0.6b-v3"]
+label = "Parakeet TDT 0.6B v3"
+short = "Parakeet v3"
+creator = "NVIDIA"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 26
+card = "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 6.51 },
+  { source = "oasr_en", metric = "ls-clean", value = 1.52 },
+  { source = "oasr_en", metric = "ls-other", value = 3.13 },
+  { source = "oasr_es", metric = "fleurs-es", value = 3.25 },
+  { source = "aa", metric = "aa-wer", value = 4.55, note = "Together AI's hosted endpoint" },
+]
+
+[models.parakeet-ultra]
+label = "Parakeet Ultra"
+short = "Parakeet Ultra"
+creator = "Moondream"
+params_b = 0.63
+licence = "CC-BY-4.0"
+card = "https://huggingface.co/moondream/parakeet-ultra"
+note = "Fine-tune of Parakeet v3, same architecture."
+reported = []
+
+[models.parakeet-redux]
+label = "Parakeet Redux"
+short = "Parakeet Redux"
+creator = "Moondream"
+params_b = 0.6
+licence = "CC-BY-4.0"
+card = "https://huggingface.co/moondream/parakeet-redux"
+note = "Parakeet v3 at 1.58 bits (ternary)."
+reported = []
+
+[models.parakeet-unified-en]
+label = "Parakeet Unified EN"
+short = "Unified EN"
+creator = "NVIDIA"
+params_b = 0.6
+licence = "other (see card)"
+languages = 1
+card = "https://huggingface.co/nvidia/parakeet-unified-en-0.6b"
+reported = []
+
+[models.phonon-2]
+label = "Phonon-2"
+short = "Phonon-2"
+creator = "Fermion Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/FermionResearch/Phonon-2"
+note = "Parakeet v3 retrained at about 2.1 bits."
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 7.23 },
+  { source = "oasr_en", metric = "ls-clean", value = 1.73 },
+  { source = "oasr_en", metric = "ls-other", value = 3.92 },
+]
+
+[models.whisper-large-v3-turbo]
+label = "Whisper large-v3 turbo"
+short = "Whisper turbo"
+creator = "OpenAI"
+params_b = 0.8
+licence = "MIT"
+languages = 99
+card = "https://huggingface.co/openai/whisper-large-v3-turbo"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 8.39 },
+  { source = "oasr_en", metric = "ls-clean", value = 2.13 },
+  { source = "oasr_en", metric = "ls-other", value = 3.71 },
+  { source = "oasr_es", metric = "fleurs-es", value = 2.73 },
+  { source = "aa", metric = "aa-wer", value = 4.62 },
+]
+
+[models."nemotron-3.5-asr-streaming"]
+label = "Nemotron 3.5 streaming"
+short = "Nemotron 3.5"
+creator = "NVIDIA"
+params_b = 0.64
+licence = "OpenMDW-1.1"
+languages = 40
+card = "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 10.51 },
+  { source = "oasr_en", metric = "ls-clean", value = 2.83 },
+  { source = "oasr_en", metric = "ls-other", value = 6.79 },
+  { source = "oasr_es", metric = "fleurs-es", value = 4.23 },
+]
+
+[models.voxtral-mini-4b-realtime]
+label = "Voxtral Mini 4B Realtime"
+short = "Voxtral 4B RT"
+creator = "Mistral"
+params_b = 4.0
+licence = "Apache-2.0"
+languages = 13
+card = "https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 9.01 },
+  { source = "oasr_en", metric = "ls-clean", value = 1.62 },
+  { source = "oasr_en", metric = "ls-other", value = 4.94 },
+  { source = "oasr_es", metric = "fleurs-es", value = 2.80 },
+]
+
+[models."qwen3-asr-1.7b"]
+label = "Qwen3-ASR 1.7B"
+short = "Qwen3-ASR 1.7B"
+creator = "Alibaba (Qwen)"
+params_b = 2.04
+licence = "Apache-2.0"
+languages = 52
+card = "https://huggingface.co/Qwen/Qwen3-ASR-1.7B"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 5.75 },
+  { source = "oasr_en", metric = "ls-clean", value = 1.26 },
+  { source = "oasr_en", metric = "ls-other", value = 2.94 },
+  { source = "oasr_es", metric = "fleurs-es", value = 2.92 },
+]
+
+[models.cohere-transcribe]
+label = "Cohere Transcribe 03-2026"
+short = "Cohere"
+creator = "Cohere"
+params_b = 2.0
+licence = "Apache-2.0"
+languages = 14
+card = "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026"
+reported = [
+  { source = "oasr_en", metric = "oasr-avg", value = 6.26 },
+  { source = "oasr_en", metric = "ls-clean", value = 0.97 },
+  { source = "oasr_en", metric = "ls-other", value = 2.05 },
+  { source = "oasr_es", metric = "fleurs-es", value = 3.26 },
+  { source = "aa", metric = "aa-wer", value = 4.57 },
+]
+
+# --- systems ------------------------------------------------------------------
+# disk_gb: the weight files the engine reads, summed from the Hugging Face API
+# (https://huggingface.co/api/models/<repo>?blobs=true), read 2026-10-23.
+# v2t: "default" (what v2t ships), "opt-in" (a backend you can choose), or leave it out.
+
+[systems.parakeet-v3]
+model = "parakeet-tdt-0.6b-v3"
+engine = "parakeet-mlx"
+precision = "bf16"
+disk_gb = 2.508
+v2t = "default"
+note = "fp32 files, run in bf16 by the grid; v2t loads it 8-bit since 0.5.15."
+
+[systems.parakeet-v3-mlxaudio]
+model = "parakeet-tdt-0.6b-v3"
+engine = "mlx-audio"
+precision = "bf16"
+disk_gb = 2.508
+
+[systems.parakeet-v3-coreml]
+model = "parakeet-tdt-0.6b-v3"
+engine = "coreml"
+precision = "fp16"
+disk_gb = 0.633
+v2t = "opt-in"
+note = "The four .mlmodelc folders v2t reads (Preprocessor, Encoder_v2, Decoder, JointDecisionv3); the repo holds 3.59 GB of variants."
+
+[systems.parakeet-ultra]
+model = "parakeet-ultra"
+engine = "parakeet-mlx"
+precision = "bf16"
+disk_gb = 1.254
+
+[systems.parakeet-redux]
+model = "parakeet-redux"
+engine = "mlx-audio"
+precision = "1.58-bit"
+disk_gb = 0.178
+
+[systems.parakeet-unified-en]
+model = "parakeet-unified-en"
+engine = "parakeet-mlx"
+precision = "bf16"
+disk_gb = 2.474
+note = "fp32 files, cast to bf16 at load."
+
+[systems.phonon-2]
+model = "phonon-2"
+engine = "fermion"
+precision = "~2.1-bit"
+disk_gb = 0.164
+note = "Fermion's default: the encoder is dequantised to fp16 after load."
+
+[systems.phonon-2-packed]
+model = "phonon-2"
+engine = "fermion"
+precision = "~2.1-bit, packed"
+disk_gb = 0.164
+note = "Encoder kept packed (FERMION_P2_FAST=tdt16): the memory a phone would need."
+
+[systems.whisper-turbo]
+model = "whisper-large-v3-turbo"
+engine = "mlx-whisper"
+precision = "fp16"
+disk_gb = 1.614
+v2t = "opt-in"
+
+[systems."nemotron-3.5-stream"]
+model = "nemotron-3.5-asr-streaming"
+engine = "mlx-audio"
+precision = "bf16"
+disk_gb = 1.276
+
+[systems.voxtral-rt-4bit]
+model = "voxtral-mini-4b-realtime"
+engine = "mlx-audio"
+precision = "4-bit"
+disk_gb = 3.134
+
+[systems."qwen3-asr-1.7b"]
+model = "qwen3-asr-1.7b"
+engine = "mlx-audio"
+precision = "bf16"
+disk_gb = 4.076
+
+[systems."qwen3-asr-1.7b-8bit"]
+model = "qwen3-asr-1.7b"
+engine = "mlx-audio"
+precision = "8-bit"
+disk_gb = 2.463
+
+[systems.cohere-transcribe]
+model = "cohere-transcribe"
+engine = "mlx-audio"
+precision = "16-bit"
+disk_gb = 4.132
+note = "The original checkpoint, from an ungated mirror; told each clip's language."
