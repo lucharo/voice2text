@@ -377,11 +377,7 @@ def _(VIEWS, mo):
     rescore = mo.ui.button(label="re-read results", value=0, on_click=lambda v: (v or 0) + 1)
     # Tabs with empty panels as the page selector only; every page stays mounted (see the top cell).
     page = mo.ui.tabs({"Overview": "", "Size × speed × accuracy": "", "Reported vs ours": "", "Engines": "", "Table": ""})
-    # Candidate views for the three dimensions at once, lettered so Luis can pick one.
-    tradeoff_variant = mo.ui.radio(
-        options=["A · bubbles", "B · parallel axes", "C · aligned bars"], value="B · parallel axes", inline=True,
-    )
-    return page, rescore, tradeoff_variant, view
+    return page, rescore, view
 
 
 @app.cell(hide_code=True)
@@ -933,24 +929,22 @@ def _(
     panel,
     pl,
     tip,
-    tradeoff_variant,
     view,
     view_frame,
 ):
-    # Size, speed and accuracy at once, three candidate views behind a lettered switch.
-    # Every view uses the systems with all three numbers; a cloud reference has no size, so
-    # it appears in A only, at the smallest bubble, and is named as such.
+    # Size, speed and accuracy at once, as parallel axes (Luis's pick, 23 Oct). Only runs with
+    # all three numbers are drawn: a cloud reference has no size and is left out.
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
     _f = view_frame.filter(pl.col("wait_p50").is_not_null()).sort("wer").with_row_index("rank", offset=1)
     _sized = _f.filter(pl.col("disk_gb").is_not_null())
-    _variant = tradeoff_variant.value[0]
     _color = alt.Color("status:N", scale=alt.Scale(domain=STATUS, range=STATUS_COLORS), legend=None)
     _tt = [
         alt.Tooltip("label:N", title="system"), alt.Tooltip("wer:Q", format=".2f", title="WER %"),
         alt.Tooltip("wait_p50:Q", format=".2f", title="wait p50 (s)"), alt.Tooltip("disk_gb:Q", format=".3f", title="disk (GB)"),
         alt.Tooltip("engine:N"), alt.Tooltip("precision:N"), alt.Tooltip("status:N", title="v2t"),
     ]
-    _status_legend = [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS)]
+    _shown = set(_sized["status"].to_list())
+    _status_legend = [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS) if s in _shown]
 
 
     def _key(frame):
@@ -965,113 +959,46 @@ def _(
         return f'<div style="display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;margin-top:4px">{"".join(parts)}</div>'
 
 
-    if _variant == "A":
-        _frame = _f.with_columns(pl.col("disk_gb").fill_null(0.02).alias("size_gb"))
-        _enc = {
-            "x": alt.X("wait_p50:Q", title="wait after release, median (s, log)",
-                       scale=alt.Scale(type="log", nice=False, padding=24), axis=alt.Axis(grid=False, labelFlush=True, format="~g")),
-            "y": alt.Y("wer:Q", scale=alt.Scale(zero=False, nice=True, padding=16),
-                       title="disagreement with the local consensus (%)" if view.value == "wispr" else "WER (%), lower is better"),
-        }
-        _chart = alt.layer(
-            alt.Chart(_frame).mark_circle(opacity=0.45, stroke="white", strokeWidth=1).encode(
-                **_enc, color=_color, tooltip=_tt,
-                size=alt.Size("size_gb:Q", scale=alt.Scale(type="sqrt", range=[30, 2200], domain=[0, 4.2]), legend=None),
-            ),
-            alt.Chart(_frame).mark_text(fontSize=10, fontWeight=600, color=CHART_REF).encode(**_enc, text="rank:Q"),
-        )
-        _body = chart_ui(_chart, 420)
-        _sizes = "".join(
-            f'<span style="display:inline-flex;align-items:center;gap:4px"><svg width="{2 * r + 2}" height="{2 * r + 2}">'
-            f'<circle cx="{r + 1}" cy="{r + 1}" r="{r}" style="fill:none;stroke:{CHART_REF}"/></svg>{gb} GB</span>'
-            for gb, r in ((0.2, 3), (1, 7), (4, 13))
-        )
-        _legend = legend_row(_status_legend) + f'<div style="display:flex;gap:14px;align-items:center;font-size:11px;color:{INK_2}">bubble area = weights on disk {_sizes}</div>'
-        _title, _note = "A · bubbles: WER against wait, area is size on disk", (
-            "Down and left is better; a smaller bubble is a smaller download. A cloud reference has no size and is drawn at the smallest bubble.")
-        _frame_for_key = _f
-    elif _variant == "B":
-        # Every axis points the same way: values grow upwards, so the best (least) sits at the bottom
-        # and a line that stays low is good on all three. Disk and wait on log scales, WER linear.
-        _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
-        _rows, _ticks = [], []
-        for _i, (_col, _name, _log, _unit) in enumerate(_axes):
-            _vals = _sized[_col].to_list()
-            _t = (lambda v: math.log(v)) if _log else (lambda v: v)
-            _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
-            for _r in _sized.iter_rows(named=True):
-                _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
-                              "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
-            for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
-                _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
-            _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · lower is better ↓", "align": "center"})
-        _long = pl.DataFrame(_rows)
-        _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
-        _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
-        _chart = alt.layer(
-            alt.Chart(pl.DataFrame({"axis": [0, 1, 2], "y0": [0.0] * 3, "y1": [1.0] * 3}))
-            .mark_rule(color=CHART_REF, strokeWidth=1).encode(x=_x, y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12])), y2="y1:Q"),
-            alt.Chart(_long.filter(pl.col("status") != STATUS[0])).mark_line(strokeWidth=1.6, opacity=0.75).encode(
-                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
-            alt.Chart(_long.filter(pl.col("status") == STATUS[0])).mark_line(strokeWidth=4, opacity=0.9).encode(
-                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
-            alt.Chart(_long).mark_point(filled=True, size=40).encode(x=_x, y=_y, color=_color, tooltip=_tt),
-            alt.Chart(_long.filter(pl.col("axis") == 2)).mark_text(align="left", dx=8, fontSize=10, fontWeight=600, color=CHART_REF)
-            .encode(x=_x, y=_y, text="rank:Q"),
-            *[
-                alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
-                .mark_text(align=a, dx=-10 if a == "right" else 0, fontSize=11, color=CHART_REF)
-                .encode(x=_x, y=_y, text="text:N")
-                for a in ("right", "center")
-            ],
-        )
-        _body = chart_ui(_chart, 420)
-        _legend = legend_row(_status_legend)
-        _title, _note = "B · parallel axes: one line per run, best at the bottom of every axis", (
-            "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
-            "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
-        _frame_for_key = _sized
-    else:
-        # One row per run, three bars sharing the row: drawn as HTML, so it is exact at any width.
-        _logmax = {c: math.log(_sized[c].max() / _sized[c].min()) or 1 for c in ("disk_gb", "wait_p50")}
-        _wmax = _sized["wer"].max()
-
-
-        def _bar(frac, color, text, note):
-            return (
-                f'<td{tip(note)} style="padding:2px 8px;min-width:0"><div style="display:flex;align-items:center;gap:6px">'
-                f'<div style="flex:1;height:10px;background:var(--si-track);border-radius:3px;overflow:hidden">'
-                f'<div style="width:{max(2, 100 * frac):.1f}%;height:100%;background:{color}"></div></div>'
-                f'<span style="font-size:11px;color:{INK};white-space:nowrap;width:52px;text-align:right">{text}</span></div></td>'
-            )
-
-
-        _trs = ""
+    # Every axis points the same way: values grow upwards, so the best (least) sits at the bottom
+    # and a line that stays low is good on all three. Disk and wait on log scales, WER linear.
+    _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
+    _rows, _ticks = [], []
+    for _i, (_col, _name, _log, _unit) in enumerate(_axes):
+        _vals = _sized[_col].to_list()
+        _t = (lambda v: math.log(v)) if _log else (lambda v: v)
+        _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
         for _r in _sized.iter_rows(named=True):
-            _c = STATUS_COLORS[STATUS.index(_r["status"])]
-            _trs += (
-                "<tr style='border-top:1px solid var(--si-border)'>"
-                f'<td style="padding:2px 8px;font-size:12px;white-space:nowrap"><b style="color:{_c}">{_r["rank"]}</b> {html.escape(_r["short"])}</td>'
-                + _bar(_r["wer"] / _wmax, _c, f'{_r["wer"]:.2f}%', "WER, linear from zero")
-                + _bar(0.08 + 0.92 * math.log(_r["wait_p50"] / _sized["wait_p50"].min()) / _logmax["wait_p50"], _c,
-                       f'{_r["wait_p50"]:.2f} s', "wait, log scale")
-                + _bar(0.08 + 0.92 * math.log(_r["disk_gb"] / _sized["disk_gb"].min()) / _logmax["disk_gb"], _c,
-                       f'{_r["disk_gb"]:.2g} GB', "size on disk, log scale")
-                + "</tr>"
-            )
-        _hdr = "".join(f'<th style="text-align:left;padding:3px 8px;color:{INK_2};font-weight:500">{h}</th>'
-                       for h in ("run, by WER", "WER (shorter is better)", "wait (log)", "size on disk (log)"))
-        _body = (f'<table style="border-collapse:collapse;width:100%;table-layout:fixed;color:{INK}">'
-                 f'<colgroup><col style="width:28%"><col><col><col></colgroup><thead><tr>{_hdr}</tr></thead><tbody>{_trs}</tbody></table>')
-        _legend = legend_row(_status_legend)
-        _title, _note = "C · aligned bars: each run's WER, wait and size side by side", (
-            "Rows sorted by WER. Shorter is better in every column; wait and size bars are log-scaled. Cloud references have no size and are left out.")
-        _frame_for_key = _sized
-    tradeoff_page = (
-        f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:12px;color:{INK_2}">'
-        f"Candidate view {tradeoff_variant}</div>"
-        + panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_frame_for_key) if _variant != "C" else "")
+            _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
+                          "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
+        for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
+            _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
+        _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · lower is better ↓", "align": "center"})
+    _long = pl.DataFrame(_rows)
+    _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
+    _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
+    _chart = alt.layer(
+        alt.Chart(pl.DataFrame({"axis": [0, 1, 2], "y0": [0.0] * 3, "y1": [1.0] * 3}))
+        .mark_rule(color=CHART_REF, strokeWidth=1).encode(x=_x, y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12])), y2="y1:Q"),
+        alt.Chart(_long.filter(pl.col("status") != STATUS[0])).mark_line(strokeWidth=1.6, opacity=0.75).encode(
+            x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+        alt.Chart(_long.filter(pl.col("status") == STATUS[0])).mark_line(strokeWidth=4, opacity=0.9).encode(
+            x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+        alt.Chart(_long).mark_point(filled=True, size=40).encode(x=_x, y=_y, color=_color, tooltip=_tt),
+        alt.Chart(_long.filter(pl.col("axis") == 2)).mark_text(align="left", dx=8, fontSize=10, fontWeight=600, color=CHART_REF)
+        .encode(x=_x, y=_y, text="rank:Q"),
+        *[
+            alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
+            .mark_text(align=a, dx=-10 if a == "right" else 0, fontSize=11, color=CHART_REF)
+            .encode(x=_x, y=_y, text="text:N")
+            for a in ("right", "center")
+        ],
     )
+    _body = chart_ui(_chart, 420)
+    _legend = legend_row(_status_legend)
+    _title, _note = "One line per run: size, wait and WER, best at the bottom of every axis", (
+        "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
+        "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
+    tradeoff_page = panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_sized))
     return (tradeoff_page,)
 
 
