@@ -290,7 +290,7 @@ note = "The original checkpoint, from an ungated mirror; told each clip's langua
 model = "wispr-flow"
 engine = "cloud"
 precision = "normal path"
-note = "Your dictations where Wispr used its normal ASR. Wait: Wispr's own stop-to-paste time, formatting included."
+note = "The text Wispr's app stored for your dictations on its normal path (its final, often formatted, output). Wait: its own stop-to-paste time, formatting included."
 
 [systems.wispr-flow-fallback]
 model = "wispr-flow"

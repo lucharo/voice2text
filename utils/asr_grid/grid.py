@@ -11,8 +11,9 @@ Sets: `wispr` (your own dictations, from the Wispr Flow bench export; no labels)
 `ls-clean` / `ls-other` (LibriSpeech test, labelled, English) and `fleurs-es`
 (FLEURS es_419 test, labelled, Spanish), 150 clips each, seeded. Labelled sets get a
 real WER. The `wispr` set has no ground truth (Wispr's own text is not truth), so each
-system is scored against the leave-one-out medoid of every other system's transcript
-plus Wispr's ASR: the transcript the rest agree with most.
+system is scored against the leave-one-out medoid of every other system's transcript:
+the transcript the rest agree with most. Wispr votes through its API run
+(`wispr-flow-api`), never through the text its app stored.
 
 Latency is the wait after the hotkey is released: the whole-file decode for an offline
 system; for a streaming one, the final push plus flush after everything before it was
@@ -199,7 +200,12 @@ def _duration(path: Path) -> float:
 
 
 def wispr_set() -> list[dict]:
-    """Every exported Wispr clip, with Wispr's own ASR kept as one consensus voter."""
+    """Every exported Wispr clip, with the text Wispr's app stored for it (`wispr_asr`).
+
+    That text is Wispr's final output, often already formatted and on fallback
+    dictations cut to the last sentence (2026-10-24 read-through), so it is scored by
+    `score_wispr_flow` but never votes in the consensus.
+    """
     meta = {c["id"]: c for c in read_jsonl(WISPR / "results.jsonl")}
     clips = []
     for wav in sorted((WISPR / "audio").glob("*.wav")):
@@ -847,11 +853,10 @@ def score_set(set_name: str) -> list[dict]:
                 errors[s] += edits(ref, hyps[s])
                 words[s] += len(ref)
             continue
-        # no label: the medoid of the other systems plus Wispr's ASR, leaving out the
-        # system's own family, whose near-identical text would otherwise vote for it
+        # no label: the medoid of the other systems, leaving out the system's own
+        # family, whose near-identical text would otherwise vote for it. Wispr's stored
+        # text no longer votes: it is its final, often formatted or truncated, output
         voters = {s: hyps[s] for s in cells}
-        if clip.get("wispr_asr"):
-            voters["wispr-asr"] = normalise(clip["wispr_asr"], clip["lang"])
         names = list(voters)
         pair = {
             frozenset((a, b)): edits(voters[a], voters[b])
@@ -864,7 +869,7 @@ def score_set(set_name: str) -> list[dict]:
 
         for s in scored:
             others = [n for n in names if family(n) != family(s)]
-            if not others:  # a lone system and no Wispr ASR: nothing to agree with
+            if not others:  # a lone system: nothing to agree with
                 continue
             ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))
             errors[s] += edits(voters[ref_name], hyps[s])
@@ -969,7 +974,7 @@ def report() -> None:
     lines = [f"# ASR grid, {date.today().isoformat()}", ""]
     lines.append(
         "WER: labelled sets against their references; `wispr` against the leave-one-out "
-        "consensus of the other systems plus Wispr's ASR (agreement, not truth). Wait: "
+        "consensus of the other systems (agreement, not truth). Wait: "
         "seconds from release to final text. RTF: compute / audio. Peak: MLX's peak "
         "memory on the worst clip, weights included (cells from 2026-10-14 on)."
     )
