@@ -717,12 +717,15 @@ def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     return low <= clean_words / raw_words <= high
 
 
-# Words casual cleanup may drop: the fillers its prompt names. Anything else it drops
-# is put back by restore_dropped_words. Measured 2026-10-26 over 1,800 labelled clips
-# (LibriSpeech clean and other, AMI far-field, Earnings22; three recognisers): the
-# cleanup added 262 word errors and fixed 107, most of them dropped small words the
-# speaker said (and, the, that, you know, as well), so it scored worse than the raw
-# transcript on every set (utils/asr_grid/cleanup_bench.py).
+# Casual cleanup may punctuate, capitalise, drop the fillers its prompt names and
+# immediate repeats, write numbers as digits and spell dictionary terms; every other
+# word stays as spoken (keep_spoken_words). Measured 2026-10-26 over 1,800 labelled
+# clips (LibriSpeech clean and other, AMI far-field, Earnings22; three recognisers):
+# the cleanup added 262 word errors and fixed 107, dropping small words the speaker
+# said (and, the, that, you know), editing grammar (says to said, it is to it's) and
+# adding words, so it scored worse than the raw transcript on every set
+# (utils/asr_grid/cleanup_bench.py). With this guard, what it still changes against
+# the raw text is mostly the repeats it removes.
 CASUAL_DROPPABLE = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
 _BARE = re.compile(r"[^\w']+")
 
@@ -731,32 +734,44 @@ def _bare(token: str) -> str:
     return _BARE.sub("", token).lower()
 
 
-def restore_dropped_words(raw: str, clean: str) -> tuple[str, int]:
-    """`clean` with every word it dropped from `raw` put back, except fillers and
-    immediate repeats ("the the"); returns the text and how many words came back.
+def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> tuple[str, dict]:
+    """`clean` held to the words of `raw`: returns the text and counts of words
+    `restored` (dropped, put back), `reverted` (changed, put back) and `removed`
+    (added, taken out).
 
-    The two are aligned on bare lowercase words, so punctuation, casing and words
-    the cleanup changed (numbers to digits, a name fixed) stay as cleaned; only a
-    stretch of raw words with nothing in its place is reinserted, as spoken, where
-    it was.
+    The two are aligned on bare lowercase words, so punctuation and casing stay as
+    cleaned. A dropped stretch comes back unless it is a filler or an immediate
+    repeat ("the the"); a changed or added stretch is kept only when it holds a digit
+    or `#` (numbers written as digits) or consists of dictionary words.
     """
     import difflib
 
+    allowed = {_bare(w) for term in vocabulary for w in term.split()}
+
+    def licensed(tokens: list[str]) -> bool:
+        joined = " ".join(tokens)
+        return any(ch.isdigit() for ch in joined) or "#" in joined or all(_bare(t) in allowed for t in tokens)
+
     raw_tokens, clean_tokens = raw.split(), clean.split()
     raw_bare = [_bare(t) for t in raw_tokens]
-    out, restored = [], 0
+    out, counts = [], {"restored": 0, "reverted": 0, "removed": 0}
     matcher = difflib.SequenceMatcher(a=raw_bare, b=[_bare(t) for t in clean_tokens], autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "delete":
+        if tag == "equal" or (tag != "delete" and licensed(clean_tokens[j1:j2])):
+            out.extend(clean_tokens[j1:j2])
+        elif tag == "insert":
+            counts["removed"] += j2 - j1
+        elif tag == "replace":
+            out.extend(raw_tokens[i1:i2])
+            counts["reverted"] += i2 - i1
+        else:  # delete
             for i in range(i1, i2):
                 word = raw_bare[i]
                 repeat = (i > 0 and raw_bare[i - 1] == word) or (i + 1 < len(raw_bare) and raw_bare[i + 1] == word)
                 if word and word not in CASUAL_DROPPABLE and not repeat:
                     out.append(raw_tokens[i])
-                    restored += 1
-        else:
-            out.extend(clean_tokens[j1:j2])
-    return " ".join(out), restored
+                    counts["restored"] += 1
+    return " ".join(out), counts
 
 
 class _ChunkedCleanup:
@@ -765,7 +780,7 @@ class _ChunkedCleanup:
     Subclasses implement `_generate(chunk, mode) -> (text, ttft_s, hit_limit)`.
     `cleanup` keeps the (text, ttft, total) contract the app, CLI and bench use;
     `last_stats` says how many chunks were guarded or hit their limit, and how many
-    words casual mode put back (restore_dropped_words).
+    words casual mode held to the dictation (keep_spoken_words).
     """
 
     model_id: str
@@ -780,7 +795,7 @@ class _ChunkedCleanup:
 
     def cleanup(self, text: str, mode: str = "casual"):
         t0, ttft, parts = time.perf_counter(), None, []
-        stats = {"chunks": 0, "guarded": 0, "limited": 0, "restored": 0}
+        stats = {"chunks": 0, "guarded": 0, "limited": 0, "restored": 0, "reverted": 0, "removed": 0}
         for chunk in chunk_text(text):
             stats["chunks"] += 1
             clean, chunk_ttft, limited = self._generate(chunk, mode)
@@ -794,8 +809,9 @@ class _ChunkedCleanup:
                 stats["guarded"] += 1
                 clean = chunk
             elif mode == "casual":
-                clean, restored = restore_dropped_words(chunk, clean)
-                stats["restored"] += restored
+                clean, counts = keep_spoken_words(chunk, clean, self.vocabulary)
+                for key, n in counts.items():
+                    stats[key] += n
             parts.append(clean)
         self.last_stats = stats
         return " ".join(parts).strip(), ttft, time.perf_counter() - t0
