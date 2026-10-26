@@ -113,6 +113,29 @@ def model_folder(folder: Path | None = None) -> Path:
     return Path(load_cache_first(COREML_REPO, lambda: snapshot_download(COREML_REPO, allow_patterns=patterns)))
 
 
+def _import_coremltools():
+    """coremltools without the converters' optional backends.
+
+    `import coremltools` imports transformers, torch and scikit-learn whenever they
+    are installed, for converting models, which v2t never does; on a fresh install
+    (mlx-lm brings transformers, librosa scikit-learn) that took 5.0 to 5.2 s against
+    1.3 to 1.6 s with them hidden (2026-10-26). They are hidden only during the import
+    and stay importable afterwards (the cleanup's mlx-lm needs transformers).
+    """
+    import sys
+
+    hidden = [name for name in ("transformers", "torch", "sklearn") if name not in sys.modules]
+    for name in hidden:
+        sys.modules[name] = None  # an import of it now raises ImportError
+    try:
+        import coremltools
+    finally:
+        for name in hidden:
+            if sys.modules.get(name) is None:
+                del sys.modules[name]
+    return coremltools
+
+
 class CoreMLParakeet:
     """Parakeet v3's four Core ML models; `decode(audio)` for 16 kHz float32 audio.
 
@@ -129,7 +152,7 @@ class CoreMLParakeet:
                 f"from huggingface.co/{COREML_REPO}, or set backend = \"parakeet\"."
             )
         try:
-            import coremltools as ct
+            ct = _import_coremltools()
         except ImportError as e:
             raise SystemExit(
                 "parakeet-coreml needs coremltools: reinstall voice2text (uv tool install --reinstall voice2text)"
