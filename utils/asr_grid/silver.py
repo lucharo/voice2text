@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import grid  # noqa: E402
+import grid
 
 VOTERS = ("wispr-flow-api", "cohere-transcribe-vad", "qwen3-asr-1.7b")
 SILVER = grid.GRID / "silver"
