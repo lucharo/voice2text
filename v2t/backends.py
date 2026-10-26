@@ -357,12 +357,21 @@ class ParakeetStream:
 
 def _load_parakeet(repo: str, from_pretrained):
     """A Parakeet repo in parakeet-mlx's layout (config.json) or NeMo's (model_config.yaml)."""
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download, try_to_load_from_cache
 
-    folder = Path(repo) if Path(repo).is_dir() else Path(snapshot_download(repo))
-    if (folder / "config.json").exists():
+    if Path(repo).is_dir():
+        folder = Path(repo)
+        return from_pretrained(repo) if (folder / "config.json").exists() else load_nemo_layout(folder)
+    cached = lambda name: isinstance(try_to_load_from_cache(repo, name), str)  # noqa: E731
+    if cached("model_config.yaml") and not cached("config.json"):
+        return load_nemo_layout(Path(snapshot_download(repo)))
+    try:
         return from_pretrained(repo)
-    return load_nemo_layout(folder)
+    except Exception:  # not yet cached and published in NeMo's layout: no config.json
+        folder = Path(snapshot_download(repo))
+        if (folder / "model_config.yaml").exists() and not (folder / "config.json").exists():
+            return load_nemo_layout(folder)
+        raise
 
 
 def load_nemo_layout(folder: Path):
@@ -708,12 +717,55 @@ def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     return low <= clean_words / raw_words <= high
 
 
+# Words casual cleanup may drop: the fillers its prompt names. Anything else it drops
+# is put back by restore_dropped_words. Measured 2026-10-26 over 1,800 labelled clips
+# (LibriSpeech clean and other, AMI far-field, Earnings22; three recognisers): the
+# cleanup added 262 word errors and fixed 107, most of them dropped small words the
+# speaker said (and, the, that, you know, as well), so it scored worse than the raw
+# transcript on every set (utils/asr_grid/cleanup_bench.py).
+CASUAL_DROPPABLE = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
+_BARE = re.compile(r"[^\w']+")
+
+
+def _bare(token: str) -> str:
+    return _BARE.sub("", token).lower()
+
+
+def restore_dropped_words(raw: str, clean: str) -> tuple[str, int]:
+    """`clean` with every word it dropped from `raw` put back, except fillers and
+    immediate repeats ("the the"); returns the text and how many words came back.
+
+    The two are aligned on bare lowercase words, so punctuation, casing and words
+    the cleanup changed (numbers to digits, a name fixed) stay as cleaned; only a
+    stretch of raw words with nothing in its place is reinserted, as spoken, where
+    it was.
+    """
+    import difflib
+
+    raw_tokens, clean_tokens = raw.split(), clean.split()
+    raw_bare = [_bare(t) for t in raw_tokens]
+    out, restored = [], 0
+    matcher = difflib.SequenceMatcher(a=raw_bare, b=[_bare(t) for t in clean_tokens], autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "delete":
+            for i in range(i1, i2):
+                word = raw_bare[i]
+                repeat = (i > 0 and raw_bare[i - 1] == word) or (i + 1 < len(raw_bare) and raw_bare[i + 1] == word)
+                if word and word not in CASUAL_DROPPABLE and not repeat:
+                    out.append(raw_tokens[i])
+                    restored += 1
+        else:
+            out.extend(clean_tokens[j1:j2])
+    return " ".join(out), restored
+
+
 class _ChunkedCleanup:
     """Shared driver: chunk, generate per chunk, guard length, keep raw on failure.
 
     Subclasses implement `_generate(chunk, mode) -> (text, ttft_s, hit_limit)`.
     `cleanup` keeps the (text, ttft, total) contract the app, CLI and bench use;
-    `last_stats` says how many chunks were guarded or hit their limit.
+    `last_stats` says how many chunks were guarded or hit their limit, and how many
+    words casual mode put back (restore_dropped_words).
     """
 
     model_id: str
@@ -728,7 +780,7 @@ class _ChunkedCleanup:
 
     def cleanup(self, text: str, mode: str = "casual"):
         t0, ttft, parts = time.perf_counter(), None, []
-        stats = {"chunks": 0, "guarded": 0, "limited": 0}
+        stats = {"chunks": 0, "guarded": 0, "limited": 0, "restored": 0}
         for chunk in chunk_text(text):
             stats["chunks"] += 1
             clean, chunk_ttft, limited = self._generate(chunk, mode)
@@ -741,6 +793,9 @@ class _ChunkedCleanup:
             elif not clean or not within_length_guard(chunk, clean, mode):
                 stats["guarded"] += 1
                 clean = chunk
+            elif mode == "casual":
+                clean, restored = restore_dropped_words(chunk, clean)
+                stats["restored"] += restored
             parts.append(clean)
         self.last_stats = stats
         return " ".join(parts).strip(), ttft, time.perf_counter() - t0

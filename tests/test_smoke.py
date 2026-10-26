@@ -3287,7 +3287,7 @@ class V2TSmokeTests(unittest.TestCase):
         text, _ttft, _total = cleaner.cleanup("hello um there friend", "casual")
 
         self.assertEqual(text, "hello um there friend")
-        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 1})
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 1, "restored": 0})
 
     def test_cleanup_keeps_the_raw_chunk_when_the_output_length_drifts(self):
         raw = "so um I think we should ship the migration on friday and watch the error rates"
@@ -3309,7 +3309,23 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(text, "So, I think we should ship the migration on Friday.")
         self.assertIsNotNone(ttft)
         self.assertGreaterEqual(total, ttft)
-        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0})
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0, "restored": 0})
+
+    def test_casual_cleanup_puts_back_words_it_dropped(self):
+        raw = "um I think that we should ship the migration and then test it on friday"
+        cleaner = self._mlx_cleaner(["I think we should ship the migration, then test it on Friday."])
+
+        text, _ttft, _total = cleaner.cleanup(raw, "casual")
+
+        self.assertEqual(text, "I think that we should ship the migration, and then test it on Friday.")
+        self.assertEqual(cleaner.last_stats["restored"], 2)
+
+    def test_restore_keeps_fillers_repeats_and_changed_words_out(self):
+        text, restored = backends.restore_dropped_words(
+            "uh PR three five nine is is done", "PR #359 is done."
+        )
+
+        self.assertEqual((text, restored), ("PR #359 is done.", 0))
 
     def test_long_dictations_are_cleaned_in_sentence_chunks(self):
         sentences = [f"Sentence number {i} has exactly seven words." for i in range(40)]
