@@ -302,7 +302,7 @@ note = "Dictations where Wispr used its fallback ASR (usedFallbackAsr), as when 
 model = "wispr-flow"
 engine = "cloud"
 precision = "API"
-note = "Wispr's own service called clip by clip through the app's gRPC route (utils/asr_grid/wispr_api.py), formatting off. Wait: the request's round trip, sent after release, so not the app's streamed stop-to-paste time."
+note = "Wispr's own service called clip by clip through the app's gRPC route (a local script, not in the repo), formatting off. Wait: the request's round trip, sent after release, so not the app's streamed stop-to-paste time."
 
 [systems.cohere-transcribe-vad]
 model = "cohere-transcribe"

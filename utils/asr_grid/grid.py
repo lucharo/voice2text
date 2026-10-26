@@ -143,7 +143,7 @@ SYSTEMS = {
     # path): the memory a phone would need
     "phonon-2-packed": ("fermion", "FermionResearch/Phonon-2#tdt16", "offline"),
     # Wispr Flow's cloud service through the desktop app's own gRPC route, run by
-    # wispr_api.py (not `run`): one request per clip after release
+    # .ignored_scripts/wispr_api.py, local only (not `run`): one request per clip after release
     "wispr-flow-api": ("wispr-cloud", "flow_api.v1.TranscriptionService/Transcribe", "offline"),
 }
 ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleurs-es
@@ -670,7 +670,7 @@ RUNTIMES = {
 def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -> None:
     runtime, repo, mode = SYSTEMS[system]
     if runtime not in RUNTIMES:
-        raise SystemExit(f"{system} runs through its own script: uv run --script utils/asr_grid/wispr_api.py run --set {set_name}")
+        raise SystemExit(f"{system} runs through a local script kept out of the repo: uv run --script .ignored_scripts/wispr_api.py run --set {set_name}")
     if system in ENGLISH_ONLY and set_name == "fleurs-es":
         raise SystemExit(f"{system} is English only")
     clips = read_jsonl(SETS / f"{set_name}.jsonl")

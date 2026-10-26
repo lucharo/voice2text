@@ -36,7 +36,7 @@ Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
 labelled clips each, seeded, scored as WER after Whisper's text normalisation. `wispr`: the 208
 dictations exported by `../wisprflow_benchmarking_profiling`, which have no ground truth; each
 system is scored against the consensus (medoid) of the other systems, its own model family left out. That
-measures agreement, not correctness. Wispr Flow takes part through `wispr_api.py`, which sends each clip to its own
+measures agreement, not correctness. Wispr Flow takes part through a local script (kept out of the repo), which sends each clip to its own
 service (`wispr-flow-api`); the text its app stored is its final output, often formatted or truncated, and no longer votes.
 
 ## Run
