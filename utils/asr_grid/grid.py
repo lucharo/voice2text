@@ -117,6 +117,14 @@ SYSTEMS = {
         "viethang/cohere-transcribe-03-2026",
         "offline",
     ),
+    # ...decoding only the speech: Cohere loops on silence ("the world is a world of
+    # peace" for 13k characters, 2026-10-24 read-through), so this cuts each clip into
+    # speech segments first (speech_segments) and joins their texts
+    "cohere-transcribe-vad": (
+        "mlx-audio",
+        "viethang/cohere-transcribe-03-2026#vad",
+        "offline",
+    ),
     # Moondream's ternary (1.58-bit) Parakeet v3, 178 MB
     "parakeet-redux": ("mlx-audio", "moondream/parakeet-redux", "offline"),
     # NVIDIA's English Parakeet Unified, offline (full-context) mode only, from the
@@ -491,13 +499,63 @@ class ParakeetCoreML:
         return self.model.decode(audio)
 
 
+VAD_FRAME_S = 0.03  # energy frames for speech_segments
+VAD_FLOOR_DB = -30  # frames this far below the clip's loudest 1% are silence...
+VAD_ABS_DB = -55  # ...and so is any frame under this, whatever the clip (dBFS)
+VAD_GAP_S = 0.8  # silences shorter than this stay inside a segment
+VAD_PAD_S = 0.2  # kept either side of each segment
+VAD_MAX_S = 25  # longer segments are cut at their quietest frame
+
+
+def speech_segments(audio: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end) samples of the speech in a clip, by frame energy.
+
+    A frame is speech when its RMS is within VAD_FLOOR_DB of the clip's 99th
+    percentile frame and above VAD_ABS_DB; speech closer than VAD_GAP_S merges, each
+    segment is padded and cut to at most VAD_MAX_S at its quietest frame. On the
+    2026-10-24 dictations speech sat at -35 to -18 dBFS and a ten-minute near-silent
+    clip at -51 dBFS in its loudest 1%.
+    """
+    hop = int(VAD_FRAME_S * SAMPLE_RATE)
+    n = len(audio) // hop
+    if n == 0:
+        return []
+    frames = audio[: n * hop].reshape(n, hop)
+    db = 20 * np.log10(np.sqrt((frames**2).mean(axis=1)) + 1e-9)
+    speech = np.flatnonzero(db > max(np.percentile(db, 99) + VAD_FLOOR_DB, VAD_ABS_DB))
+    if not len(speech):
+        return []
+    gap, pad = int(VAD_GAP_S / VAD_FRAME_S), int(VAD_PAD_S / VAD_FRAME_S)
+    runs, start, prev = [], speech[0], speech[0]
+    for f in speech[1:]:
+        if f - prev > gap:
+            runs.append((start, prev))
+            start = f
+        prev = f
+    runs.append((start, prev))
+    longest = int(VAD_MAX_S / VAD_FRAME_S)
+    out = []
+    for a, b in runs:
+        a, b = max(0, a - pad), min(n - 1, b + pad)
+        while b - a > longest:
+            window = db[a + longest // 2 : a + longest]
+            cut = a + longest // 2 + int(np.argmin(window))
+            out.append((a * hop, cut * hop))
+            a = cut
+        out.append((a * hop, (b + 1) * hop))
+    return out
+
+
 class MLXAudio:
     """mlx-audio 0.5.7: `generate` for offline models, a streaming session
-    (feed / step / close) for natively streaming ones."""
+    (feed / step / close) for natively streaming ones. A repo ending in `#vad`
+    decodes only the speech segments of each clip (speech_segments)."""
 
     def __init__(self, repo: str, mode: str):
         from mlx_audio.stt import load
 
+        repo, _, flag = repo.partition("#")
+        self.vad = flag == "vad"
         self.model = load(repo)
         self.mode = mode
         self.lang = "en"  # the `chunk` sets are English
@@ -512,6 +570,12 @@ class MLXAudio:
         return self._stream(audio)
 
     def decode(self, audio: np.ndarray) -> str:
+        if self.vad:
+            texts = [self._decode(audio[a:b]) for a, b in speech_segments(audio)]
+            return " ".join(t for t in texts if t)
+        return self._decode(audio)
+
+    def _decode(self, audio: np.ndarray) -> str:
         if "parakeet" in type(self.model).__name__.lower():
             import mlx.core as mx
 
