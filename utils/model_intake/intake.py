@@ -167,8 +167,12 @@ def _(mo, sys, tomllib):
     MODELS, SYSTEMS, SOURCES = _reg["models"], _reg["systems"], _reg["sources"]
     LONDON = "Europe/London"
     SHORT = ("ls-clean", "ls-other", "fleurs-es")
+    NOISY = ("ami-sdm", "earnings22")  # utils/asr_grid/fetch_noisy.py
     VIEWS = {
         "Short clips, labelled (mean of 3 sets)": "short",
+        "Noisy clips, labelled (mean of AMI far-field and Earnings22)": "noisy",
+        "AMI far-field (meetings on a room mic)": "ami-sdm",
+        "Earnings22 (phone-quality calls)": "earnings22",
         "LibriSpeech clean": "ls-clean",
         "LibriSpeech other": "ls-other",
         "FLEURS Spanish": "fleurs-es",
@@ -199,6 +203,7 @@ def _(mo, sys, tomllib):
         ENGINES,
         LONDON,
         MODELS,
+        NOISY,
         SHAPES,
         SHORT,
         SOURCES,
@@ -462,6 +467,7 @@ def _(
     ENGINES,
     grid,
     MODELS,
+    NOISY,
     pl,
     scores,
     SHORT,
@@ -477,12 +483,13 @@ def _(
     # English sets and is flagged hollow, since its mean covers different clips.
     _key = view.value
     _known = scores.filter(pl.col("base").is_in(list(SYSTEMS)))
-    if _key == "short":
+    if _key in ("short", "noisy"):
+        _group = SHORT if _key == "short" else NOISY
         _rows = []
         for _sys in sorted(_known.filter(~pl.col("chunked"))["base"].unique().to_list()):
-            _cells = _known.filter((pl.col("base") == _sys) & ~pl.col("chunked") & pl.col("set").is_in(SHORT))
-            _en = _sys in grid.ENGLISH_ONLY
-            if _cells.height < (2 if _en else 3):
+            _cells = _known.filter((pl.col("base") == _sys) & ~pl.col("chunked") & pl.col("set").is_in(_group))
+            _en = _key == "short" and _sys in grid.ENGLISH_ONLY  # the noisy sets are all English
+            if _cells.height < (2 if _en else len(_group)):
                 continue
             _peaks = [p for p in _cells["peak_gb"].to_list() if p is not None]
             _rows.append({
