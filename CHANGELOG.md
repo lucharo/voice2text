@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **An English-only Parakeet you can switch to.** Set `model = "littlebearlabs/parakeet-unified-en-0.6b-mlx"` under `[transcription]` to use NVIDIA's Parakeet Unified, English only, with the same engine, size and live words as the default. On the maintainer's grid it made fewer mistakes on every English set: 1.6 / 3.6% against 1.9 / 4.2% on LibriSpeech clean and other, 8.3% against 10.8% on Earnings22 phone calls, and 5.2% against 6.0% on 208 real dictations, for a wait of about 0.17 s against 0.13 s on short clips. It is published in NeMo's own file layout, which v2t now loads. The default stays Parakeet v3, which also handles other languages.
+
 ## 0.5.16
 
 - **Experimental: transcribe on the Neural Engine.** Set `backend = "parakeet-coreml"` and install `voice2text[coreml]` to run Parakeet v3 on the Mac's Neural Engine through Core ML, with no MLX: the live words while you hold the key and the final text both come from it. While you speak, the recording is decoded in pieces of up to 15 s cut at quiet moments, and the rest is previewed every second, so on release only the last piece is left. On an M4 Pro, replaying 40 real dictations of 8 s to 5 min, the wait after release was 0.058 s at the median against 0.29 s for the default, and v2t took 0.34 GB at its peak against 2.6 GB. Words wrong on 450 labelled clips: 2.00 / 4.66 / 5.67% on LibriSpeech clean, LibriSpeech other and FLEURS Spanish, against 2.03 / 4.28 / 5.40%; on 40 recordings of one to five minutes, 2.50% against 2.3%. It reads FluidAudio's converted model files from `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`, or the folder set as `model`, and does not download them. The default backend is unchanged.

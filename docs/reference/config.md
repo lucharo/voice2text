@@ -50,7 +50,7 @@ url = "http://localhost:11434"
 | Key | Values | Does |
 |---|---|---|
 | `transcription.backend` | `parakeet`, `parakeet-coreml`, `whisper` | Transcription engine; `whisper` needs `voice2text[whisper]`. `parakeet-coreml` (experimental) runs Parakeet v3 on the Neural Engine through Core ML, with no MLX: the live text while you hold the key and the final text both come from it. It needs `voice2text[coreml]` and FluidAudio's Parakeet v3 Core ML files in `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3` |
-| `transcription.model` | repo id, or a folder for `parakeet-coreml` | Blank means `parakeet-tdt-0.6b-v3`, `whisper-large-v3-turbo`, or FluidAudio's folder above |
+| `transcription.model` | repo id, or a folder for `parakeet-coreml` | Blank means `parakeet-tdt-0.6b-v3`, `whisper-large-v3-turbo`, or FluidAudio's folder above. If you speak English, `littlebearlabs/parakeet-unified-en-0.6b-mlx` (Parakeet Unified, English only) makes fewer mistakes at the same size and speed |
 | `transcription.streaming_mode` | `hacky`, `off` | Transcribe while the key is held; see [How it works](../how-it-works.md#what-happens-while-you-hold-the-key) |
 | `transcription.live_transcript` | `true`, `false` | Experimental: show the words on the pill while you speak (streaming only) |
 | `cleanup.enabled` | `true`, `false` | Run the cleanup model at all |

@@ -21,6 +21,11 @@ import numpy as np
 T = TypeVar("T")
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
+# English only, opt-in (transcription.model). On the 2026-10-26 grid it beat v3 on every
+# English set at the same size and speed: LibriSpeech clean 1.6% vs 1.9%, other 3.6% vs
+# 4.2%, Earnings22 8.3% vs 10.8%, the maintainer's dictations 5.2% vs 6.0% (30 s pieces).
+# Published in NeMo's own layout, so it loads through load_nemo_layout.
+PARAKEET_UNIFIED_EN = "littlebearlabs/parakeet-unified-en-0.6b-mlx"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
 
 # Parakeet's Linear layers are quantized to this many bits at load (group size 64),
@@ -350,6 +355,53 @@ class ParakeetStream:
         return self.text
 
 
+def _load_parakeet(repo: str, from_pretrained):
+    """A Parakeet repo in parakeet-mlx's layout (config.json) or NeMo's (model_config.yaml)."""
+    from huggingface_hub import snapshot_download
+
+    folder = Path(repo) if Path(repo).is_dir() else Path(snapshot_download(repo))
+    if (folder / "config.json").exists():
+        return from_pretrained(repo)
+    return load_nemo_layout(folder)
+
+
+def load_nemo_layout(folder: Path):
+    """A Parakeet checkpoint kept in NeMo's own layout (model_config.yaml, PyTorch
+    LSTM names and conv layouts), as littlebearlabs publishes Parakeet Unified,
+    loaded into stock parakeet-mlx and cast to bf16 like `from_pretrained`.
+
+    The renaming follows MarkChen1214's compatibility loader for the same
+    checkpoint: fold the two LSTM biases, drop batch counters and the stored
+    featuriser, transpose conv kernels to MLX's channel-last order.
+    """
+    import mlx.core as mx
+    import yaml
+    from mlx.utils import tree_flatten, tree_unflatten
+    from parakeet_mlx.utils import from_config
+
+    folder = Path(folder)
+    model = from_config(yaml.safe_load((folder / "model_config.yaml").read_text()))
+    weights = dict(mx.load(str(folder / "model.safetensors")))
+    lstm = "decoder.prediction.dec_rnn.lstm."
+    for layer in range(2):
+        weights[f"{lstm}{layer}.Wx"] = weights.pop(f"{lstm}weight_ih_l{layer}")
+        weights[f"{lstm}{layer}.Wh"] = weights.pop(f"{lstm}weight_hh_l{layer}")
+        weights[f"{lstm}{layer}.bias"] = weights.pop(f"{lstm}bias_ih_l{layer}") + weights.pop(
+            f"{lstm}bias_hh_l{layer}"
+        )
+    for key in list(weights):
+        if key.endswith(".num_batches_tracked") or key.startswith("preprocessor.featurizer."):
+            del weights[key]
+    expected = dict(tree_flatten(model.parameters()))
+    for key in expected.keys() & weights.keys():
+        if expected[key].shape != weights[key].shape:
+            order = {3: (0, 2, 1), 4: (0, 2, 3, 1)}[weights[key].ndim]
+            weights[key] = weights[key].transpose(*order)
+    model.load_weights(list(weights.items()), strict=True)
+    model.update(tree_unflatten([(k, v.astype(mx.bfloat16)) for k, v in tree_flatten(model.parameters())]))
+    return model
+
+
 class ParakeetSTT:
     default_model = PARAKEET_DEFAULT
     streaming = True
@@ -362,7 +414,7 @@ class ParakeetSTT:
                 "parakeet-mlx missing — reinstall voice2text (Apple Silicon only)."
             ) from e
         repo = model or self.default_model
-        self.model = _quantized(load_cache_first(repo, lambda: from_pretrained(repo)))
+        self.model = _quantized(load_cache_first(repo, lambda: _load_parakeet(repo, from_pretrained)))
 
     @property
     def sample_rate(self) -> int:
