@@ -272,7 +272,9 @@ def _(html, mo, textwrap):
     def tile_row(tiles):
         """Tiles filling whole rows: four go 4, 2 x 2 or 1 x 4 as the pane narrows."""
         n = len(tiles)
-        basis = lambda cols: f"calc({100 / cols:.4f}% - {GUTTER * (cols - 1) / cols:.1f}px)"
+        def basis(cols: int) -> str:
+            return f"calc({100 / cols:.4f}% - {GUTTER * (cols - 1) / cols:.1f}px)"
+
         items = "".join(f'<div class="t" style="display:flex;min-width:0">{tl}</div>' for tl in tiles)
         return (
             f"<style>.si-tiles{n}{{container-type:inline-size}}"
