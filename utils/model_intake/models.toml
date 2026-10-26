@@ -301,5 +301,12 @@ note = "Dictations where Wispr used its fallback ASR (usedFallbackAsr), as when 
 [systems.wispr-flow-api]
 model = "wispr-flow"
 engine = "cloud"
-precision = "API, raw ASR"
+precision = "API"
 note = "Wispr's own service called clip by clip through the app's gRPC route (utils/asr_grid/wispr_api.py), formatting off. Wait: the request's round trip, sent after release, so not the app's streamed stop-to-paste time."
+
+[systems.cohere-transcribe-vad]
+model = "cohere-transcribe"
+engine = "mlx-audio"
+precision = "16-bit, speech only"
+disk_gb = 4.132
+note = "Decodes only the speech segments of each clip (grid.speech_segments): Cohere loops on silence otherwise."

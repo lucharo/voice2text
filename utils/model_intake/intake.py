@@ -539,12 +539,13 @@ def _(
             "disk_gb": SYSTEMS[r["base"]].get("disk_gb"),
             "params_b": MODELS[SYSTEMS[r["base"]]["model"]].get("params_b"),
             "licence": MODELS[SYSTEMS[r["base"]]["model"]]["licence"],
+            "creator": MODELS[SYSTEMS[r["base"]]["model"]]["creator"],
             "status": status_of(r["base"]),
             "note": SYSTEMS[r["base"]].get("note", ""),
         }
         for r in _frame.iter_rows(named=True)
     ]
-    _schema = {k: pl.Utf8 for k in ("system", "label", "short", "model", "model_label", "engine", "precision", "licence", "status", "note")}
+    _schema = {k: pl.Utf8 for k in ("system", "label", "short", "model", "model_label", "engine", "precision", "licence", "creator", "status", "note")}
     _schema.update({"disk_gb": pl.Float64, "params_b": pl.Float64})
     view_frame = _frame.join(pl.DataFrame(_facts, schema=_schema), on="system", how="left").sort("wer")
     return (view_frame,)
@@ -566,101 +567,172 @@ def _(pl):
 
 @app.cell(hide_code=True)
 def _(
-    CHART_REF,
-    ENGINES,
-    INK,
-    INK_2,
-    SHAPES,
-    STATUS,
-    STATUS_COLORS,
-    VIEWS,
     alt,
     bullets,
+    CHART_REF,
     chart_ui,
     dash_line,
     dot,
+    ENGINES,
     html,
+    INK,
+    INK_2,
     legend_row,
+    math,
     panel,
     pareto,
     pl,
+    SHAPES,
     share_bar,
+    STATUS,
+    STATUS_COLORS,
     tile,
     view,
     view_frame,
+    VIEWS,
 ):
     # Overview: four tiles and the two trade-offs, WER against the wait and against disk.
-    # Every point carries its WER rank; the key under each chart names it with its numbers, so
-    # a cluster of points stays readable where full labels would overlap.
-    _f = view_frame.sort("wer").with_row_index("rank", offset=1)
+    # On long clips a system can run whole or in 30 s pieces; the charts keep its better run.
+    _f = view_frame.sort("wer").unique("base", keep="first", maintain_order=True).with_row_index("rank", offset=1)
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
     _ylabel = "disagreement with the local consensus (%)" if view.value == "wispr" else "WER (%), lower is better"
 
 
+    # Artificial Analysis-style trade-off charts: better is up and left, every point
+    # labelled in its creator's colour, labels placed by a small greedy search so they
+    # neither overlap each other nor the points, and the quadrant better than the median
+    # on both axes shaded.
+    _creators = sorted(set(_f["creator"].to_list()))
+    _palette = ["#2a78d6", "#eb6834", "#1baf7a", "#8c5bd6", "#d6486e", "#c08a00", "#3aa6b9", "#6f6e69", "#a0522d"]
+    _creator_color = {c: _palette[i % len(_palette)] for i, c in enumerate(_creators)}
+    _H = 380  # plot height in px; widths assume ~560 px for label boxes
+
+
+    def _place(us, vs, texts, order, w_px=520, h_px=_H - 50):
+        """Greedy label placement in plot-unit space (0..1 both ways, v up).
+
+        For each point, in `order`, try eight spots around it and keep the one that
+        overlaps placed labels and all points least and stays inside the plot."""
+        cw, lh = 6.2 / w_px, 14 / h_px  # one character's width, one line's height
+        pr_u, pr_v = 7 / w_px, 7 / h_px  # a point's radius
+        placed, out = [], [None] * len(us)
+        cands = [(1, 0, "left"), (-1, 0, "right"), (0, 1, "center"), (0, -1, "center"),
+                 (1, 1, "left"), (-1, 1, "right"), (1, -1, "left"), (-1, -1, "right")]
+
+        def box(u, v, w, align):
+            x0 = u if align == "left" else (u - w if align == "right" else u - w / 2)
+            return (x0, v - lh / 2, x0 + w, v + lh / 2)
+
+        def overlap(a, b):
+            return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+
+        for i in order:
+            w = cw * len(texts[i]) + 2 / w_px
+            best = None
+            for k, (du, dv, align) in enumerate(cands):
+                for step in (1, 2, 3.2):
+                    u = us[i] + du * (pr_u + 3 / w_px) * step
+                    v = vs[i] + dv * (pr_v + lh / 2) * step
+                    b = box(u, v, w, align)
+                    cost = sum(overlap(b, pb) for pb in placed) * 50
+                    cost += sum(overlap(b, (us[j] - pr_u, vs[j] - pr_v, us[j] + pr_u, vs[j] + pr_v)) for j in range(len(us))) * 30
+                    cost += (max(0, -b[0]) + max(0, b[2] - 1) + max(0, -b[1]) + max(0, b[3] - 1)) * 10
+                    cost += k * 1e-4 + (step - 1) * 2e-4
+                    if best is None or cost < best[0]:
+                        best = (cost, u, v, align, b)
+            placed.append(best[4])
+            out[i] = (best[1], best[2], best[3])
+        return out
+
+
     def _scatter(x, title, fmt):
         # a cloud system has nothing on disk (and a clip without a wait has no wait): left out
-        src = _f.filter(pl.col(x).is_not_null() & (pl.col(x) > 0))
+        src = _f.filter(pl.col(x).is_not_null() & (pl.col(x) > 0)).sort("wer")
         front = pareto(src, x)
-        lo, hi = src[x].log().min(), src[x].log().max()
-        frame = src.with_columns(
-            pl.col("system").is_in(front).alias("front"),
-            (pl.col("system").is_in(front) | (pl.col("status") == STATUS[0])).alias("labelled"),
-            # labels in the right part of the plot sit left of their point, so none runs past
-            # the plot edge (fit sizing would shrink the plot to make room for it)
-            ((pl.col(x).log() - lo) / max(hi - lo, 1e-9) > 0.55).alias("right"),
+        # outliers stay on the chart at its edge, labelled with their value, so the
+        # rest are not squeezed into a band (a looping model reads 29%)
+        cap = max(sorted(src["wer"].to_list())[src.height // 2] * 2.5, 8.0)
+        src = src.with_columns(
+            pl.col("wer").clip(upper_bound=cap).alias("wer_plot"), (pl.col("wer") > cap).alias("off"),
         )
+        xs, ys = src[x].to_list(), src["wer_plot"].to_list()
+        lx_lo, lx_hi = math.log(min(xs)) - 0.25, math.log(max(xs)) + 0.25
+        y_lo, y_hi = min(ys) - 0.08 * (max(ys) - min(ys) + 0.5), max(ys) + 0.08 * (max(ys) - min(ys) + 0.5)
+        us = [(math.log(v) - lx_lo) / (lx_hi - lx_lo) for v in xs]
+        vs = [(y_hi - v) / (y_hi - y_lo) for v in ys]  # reversed: lower WER is higher up
+        shipped = [st != STATUS[2] and st != STATUS[3] for st in src["status"].to_list()]
+        texts = [
+            t + (" (v2t)" if sh else "") + (f" ▼ {w:.0f}%" if off else "")
+            for t, sh, w, off in zip(src["short"].to_list(), shipped, src["wer"].to_list(), src["off"].to_list())
+        ]
+        order = sorted(range(len(xs)), key=lambda i: (not shipped[i], src["system"][i] not in front, ys[i]))
+        spots = _place(us, vs, texts, order)
+        frame = src.with_columns(
+            pl.Series("text", texts),
+            pl.Series("lab_x", [math.exp(lx_lo + u * (lx_hi - lx_lo)) for u, _, _ in spots]),
+            pl.Series("lab_y", [y_hi - v * (y_hi - y_lo) for _, v, _ in spots]),
+            pl.Series("align", [a for _, _, a in spots]),
+            pl.Series("shipped", shipped),
+            pl.col("system").is_in(front).alias("front"),
+        )
+        xdom, ydom = [math.exp(lx_lo), math.exp(lx_hi)], [y_hi, y_lo]
         enc = {
-            "x": alt.X(f"{x}:Q", title=title, scale=alt.Scale(type="log", nice=False, padding=12),
-                       axis=alt.Axis(grid=False, labelFlush=True, format="~g")),
-            "y": alt.Y("wer:Q", title=_ylabel, scale=alt.Scale(zero=False, nice=True, padding=8)),
+            "x": alt.X(f"{x}:Q", title=title, scale=alt.Scale(type="log", domain=xdom, nice=False),
+                       axis=alt.Axis(grid=True, gridOpacity=0.35, labelFlush=True, format="~g", tickCount=6)),
+            "y": alt.Y("wer_plot:Q", title=_ylabel + "  (better ↑)", scale=alt.Scale(domain=ydom, nice=False),
+                       axis=alt.Axis(grid=True, gridOpacity=0.35)),
         }
         tooltip = [
-            alt.Tooltip("label:N", title="system"),
+            alt.Tooltip("label:N", title="system"), alt.Tooltip("creator:N"),
             alt.Tooltip("wer:Q", format=".2f", title="WER %"),
             alt.Tooltip("wait_p50:Q", format=".2f", title="wait p50 (s)"),
             alt.Tooltip("disk_gb:Q", format=".3f", title="disk (GB)"),
             alt.Tooltip("peak_gb:Q", format=".2f", title="peak memory (GB)"),
-            alt.Tooltip("rtf:Q", format=".3f", title="compute / audio"),
             alt.Tooltip("engine:N"), alt.Tooltip("precision:N"), alt.Tooltip("status:N", title="v2t"),
             alt.Tooltip("params_b:Q", format=".2g", title="params (B)"), alt.Tooltip("licence:N"),
             alt.Tooltip("note:N"),
         ]
-        color = alt.Color("status:N", scale=alt.Scale(domain=STATUS, range=STATUS_COLORS), legend=None)
-        shape = alt.Shape("engine:N", scale=alt.Scale(domain=list(ENGINES.values()), range=SHAPES), legend=None)
+        color = alt.Color("creator:N", scale=alt.Scale(domain=_creators, range=[_creator_color[c] for c in _creators]), legend=None)
+        mx, my = sorted(xs)[len(xs) // 2], sorted(ys)[len(ys) // 2]
+        quad = pl.DataFrame({"x0": [xdom[0]], "x1": [mx], "y0": [my], "y1": [y_lo]})
         base = alt.Chart(frame)
         layers = [
-            alt.Chart(frame.filter(pl.col("front")).sort(x))
-            .mark_line(color=CHART_REF, strokeDash=[4, 3], strokeWidth=1.5)
-            .encode(**enc),
-            base.transform_filter("!datum.hollow").mark_point(filled=True, size=110, opacity=0.9)
-            .encode(**enc, color=color, shape=shape, tooltip=tooltip),
-            base.transform_filter("datum.hollow").mark_point(filled=False, size=110, strokeWidth=2)
-            .encode(**enc, color=color, shape=shape, tooltip=tooltip),
-            base.mark_text(align="left", dx=7, dy=-7, fontSize=10, fontWeight=600, color=CHART_REF)
-            .encode(**enc, text="rank:Q"),
+            alt.Chart(quad).mark_rect(color="#1baf7a", opacity=0.07).encode(
+                x=alt.X("x0:Q", scale=alt.Scale(type="log", domain=xdom, nice=False)), x2="x1:Q",
+                y=alt.Y("y0:Q", scale=alt.Scale(domain=ydom, nice=False)), y2="y1:Q"),
+            alt.Chart(quad).mark_text(align="left", baseline="top", dx=6, dy=6, fontSize=11, color="#1baf7a", fontWeight=600)
+            .encode(x="x0:Q", y="y1:Q", text=alt.value("Most attractive quadrant")),
+            alt.Chart(pl.DataFrame({"m": [mx]})).mark_rule(color=CHART_REF, strokeDash=[2, 3], opacity=0.6).encode(x="m:Q"),
+            alt.Chart(pl.DataFrame({"m": [my]})).mark_rule(color=CHART_REF, strokeDash=[2, 3], opacity=0.6).encode(y="m:Q"),
+            alt.Chart(frame.filter(pl.col("front")).sort(x)).mark_line(color=CHART_REF, strokeWidth=1.2, opacity=0.6).encode(**enc),
+            base.mark_rule(color=CHART_REF, strokeWidth=0.6, opacity=0.5).encode(**enc, x2="lab_x:Q", y2="lab_y:Q"),
+            base.transform_filter("datum.shipped").mark_point(size=300, filled=False, color="#0b0b0b", strokeWidth=1.4).encode(**enc),
+            base.transform_filter("!datum.hollow").mark_circle(size=95, opacity=1, stroke="white", strokeWidth=1)
+            .encode(**enc, color=color, tooltip=tooltip),
+            base.transform_filter("datum.hollow").mark_point(filled=False, size=95, strokeWidth=2)
+            .encode(**enc, color=color, tooltip=tooltip),
+            *[
+                base.transform_filter(f"datum.align == '{a}' && {'' if bold else '!'}(datum.shipped || datum.front)")
+                .mark_text(align=a, baseline="middle", fontSize=11, fontWeight=700 if bold else 500)
+                .encode(x="lab_x:Q", y="lab_y:Q", text="text:N", color=color)
+                for a in ("left", "right", "center") for bold in (True, False)
+            ],
         ]
-        key = "".join(
-            f'<span style="white-space:nowrap;{"font-weight:600;" if r["labelled"] else ""}">'
-            f'<span style="color:{STATUS_COLORS[STATUS.index(r["status"])]}">{r["rank"]}</span> {html.escape(r["short"])} '
-            f'<span style="color:{INK_2}">{r["wer"]:.2f}% · {fmt(r[x])}</span></span>'
-            for r in frame.sort("rank").iter_rows(named=True)
-        )
-        footer = f'<div style="display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;margin-top:4px;color:{INK}">{key}</div>'
-        return chart_ui(alt.layer(*layers), 300), footer
+        return chart_ui(alt.layer(*layers), _H), ""
 
 
     _legend = legend_row(
-        [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS)]
-        + [(dot(CHART_REF, shape=sh), e) for e, sh in zip(ENGINES.values(), SHAPES)]
-        + [(dash_line(CHART_REF), "best trade-off (Pareto front)")]
-        + ([(dot(CHART_REF, hollow=True), "English only: 2 sets")] if view.value == "short" else [])
+        [(dot(_creator_color[c]), c) for c in _creators]
+        + [(dot("#0b0b0b", hollow=True), "ringed: v2t ships it")]
+        + [(dash_line(CHART_REF), "median; solid grey line: best trade-off")]
+        + ([(dot(CHART_REF, hollow=True), "hollow: English only, 2 sets")] if view.value == "short" else [])
     )
     _speed = _scatter("wait_p50", "wait after release, median (s, log)", lambda v: f"{v:.2f} s")
     _disk = _scatter("disk_gb", "weights on disk (GB, log)", lambda v: f"{v:.2g} GB")
     overview_panels = {
         "speed": panel(
             "Accuracy vs speed", "Wait: the median seconds from releasing the hotkey to the final text, one M4 Pro, "
-            "one model on the GPU at a time. Numbers are WER ranks, named below; bold: the front and v2t's default.",
+            "one model on the GPU at a time. Better is up and left; the shaded box beats the median on both axes.",
             _speed[0], footer=_speed[1], subtitle=_view_name, legend=_legend,
         ),
         "disk": panel(
