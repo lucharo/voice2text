@@ -74,7 +74,7 @@ def _wer(pairs, tokenise) -> float:
 
 
 def report() -> None:
-    norm = lambda t: grid.normalise(t, "en")  # noqa: E731
+    norm = lambda t: grid.normalise(t, "en")
     fmt = _TOKEN.findall
     print(f"{'set':11} {'system':22} {'WER raw':>8} {'cleaned':>8}" + f"  {'formatted raw':>14} {'cleaned':>8}")
     for set_name in SETS:
