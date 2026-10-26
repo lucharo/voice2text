@@ -436,46 +436,11 @@ def _snapshot(repo: str) -> str:
 
 
 def load_nemo_layout(folder: str):
-    """A Parakeet checkpoint kept in NeMo's own layout (model_config.yaml, PyTorch
-    LSTM names and conv layouts), as littlebearlabs publishes Parakeet Unified,
-    loaded into stock parakeet-mlx and cast to bf16 like `from_pretrained`.
+    """v2t's own loader for NeMo-layout Parakeet checkpoints (backends.load_nemo_layout)."""
+    sys.path.insert(0, str(REPO))
+    from v2t.backends import load_nemo_layout as load
 
-    The renaming follows MarkChen1214's compatibility loader for the same
-    checkpoint: fold the two LSTM biases, drop batch counters and the stored
-    featuriser, transpose conv kernels to MLX's channel-last order.
-    """
-    import mlx.core as mx
-    import yaml
-    from mlx.utils import tree_flatten, tree_unflatten
-    from parakeet_mlx.utils import from_config
-
-    folder = Path(folder)
-    model = from_config(yaml.safe_load((folder / "model_config.yaml").read_text()))
-    weights = dict(mx.load(str(folder / "model.safetensors")))
-    lstm = "decoder.prediction.dec_rnn.lstm."
-    for layer in range(2):
-        weights[f"{lstm}{layer}.Wx"] = weights.pop(f"{lstm}weight_ih_l{layer}")
-        weights[f"{lstm}{layer}.Wh"] = weights.pop(f"{lstm}weight_hh_l{layer}")
-        weights[f"{lstm}{layer}.bias"] = weights.pop(
-            f"{lstm}bias_ih_l{layer}"
-        ) + weights.pop(f"{lstm}bias_hh_l{layer}")
-    for key in list(weights):
-        if key.endswith(".num_batches_tracked") or key.startswith(
-            "preprocessor.featurizer."
-        ):
-            del weights[key]
-    expected = dict(tree_flatten(model.parameters()))
-    for key in expected.keys() & weights.keys():
-        if expected[key].shape != weights[key].shape:
-            order = {3: (0, 2, 1), 4: (0, 2, 3, 1)}[weights[key].ndim]
-            weights[key] = weights[key].transpose(*order)
-    model.load_weights(list(weights.items()), strict=True)
-    model.update(
-        tree_unflatten(
-            [(k, v.astype(mx.bfloat16)) for k, v in tree_flatten(model.parameters())]
-        )
-    )
-    return model
+    return load(Path(folder))
 
 
 class MLXWhisper:
