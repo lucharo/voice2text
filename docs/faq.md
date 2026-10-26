@@ -141,12 +141,12 @@ Neural Engine (below).
 
 ## Does v2t use the Neural Engine?
 
-Only if you opt in, from 0.5.16. By default v2t runs Parakeet through MLX, which uses only the GPU
-and CPU. The Neural Engine is reachable only through Core ML, with a converted model such as the
-Parakeet v3 that [FluidAudio](https://github.com/FluidInference/FluidAudio) ships. Set
-`backend = "parakeet-coreml"` and install `voice2text[coreml]`, and v2t runs that model on the
-Neural Engine with no MLX at all; it reads FluidAudio's files and does not download them yet
-([#59](https://github.com/lucharo/voice2text/issues/59) would make it the default).
+Yes, by default since the release after 0.5.16 (opt-in in 0.5.16). The Neural Engine is reachable
+only through Core ML, with a converted model such as the Parakeet v3 that
+[FluidAudio](https://github.com/FluidInference/FluidAudio) ships, and v2t runs that model with no
+MLX at all. The first run downloads the four Core ML files it needs (about 0.63 GB), or reads
+FluidAudio's copy when there is one. `backend = "parakeet"` goes back to Parakeet on MLX, which uses
+the GPU and CPU ([#59](https://github.com/lucharo/voice2text/issues/59)).
 
 Measured on an M4 Pro, each pair run alternately clip by clip:
 

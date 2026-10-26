@@ -278,7 +278,7 @@ class V2TSmokeTests(unittest.TestCase):
             self.assertTrue(permissions.request_microphone(timeout=0.1))
 
     def test_status_reports_the_running_overrides(self):
-        cfg = config.Config(cleanup_enabled=False, mode="casual")
+        cfg = config.Config(backend="parakeet", cleanup_enabled=False, mode="casual")
         voice = app.VoiceToText(cfg)
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -1229,7 +1229,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("missing: JointDecisionv3.mlmodelc, parakeet_v3_vocab.json", message)
         self.assertIn("FluidInference/parakeet-tdt-0.6b-v3-coreml", message)
 
-    def test_coreml_without_coremltools_names_the_extra(self):
+    def test_coreml_without_coremltools_says_to_reinstall(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             for name in coreml.FILES:
@@ -1241,7 +1241,7 @@ class V2TSmokeTests(unittest.TestCase):
             ):
                 coreml.CoreMLParakeet(folder)
 
-        self.assertIn("voice2text[coreml]", str(caught.exception))
+        self.assertIn("reinstall voice2text", str(caught.exception))
 
     def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
         decoded: list[np.ndarray] = []
@@ -1817,7 +1817,7 @@ class V2TSmokeTests(unittest.TestCase):
                 return events
 
     def test_status_changes_reach_the_menu_apps_pill(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
 
         voice._set_state("recording", partial="hello there")
@@ -1844,7 +1844,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_status_changes_work_with_no_menu_app_listening(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         config.ensure_dirs()
 
         voice._set_state("recording")
@@ -1867,7 +1867,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_status_advertises_live_transcript_only_when_enabled_and_capture_can_stream(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
         voice.stt, _stream = self._streaming_stt([])
         for mode, rate, backend_streams, live, available in (
@@ -2590,7 +2590,7 @@ class V2TSmokeTests(unittest.TestCase):
             "home": self.tempdir.name,
             "config": str(config.config_path()),
             "settings": {
-                "transcription.backend": "parakeet", "transcription.model": "",
+                "transcription.backend": "parakeet-coreml", "transcription.model": "",
                 "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
                 "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
                 "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
@@ -2635,7 +2635,7 @@ class V2TSmokeTests(unittest.TestCase):
     def test_setup_quotes_the_whisper_extra_for_zsh(self):
         output = io.StringIO()
         with (
-            mock.patch("builtins.input", side_effect=["2", "n"]),
+            mock.patch("builtins.input", side_effect=["3", "n"]),
             contextlib.redirect_stdout(output),
         ):
             cli.cmd_setup([])
@@ -3218,8 +3218,8 @@ class V2TSmokeTests(unittest.TestCase):
                 "trigger": "file",
                 "source": str(path),
                 "audio_s": 10.0,
-                "backend": "parakeet",
-                "model": backends.PARAKEET_DEFAULT,
+                "backend": "parakeet-coreml",
+                "model": backends.ParakeetCoreMLSTT.default_model,
                 "mode": "casual",
                 "stt_s": record["stt_s"],
                 "cleanup_s": 0.0,

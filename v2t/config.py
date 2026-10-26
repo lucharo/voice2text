@@ -27,7 +27,7 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    backend: str = "parakeet"  # parakeet | parakeet-coreml | whisper
+    backend: str = "parakeet-coreml"  # parakeet-coreml | parakeet | whisper
     stt_model: str = ""  # blank = the backend's own default
     streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
     live_transcript: bool = False  # experimental: streamed words in the pill while speaking
@@ -279,9 +279,11 @@ DEFAULT_TOML = """\
 # v2t config — every key is optional; delete what you don't override.
 
 [transcription]
-backend = "parakeet"   # parakeet (default, MLX) | whisper (needs voice2text[whisper])
-                       # | parakeet-coreml (experimental: Neural Engine, no MLX, needs voice2text[coreml])
-model = ""             # blank = backend default (parakeet-tdt-0.6b-v3 / whisper-large-v3-turbo)
+backend = "parakeet-coreml"  # parakeet-coreml (default: Parakeet v3 on the Neural Engine)
+                       # | parakeet (Parakeet on MLX) | whisper (needs voice2text[whisper])
+model = ""             # blank = backend default (Parakeet v3 Core ML files / parakeet-tdt-0.6b-v3
+                       # / whisper-large-v3-turbo); littlebearlabs/parakeet-unified-en-0.6b-mlx
+                       # with backend = "parakeet" is English-only and more accurate
 streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)
 
@@ -692,7 +694,7 @@ if __name__ == "__main__":
         os.environ.pop("V2T_CONFIG", None)
 
         assert home() == Path(d), "V2T_HOME must win"
-        assert load().backend == "parakeet", "default backend"
+        assert load().backend == "parakeet-coreml", "default backend"
         assert load({"mode": "casual"}).mode == "casual", "override wins"
         assert load({"mode": None}).mode == "casual", "None override ignored"
 

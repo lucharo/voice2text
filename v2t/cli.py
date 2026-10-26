@@ -619,7 +619,8 @@ def _setup() -> int:
     backend = _ask(
         "Transcription model:",
         [
-            ("parakeet", "Parakeet — fast, multilingual (recommended)"),
+            ("parakeet-coreml", "Parakeet on the Neural Engine — fast, light, multilingual (recommended)"),
+            ("parakeet", "Parakeet on MLX — the same model on the GPU"),
             ("whisper", "Whisper — best for rare languages / accents"),
         ],
     )

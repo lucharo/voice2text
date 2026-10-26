@@ -462,10 +462,11 @@ class ParakeetCoreMLSTT:
     pieces_only = True  # ...from the start, with no streaming recogniser
 
     def __init__(self, model: str = ""):
-        from .coreml import COREML_DIR, CoreMLParakeet
+        from .coreml import CoreMLParakeet, model_folder
 
-        # `model` is a folder of the Core ML files; blank means FluidAudio's cache
-        self.coreml = CoreMLParakeet(Path(model).expanduser() if model else COREML_DIR)
+        # `model` is a folder of the Core ML files; blank means FluidAudio's folder,
+        # else the Hugging Face cache, downloading the files the first time
+        self.coreml = CoreMLParakeet(model_folder(Path(model).expanduser() if model else None))
 
     @property
     def sample_rate(self) -> int:

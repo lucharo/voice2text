@@ -27,8 +27,10 @@ import numpy as np
 
 from .backends import PieceDecoder
 
-# Where FluidAudio keeps the files it downloads from Hugging Face
-# (FluidInference/parakeet-tdt-0.6b-v3-coreml); v2t reads them, never fetches them.
+# The compiled models on Hugging Face. v2t downloads only the files in FILES (about
+# 0.63 GB of the repo's 3.6 GB) into the Hugging Face cache, unless FluidAudio has
+# already put them in its own folder, which is read first.
+COREML_REPO = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
 COREML_DIR = (
     Path.home() / "Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"
 )
@@ -96,6 +98,21 @@ def missing_files(folder: Path) -> list[str]:
     return [name for name in FILES if not (folder / name).exists()]
 
 
+def model_folder(folder: Path | None = None) -> Path:
+    """Where the Core ML files are: `folder` when given, else FluidAudio's folder when
+    complete, else the Hugging Face cache, downloading just FILES the first time."""
+    if folder is not None:
+        return folder
+    if not missing_files(COREML_DIR):
+        return COREML_DIR
+    from huggingface_hub import snapshot_download
+
+    from .backends import load_cache_first
+
+    patterns = [f"{name}/*" if name.endswith(".mlmodelc") else name for name in FILES]
+    return Path(load_cache_first(COREML_REPO, lambda: snapshot_download(COREML_REPO, allow_patterns=patterns)))
+
+
 class CoreMLParakeet:
     """Parakeet v3's four Core ML models; `decode(audio)` for 16 kHz float32 audio.
 
@@ -107,17 +124,15 @@ class CoreMLParakeet:
         missing = missing_files(folder)
         if missing:
             raise SystemExit(
-                f"parakeet-coreml needs FluidAudio's Parakeet v3 Core ML files in "
-                f"{folder}, missing: {', '.join(missing)}. Put the contents of "
-                "huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml there "
-                "(any FluidAudio app downloads them to that folder), or set "
-                'backend = "parakeet".'
+                f"parakeet-coreml needs Parakeet v3's Core ML files in {folder}, missing: "
+                f"{', '.join(missing)}. Leave transcription.model blank to download them "
+                f"from huggingface.co/{COREML_REPO}, or set backend = \"parakeet\"."
             )
         try:
             import coremltools as ct
         except ImportError as e:
             raise SystemExit(
-                "parakeet-coreml needs coremltools: uv tool install 'voice2text[coreml]'"
+                "parakeet-coreml needs coremltools: reinstall voice2text (uv tool install --reinstall voice2text)"
             ) from e
         model, units = ct.models.CompiledMLModel, ct.ComputeUnit
         self.pre = model(str(folder / FILES[0]), compute_units=units.CPU_ONLY)
