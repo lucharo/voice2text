@@ -673,7 +673,8 @@ def _(
             t + (" (v2t)" if sh else "") + (f" ▼ {w:.0f}%" if off else "")
             for t, sh, w, off in zip(src["short"].to_list(), shipped, src["wer"].to_list(), src["off"].to_list())
         ]
-        order = sorted(range(len(xs)), key=lambda i: (not shipped[i], src["system"][i] not in front, ys[i]))
+        cloud = [st == STATUS[3] for st in src["status"].to_list()]
+        order = sorted(range(len(xs)), key=lambda i: (not (shipped[i] or cloud[i]), src["system"][i] not in front, ys[i]))
         spots = _place(us, vs, texts, order)
         frame = src.with_columns(
             pl.Series("text", texts),
@@ -682,7 +683,10 @@ def _(
             pl.Series("align", [a for _, _, a in spots]),
             pl.Series("shipped", shipped),
             pl.col("system").is_in(front).alias("front"),
-        ).with_columns((pl.col("front") | pl.col("shipped")).alias("key"))
+        ).with_columns(
+            # the cloud reference (Wispr Flow) is what v2t is measured against: always shown in full
+            (pl.col("front") | pl.col("shipped") | (pl.col("status") == STATUS[3])).alias("key")
+        )
         xdom, ydom = [math.exp(lx_lo), math.exp(lx_hi)], [y_hi, y_lo]
         enc = {
             "x": alt.X(f"{x}:Q", title=title, scale=alt.Scale(type="log", domain=xdom, nice=False),
