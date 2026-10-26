@@ -48,6 +48,7 @@ SETS = GRID / "sets"
 RESULTS = GRID / "results"
 LIBRISPEECH = EVAL / "labelled/LibriSpeech"
 FLEURS_ES = EVAL / "labelled/fleurs/es_419"
+NOISY = ("ami-sdm", "earnings22")  # fetched by fetch_noisy.py into EVAL/labelled/<set>
 WISPR = EVAL / "wisprflow"
 SAMPLE = 150
 SEED = 20260929
@@ -193,6 +194,9 @@ def prepare() -> None:
         sets["ls-long"] = librispeech_long_set()
     if FLEURS_ES.exists():
         sets["fleurs-es"] = fleurs_set()
+    for name in NOISY:
+        if (EVAL / "labelled" / name / "transcripts.tsv").exists():
+            sets[name] = noisy_set(name)
     for name, clips in sets.items():
         path = SETS / f"{name}.jsonl"
         path.write_text("".join(json.dumps(c) + "\n" for c in clips))
@@ -288,6 +292,19 @@ def librispeech_long_set() -> list[dict]:
                     "text": " ".join(texts),
                 }
             )
+    return clips
+
+
+def noisy_set(name: str) -> list[dict]:
+    """A set fetch_noisy.py already sampled: its WAVs and their reference texts."""
+    root = EVAL / "labelled" / name
+    clips = []
+    for line in (root / "transcripts.tsv").read_text().splitlines():
+        cid, text = line.split("\t", 1)
+        path = root / "audio" / f"{cid}.wav"
+        clips.append(
+            {"id": cid, "path": str(path), "duration_s": round(_duration(path), 3), "lang": "en", "text": text}
+        )
     return clips
 
 
