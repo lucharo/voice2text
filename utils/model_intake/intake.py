@@ -674,7 +674,7 @@ def _(
             pl.Series("align", [a for _, _, a in spots]),
             pl.Series("shipped", shipped),
             pl.col("system").is_in(front).alias("front"),
-        )
+        ).with_columns((pl.col("front") | pl.col("shipped")).alias("key"))
         xdom, ydom = [math.exp(lx_lo), math.exp(lx_hi)], [y_hi, y_lo]
         enc = {
             "x": alt.X(f"{x}:Q", title=title, scale=alt.Scale(type="log", domain=xdom, nice=False),
@@ -704,18 +704,23 @@ def _(
             .encode(x="x0:Q", y="y1:Q", text=alt.value("Most attractive quadrant")),
             alt.Chart(pl.DataFrame({"m": [mx]})).mark_rule(color=CHART_REF, strokeDash=[2, 3], opacity=0.6).encode(x="m:Q"),
             alt.Chart(pl.DataFrame({"m": [my]})).mark_rule(color=CHART_REF, strokeDash=[2, 3], opacity=0.6).encode(y="m:Q"),
-            alt.Chart(frame.filter(pl.col("front")).sort(x)).mark_line(color=CHART_REF, strokeWidth=1.2, opacity=0.6).encode(**enc),
-            base.mark_rule(color=CHART_REF, strokeWidth=0.6, opacity=0.5).encode(**enc, x2="lab_x:Q", y2="lab_y:Q"),
-            base.transform_filter("datum.shipped").mark_point(size=300, filled=False, color="#0b0b0b", strokeWidth=1.4).encode(**enc),
-            base.transform_filter("!datum.hollow").mark_circle(size=95, opacity=1, stroke="white", strokeWidth=1)
+            # the best trade-offs pop: the front as a heavy line, its runs and v2t's large and
+            # in full colour, every other run small, pale and labelled in grey
+            alt.Chart(frame.filter(pl.col("front")).sort(x)).mark_line(color="#1baf7a", strokeWidth=2.5, opacity=0.9).encode(**enc),
+            base.mark_rule(color=CHART_REF, strokeWidth=0.6, opacity=0.4).encode(**enc, x2="lab_x:Q", y2="lab_y:Q"),
+            base.transform_filter("datum.shipped").mark_point(size=360, filled=False, color="#0b0b0b", strokeWidth=1.6).encode(**enc),
+            base.transform_filter("!datum.hollow && !datum.key").mark_circle(size=55, opacity=0.35)
             .encode(**enc, color=color, tooltip=tooltip),
-            base.transform_filter("datum.hollow").mark_point(filled=False, size=95, strokeWidth=2)
+            base.transform_filter("!datum.hollow && datum.key").mark_circle(size=170, opacity=1, stroke="white", strokeWidth=1.5)
+            .encode(**enc, color=color, tooltip=tooltip),
+            base.transform_filter("datum.hollow").mark_point(filled=False, size=95, strokeWidth=2, opacity=0.6)
             .encode(**enc, color=color, tooltip=tooltip),
             *[
-                base.transform_filter(f"datum.align == '{a}' && {'' if bold else '!'}(datum.shipped || datum.front)")
-                .mark_text(align=a, baseline="middle", fontSize=11, fontWeight=700 if bold else 500)
-                .encode(x="lab_x:Q", y="lab_y:Q", text="text:N", color=color)
-                for a in ("left", "right", "center") for bold in (True, False)
+                base.transform_filter(f"datum.align == '{a}' && {'' if key else '!'}datum.key")
+                .mark_text(align=a, baseline="middle", fontSize=12 if key else 10, fontWeight=700 if key else 400,
+                           **({} if key else {"color": CHART_REF}))
+                .encode(x="lab_x:Q", y="lab_y:Q", text="text:N", **({"color": color} if key else {}))
+                for a in ("left", "right", "center") for key in (True, False)
             ],
         ]
         return chart_ui(alt.layer(*layers), _H), ""
@@ -724,7 +729,7 @@ def _(
     _legend = legend_row(
         [(dot(_creator_color[c]), c) for c in _creators]
         + [(dot("#0b0b0b", hollow=True), "ringed: v2t ships it")]
-        + [(dash_line(CHART_REF), "median; solid grey line: best trade-off")]
+        + [(dash_line(CHART_REF), "median; green line: best trade-offs (bold)")]
         + ([(dot(CHART_REF, hollow=True), "hollow: English only, 2 sets")] if view.value == "short" else [])
     )
     _speed = _scatter("wait_p50", "wait after release, median (s, log)", lambda v: f"{v:.2f} s")
