@@ -3,11 +3,11 @@
 Which speech model makes the fewest mistakes, and how long it takes to decode a recording. Each
 dot is one model on the maintainers' grid; lower and further left is better.
 
-![Words wrong against the median wait after release, on 208 real dictations and 150 meeting clips on a room microphone. Parakeet v3 on Core ML, the default: 5.1% and 29.2% at 0.13 and 0.05 s. Qwen3-ASR: 2.4% and 28.2% at 0.85 and 0.30 s](images/models.svg)
+![Words wrong against the median wait after release, on 208 real dictations and 150 meeting clips on a room microphone. Parakeet v3 on Core ML, the default: 5.0% and 29.2% at 0.13 and 0.05 s. Qwen3-ASR: 2.4% and 28.2% at 0.85 and 0.30 s](images/models.svg)
 
 | Backend | Real dictations | Meetings, room microphone | Meetings, headsets | Earnings calls | Decode after release |
 |---|--:|--:|--:|--:|--:|
-| `parakeet-coreml` (default) | 5.1% | 29.2% | 8.7% | 7.2% | 0.13 s |
+| `parakeet-coreml` (default) | 5.0% | 29.2% | 8.7% | 7.2% | 0.13 s |
 | `qwen3-asr` | 2.4% | 28.2% | 7.7% | 5.9% | 0.85 s |
 | `parakeet` (MLX, bf16 on the grid) | 5.4% | 33.3% | 8.9% | 6.1% | 0.25 s |
 | `parakeet`, Parakeet Unified EN (bf16) | 4.9% | 32.7% | 7.8% | 6.7% | 0.48 s |

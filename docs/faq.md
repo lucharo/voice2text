@@ -258,7 +258,7 @@ being one of those three flatters it, so the table also gives the score on the 1
 silver text is Wispr Flow's; the gap barely moves. On AMI the newer mlx-audio v2t installs (0.6.2)
 scores 29.0%, against 28.4% for the 0.5.7 the grid used, on the same audio; on the dictations the
 two are within 0.02 points. These rates were counted with the grid's earlier scorer. Counted the
-Open ASR Leaderboard's way on the grid's own runs, the same comparison reads 5.1% against 2.4% on
+Open ASR Leaderboard's way on the grid's own runs, the same comparison reads 5.0% against 2.4% on
 the dictations, 29.2% against 28.2% on AMI and 9.9% against 8.5% on Earnings22.
 
 While you hold the key, v2t decodes the recording in pieces of about 30 s cut at quiet moments, so

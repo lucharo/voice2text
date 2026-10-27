@@ -714,11 +714,11 @@ def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -
     runtime, repo, mode = SYSTEMS[system]
     if runtime not in RUNTIMES:
         raise SystemExit(f"{system} runs through a local script kept out of the repo: uv run --script .ignored_scripts/wispr_api.py run --set {set_name}")
-    if system in ENGLISH_ONLY and set_name == "fleurs-es":
-        raise SystemExit(f"{system} is English only")
     clips = read_jsonl(SETS / f"{set_name}.jsonl")
     if not clips:
         raise SystemExit(f"no clips for {set_name}; run `prepare` first")
+    if system in ENGLISH_ONLY and any(c["lang"] != "en" for c in clips):
+        raise SystemExit(f"{system} is English only")
     # a tagged run (a timing baseline) goes beside the cell, never into it
     out_path = private_dir(RESULTS / set_name) / f"{system}.jsonl{'.' + tag if tag else ''}"
     done = {r["id"] for r in read_jsonl(out_path)}
@@ -937,8 +937,15 @@ def score_set(set_name: str) -> list[dict]:
     parents = parent_texts(set_name)
     if parents:  # scored per call: each call's chunks joined in order, as the leaderboard does
         calls: dict[str, list[str]] = {}
-        for cid in sorted(common, key=lambda c: (clips[c]["parent"], clips[c]["chunk"])):
+        for cid in sorted(clips, key=lambda c: (clips[c]["parent"], clips[c]["chunk"])):
             calls.setdefault(clips[cid]["parent"], []).append(cid)
+        # only calls every system finished: a call cut short would count its missing audio
+        # as deletions; waits and compute then cover the same chunks
+        done = set(common)
+        calls = {p: ids for p, ids in calls.items() if done.issuperset(ids)}
+        common = [cid for ids in calls.values() for cid in ids]
+        if not common:
+            return []
         for parent, ids in calls.items():
             ref = normalise(parents[parent], "en")
             for s in scored:

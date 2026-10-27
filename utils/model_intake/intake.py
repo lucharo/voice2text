@@ -395,13 +395,16 @@ def _(VIEWS, mo):
 @app.cell(hide_code=True)
 def _(Path, grid, hashlib, json, pl, rescore, time):
     # Scores for every finished cell of every set, cached beside the grid's results. The cache
-    # key is every results and manifest file's size and mtime plus grid.py's, so a new cell, a
-    # rerun or a scoring change rescores; anything else reads the cache.
+    # key is every results and manifest file's size and mtime plus grid.py's, the leaderboard
+    # scorer's (asr_grid/oasr) and the per-call transcripts', so a new cell, a rerun or a scoring
+    # change rescores; anything else reads the cache.
     _ = rescore.value  # the button re-checks the key
     _cache = grid.private_dir(grid.GRID / ".intake-cache")
     _files = (
         sorted(grid.RESULTS.glob("*/*.jsonl")) + sorted(grid.SETS.glob("*.jsonl"))
         + [p for p in (grid.WISPR / "results.jsonl",) if p.exists()] + [Path(grid.__file__)]
+        + sorted((Path(grid.__file__).parent / "oasr").glob("*.py"))
+        + sorted((grid.EVAL / "labelled").glob("*/parents.tsv"))
     )
     _key = hashlib.sha256(
         "\n".join(f"{p}:{p.stat().st_size}:{p.stat().st_mtime_ns}" for p in _files).encode()
