@@ -12,6 +12,7 @@ nav = [
   { "Getting started" = "getting-started.md" },
   { "How it works" = "how-it-works.md" },
   { "Guide" = "guide.md" },
+  { "Benchmarks" = "benchmarks.md" },
   { "Reference" = [
     { "CLI" = "reference/cli.md" },
     { "config.toml" = "reference/config.md" },

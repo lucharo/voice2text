@@ -49,6 +49,7 @@ the GitHub Release, and commits the new cask checksum to `main`.
 - `utils/asr_grid` compares speech models on labelled clip sets: whole-file, streaming, and in
   30 s pieces (`grid.py chunk`), the way v2t transcribes from 60 s.
   `utils/asr_grid/plot_wait.py` draws the wait-vs-length chart on [How it works](../how-it-works.md).
+  `utils/asr_grid/plot_models.py` draws the errors-against-wait chart on [Benchmarks](../benchmarks.md).
   Each benchmark's README says what it answers, its inputs and how to read the numbers.
 - `utils/cleanup_speed` times the cleanup paths against each other.
 
