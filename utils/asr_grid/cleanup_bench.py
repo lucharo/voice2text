@@ -77,7 +77,8 @@ def _signature(model: str, mode: str, vocabulary, replacements) -> dict:
     return {
         "model": model, "mode": mode,
         "dictionary": hashlib.sha256(dictionary.encode()).hexdigest()[:16],
-        "v2t": git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain", "--", "v2t") else ""),
+        # the last commit that changed v2t's code, so tool-only commits keep a run resumable
+        "v2t": git("log", "-1", "--format=%H", "--", "v2t") + ("-dirty" if git("status", "--porcelain", "--", "v2t") else ""),
     }
 
 
