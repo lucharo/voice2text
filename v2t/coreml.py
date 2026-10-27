@@ -19,6 +19,7 @@ need neither coremltools nor the model files, so the tests run without them.
 
 from __future__ import annotations
 
+import ctypes
 import json
 from pathlib import Path
 from typing import Callable
@@ -169,6 +170,8 @@ class CoreMLParakeet:
             raise SystemExit(
                 "parakeet-coreml needs coremltools: reinstall voice2text (uv tool install --reinstall voice2text)"
             ) from e
+        # Every array handed to predict(), by address, kept until Core ML has let go (_predict).
+        self._held: dict[int, np.ndarray] = {}
         model, units = ct.models.CompiledMLModel, ct.ComputeUnit
         self.pre = model(str(folder / FILES[0]), compute_units=units.CPU_ONLY)
         self.enc = model(str(folder / FILES[1]), compute_units=units.CPU_AND_NE)
@@ -183,27 +186,56 @@ class CoreMLParakeet:
         pieces.add(audio)
         return pieces.finish()
 
+    def _predict(self, model, inputs: dict) -> dict:
+        """`model.predict` on private copies of `inputs`, each kept referenced here.
+
+        coremltools 9.0 wraps each NumPy input without copying it, and Core ML lets go
+        of that wrapper about a second after predict() returns, on its own queue and
+        without the GIL; on Python 3.12+ the release of the last reference to the
+        array then segfaults (apple/coremltools#2829, fixed after 9.0; v2t #66). While
+        `_held` still refers to the array, that release only drops a count. The copies
+        are C-contiguous and keep their dtype, so coremltools makes no temporary of
+        its own, and nothing else in Python refers to them once predict() returns.
+        """
+        own = {name: np.array(value, order="C", copy=True) for name, value in inputs.items()}
+        for array in own.values():
+            self._held[id(array)] = array
+        return model.predict(own)
+
+    def _release_held(self) -> None:
+        """Free the held inputs Core ML has finished with, on this thread, with the GIL.
+
+        An array's count is read from its object header rather than through a Python
+        reference, so an array Core ML may still be releasing is never touched: only
+        one whose count is down to `_held`'s own reference is dropped.
+        """
+        for address in list(self._held):
+            if ctypes.c_ssize_t.from_address(address).value == 1:
+                del self._held[address]
+
     def window(self, pcm: np.ndarray) -> str:
         """Text for at most one WINDOW of audio, zero-padded to it (numpy refuses more)."""
+        self._release_held()  # once per window: inputs go about a second after predict
         x = np.zeros((1, WINDOW), np.float32)
         x[0, : pcm.size] = pcm
-        mel = self.pre.predict(
-            {"audio_signal": x, "audio_length": np.array([pcm.size], np.int32)}
+        mel = self._predict(
+            self.pre, {"audio_signal": x, "audio_length": np.array([pcm.size], np.int32)}
         )
-        enc = self.enc.predict(
-            {"mel": mel["mel"], "mel_length": mel["mel_length"].astype(np.int32)}
+        enc = self._predict(
+            self.enc, {"mel": mel["mel"], "mel_length": mel["mel_length"].astype(np.int32)}
         )
         frames = enc["encoder"]
 
         def joint(t: int, out) -> tuple[int, int]:
-            j = self.joint.predict(
-                {"encoder_step": frames[:, :, t : t + 1], "decoder_step": out}
+            j = self._predict(
+                self.joint, {"encoder_step": frames[:, :, t : t + 1], "decoder_step": out}
             )
             return int(j["token_id"].reshape(-1)[0]), int(j["duration"].reshape(-1)[0])
 
         def predict(token: int, state):
             h, c = state
-            o = self.dec.predict(
+            o = self._predict(
+                self.dec,
                 {
                     "targets": np.array([[token]], np.int32),
                     "target_length": np.array([1], np.int32),

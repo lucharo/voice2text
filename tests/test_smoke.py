@@ -1173,8 +1173,9 @@ class V2TSmokeTests(unittest.TestCase):
 
         frames = np.arange(4, dtype=np.float32).reshape(1, 1, 4)  # frame t holds t
         script = {0: (10, 1), 1: (blank, 1), 2: (11, 2)}  # frame 3 is skipped
-        model = object.__new__(coreml.CoreMLParakeet)
-        model.pre = fake("pre", lambda i: {"mel": "MEL", "mel_length": np.array([7])})
+        model = self._bare_coreml()
+        mel = np.full((1, 2, 3), 7.0, dtype=np.float32)
+        model.pre = fake("pre", lambda i: {"mel": mel, "mel_length": np.array([7])})
         model.enc = fake(
             "enc", lambda i: {"encoder": frames, "encoder_length": np.array([4])}
         )
@@ -1203,7 +1204,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(float(np.abs(pre["audio_signal"][0, 16000:]).max()), 0.0)
         self.assertEqual(pre["audio_length"].tolist(), [16000])
         (enc,) = seen["enc"]
-        self.assertEqual((enc["mel"], enc["mel_length"].dtype), ("MEL", np.int32))
+        self.assertEqual((enc["mel"].tolist(), enc["mel_length"].dtype), (mel.tolist(), np.int32))
         self.assertEqual(
             [(int(d["targets"].item()), float(d["h_in"].max()), float(d["c_in"].max()))
              for d in seen["dec"]],
@@ -1215,6 +1216,44 @@ class V2TSmokeTests(unittest.TestCase):
              for j in seen["joint"]],
             [(0, blank), (1, 10), (2, 10)],
         )
+
+    @staticmethod
+    def _bare_coreml() -> coreml.CoreMLParakeet:
+        """A CoreMLParakeet with no model files loaded; set its four models yourself."""
+        model = object.__new__(coreml.CoreMLParakeet)
+        model._held = {}
+        return model
+
+    def test_coreml_holds_each_input_until_core_ml_lets_go_of_it(self):
+        # coremltools 9.0 releases NumPy inputs on Core ML's queue without the GIL a
+        # second after predict(); if that drops the last reference, Python 3.12+
+        # segfaults (#66). v2t hands predict() copies it keeps until Core ML is done.
+        retained: list[np.ndarray] = []  # what Core ML still holds
+
+        def predict(inputs):
+            retained.extend(inputs.values())
+            return {"out": np.zeros(1, np.float32)}
+
+        model = self._bare_coreml()
+        mine = np.ones((1, 4), np.float32)
+        view = np.arange(8, dtype=np.float32).reshape(2, 4)[:, 1:3]  # not contiguous
+
+        model._predict(types.SimpleNamespace(predict=predict), {"a": mine, "b": view})
+
+        self.assertEqual(len(retained), 2)
+        self.assertTrue(all(any(a is h for h in model._held.values()) for a in retained))
+        self.assertFalse(any(a is mine or a is view for a in retained), "private copies")
+        self.assertTrue(all(a.flags.c_contiguous for a in retained))
+        self.assertEqual(retained[1].tolist(), view.tolist())
+        self.assertEqual(retained[1].dtype, np.float32)
+
+        del retained[0]  # Core ML let go of the first, still holds the second
+        model._release_held()
+        self.assertEqual(len(model._held), 1)
+        self.assertIs(next(iter(model._held.values())), retained[0])
+        retained.clear()
+        model._release_held()
+        self.assertEqual(model._held, {})
 
     def test_coreml_without_its_model_files_names_the_missing_ones(self):
         with tempfile.TemporaryDirectory() as directory:
