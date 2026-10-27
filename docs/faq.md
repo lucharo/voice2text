@@ -188,7 +188,7 @@ dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, int
 
 ## Why does v2t use Parakeet v3 and not Cohere, Qwen3-ASR, Whisper or Voxtral?
 
-Parakeet v3 is accurate and the quickest of the accurate models. The maintainers' grid compares
+Parakeet v3 is accurate and the quickest of the accurate models. [Benchmarks](benchmarks.md) has the chart. The maintainers' grid compares
 them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 Pro
 ([#54](https://github.com/lucharo/voice2text/pull/54), October 2026). Parakeet v3 scores 1.9 / 4.2 /
 5.4% (LibriSpeech clean, LibriSpeech other, FLEURS Spanish), 2.3% on long recordings, and waits
