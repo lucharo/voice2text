@@ -5,8 +5,9 @@
 #     "marimo",
 #     "numpy",
 #     "polars>=1.20",
-#     "rapidfuzz",
-#     "whisper-normalizer",
+#     "kaldialign>=0.12",
+#     "num2words",
+#     "regex",
 # ]
 # ///
 """Speech-to-text model intake: every model we have run in the ASR grid, on one screen.
@@ -157,7 +158,8 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, sys, tomllib):
     # The registry and the grid. grid.py is imported from the repo, so scores here are the
-    # grid report's own numbers; it needs numpy, whisper-normalizer and rapidfuzz.
+    # grid report's own numbers; it needs numpy, kaldialign, num2words and regex (the
+    # leaderboard scorer in utils/asr_grid/oasr).
     HERE = mo.notebook_dir()
     REPO = HERE.parents[1]
     sys.path.insert(0, str(REPO / "utils" / "asr_grid"))
@@ -173,7 +175,9 @@ def _(mo, sys, tomllib):
         "Short clips, labelled (mean of 3 sets)": "short",
         "Noisy clips, labelled (mean of AMI far-field and Earnings22)": "noisy",
         "AMI far-field (meetings on a room mic)": "ami-sdm",
-        "Earnings22 (phone-quality calls)": "earnings22",
+        "AMI headset (the leaderboard's AMI-Cleaned)": "ami-ihm",
+        "Earnings22 (phone-quality calls, original transcripts)": "earnings22",
+        "Earnings22 cleaned (the leaderboard's, 6 whole calls)": "earnings22-aa",
         "LibriSpeech clean": "ls-clean",
         "LibriSpeech other": "ls-other",
         "FLEURS Spanish": "fleurs-es",
@@ -818,11 +822,13 @@ def _(
     SYSTEMS,
     tip,
 ):
-    # Reported vs ours on the datasets both cover: LibriSpeech clean and other (the leaderboard's
-    # full test sets against our 150-clip samples) and FLEURS Spanish. Each system is drawn
+    # Reported vs ours on the datasets both cover: LibriSpeech clean and other, FLEURS Spanish,
+    # the leaderboard's AMI-Cleaned (headset) and Earnings22-Cleaned-AA (the leaderboard's full
+    # test sets against our 150-clip samples; all six calls for Earnings22). Each system is drawn
     # against its model's reported number, so an engine or precision that costs accuracy shows
     # as a gap even where the model itself is fine.
-    _sets = {"ls-clean": "LibriSpeech clean", "ls-other": "LibriSpeech other", "fleurs-es": "FLEURS Spanish"}
+    _sets = {"ls-clean": "LibriSpeech clean", "ls-other": "LibriSpeech other", "fleurs-es": "FLEURS Spanish",
+             "ami-ihm": "AMI headset", "earnings22-aa": "Earnings22 cleaned"}
 
 
     def _rep(model, metric):
@@ -867,14 +873,16 @@ def _(
         _sub = (f"{_frame.height} systems; median gap {_median_gap:+.2f} points (ours minus reported)"
                 if _frame.height else "no system with a reported number")
         _cells[_set] = panel(
-            _name, "Ours: 150 seeded clips, MLX or Core ML on an M4 Pro, scored by grid.score_set. Reported: the full "
-            "test set, the model's reference implementation on a GPU (Open ASR Leaderboard). Same normalisation (Whisper's).",
+            _name, "Ours: 150 seeded clips (Earnings22: all 6 calls), MLX or Core ML on an M4 Pro, scored by "
+            "grid.score_set with the leaderboard's own scorer. Reported: the full test set, the model's reference "
+            "implementation on a GPU (Open ASR Leaderboard or the model's card).",
             chart_ui(_chart, max(110, 22 * _frame.height)), subtitle=_sub,
         )
 
     # The headline reported numbers per model, beside our short-clip mean for its best system.
+    _short_sets = ("ls-clean", "ls-other", "fleurs-es")
     _short = (
-        scores.filter(pl.col("set").is_in(list(_sets)) & ~pl.col("chunked") & pl.col("base").is_in(list(SYSTEMS)))
+        scores.filter(pl.col("set").is_in(_short_sets) & ~pl.col("chunked") & pl.col("base").is_in(list(SYSTEMS)))
         .group_by("base").agg(pl.col("wer").mean().alias("wer"), pl.len().alias("n"))
     )
     # a system counts only once it has run on every set its model can do (English-only
@@ -882,7 +890,7 @@ def _(
     _best_ours = {}
     for _r in _short.iter_rows(named=True):
         _m = SYSTEMS[_r["base"]]["model"]
-        if _r["n"] < (2 if MODELS[_m].get("languages") == 1 else len(_sets)):
+        if _r["n"] < (2 if MODELS[_m].get("languages") == 1 else len(_short_sets)):
             continue
         if _m not in _best_ours or _r["wer"] < _best_ours[_m][0]:
             _best_ours[_m] = (_r["wer"], _r["n"], _r["base"])
@@ -927,12 +935,13 @@ def _(
             "reported",
             {**_cells, "table": panel(
                 "What each model's publishers and leaderboards report", "Each number links to its source; hover for the "
-                "date read. Open ASR avg covers 9 English datasets; AA-WER is Artificial Analysis's index over "
+                "date read. Open ASR avg is the leaderboard's default average, which changes with its list of "
+                "datasets (eleven, two of them private, since 26 October 2026); AA-WER is Artificial Analysis's index over "
                 "agent talk, VoxPopuli and Earnings22, often through a hosted API. Neither is on our clips, so "
                 "compare them across models, not with our column.", _table)},
-            wide=("repeat(3,minmax(0,1fr))", '"ls-clean ls-other fleurs-es" "table table table"'),
-            mid=("minmax(0,1fr) minmax(0,1fr)", '"ls-clean ls-other" "fleurs-es fleurs-es" "table table"'),
-            narrow=("minmax(0,1fr)", '"ls-clean" "ls-other" "fleurs-es" "table"'),
+            wide=("repeat(3,minmax(0,1fr))", '"ls-clean ls-other fleurs-es" "ami-ihm earnings22-aa ." "table table table"'),
+            mid=("minmax(0,1fr) minmax(0,1fr)", '"ls-clean ls-other" "fleurs-es ami-ihm" "earnings22-aa ." "table table"'),
+            narrow=("minmax(0,1fr)", '"ls-clean" "ls-other" "fleurs-es" "ami-ihm" "earnings22-aa" "table"'),
         )
     )
     return (reported_page,)

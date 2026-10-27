@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["matplotlib", "numpy", "whisper-normalizer", "rapidfuzz"]
+# dependencies = ["matplotlib", "numpy", "kaldialign>=0.12", "num2words", "regex"]
 # ///
 """Two Pareto panels from the grid: WER against weights on disk, and against the wait
 after release. Short labelled sets only (ls-clean, ls-other, fleurs-es: 450 clips of

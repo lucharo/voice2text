@@ -33,15 +33,36 @@ Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
 ## Clip sets
 
 `ls-clean`, `ls-other` (LibriSpeech test, openslr.org), `fleurs-es` (FLEURS es_419 test): 150
-labelled clips each, seeded, scored as WER after Whisper's text normalisation. `wispr`: the 208
+labelled clips each, seeded. Every labelled set is scored the way the
+[Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard) scores it:
+its normalisers and its compound-merging alignment, copied into [`oasr/`](oasr/) at a pinned
+commit, so a "to night" against "tonight" costs nothing and the numbers compare with its own
+and with model cards that use its code. FLEURS references lose their parentheses, as in the
+leaderboard's copy (the normaliser would otherwise delete the words inside, #76). Each row
+carries a 95% interval from resampling its clips: on 150 clips it is about 1.5 points wide
+on LibriSpeech, so gaps smaller than that are ties. `wispr`: the 208
 dictations exported by `../wisprflow_benchmarking_profiling`, which have no ground truth; each
 system is scored against the consensus (medoid) of the other systems, its own model family left out. That
 measures agreement, not correctness. Wispr Flow takes part through a local script (kept out of the repo), which sends each clip to its own
 service (`wispr-flow-api`); the text its app stored is its final output, often formatted or truncated, and no longer votes.
 
-`ami-sdm` (AMI meetings on one distant microphone, CC-BY-4.0) and `earnings22` (earnings calls,
-references with punctuation and capitals) are the noisy labelled sets, 150 seeded clips each,
-fetched by `fetch_noisy.py`. Prefer a labelled set whenever one fits the question. `silver.py`
+Meetings and earnings calls come twice, fetched by `fetch_noisy.py`:
+
+| set | what | compares with |
+|---|---|---|
+| `ami-sdm` | AMI on the room microphone, as a laptop hears a meeting; 150 clips from 3 meetings | nothing published (the leaderboard uses headsets) |
+| `ami-ihm` | the leaderboard's `AMI-Cleaned`: each speaker's headset, clips under 1 s removed; 150 clips from all 16 test meetings | the leaderboard's AMI column and most model cards |
+| `earnings22` | earnings calls in short chunks with the original transcripts (`<unk>`, `<inaudible>`); 150 clips from 3 calls | the original Earnings22 numbers on older cards |
+| `earnings22-aa` | the leaderboard's `Earnings22-Cleaned-AA-chunked`: 6 calls, 341 chunks, corrected transcripts, scored per call | the leaderboard's Earnings22 column |
+
+On the same 127 AMI segments Parakeet v3 makes 12.1% errors on the headset and 34.9% on the
+room microphone, so an 8% AMI on a model card and our 30% are not in conflict.
+
+`<set>-full` (`ls-clean-full`, `ls-other-full`, `fleurs-es-full`, and `ami-ihm-full` after
+`fetch_noisy.py --full ami-ihm`) is the whole test split: run a shortlisted model on it when a
+decision needs the leaderboard's own precision (Parakeet v3 on LibriSpeech clean took about
+20 minutes on a loaded M4 Pro). Its full-set numbers then match the leaderboard's: 1.48 / 3.14 /
+3.31% against 1.52 / 3.13 / 3.25%. Prefer a labelled set whenever one fits the question. `silver.py`
 builds a reference for the unlabelled dictations from three strong systems, but silver text cannot
 reward a name or vocabulary fix the voters never got right, so judge dictionary and cleanup changes
 on labelled sets. `cleanup_bench.py run|report` scores v2t's cleanup on its own: WER of raw against
@@ -52,12 +73,13 @@ cleaned text on the labelled sets, plus formatted WER on Earnings22.
 Each runtime lives in its own environment so their pins never meet v2t's lock:
 
 ```bash
+SCORE="kaldialign>=0.12 num2words regex"  # the leaderboard scorer in oasr/
 uv venv ~/.v2t/eval/grid-envs/mlxaudio && VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio \
-  uv pip install mlx-audio==0.5.7 soundfile whisper-normalizer
+  uv pip install mlx-audio==0.5.7 soundfile ${=SCORE}
 VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio uv pip install sentencepiece  # Cohere's tokenizer
-VIRTUAL_ENV=.venv uv pip install whisper-normalizer rapidfuzz pyyaml  # Parakeet and Whisper run in v2t's own venv
+VIRTUAL_ENV=.venv uv pip install ${=SCORE} pyyaml  # Parakeet and Whisper run in v2t's own venv
 uv venv ~/.v2t/eval/grid-envs/phonon && VIRTUAL_ENV=~/.v2t/eval/grid-envs/phonon \
-  uv pip install 'fermion-research[mlx]==0.2.11' soundfile whisper-normalizer rapidfuzz
+  uv pip install 'fermion-research[mlx]==0.2.11' soundfile ${=SCORE}
 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py prepare
 .venv/bin/python utils/asr_grid/grid.py run --system parakeet-v3 --set ls-clean

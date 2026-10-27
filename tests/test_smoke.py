@@ -48,12 +48,10 @@ class V2TSmokeTests(unittest.TestCase):
                 result = {"id": "clip", "offline": "hello", "stream": "hello", **row}
                 (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
                 (root / "results" / "fixture" / "parakeet-v3.jsonl").write_text(json.dumps(result) + "\n")
-                scoring_dependencies = {
-                    "whisper_normalizer.basic": types.SimpleNamespace(BasicTextNormalizer=lambda: str.lower),
-                    "whisper_normalizer.english": types.SimpleNamespace(EnglishTextNormalizer=lambda: str.lower),
-                    "rapidfuzz.distance": types.SimpleNamespace(Levenshtein=types.SimpleNamespace(distance=lambda a, b: 0 if a == b else 1)),
-                }
-                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.dict(sys.modules, scoring_dependencies):
+                # the leaderboard scorer needs kaldialign and num2words, absent from v2t's env
+                words = lambda text, lang: (text or "").lower().split()  # noqa: E731
+                errors = lambda ref, hyp, lang="en": 0 if ref == hyp else 1  # noqa: E731
+                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.object(grid, "normalise", words), mock.patch.object(grid, "edits", errors):
                     scored = grid.score_set("fixture")
                 self.assertEqual(scored[0]["busy_s"], expected)
                 self.assertEqual(scored[0]["rtf"], expected / duration)

@@ -9,8 +9,10 @@ environment that has that system's runtime; cells resume where they stopped.
 
 Sets: `wispr` (your own dictations, from the Wispr Flow bench export; no labels),
 `ls-clean` / `ls-other` (LibriSpeech test, labelled, English) and `fleurs-es`
-(FLEURS es_419 test, labelled, Spanish), 150 clips each, seeded. Labelled sets get a
-real WER. The `wispr` set has no ground truth (Wispr's own text is not truth), so each
+(FLEURS es_419 test, labelled, Spanish), 150 clips each, seeded, plus the meeting and
+earnings-call sets of fetch_noisy.py. `<set>-full` is the whole test split, for a model on
+the shortlist. Labelled sets get a real WER, counted the Open ASR Leaderboard's way
+(`oasr/`), with a 95% interval from resampling clips. The `wispr` set has no ground truth (Wispr's own text is not truth), so each
 system is scored against the leave-one-out medoid of every other system's transcript:
 the transcript the rest agree with most. Wispr votes through its API run
 (`wispr-flow-api`), never through the text its app stored.
@@ -39,6 +41,8 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # oasr/, also when imported as a package
+
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 REPO = Path(__file__).resolve().parents[2]
@@ -48,7 +52,8 @@ SETS = GRID / "sets"
 RESULTS = GRID / "results"
 LIBRISPEECH = EVAL / "labelled/LibriSpeech"
 FLEURS_ES = EVAL / "labelled/fleurs/es_419"
-NOISY = ("ami-sdm", "earnings22")  # fetched by fetch_noisy.py into EVAL/labelled/<set>
+NOISY = ("ami-sdm", "ami-ihm", "earnings22", "earnings22-aa")  # fetch_noisy.py, EVAL/labelled/<set>
+BOOTSTRAP = 2000  # resamples for each labelled row's 95% interval
 WISPR = EVAL / "wisprflow"
 SAMPLE = 150
 SEED = 20260929
@@ -151,23 +156,19 @@ ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleu
 
 # --- text -------------------------------------------------------------------
 
-_WORD = re.compile(r"[\w']+")
-
-
 def normalise(text: str | None, lang: str) -> list[str]:
-    """Open ASR Leaderboard normalisation (Whisper's), then words."""
-    from whisper_normalizer.basic import BasicTextNormalizer
-    from whisper_normalizer.english import EnglishTextNormalizer
+    """The Open ASR Leaderboard's normalised words (oasr/, its code at a pinned commit)."""
+    from oasr import normalise as leaderboard_normalise
 
-    norm = EnglishTextNormalizer() if lang == "en" else BasicTextNormalizer()
-    return _WORD.findall(norm(text or "").lower())
+    return leaderboard_normalise(text, lang)
 
 
-def edits(ref: list[str], hyp: list[str]) -> int:
-    """Word-level Levenshtein distance (symmetric)."""
-    from rapidfuzz.distance import Levenshtein
+def edits(ref: list[str], hyp: list[str], lang: str = "en") -> int:
+    """Word errors between two normalised word lists, aligned as the leaderboard aligns them:
+    a compound split differently ("to night" against "tonight") costs nothing."""
+    from oasr import edits as leaderboard_edits
 
-    return Levenshtein.distance(ref, hyp)
+    return leaderboard_edits(ref, hyp, lang)
 
 
 def private_dir(path: Path) -> Path:
@@ -192,11 +193,17 @@ def prepare() -> None:
         sets["ls-clean"] = librispeech_set("test-clean")
         sets["ls-other"] = librispeech_set("test-other")
         sets["ls-long"] = librispeech_long_set()
+        sets["ls-clean-full"] = librispeech_set("test-clean", None)
+        sets["ls-other-full"] = librispeech_set("test-other", None)
     if FLEURS_ES.exists():
         sets["fleurs-es"] = fleurs_set()
+        sets["fleurs-es-full"] = fleurs_set(None)
     for name in NOISY:
-        if (EVAL / "labelled" / name / "transcripts.tsv").exists():
+        root = EVAL / "labelled" / name
+        if (root / "transcripts.tsv").exists() or (root / "chunks.tsv").exists():
             sets[name] = noisy_set(name)
+        if (root / "transcripts-full.tsv").exists():
+            sets[f"{name}-full"] = noisy_set(name, full=True)
     for name, clips in sets.items():
         path = SETS / f"{name}.jsonl"
         path.write_text("".join(json.dumps(c) + "\n" for c in clips))
@@ -234,7 +241,7 @@ def wispr_set() -> list[dict]:
     return clips
 
 
-def librispeech_set(split: str) -> list[dict]:
+def librispeech_set(split: str, sample: int | None = SAMPLE) -> list[dict]:
     rows = []
     for trans in sorted((LIBRISPEECH / split).rglob("*.trans.txt")):
         for line in trans.read_text().splitlines():
@@ -249,7 +256,7 @@ def librispeech_set(split: str) -> list[dict]:
             "lang": "en",
             "text": text,
         }
-        for utt, path, text in sorted(rows[:SAMPLE])
+        for utt, path, text in sorted(rows[:sample])
     ]
 
 
@@ -295,26 +302,62 @@ def librispeech_long_set() -> list[dict]:
     return clips
 
 
-def noisy_set(name: str) -> list[dict]:
-    """A set fetch_noisy.py already sampled: its WAVs and their reference texts."""
+def noisy_set(name: str, full: bool = False) -> list[dict]:
+    """A set fetch_noisy.py already wrote: its WAVs and their reference texts.
+
+    `earnings22-aa` has no text per clip: each chunk carries its call (`parent`) and place
+    in it (`chunk`), and `score_set` joins the chunks' text against the call's transcript.
+    """
     root = EVAL / "labelled" / name
     clips = []
-    for line in (root / "transcripts.tsv").read_text().splitlines():
+    if (root / "chunks.tsv").exists():
+        for line in (root / "chunks.tsv").read_text().splitlines():
+            cid, parent, index = line.split("\t")
+            path = root / "audio" / f"{cid}.wav"
+            clips.append({"id": cid, "path": str(path), "duration_s": round(_duration(path), 3),
+                          "lang": "en", "text": None, "parent": parent, "chunk": int(index)})
+        return clips
+    audio = root / ("audio-full" if full else "audio")
+    for line in (root / ("transcripts-full.tsv" if full else "transcripts.tsv")).read_text().splitlines():
         cid, text = line.split("\t", 1)
-        path = root / "audio" / f"{cid}.wav"
+        path = audio / f"{cid}.wav"
         clips.append(
             {"id": cid, "path": str(path), "duration_s": round(_duration(path), 3), "lang": "en", "text": text}
         )
     return clips
 
 
-def fleurs_set() -> list[dict]:
+def parent_texts(set_name: str) -> dict[str, str]:
+    """Call id -> transcript, for a set scored per call (fetch_noisy.py's parents.tsv)."""
+    path = EVAL / "labelled" / set_name / "parents.tsv"
+    return dict(line.split("\t", 1) for line in path.read_text().splitlines()) if path.exists() else {}
+
+
+def interval(counts: list[tuple[int, int]], n: int = BOOTSTRAP) -> tuple[float, float]:
+    """95% interval of pooled WER, resampling the (errors, words) units with replacement."""
+    if len(counts) < 2:
+        return float("nan"), float("nan")
+    rng = random.Random(SEED)
+    vals = []
+    for _ in range(n):
+        pick = [counts[rng.randrange(len(counts))] for _ in counts]
+        words = sum(w for _, w in pick)
+        vals.append(sum(e for e, _ in pick) / words if words else float("nan"))
+    vals.sort()
+    return vals[int(0.025 * n)], vals[int(0.975 * n) - 1]
+
+
+def fleurs_set(sample: int | None = SAMPLE) -> list[dict]:
+    """FLEURS es_419 test. The reference is the raw transcription with its parentheses
+    taken out, as in the leaderboard's copy of the set: the normaliser deletes `(...)` and
+    its words, which would charge a correct transcript for every word inside (#76)."""
     rows = []
     for line in (FLEURS_ES / "test.tsv").read_text().splitlines():
         fields = line.split("\t")
         wav = FLEURS_ES / "audio/test" / fields[1]
         if wav.exists():
-            rows.append((fields[1], wav, fields[2]))  # raw transcription
+            text = " ".join(fields[2].replace("(", " ").replace(")", " ").split())
+            rows.append((fields[1], wav, text))
     random.Random(SEED).shuffle(rows)
     return [
         {
@@ -324,7 +367,7 @@ def fleurs_set() -> list[dict]:
             "lang": "es",
             "text": text,
         }
-        for name, path, text in sorted(rows[:SAMPLE])
+        for name, path, text in sorted(rows[:sample])
     ]
 
 
@@ -890,14 +933,30 @@ def score_set(set_name: str) -> list[dict]:
     scored = {**cells, **chunked_cells(set_name, cells, common)}
     errors = dict.fromkeys(scored, 0)
     words = dict.fromkeys(scored, 0)
-    for cid in common:
+    units: dict[str, list[tuple[int, int]]] = {s: [] for s in scored}  # for the interval
+    parents = parent_texts(set_name)
+    if parents:  # scored per call: each call's chunks joined in order, as the leaderboard does
+        calls: dict[str, list[str]] = {}
+        for cid in sorted(common, key=lambda c: (clips[c]["parent"], clips[c]["chunk"])):
+            calls.setdefault(clips[cid]["parent"], []).append(cid)
+        for parent, ids in calls.items():
+            ref = normalise(parents[parent], "en")
+            for s in scored:
+                hyp = " ".join(t for cid in ids if (t := (final_text(s, scored[s][cid]) or "").strip()))
+                e = edits(ref, normalise(hyp, "en"))
+                errors[s] += e
+                words[s] += len(ref)
+                units[s].append((e, len(ref)))
+    for cid in common if not parents else []:
         clip = clips[cid]
         hyps = {s: normalise(final_text(s, scored[s][cid]), clip["lang"]) for s in scored}
         if clip["text"] is not None:
             ref = normalise(clip["text"], clip["lang"])
             for s in scored:
-                errors[s] += edits(ref, hyps[s])
+                e = edits(ref, hyps[s], clip["lang"])
+                errors[s] += e
                 words[s] += len(ref)
+                units[s].append((e, len(ref)))
             continue
         # no label: the medoid of the other systems, leaving out the system's own
         # family, whose near-identical text would otherwise vote for it. Wispr's stored
@@ -941,6 +1000,7 @@ def score_set(set_name: str) -> list[dict]:
                 "wer": errors[system] / words[system]
                 if words[system]
                 else float("nan"),
+                "wer_95": interval(units[system]),  # (nan, nan) for the unlabelled sets
                 "waits": waits,
                 "wait_p50": q(waits, 0.5) if waits else float("nan"),
                 "wait_p90": q(waits, 0.9) if waits else float("nan"),
@@ -1022,7 +1082,9 @@ def score_wispr_flow() -> list[dict]:
 def report() -> None:
     lines = [f"# ASR grid, {date.today().isoformat()}", ""]
     lines.append(
-        "WER: labelled sets against their references; `wispr` against the leave-one-out "
+        "WER: labelled sets against their references, counted the Open ASR Leaderboard's way "
+        "(utils/asr_grid/oasr), with the 95% interval from resampling clips (calls for "
+        "earnings22-aa); `wispr` against the leave-one-out "
         "consensus of the other systems (agreement, not truth). Wait: "
         "seconds from release to final text. RTF: compute / audio. Peak: MLX's peak "
         "memory on the worst clip, weights included (cells from 2026-10-14 on)."
@@ -1035,13 +1097,15 @@ def report() -> None:
             "",
             f"## {set_path.stem} ({rows[0]['n']} clips)",
             "",
-            "| system | mode | WER | wait p50 | p90 | max | RTF | peak |",
-            "|---|---|--:|--:|--:|--:|--:|--:|",
+            "| system | mode | WER | 95% | wait p50 | p90 | max | RTF | peak |",
+            "|---|---|--:|--:|--:|--:|--:|--:|--:|",
         ]
         for r in rows:
             peak = "–" if r["peak_gb"] is None else f"{r['peak_gb']:.2f} GB"
+            lo, hi = r.get("wer_95", (float("nan"),) * 2)
+            band = "–" if lo != lo else f"{lo:.1%}–{hi:.1%}"
             lines.append(
-                f"| {r['system']} | {r['mode']} | {r['wer']:.1%} | {r['wait_p50']:.2f}s "
+                f"| {r['system']} | {r['mode']} | {r['wer']:.1%} | {band} | {r['wait_p50']:.2f}s "
                 f"| {r['wait_p90']:.2f}s | {r['wait_max']:.2f}s | {r['rtf']:.3f} | {peak} |"
             )
     path = GRID / f"{date.today().isoformat()}-report.md"

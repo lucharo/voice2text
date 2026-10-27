@@ -99,7 +99,7 @@ def points(set_name: str) -> dict[str, tuple[float, float]]:
         for k, c in clips.items():
             truth = grid.normalise(c["text"], c["lang"])
             ref += len(truth)
-            err += grid.edits(truth, grid.normalise(grid.final_text(name, rows[k]), c["lang"]))
+            err += grid.edits(truth, grid.normalise(grid.final_text(name, rows[k]), c["lang"]), c["lang"])
             waits.append(grid.wait_s(name, rows[k]))
         out[system] = (100 * err / ref, float(np.median(waits)))
         print(f"{set_name:8} {system:24} WER {out[system][0]:5.2f}%  wait p50 {out[system][1]:.3f} s")
