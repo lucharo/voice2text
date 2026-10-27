@@ -36,19 +36,21 @@ def build() -> Path:
     cells = {}
     for s in VOTERS:
         rows = {r["id"]: r for r in grid.read_jsonl(grid.RESULTS / "wispr" / f"{s}.jsonl")}
-        if len(rows) < len(clips):
-            raise SystemExit(f"{s}: {len(rows)}/{len(clips)} clips; run its cell first")
+        if missing := set(clips) - set(rows):
+            raise SystemExit(f"{s}: {len(missing)} of {len(clips)} clips missing; run its cell first")
         cells[s] = rows
     out = grid.private_dir(SILVER) / "wispr.jsonl"
+    tmp = out.with_suffix(".jsonl.tmp")
     picks: dict[str, int] = dict.fromkeys(VOTERS, 0)
-    with out.open("w") as f:
+    with tmp.open("w") as f:
         for cid, clip in clips.items():
             texts = {s: grid.final_text(s, cells[s][cid]) for s in VOTERS}
             words = {s: grid.normalise(t, "en") for s, t in texts.items()}
             best = min(VOTERS, key=lambda s: sum(grid.edits(words[s], words[o]) for o in VOTERS if o != s))
             picks[best] += 1
             f.write(json.dumps({"id": cid, "duration_s": clip["duration_s"], "from": best, "text": texts[best]}) + "\n")
-    out.chmod(0o600)
+    tmp.chmod(0o600)
+    tmp.replace(out)  # only a complete build replaces the old one
     print(f"{len(clips)} silver transcripts -> {out}; picked from {picks}")
     return out
 
@@ -65,7 +67,11 @@ def score(path: Path, field: str, ids: str = "all") -> dict:
     rows = grid.read_jsonl(path)
     totals = {"ref": 0, "del": 0, "ins": 0, "sub": 0, "clips": 0}
     for r in rows:
-        cid = next((k for k in silver if k.startswith(r["id"])), None)  # short or full ids
+        # full ids, or short ones that match exactly one clip
+        matches = [r["id"]] if r["id"] in silver else [k for k in silver if k.startswith(r["id"])]
+        if len(matches) > 1:
+            raise SystemExit(f"id {r['id']} matches {len(matches)} silver clips")
+        cid = matches[0] if matches else None
         if cid is None or r.get(field) is None:
             continue
         if ids != "all" and held_out(cid) != (ids == "held-out"):

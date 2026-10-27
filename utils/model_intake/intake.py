@@ -1039,7 +1039,8 @@ def _(
     # Size, speed and accuracy at once, as parallel axes (Luis's pick, 23 Oct). Only runs with
     # all three numbers are drawn: a cloud reference has no size and is left out.
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
-    _f = view_frame.filter(pl.col("wait_p50").is_not_null()).sort("wer").with_row_index("rank", offset=1)
+    # English-only runs (hollow in the 3-set view) average fewer sets, so they are not ranked here
+    _f = view_frame.filter(pl.col("wait_p50").is_not_null() & ~pl.col("hollow")).sort("wer").with_row_index("rank", offset=1)
     _sized = _f.filter(pl.col("disk_gb").is_not_null())
     if _sized.height == 0:
         tradeoff_page = mo.md(f"**{_view_name}**: no run in this view has a size, a wait and a WER yet.")
@@ -1104,7 +1105,8 @@ def _(
         _legend = legend_row(_status_legend)
         _title, _note = "One line per run: size, wait and WER, best at the bottom of every axis", (
             "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
-            "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
+            "best and a line that stays low is good on all three. Cloud references have no size and are left out, "
+            "and so are English-only models in the 3-set view, whose mean covers fewer sets.")
         tradeoff_page = panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_sized))
     return (tradeoff_page,)
 

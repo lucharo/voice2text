@@ -47,7 +47,10 @@ def fetch(name: str, url: str, text_col: str) -> None:
     shard = out / "test-0.parquet"
     if not shard.exists():
         print(f"{name}: downloading {url}")
-        urllib.request.urlretrieve(url, shard)
+        partial = shard.with_suffix(".parquet.part")
+        urllib.request.urlretrieve(url, partial)
+        pq.read_metadata(partial)  # a cut-off download fails here, not on every later run
+        partial.replace(shard)
     table = pq.read_table(shard)
     cols = table.column_names
     text_col = text_col if text_col in cols else next(c for c in cols if c in ("text", "transcription", "sentence"))

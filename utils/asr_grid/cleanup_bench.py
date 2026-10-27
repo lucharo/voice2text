@@ -66,19 +66,21 @@ def run() -> None:
 
 
 def _signature(model: str, mode: str, vocabulary, replacements) -> dict:
-    """What decides the cleaned text: model, mode, dictionary and v2t's own code."""
+    """What decides the cleaned text: model, mode, dictionary and v2t's own code (a
+    dirty v2t/ adds a digest of its diff, so further edits change the signature)."""
     import hashlib
     import subprocess
 
     def git(*args: str) -> str:
         return subprocess.run(["git", "-C", str(grid.REPO), *args], capture_output=True, text=True).stdout.strip()
 
-    dictionary = json.dumps([sorted(vocabulary), sorted(map(list, replacements))], sort_keys=True)
+    dictionary = json.dumps([sorted(vocabulary), [list(r) for r in replacements]])  # replacements apply in order
     return {
         "model": model, "mode": mode,
         "dictionary": hashlib.sha256(dictionary.encode()).hexdigest()[:16],
         # the last commit that changed v2t's code, so tool-only commits keep a run resumable
-        "v2t": git("log", "-1", "--format=%H", "--", "v2t") + ("-dirty" if git("status", "--porcelain", "--", "v2t") else ""),
+        "v2t": git("log", "-1", "--format=%H", "--", "v2t")
+        + (f"-dirty-{hashlib.sha256(diff.encode()).hexdigest()[:12]}" if (diff := git("diff", "HEAD", "--", "v2t")) else ""),
     }
 
 
