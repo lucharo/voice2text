@@ -65,6 +65,9 @@ def run() -> None:
                                         "stats": getattr(cleaner, "last_stats", {})}) + "\n")
 
 
+CODE = ("v2t", "pyproject.toml", "uv.lock")
+
+
 def _signature(model: str, mode: str, vocabulary, replacements) -> dict:
     """What decides the cleaned text: model, mode, dictionary and v2t's own code (a
     dirty v2t/ adds a digest of its diff, so further edits change the signature)."""
@@ -74,13 +77,15 @@ def _signature(model: str, mode: str, vocabulary, replacements) -> dict:
     def git(*args: str) -> str:
         return subprocess.run(["git", "-C", str(grid.REPO), *args], capture_output=True, text=True).stdout.strip()
 
-    dictionary = json.dumps([sorted(vocabulary), [list(r) for r in replacements]])  # replacements apply in order
+    # in order: the vocabulary goes into the prompt as listed, replacements apply in turn
+    dictionary = json.dumps([list(vocabulary), [list(r) for r in replacements]])
     return {
         "model": model, "mode": mode,
         "dictionary": hashlib.sha256(dictionary.encode()).hexdigest()[:16],
-        # the last commit that changed v2t's code, so tool-only commits keep a run resumable
-        "v2t": git("log", "-1", "--format=%H", "--", "v2t")
-        + (f"-dirty-{hashlib.sha256(diff.encode()).hexdigest()[:12]}" if (diff := git("diff", "HEAD", "--", "v2t")) else ""),
+        # the last commit that changed v2t's code or its dependencies, so tool-only
+        # commits keep a run resumable
+        "v2t": git("log", "-1", "--format=%H", "--", *CODE)
+        + (f"-dirty-{hashlib.sha256(diff.encode()).hexdigest()[:12]}" if (diff := git("diff", "HEAD", "--", *CODE)) else ""),
     }
 
 
