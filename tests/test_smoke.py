@@ -1221,9 +1221,7 @@ class V2TSmokeTests(unittest.TestCase):
     def _bare_coreml() -> coreml.CoreMLParakeet:
         """A CoreMLParakeet with no model files loaded; set its four models yourself."""
         model = object.__new__(coreml.CoreMLParakeet)
-        model._held = []
-        control = [np.empty(0)]
-        model._refs_when_only_held = sys.getrefcount(control[0])
+        model._held = {}
         return model
 
     def test_coreml_holds_each_input_until_core_ml_lets_go_of_it(self):
@@ -1243,7 +1241,7 @@ class V2TSmokeTests(unittest.TestCase):
         model._predict(types.SimpleNamespace(predict=predict), {"a": mine, "b": view})
 
         self.assertEqual(len(retained), 2)
-        self.assertTrue(all(any(a is h for h in model._held) for a in retained))
+        self.assertTrue(all(any(a is h for h in model._held.values()) for a in retained))
         self.assertFalse(any(a is mine or a is view for a in retained), "private copies")
         self.assertTrue(all(a.flags.c_contiguous for a in retained))
         self.assertEqual(retained[1].tolist(), view.tolist())
@@ -1252,10 +1250,10 @@ class V2TSmokeTests(unittest.TestCase):
         del retained[0]  # Core ML let go of the first, still holds the second
         model._release_held()
         self.assertEqual(len(model._held), 1)
-        self.assertIs(model._held[0], retained[0])
+        self.assertIs(next(iter(model._held.values())), retained[0])
         retained.clear()
         model._release_held()
-        self.assertEqual(model._held, [])
+        self.assertEqual(model._held, {})
 
     def test_coreml_without_its_model_files_names_the_missing_ones(self):
         with tempfile.TemporaryDirectory() as directory:

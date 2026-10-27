@@ -19,8 +19,8 @@ need neither coremltools nor the model files, so the tests run without them.
 
 from __future__ import annotations
 
+import ctypes
 import json
-import sys
 from pathlib import Path
 from typing import Callable
 
@@ -170,10 +170,8 @@ class CoreMLParakeet:
             raise SystemExit(
                 "parakeet-coreml needs coremltools: reinstall voice2text (uv tool install --reinstall voice2text)"
             ) from e
-        # Every array handed to predict(), kept until Core ML has let go of it (_predict).
-        self._held: list[np.ndarray] = []
-        control = [np.empty(0)]
-        self._refs_when_only_held = sys.getrefcount(control[0])
+        # Every array handed to predict(), by address, kept until Core ML has let go (_predict).
+        self._held: dict[int, np.ndarray] = {}
         model, units = ct.models.CompiledMLModel, ct.ComputeUnit
         self.pre = model(str(folder / FILES[0]), compute_units=units.CPU_ONLY)
         self.enc = model(str(folder / FILES[1]), compute_units=units.CPU_AND_NE)
@@ -195,21 +193,25 @@ class CoreMLParakeet:
         of that wrapper about a second after predict() returns, on its own queue and
         without the GIL; on Python 3.12+ the release of the last reference to the
         array then segfaults (apple/coremltools#2829, fixed after 9.0; v2t #66). While
-        this list still holds the array, that release only drops a count, and the
-        array is freed later on our thread by `_release_held`. The copies are
-        C-contiguous and keep their dtype, so coremltools makes no temporary of its own,
-        and no other Python code touches their counts.
+        `_held` still refers to the array, that release only drops a count. The copies
+        are C-contiguous and keep their dtype, so coremltools makes no temporary of
+        its own, and nothing else in Python refers to them once predict() returns.
         """
         own = {name: np.array(value, order="C", copy=True) for name, value in inputs.items()}
-        self._held.extend(own.values())
+        for array in own.values():
+            self._held[id(array)] = array
         return model.predict(own)
 
     def _release_held(self) -> None:
-        """Drop the held inputs Core ML has finished with (only this list refers to them)."""
-        held, self._held = self._held, []
-        for i in range(len(held)):
-            if sys.getrefcount(held[i]) > self._refs_when_only_held:
-                self._held.append(held[i])
+        """Free the held inputs Core ML has finished with, on this thread, with the GIL.
+
+        An array's count is read from its object header rather than through a Python
+        reference, so an array Core ML may still be releasing is never touched: only
+        one whose count is down to `_held`'s own reference is dropped.
+        """
+        for address in list(self._held):
+            if ctypes.c_ssize_t.from_address(address).value == 1:
+                del self._held[address]
 
     def window(self, pcm: np.ndarray) -> str:
         """Text for at most one WINDOW of audio, zero-padded to it (numpy refuses more)."""
