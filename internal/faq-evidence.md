@@ -347,7 +347,31 @@ _Created: 2026-10-19 · Verified: 2026-10-19 against the 2026-10-15 report._
 
 ## Why do v2t's error rates differ from model cards and the Open ASR Leaderboard?
 
-**Short answer:** Scoring and set preparation explain nearly every gap. Parakeet v3 (parakeet-mlx,
+**Since 2026-10-27 the grid follows the leaderboard.** `utils/asr_grid/oasr` holds its scorer
+(commit 2aaa07a), FLEURS references lose their parentheses (#76), and two sets were added:
+`ami-ihm` (150 clips of the leaderboard's AMI-Cleaned, all 16 test meetings) and `earnings22-aa`
+(its 6 cleaned calls, scored per call). Every grid system that was still in the model cache ran
+on both (24 cells, 2026-10-27, `~/.v2t/eval/grid/run-leaderboard-sets.log`); Qwen3-ASR bf16,
+Nemotron 3.5 and Voxtral were left out because downloading them again would have taken the disk
+under the 15 GB another session's timing needed. Leaderboard scorer, 95% interval from resampling
+clips (calls for Earnings22):
+
+| System | ami-ihm | earnings22-aa | published (AMI-Cleaned / Earnings22-AA) |
+|---|--:|--:|--:|
+| parakeet-v3 (MLX bf16) | 8.92 (6.6–11.5) | 6.07 (4.0–8.1) | 9.42 / 5.85 |
+| parakeet-v3-coreml | 8.72 (6.5–11.1) | 7.15 (4.3–9.7) | 9.42 / 5.85 |
+| qwen3-asr-1.7b-8bit | 7.67 (5.8–9.8) | 5.90 (3.6–7.8) | 8.31 / 5.84 (bf16) |
+| parakeet-unified-en | 7.80 (5.7–10.3) | 6.66 (4.1–8.8) | – |
+| parakeet-ultra | 7.53 (5.9–9.5) | 5.97 (3.7–8.0) | – |
+| parakeet-redux | 8.53 (6.7–10.5) | 7.84 (5.0–10.2) | – |
+| phonon-2 | 9.78 (7.6–12.3) | 6.98 (4.3–9.4) | 9.32 / 6.96 |
+| cohere-transcribe | 6.68 (4.8–8.9) | 6.82 (4.0–9.1) | 7.02 / 7.88 |
+| whisper-turbo | 13.09 (10.4–16.2) | 9.87 (5.8–13.6) | 13.88 / 8.09 |
+| bark-3.0 (other session's cell) | 7.34 | – | 7.82 / 7.05 (card) |
+
+The analysis below is the one that led there, on the grid as it was before.
+
+**Short answer (before the change):** Scoring and set preparation explain nearly every gap. Parakeet v3 (parakeet-mlx,
 bf16) over the *full* test sets on the M4 Pro, scored with the leaderboard's own normaliser and
 alignment: LibriSpeech clean 1.48% (2,620 utterances), other 3.14% (2,939), FLEURS es_419 3.31%
 (908, parentheses taken out of the references as in the leaderboard's copy). Leaderboard: 1.52 /
@@ -451,7 +475,7 @@ What each gap comes from:
   scripts, full-set transcripts, AMI headset run and a snapshot of the leaderboard tables under
   `~/.v2t/eval/public-vs-ours/` (private).
 
-_Created: 2026-10-27 · Verified: 2026-10-27 · Leaderboard version 26-10-2026._
+_Created: 2026-10-27 · Updated: 2026-10-27 (grid follows the leaderboard) · Verified: 2026-10-27 · Leaderboard version 26-10-2026._
 
 ## Which Macs were the benchmarks run on?
 
