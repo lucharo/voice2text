@@ -1253,6 +1253,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         with (
             mock.patch.object(coreml, "CoreMLParakeet", return_value=core_ml) as load,
+            mock.patch.object(coreml, "model_folder", return_value=Path("/models")) as folder,
             mock.patch.dict(sys.modules, {"parakeet_mlx": None, "mlx": None}),
         ):
             stt = backends.make_stt("parakeet-coreml")
@@ -1261,7 +1262,8 @@ class V2TSmokeTests(unittest.TestCase):
             pieces.add(np.ones(16000 * 20, dtype=np.float32))
             stepped = pieces.step()
 
-        load.assert_called_once_with(coreml.COREML_DIR)
+        folder.assert_called_once_with(None)
+        load.assert_called_once_with(Path("/models"))
         self.assertEqual(text, "core ml words")
         self.assertEqual([(a.shape, a.dtype) for a in decoded], [((16000,), np.float32)])
         # one window cut within 3 s of the 12 s mark, known once 15 s are in
@@ -1270,6 +1272,32 @@ class V2TSmokeTests(unittest.TestCase):
             (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
         )
         self.assertFalse(hasattr(stt, "stream"))
+
+    def test_coreml_model_folder_prefers_fluidaudio_then_downloads_only_its_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fluid = Path(directory) / "fluid"
+            fluid.mkdir()
+            download = mock.Mock(return_value=str(Path(directory) / "snapshot"))
+            hub = mock.Mock(snapshot_download=download)
+            with (
+                mock.patch.object(coreml, "COREML_DIR", fluid),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_cache_first", lambda repo, fetch: fetch()),
+            ):
+                configured = coreml.model_folder(Path("/mine"))
+                fetched = coreml.model_folder()
+                for name in coreml.FILES:
+                    (fluid / name).touch()
+                fluid_folder = coreml.model_folder()
+
+        self.assertEqual(configured, Path("/mine"))
+        self.assertEqual(fetched, Path(directory) / "snapshot")
+        self.assertEqual(fluid_folder, fluid)
+        download.assert_called_once()
+        repo, patterns = download.call_args.args[0], download.call_args.kwargs["allow_patterns"]
+        self.assertEqual(repo, coreml.COREML_REPO)
+        self.assertEqual(len(patterns), len(coreml.FILES))
+        self.assertTrue(all(p.endswith("/*") for p in patterns if ".mlmodelc" in p))
 
     def test_parakeet_coreml_reads_its_files_from_a_configured_folder(self):
         with mock.patch.object(coreml, "CoreMLParakeet") as load:
