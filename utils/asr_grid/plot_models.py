@@ -6,8 +6,8 @@ and on far-field meetings.
 Numbers only, from the grid's finished cells: word error rate over the `wispr` set (208
 of the maintainer's dictations, scored against silver.py's transcripts) and over
 `ami-sdm` (150 AMI meeting clips on a room microphone, human labels), against the
-median wait after release. Whole-file systems are taken with their `chunk` pass from
-60 s up, as v2t decodes long recordings. A self-contained SVG that follows the
+median wait after release. Systems are taken with their `chunk` pass from 60 s up, as
+v2t decodes long recordings. A self-contained SVG that follows the
 reader's light or dark mode, like plot_wait.py.
 """
 
@@ -41,8 +41,7 @@ PANELS = (
 )
 # label offsets in px (and anchor), per panel, where the default (8, 4) would collide
 OFF = {
-    ("wispr", "parakeet-unified-en"): (8, 16),
-    ("wispr", "parakeet-v3-coreml"): (8, -6),
+    ("wispr", "parakeet-v3-coreml"): (-4, 20),
     ("wispr", "qwen3-asr-1.7b-8bit"): (-11, 4, "end"),
     ("ami-sdm", "parakeet-unified-en"): (8, 14),
     ("ami-sdm", "parakeet-v3"): (8, -6),
@@ -60,10 +59,14 @@ def X(v: float) -> float:
 
 
 def rows_of(set_name: str, system: str) -> tuple[str, dict]:
-    """A system's rows, with its chunk pass merged in when that pass is complete."""
+    """A system's rows, with its chunk pass merged in when that pass is complete.
+
+    That covers `hacky` Parakeet too: since 0.5.8 v2t decodes recordings from 60 s
+    in pieces, not with the stream the `hacky` cell scores there.
+    """
     rows = {r["id"]: r for r in grid.read_jsonl(grid.RESULTS / set_name / f"{system}.jsonl")}
     chunked = grid.RESULTS / set_name / f"{system}.chunked.jsonl"
-    if chunked.exists() and grid.mode_of(system) == "offline":
+    if chunked.exists() and grid.mode_of(system) in ("offline", "hacky"):
         extra = {r["id"]: r for r in grid.read_jsonl(chunked)}
         long = [k for k, r in rows.items() if r["duration_s"] >= grid.TAKEOVER_S]
         if all(k in extra for k in long):

@@ -26,13 +26,13 @@
 <text class="tick" x="51" y="63.1" text-anchor="end">16%</text>
 <text class="axis" transform="translate(14 147.0) rotate(-90)" text-anchor="middle">words wrong</text>
 <rect class="dot default" x="273.2" y="185.2" width="10" height="10"><title>Parakeet v3, Core ML (default): 5.6% words wrong, 0.13 s median wait</title></rect>
-<text class="lab default" x="286.2" y="184.2" text-anchor="start">Parakeet v3, Core ML (default)  5.6%</text>
+<text class="lab default" x="274.2" y="210.2" text-anchor="start">Parakeet v3, Core ML (default)  5.6%</text>
 <path class="dot qwen" d="M553.9,216.6L560.9,223.6L553.9,230.6L546.9,223.6Z"><title>Qwen3-ASR 1.7B (qwen3-asr): 2.9% words wrong, 0.85 s median wait</title></path>
 <text class="lab qwen" x="542.9" y="227.6" text-anchor="end">Qwen3-ASR 1.7B (qwen3-asr)  2.9%</text>
-<circle class="dot other" cx="412.5" cy="163.6" r="4"><title>Parakeet v3, MLX (parakeet): 7.7% words wrong, 0.33 s median wait</title></circle>
-<text class="lab other" x="420.5" y="157.6" text-anchor="start">Parakeet v3, MLX (parakeet)  7.7%</text>
+<circle class="dot other" cx="373.3" cy="186.9" r="4"><title>Parakeet v3, MLX (parakeet): 5.8% words wrong, 0.25 s median wait</title></circle>
+<text class="lab other" x="381.3" y="180.9" text-anchor="start">Parakeet v3, MLX (parakeet)  5.8%</text>
 <circle class="dot other" cx="469.5" cy="195.4" r="4"><title>Parakeet Unified EN: 5.1% words wrong, 0.48 s median wait</title></circle>
-<text class="lab other" x="477.5" y="211.4" text-anchor="start">Parakeet Unified EN  5.1%</text>
+<text class="lab other" x="477.5" y="199.4" text-anchor="start">Parakeet Unified EN  5.1%</text>
 <circle class="dot other" cx="574.1" cy="63.1" r="4"><title>Whisper large-v3 turbo: 15.7% words wrong, 0.98 s median wait</title></circle>
 <text class="lab other" x="582.1" y="67.1" text-anchor="start">Whisper large-v3 turbo  15.7%</text>
 <circle class="dot other" cx="594.9" cy="105.6" r="4"><title>Cohere Transcribe: 12.3% words wrong, 1.13 s median wait</title></circle>

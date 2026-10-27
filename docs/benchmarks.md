@@ -9,7 +9,7 @@ on the maintainers' grid; lower and further left is better.
 |---|--:|--:|--:|--:|
 | `parakeet-coreml` (default) | 5.6% | 29.5% | 10.3% | 0.13 s |
 | `qwen3-asr` | 2.9% | 28.4% | 8.6% | 0.85 s |
-| `parakeet` (MLX) | 7.7% | 33.3% | 10.8% | 0.33 s |
+| `parakeet` (MLX) | 5.8% | 33.3% | 10.8% | 0.25 s |
 | `parakeet`, Parakeet Unified EN | 5.1% | 33.2% | 8.3% | 0.48 s |
 
 Words wrong, after Whisper's text normalisation, so punctuation and capitals do not count.
