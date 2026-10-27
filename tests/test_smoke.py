@@ -3339,6 +3339,40 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(total, ttft)
         self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0, "restored": 0, "reverted": 0, "removed": 0})
 
+    def test_keep_spoken_words_holds_each_edit_to_what_was_said(self):
+        cases = [
+            # a number in digits stays; a word changed beside it comes back
+            ("send three red boxes tomorrow", "Send 3 blue boxes tomorrow.", "Send 3 red boxes tomorrow."),
+            ("it says twenty five percent", "It said 25%.", "It says 25%."),
+            # one of a repeated word the cleanup dropped whole comes back
+            ("I can can attend on Friday", "I attend on Friday.", "I can attend on Friday."),
+            # words put back at the end go before the full stop, capitals kept
+            ("send it to me please", "Send it to me.", "Send it to me please."),
+            ("it is fine", "It's fine.", "It is fine."),
+            # dictionary words are the cleanup's to write
+            ("we met clod yesterday", "We met Claude yesterday.", "We met Claude yesterday."),
+        ]
+        for raw, clean, expected in cases:
+            with self.subTest(raw=raw):
+                text, _counts = backends.keep_spoken_words(raw, clean, ["Claude"])
+                self.assertEqual(text, expected)
+
+    def test_parakeet_picks_the_loader_by_the_repos_file_layout(self):
+        def cached(files):
+            return lambda repo, name: f"/cache/{name}" if name in files else None
+
+        for files, expected in ((["config.json"], "parakeet-mlx"), (["model_config.yaml"], "nemo")):
+            hub = mock.Mock(try_to_load_from_cache=cached(files), snapshot_download=lambda repo: "/snap")
+            with (
+                self.subTest(files=files),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_nemo_layout", return_value="nemo") as nemo,
+            ):
+                got = backends._load_parakeet("org/model", lambda repo: "parakeet-mlx")
+            self.assertEqual(got, expected)
+            if expected == "nemo":
+                nemo.assert_called_once_with(Path("/snap"))
+
     def test_casual_cleanup_puts_back_words_it_dropped(self):
         raw = "um I think that we should ship the migration and then test it on friday"
         cleaner = self._mlx_cleaner(["I think we should ship the migration, then test it on Friday."])

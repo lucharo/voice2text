@@ -729,6 +729,8 @@ def within_length_guard(raw: str, clean: str, mode: str) -> bool:
 # the raw text is mostly the repeats it removes.
 CASUAL_DROPPABLE = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
 _BARE = re.compile(r"[^\w']+")
+_TRAILING = re.compile(r"[.,;:!?…]+$")
+_END = re.compile(r"[.!?…]+$")
 
 
 def _bare(token: str) -> str:
@@ -742,36 +744,93 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
 
     The two are aligned on bare lowercase words, so punctuation and casing stay as
     cleaned. A dropped stretch comes back unless it is a filler or an immediate
-    repeat ("the the"); a changed or added stretch is kept only when it holds a digit
-    or `#` (numbers written as digits) or consists of dictionary words.
+    repeat ("the the", keeping one of a run the cleanup dropped whole); a changed or
+    added stretch is kept only when each of its words holds a digit or `#` (numbers
+    written as digits), is a dictionary word or was said in that stretch. Words put
+    back go before the punctuation that ended the cleaned word ahead of them.
     """
     import difflib
 
     allowed = {_bare(w) for term in vocabulary for w in term.split()}
 
-    def licensed(tokens: list[str]) -> bool:
-        joined = " ".join(tokens)
-        return any(ch.isdigit() for ch in joined) or "#" in joined or all(_bare(t) in allowed for t in tokens)
+    def number(token: str) -> bool:
+        return any(ch.isdigit() for ch in token) or "#" in token
+
+    def license(token: str) -> bool:
+        """A word the cleanup may write: a number in digits or a dictionary word."""
+        return number(token) or _bare(token) in allowed
+
+    def licensed(tokens: list[str], said: set[str]) -> bool:
+        """Each word licensed or said in this stretch, and at least one licensed."""
+        return all(license(t) or _bare(t) in said for t in tokens) and any(license(t) for t in tokens)
+
+    def cased(word: str, like: str) -> str:
+        """`word` capitalised when the cleaned word it replaces starts a sentence."""
+        return word[:1].upper() + word[1:] if like[:1].isupper() and word[:1].islower() else word
+
+    def put_back(words: list[str], trailing: str = "") -> None:
+        """Append `words`, ending with `trailing` unless they carry their own."""
+        words = list(words)
+        if trailing and not _TRAILING.search(words[-1]):
+            words[-1] += trailing
+        out.extend(words)
 
     raw_tokens, clean_tokens = raw.split(), clean.split()
     raw_bare = [_bare(t) for t in raw_tokens]
-    out, counts = [], {"restored": 0, "reverted": 0, "removed": 0}
+    out: list[str] = []
+    counts = {"restored": 0, "reverted": 0, "removed": 0}
     matcher = difflib.SequenceMatcher(a=raw_bare, b=[_bare(t) for t in clean_tokens], autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal" or (tag != "delete" and licensed(clean_tokens[j1:j2])):
+        if tag == "equal" or (tag != "delete" and licensed(clean_tokens[j1:j2], set(raw_bare[i1:i2]))):
             out.extend(clean_tokens[j1:j2])
         elif tag == "insert":
             counts["removed"] += j2 - j1
         elif tag == "replace":
-            out.extend(raw_tokens[i1:i2])
-            counts["reverted"] += i2 - i1
+            # peel word-for-word edits off both ends ("says twenty five" -> "said 25":
+            # "says" comes back, "25" stays), then keep or revert what is left
+            head, tail = [], []
+            while i1 < i2 and j1 < j2 and not number(raw_tokens[i1]) and not license(clean_tokens[j1]):
+                head.append(cased(raw_tokens[i1], clean_tokens[j1]))
+                i1, j1 = i1 + 1, j1 + 1
+            while i1 < i2 and j1 < j2 and not number(raw_tokens[i2 - 1]) and not license(clean_tokens[j2 - 1]):
+                mark = _TRAILING.search(clean_tokens[j2 - 1])
+                tail.insert(0, raw_tokens[i2 - 1] + (mark.group() if mark and not _TRAILING.search(raw_tokens[i2 - 1]) else ""))
+                i2, j2 = i2 - 1, j2 - 1
+            out.extend(head)
+            if i1 < i2 or j1 < j2:
+                if j1 < j2 and licensed(clean_tokens[j1:j2], set(raw_bare[i1:i2])):
+                    out.extend(clean_tokens[j1:j2])
+                elif i1 < i2:
+                    mark = _TRAILING.search(clean_tokens[j2 - 1]) if j1 < j2 and not tail else None
+                    words = raw_tokens[i1:i2]
+                    if j1 < j2 and not head:
+                        words = [cased(words[0], clean_tokens[j1]), *words[1:]]
+                    put_back(words, mark.group() if mark else "")
+                    counts["reverted"] += i2 - i1
+            out.extend(tail)
+            counts["reverted"] += len(head) + len(tail)
         else:  # delete
+            kept = []
             for i in range(i1, i2):
                 word = raw_bare[i]
-                repeat = (i > 0 and raw_bare[i - 1] == word) or (i + 1 < len(raw_bare) and raw_bare[i + 1] == word)
+                # a repeat of a word kept just outside this stretch, or of one already
+                # handled inside it: of "can can" dropped whole, one "can" comes back
+                repeat = (
+                    (i > i1 and raw_bare[i - 1] == word)
+                    or (i == i1 and i > 0 and raw_bare[i - 1] == word)
+                    or (i == i2 - 1 and i + 1 < len(raw_bare) and raw_bare[i + 1] == word)
+                )
                 if word and word not in CASUAL_DROPPABLE and not repeat:
-                    out.append(raw_tokens[i])
-                    counts["restored"] += 1
+                    kept.append(raw_tokens[i])
+            if kept:
+                # "Send it to me." + "please" reads "Send it to me please.": the
+                # punctuation that ended the cleaned text moves past the words put
+                # back at its end (a comma before "and" stays where it is)
+                trailing = ""
+                if j1 == len(clean_tokens) and out and (mark := _END.search(out[-1])):
+                    out[-1], trailing = out[-1][: mark.start()], mark.group()
+                put_back(kept, trailing)
+                counts["restored"] += len(kept)
     return " ".join(out), counts
 
 
