@@ -1278,9 +1278,13 @@ class V2TSmokeTests(unittest.TestCase):
             fluid = Path(directory) / "fluid"
             fluid.mkdir()
             snapshot = Path(directory) / "snapshot"
-            snapshot.mkdir()
             for name in coreml.FILES:
-                (snapshot / name).touch()
+                if name.endswith(".mlmodelc"):
+                    (snapshot / name).mkdir(parents=True)
+                    (snapshot / name / "coremldata.bin").touch()
+                else:
+                    snapshot.mkdir(exist_ok=True)
+                    (snapshot / name).touch()
             download = mock.Mock(return_value=str(snapshot))
             hub = mock.Mock(snapshot_download=download)
             with (
@@ -1307,10 +1311,14 @@ class V2TSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             partial, whole = Path(directory) / "partial", Path(directory) / "whole"
             for folder in (partial, whole):
-                folder.mkdir()
-            for name in coreml.FILES:
-                (whole / name).touch()
-            (partial / coreml.FILES[0]).touch()
+                for name in coreml.FILES:
+                    if name.endswith(".mlmodelc"):
+                        (folder / name).mkdir(parents=True)
+                        # the partial download has every folder but one model's contents
+                        if folder is whole or name != coreml.FILES[0]:
+                            (folder / name / "coremldata.bin").touch()
+                    else:
+                        (folder / name).touch()
             hub = mock.Mock(snapshot_download=mock.Mock(side_effect=[str(partial), str(whole)]))
 
             def cache_first(repo, fetch):  # load_cache_first: offline, then online on OSError
@@ -3374,6 +3382,10 @@ class V2TSmokeTests(unittest.TestCase):
             ("send three red boxes tomorrow", "Send 3 boxes tomorrow.", "Send three red boxes tomorrow."),
             ("she says", "She said.", "She says."),
             ("ship it", "Ship it to Claude.", "Ship it."),
+            ("we think it is", "We think it's.", "We think it is."),
+            # a dictionary word fixes one misheard word, not the phrase it swallowed
+            ("send clod the report today", "Send Claude today.", "Send Clod the report today."),
+            ("clock code is great", "Claude Code is great.", "Claude Code is great."),
             # one of a repeated word the cleanup dropped whole comes back
             ("I can can attend on Friday", "I attend on Friday.", "I can attend on Friday."),
             # words put back at the end go before the full stop, capitals kept
@@ -3384,7 +3396,7 @@ class V2TSmokeTests(unittest.TestCase):
         ]
         for raw, clean, expected in cases:
             with self.subTest(raw=raw):
-                text, _counts = backends.keep_spoken_words(raw, clean, ["Claude"])
+                text, _counts = backends.keep_spoken_words(raw, clean, ["Claude", "Claude Code"])
                 self.assertEqual(text, expected)
 
     def test_parakeet_picks_the_loader_by_the_repos_file_layout(self):

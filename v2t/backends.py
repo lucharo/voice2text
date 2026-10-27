@@ -784,10 +784,11 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
         return (
             all(license(t) or _bare(t) in set(spoken) for t in tokens)
             and any(license(t) for t in tokens)
-            and (
-                bool(written & allowed)
-                or all(w in written or w in _NUMBER_WORDS or droppable(i) for i, w in enumerate(spoken, i1))
-            )
+            # each dictionary word written may stand for one word said ("clock code" ->
+            # "Claude Code"), not for a whole phrase it swallowed ("clod the report")
+            and sum(
+                not (w in written or w in _NUMBER_WORDS or droppable(i)) for i, w in enumerate(spoken, i1)
+            ) <= sum(_bare(t) in allowed for t in tokens)
         )
 
     def cased(word: str, like: str) -> str:
@@ -820,15 +821,23 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
             # peel word-for-word edits off both ends ("says twenty five" -> "said 25":
             # "says" comes back, "25" stays), then keep or revert what is left
             head, tail = [], []
+            pending = ""  # punctuation of a peeled word, for the end of what comes back
             while i1 < i2 and j1 < j2 and not number(raw_tokens[i1]) and not license(clean_tokens[j1]):
                 mark = _TRAILING.search(clean_tokens[j1])
-                word = cased(raw_tokens[i1], clean_tokens[j1])
-                head.append(word + (mark.group() if mark and not _TRAILING.search(word) else ""))
+                head.append(cased(raw_tokens[i1], clean_tokens[j1]))
+                pending = mark.group() if mark and not _TRAILING.search(raw_tokens[i1]) else ""
                 i1, j1 = i1 + 1, j1 + 1
             while i1 < i2 and j1 < j2 and not number(raw_tokens[i2 - 1]) and not license(clean_tokens[j2 - 1]):
                 mark = _TRAILING.search(clean_tokens[j2 - 1])
                 tail.insert(0, raw_tokens[i2 - 1] + (mark.group() if mark and not _TRAILING.search(raw_tokens[i2 - 1]) else ""))
                 i2, j2 = i2 - 1, j2 - 1
+            if pending and i1 == i2 and not tail:  # "She said." -> "She says."
+                head[-1] += pending
+            elif pending and j1 == j2 and not tail:  # "it's." -> "it is.": after the last word
+                raw_end = raw_tokens[i2 - 1]
+                pending = "" if _TRAILING.search(raw_end) else pending
+            else:
+                pending = ""
             out.extend(head)
             if i1 < i2 or j1 < j2:
                 if j1 < j2 and licensed(clean_tokens[j1:j2], i1, i2):
@@ -838,7 +847,7 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
                     words = raw_tokens[i1:i2]
                     if j1 < j2 and not head:
                         words = [cased(words[0], clean_tokens[j1]), *words[1:]]
-                    put_back(words, mark.group() if mark else "")
+                    put_back(words, (mark.group() if mark else "") or pending)
                     counts["reverted"] += i2 - i1
             out.extend(tail)
             counts["reverted"] += len(head) + len(tail)

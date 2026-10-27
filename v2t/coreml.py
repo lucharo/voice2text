@@ -113,7 +113,11 @@ def model_folder(folder: Path | None = None) -> Path:
 
     def fetch() -> Path:
         folder = Path(snapshot_download(COREML_REPO, allow_patterns=patterns))
-        if missing := missing_files(folder):
+        # a compiled model is a folder: it is whole once its coremldata.bin arrived
+        missing = missing_files(folder) + [
+            name for name in FILES if name.endswith(".mlmodelc") and not (folder / name / "coremldata.bin").exists()
+        ]
+        if missing:
             # an interrupted download: load_cache_first retries online on OSError
             raise FileNotFoundError(f"{folder} lacks {', '.join(missing)}")
         return folder
