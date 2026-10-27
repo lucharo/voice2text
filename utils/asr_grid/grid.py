@@ -11,8 +11,9 @@ Sets: `wispr` (your own dictations, from the Wispr Flow bench export; no labels)
 `ls-clean` / `ls-other` (LibriSpeech test, labelled, English) and `fleurs-es`
 (FLEURS es_419 test, labelled, Spanish), 150 clips each, seeded. Labelled sets get a
 real WER. The `wispr` set has no ground truth (Wispr's own text is not truth), so each
-system is scored against the leave-one-out medoid of every other system's transcript
-plus Wispr's ASR: the transcript the rest agree with most.
+system is scored against the leave-one-out medoid of every other system's transcript:
+the transcript the rest agree with most. Wispr votes through its API run
+(`wispr-flow-api`), never through the text its app stored.
 
 Latency is the wait after the hotkey is released: the whole-file decode for an offline
 system; for a streaming one, the final push plus flush after everything before it was
@@ -47,6 +48,7 @@ SETS = GRID / "sets"
 RESULTS = GRID / "results"
 LIBRISPEECH = EVAL / "labelled/LibriSpeech"
 FLEURS_ES = EVAL / "labelled/fleurs/es_419"
+NOISY = ("ami-sdm", "earnings22")  # fetched by fetch_noisy.py into EVAL/labelled/<set>
 WISPR = EVAL / "wisprflow"
 SAMPLE = 150
 SEED = 20260929
@@ -116,6 +118,14 @@ SYSTEMS = {
         "viethang/cohere-transcribe-03-2026",
         "offline",
     ),
+    # ...decoding only the speech: Cohere loops on silence ("the world is a world of
+    # peace" for 13k characters, 2026-10-24 read-through), so this cuts each clip into
+    # speech segments first (speech_segments) and joins their texts
+    "cohere-transcribe-vad": (
+        "mlx-audio",
+        "viethang/cohere-transcribe-03-2026#vad",
+        "offline",
+    ),
     # Moondream's ternary (1.58-bit) Parakeet v3, 178 MB
     "parakeet-redux": ("mlx-audio", "moondream/parakeet-redux", "offline"),
     # NVIDIA's English Parakeet Unified, offline (full-context) mode only, from the
@@ -132,6 +142,9 @@ SYSTEMS = {
     # ...and with the encoder kept packed (FERMION_P2_FAST=tdt16, its bit-exact
     # path): the memory a phone would need
     "phonon-2-packed": ("fermion", "FermionResearch/Phonon-2#tdt16", "offline"),
+    # Wispr Flow's cloud service through the desktop app's own gRPC route, run by
+    # .ignored_scripts/wispr_api.py, local only (not `run`): one request per clip after release
+    "wispr-flow-api": ("wispr-cloud", "flow_api.v1.TranscriptionService/Transcribe", "offline"),
 }
 ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleurs-es
 
@@ -181,6 +194,9 @@ def prepare() -> None:
         sets["ls-long"] = librispeech_long_set()
     if FLEURS_ES.exists():
         sets["fleurs-es"] = fleurs_set()
+    for name in NOISY:
+        if (EVAL / "labelled" / name / "transcripts.tsv").exists():
+            sets[name] = noisy_set(name)
     for name, clips in sets.items():
         path = SETS / f"{name}.jsonl"
         path.write_text("".join(json.dumps(c) + "\n" for c in clips))
@@ -196,7 +212,12 @@ def _duration(path: Path) -> float:
 
 
 def wispr_set() -> list[dict]:
-    """Every exported Wispr clip, with Wispr's own ASR kept as one consensus voter."""
+    """Every exported Wispr clip, with the text Wispr's app stored for it (`wispr_asr`).
+
+    That text is Wispr's final output, often already formatted and on fallback
+    dictations cut to the last sentence (2026-10-24 read-through), so it is scored by
+    `score_wispr_flow` but never votes in the consensus.
+    """
     meta = {c["id"]: c for c in read_jsonl(WISPR / "results.jsonl")}
     clips = []
     for wav in sorted((WISPR / "audio").glob("*.wav")):
@@ -271,6 +292,19 @@ def librispeech_long_set() -> list[dict]:
                     "text": " ".join(texts),
                 }
             )
+    return clips
+
+
+def noisy_set(name: str) -> list[dict]:
+    """A set fetch_noisy.py already sampled: its WAVs and their reference texts."""
+    root = EVAL / "labelled" / name
+    clips = []
+    for line in (root / "transcripts.tsv").read_text().splitlines():
+        cid, text = line.split("\t", 1)
+        path = root / "audio" / f"{cid}.wav"
+        clips.append(
+            {"id": cid, "path": str(path), "duration_s": round(_duration(path), 3), "lang": "en", "text": text}
+        )
     return clips
 
 
@@ -402,46 +436,11 @@ def _snapshot(repo: str) -> str:
 
 
 def load_nemo_layout(folder: str):
-    """A Parakeet checkpoint kept in NeMo's own layout (model_config.yaml, PyTorch
-    LSTM names and conv layouts), as littlebearlabs publishes Parakeet Unified,
-    loaded into stock parakeet-mlx and cast to bf16 like `from_pretrained`.
+    """v2t's own loader for NeMo-layout Parakeet checkpoints (backends.load_nemo_layout)."""
+    sys.path.insert(0, str(REPO))
+    from v2t.backends import load_nemo_layout as load
 
-    The renaming follows MarkChen1214's compatibility loader for the same
-    checkpoint: fold the two LSTM biases, drop batch counters and the stored
-    featuriser, transpose conv kernels to MLX's channel-last order.
-    """
-    import mlx.core as mx
-    import yaml
-    from mlx.utils import tree_flatten, tree_unflatten
-    from parakeet_mlx.utils import from_config
-
-    folder = Path(folder)
-    model = from_config(yaml.safe_load((folder / "model_config.yaml").read_text()))
-    weights = dict(mx.load(str(folder / "model.safetensors")))
-    lstm = "decoder.prediction.dec_rnn.lstm."
-    for layer in range(2):
-        weights[f"{lstm}{layer}.Wx"] = weights.pop(f"{lstm}weight_ih_l{layer}")
-        weights[f"{lstm}{layer}.Wh"] = weights.pop(f"{lstm}weight_hh_l{layer}")
-        weights[f"{lstm}{layer}.bias"] = weights.pop(
-            f"{lstm}bias_ih_l{layer}"
-        ) + weights.pop(f"{lstm}bias_hh_l{layer}")
-    for key in list(weights):
-        if key.endswith(".num_batches_tracked") or key.startswith(
-            "preprocessor.featurizer."
-        ):
-            del weights[key]
-    expected = dict(tree_flatten(model.parameters()))
-    for key in expected.keys() & weights.keys():
-        if expected[key].shape != weights[key].shape:
-            order = {3: (0, 2, 1), 4: (0, 2, 3, 1)}[weights[key].ndim]
-            weights[key] = weights[key].transpose(*order)
-    model.load_weights(list(weights.items()), strict=True)
-    model.update(
-        tree_unflatten(
-            [(k, v.astype(mx.bfloat16)) for k, v in tree_flatten(model.parameters())]
-        )
-    )
-    return model
+    return load(Path(folder))
 
 
 class MLXWhisper:
@@ -482,13 +481,63 @@ class ParakeetCoreML:
         return self.model.decode(audio)
 
 
+VAD_FRAME_S = 0.03  # energy frames for speech_segments
+VAD_FLOOR_DB = -30  # frames this far below the clip's loudest 1% are silence...
+VAD_ABS_DB = -55  # ...and so is any frame under this, whatever the clip (dBFS)
+VAD_GAP_S = 0.8  # silences shorter than this stay inside a segment
+VAD_PAD_S = 0.2  # kept either side of each segment
+VAD_MAX_S = 25  # longer segments are cut at their quietest frame
+
+
+def speech_segments(audio: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end) samples of the speech in a clip, by frame energy.
+
+    A frame is speech when its RMS is within VAD_FLOOR_DB of the clip's 99th
+    percentile frame and above VAD_ABS_DB; speech closer than VAD_GAP_S merges, each
+    segment is padded and cut to at most VAD_MAX_S at its quietest frame. On the
+    2026-10-24 dictations speech sat at -35 to -18 dBFS and a ten-minute near-silent
+    clip at -51 dBFS in its loudest 1%.
+    """
+    hop = int(VAD_FRAME_S * SAMPLE_RATE)
+    n = len(audio) // hop
+    if n == 0:
+        return []
+    frames = audio[: n * hop].reshape(n, hop)
+    db = 20 * np.log10(np.sqrt((frames**2).mean(axis=1)) + 1e-9)
+    speech = np.flatnonzero(db > max(np.percentile(db, 99) + VAD_FLOOR_DB, VAD_ABS_DB))
+    if not len(speech):
+        return []
+    gap, pad = int(VAD_GAP_S / VAD_FRAME_S), int(VAD_PAD_S / VAD_FRAME_S)
+    runs, start, prev = [], speech[0], speech[0]
+    for f in speech[1:]:
+        if f - prev > gap:
+            runs.append((start, prev))
+            start = f
+        prev = f
+    runs.append((start, prev))
+    longest = int(VAD_MAX_S / VAD_FRAME_S)
+    out = []
+    for a, b in runs:
+        a, b = max(0, a - pad), min(n - 1, b + pad)
+        while b - a > longest:
+            window = db[a + longest // 2 : a + longest]
+            cut = a + longest // 2 + int(np.argmin(window))
+            out.append((a * hop, cut * hop))
+            a = cut
+        out.append((a * hop, (b + 1) * hop))
+    return out
+
+
 class MLXAudio:
     """mlx-audio 0.5.7: `generate` for offline models, a streaming session
-    (feed / step / close) for natively streaming ones."""
+    (feed / step / close) for natively streaming ones. A repo ending in `#vad`
+    decodes only the speech segments of each clip (speech_segments)."""
 
     def __init__(self, repo: str, mode: str):
         from mlx_audio.stt import load
 
+        repo, _, flag = repo.partition("#")
+        self.vad = flag == "vad"
         self.model = load(repo)
         self.mode = mode
         self.lang = "en"  # the `chunk` sets are English
@@ -503,6 +552,12 @@ class MLXAudio:
         return self._stream(audio)
 
     def decode(self, audio: np.ndarray) -> str:
+        if self.vad:
+            texts = [self._decode(audio[a:b]) for a, b in speech_segments(audio)]
+            return " ".join(t for t in texts if t)
+        return self._decode(audio)
+
+    def _decode(self, audio: np.ndarray) -> str:
         if "parakeet" in type(self.model).__name__.lower():
             import mlx.core as mx
 
@@ -614,6 +669,8 @@ RUNTIMES = {
 
 def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -> None:
     runtime, repo, mode = SYSTEMS[system]
+    if runtime not in RUNTIMES:
+        raise SystemExit(f"{system} runs through a local script kept out of the repo: uv run --script .ignored_scripts/wispr_api.py run --set {set_name}")
     if system in ENGLISH_ONLY and set_name == "fleurs-es":
         raise SystemExit(f"{system} is English only")
     clips = read_jsonl(SETS / f"{set_name}.jsonl")
@@ -842,11 +899,10 @@ def score_set(set_name: str) -> list[dict]:
                 errors[s] += edits(ref, hyps[s])
                 words[s] += len(ref)
             continue
-        # no label: the medoid of the other systems plus Wispr's ASR, leaving out the
-        # system's own family, whose near-identical text would otherwise vote for it
+        # no label: the medoid of the other systems, leaving out the system's own
+        # family, whose near-identical text would otherwise vote for it. Wispr's stored
+        # text no longer votes: it is its final, often formatted or truncated, output
         voters = {s: hyps[s] for s in cells}
-        if clip.get("wispr_asr"):
-            voters["wispr-asr"] = normalise(clip["wispr_asr"], clip["lang"])
         names = list(voters)
         pair = {
             frozenset((a, b)): edits(voters[a], voters[b])
@@ -859,7 +915,7 @@ def score_set(set_name: str) -> list[dict]:
 
         for s in scored:
             others = [n for n in names if family(n) != family(s)]
-            if not others:  # a lone system and no Wispr ASR: nothing to agree with
+            if not others:  # a lone system: nothing to agree with
                 continue
             ref_name = min(others, key=lambda c: sum(dist(c, o) for o in others))
             errors[s] += edits(voters[ref_name], hyps[s])
@@ -899,11 +955,75 @@ def score_set(set_name: str) -> list[dict]:
     return sorted(rows, key=lambda r: r["wer"])
 
 
+WISPR_FLOW = {"wispr-flow": False, "wispr-flow-fallback": True}  # row -> usedFallbackAsr
+
+
+def score_wispr_flow() -> list[dict]:
+    """Wispr Flow's own ASR on the `wispr` set, as rows shaped like `score_set`'s.
+
+    Its transcript is scored against the medoid of every grid system's transcript (it
+    never votes for itself), on the clips every cell finished. The clips split on Wispr's
+    own `usedFallbackAsr` flag (from the bench export): `wispr-flow` is its normal path,
+    `wispr-flow-fallback` the dictations where it fell back to another ASR, which is
+    what happens when its websocket is blocked. Wait is Wispr's own `e2eLatency`, stop to
+    paste, so it includes its formatting pass; clips without one have no wait.
+    """
+    clips = {c["id"]: c for c in read_jsonl(SETS / "wispr.jsonl")}
+    meta = {r["id"]: r for r in read_jsonl(WISPR / "results.jsonl")}
+    every = {
+        p.stem: {r["id"]: r for r in read_jsonl(p)}
+        for p in sorted((RESULTS / "wispr").glob("*.jsonl"))
+        if p.stem in SYSTEMS
+    }
+    # the clips every cell finished, Wispr's own API cell included, as score_set uses;
+    # only the voters leave Wispr out (Wispr never votes for Wispr)
+    cells = {name: rows for name, rows in every.items() if family(name) != "wispr"}
+    if not cells:
+        return []
+    common = sorted(
+        cid
+        for cid in set(clips).intersection(*[set(rows) for rows in every.values()])
+        if clips[cid].get("wispr_asr") and cid in meta
+    )
+    rows = []
+    for name, fallback in WISPR_FLOW.items():
+        ids = [cid for cid in common if bool(meta[cid].get("wispr_fallback_asr")) == fallback]
+        errors = words = 0
+        for cid in ids:
+            voters = {s: normalise(final_text(s, cells[s][cid]), "en") for s in cells}
+            names = list(voters)
+            ref = min(names, key=lambda c: sum(edits(voters[c], voters[o]) for o in names if o != c))
+            errors += edits(voters[ref], normalise(clips[cid]["wispr_asr"], "en"))
+            words += len(voters[ref])
+        if not words:
+            continue
+        waits = [meta[cid]["wispr_e2e_ms"] / 1000 for cid in ids if meta[cid].get("wispr_e2e_ms")]
+        rows.append(
+            {
+                "system": name,
+                "mode": "cloud",
+                "n": len(ids),
+                "errors": errors,
+                "words": words,
+                "wer": errors / words,
+                "waits": waits,
+                "wait_p50": q(waits, 0.5) if waits else float("nan"),
+                "wait_p90": q(waits, 0.9) if waits else float("nan"),
+                "wait_max": max(waits) if waits else float("nan"),
+                "busy_s": float("nan"),
+                "audio_s": sum(clips[cid]["duration_s"] for cid in ids),
+                "rtf": float("nan"),
+                "peak_gb": None,
+            }
+        )
+    return rows
+
+
 def report() -> None:
     lines = [f"# ASR grid, {date.today().isoformat()}", ""]
     lines.append(
         "WER: labelled sets against their references; `wispr` against the leave-one-out "
-        "consensus of the other systems plus Wispr's ASR (agreement, not truth). Wait: "
+        "consensus of the other systems (agreement, not truth). Wait: "
         "seconds from release to final text. RTF: compute / audio. Peak: MLX's peak "
         "memory on the worst clip, weights included (cells from 2026-10-14 on)."
     )

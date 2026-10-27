@@ -20,3 +20,7 @@ dist/
 .claude/.DS_Store
 build/
 site/
+
+# marimo session snapshots
+__marimo__/
+.ignored_scripts/

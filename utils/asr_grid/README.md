@@ -35,8 +35,17 @@ Not in the grid, because no MLX runtime runs them faithfully today (2026-09-29):
 `ls-clean`, `ls-other` (LibriSpeech test, openslr.org), `fleurs-es` (FLEURS es_419 test): 150
 labelled clips each, seeded, scored as WER after Whisper's text normalisation. `wispr`: the 208
 dictations exported by `../wisprflow_benchmarking_profiling`, which have no ground truth; each
-system is scored against the consensus (medoid) of the other systems, its own model family left out, plus Wispr's
-own ASR. That measures agreement, not correctness.
+system is scored against the consensus (medoid) of the other systems, its own model family left out. That
+measures agreement, not correctness. Wispr Flow takes part through a local script (kept out of the repo), which sends each clip to its own
+service (`wispr-flow-api`); the text its app stored is its final output, often formatted or truncated, and no longer votes.
+
+`ami-sdm` (AMI meetings on one distant microphone, CC-BY-4.0) and `earnings22` (earnings calls,
+references with punctuation and capitals) are the noisy labelled sets, 150 seeded clips each,
+fetched by `fetch_noisy.py`. Prefer a labelled set whenever one fits the question. `silver.py`
+builds a reference for the unlabelled dictations from three strong systems, but silver text cannot
+reward a name or vocabulary fix the voters never got right, so judge dictionary and cleanup changes
+on labelled sets. `cleanup_bench.py run|report` scores v2t's cleanup on its own: WER of raw against
+cleaned text on the labelled sets, plus formatted WER on Earnings22.
 
 ## Run
 
@@ -60,6 +69,10 @@ uv venv ~/.v2t/eval/grid-envs/phonon && VIRTUAL_ENV=~/.v2t/eval/grid-envs/phonon
 uv run --script utils/asr_grid/plot_pareto.py              # WER vs size and vs wait, short sets
 ```
 
+When disk is tight, sweep models one at a time: download one, run every set, delete it with
+Hugging Face's cache API (`scan_cache_dir().delete_revisions(...)`; moving the files to a trash
+frees nothing), then the next.
+
 Run cells one at a time: two models on the GPU contaminate each other's timings. Check `df -h /`
 and swap first: at 595 MB free a cell died with no traceback, and swapping inflated the waits of
 another, so rerun a spoiled cell rather than keep it. Results from before 2026-10-06 on long sets
@@ -71,6 +84,11 @@ and rsync that folder into `~/.cache/huggingface/hub`.
 
 Everything is written under `~/.v2t/eval/grid` (owner-only): manifests, per-clip results with
 transcripts, and `<date>-report.md`, which holds numbers only.
+
+For every finished cell on one screen (WER against wait and against disk, our numbers against
+the Open ASR Leaderboard's, which engine runs which model), run `just intake`: the notebook in
+[`../model_intake`](../model_intake/intake.py) scores these results with `score_set` and reads its
+model facts from [`models.toml`](../model_intake/models.toml), where a new model is onboarded.
 
 ## Reading the numbers
 

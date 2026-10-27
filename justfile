@@ -13,6 +13,10 @@ check: lint
 bench *args:
     uv run python -m v2t.bench {{args}}
 
+# Speech-to-text model intake dashboard over the ASR grid's results (maintainers)
+intake:
+    uvx marimo run --sandbox utils/model_intake/intake.py
+
 # Build the package
 build: check
     rm -rf dist/
