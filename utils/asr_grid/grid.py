@@ -811,7 +811,7 @@ class Bark:
         import shutil
 
         import mlx.core as mx
-        import mlx.nn as nn
+        from mlx import nn
         from mlx.utils import tree_flatten
         from mlx_audio.stt import load
 
@@ -967,7 +967,7 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
         for n, clip in enumerate(todo, 1):
             result = {"id": clip["id"], "duration_s": clip["duration_s"]}
             audio = load_audio(clip["path"])
-            work = lambda: chunked(engine, audio)  # noqa: E731
+            work = lambda: chunked(engine, audio)
             result.update(measured(work) if getattr(engine, "uses_mlx", True) else work())
             out.write(json.dumps(result) + "\n")
             out.flush()
