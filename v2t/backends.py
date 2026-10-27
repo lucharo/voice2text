@@ -781,13 +781,16 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
         "red", so it is not licensed) unless a dictionary word replaced it ("clod" ->
         "Claude")."""
         written, spoken = {_bare(t) for t in tokens}, raw_bare[i1:i2]
+        digits = any(number(t) for t in tokens)
         return (
             all(license(t) or _bare(t) in set(spoken) for t in tokens)
             and any(license(t) for t in tokens)
             # each dictionary word written may stand for one word said ("clock code" ->
             # "Claude Code"), not for a whole phrase it swallowed ("clod the report")
+            # (number words count as written only when a number is written there)
             and sum(
-                not (w in written or w in _NUMBER_WORDS or droppable(i)) for i, w in enumerate(spoken, i1)
+                not (w in written or (digits and w in _NUMBER_WORDS) or droppable(i))
+                for i, w in enumerate(spoken, i1)
             ) <= sum(_bare(t) in allowed for t in tokens)
         )
 
@@ -831,12 +834,11 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
                 mark = _TRAILING.search(clean_tokens[j2 - 1])
                 tail.insert(0, raw_tokens[i2 - 1] + (mark.group() if mark and not _TRAILING.search(raw_tokens[i2 - 1]) else ""))
                 i2, j2 = i2 - 1, j2 - 1
-            if pending and i1 == i2 and not tail:  # "She said." -> "She says."
+            if pending and j1 == j2 and i1 < i2 and not tail:
+                # "it's." -> "it is.": the full stop goes after the last word put back
+                pending = "" if _TRAILING.search(raw_tokens[i2 - 1]) else pending
+            elif pending:  # "She said." -> "She says."; "left. Claude" -> "leaves. Claude"
                 head[-1] += pending
-            elif pending and j1 == j2 and not tail:  # "it's." -> "it is.": after the last word
-                raw_end = raw_tokens[i2 - 1]
-                pending = "" if _TRAILING.search(raw_end) else pending
-            else:
                 pending = ""
             out.extend(head)
             if i1 < i2 or j1 < j2:

@@ -3386,6 +3386,8 @@ class V2TSmokeTests(unittest.TestCase):
             # a dictionary word fixes one misheard word, not the phrase it swallowed
             ("send clod the report today", "Send Claude today.", "Send Clod the report today."),
             ("clock code is great", "Claude Code is great.", "Claude Code is great."),
+            ("she leaves clod stays", "She left. Claude stays.", "She leaves. Claude stays."),
+            ("send clod one today", "Send Claude today.", "Send Clod one today."),
             # one of a repeated word the cleanup dropped whole comes back
             ("I can can attend on Friday", "I attend on Friday.", "I can attend on Friday."),
             # words put back at the end go before the full stop, capitals kept
