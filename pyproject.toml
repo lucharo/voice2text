@@ -22,6 +22,9 @@ dependencies = [
 # optional alternative STT backend.
 [project.optional-dependencies]
 whisper = ["mlx-whisper"]
+# Qwen3-ASR (backend = "qwen3-asr"): mlx-audio is small, but from 0.6 it pins mlx to one
+# exact version, so it stays out of the default install
+qwen = ["mlx-audio>=0.5.7"]
 coreml = []  # coremltools is a core dependency since parakeet-coreml became the default
 
 [project.scripts]

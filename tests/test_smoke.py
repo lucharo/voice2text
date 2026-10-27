@@ -1343,6 +1343,101 @@ class V2TSmokeTests(unittest.TestCase):
     def test_config_accepts_the_parakeet_coreml_backend(self):
         config._validate(config.Config(backend="parakeet-coreml"))  # no SystemExit
 
+    @staticmethod
+    def _mlx_audio(model) -> tuple[mock.Mock, dict]:
+        """Stand-ins for mlx_audio.stt (whose load returns `model`) and mlx.core."""
+        stt_module = mock.Mock(load=mock.Mock(return_value=model))
+        mx = mock.Mock()
+        mlx = mock.Mock(core=mx)
+        return stt_module, {
+            "mlx_audio": mock.Mock(stt=stt_module),
+            "mlx_audio.stt": stt_module,
+            "mlx": mlx,
+            "mlx.core": mx,
+        }
+
+    def test_qwen3_asr_loads_cache_first_and_decodes_float32_audio_in_30_s_pieces(self):
+        heard: list[np.ndarray] = []
+        model = mock.Mock(sample_rate=16000)
+        model.generate.side_effect = lambda pcm: heard.append(pcm) or mock.Mock(text=" qwen words ")
+        stt_module, modules = self._mlx_audio(model)
+
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(backends, "load_cache_first", side_effect=lambda repo, loader: loader()) as cache_first,
+        ):
+            stt = backends.make_stt("qwen3-asr")
+            text = stt.decode(np.ones((16000, 1), dtype=np.float64))
+            pieces = stt.pieces()
+            pieces.add(np.ones(16000 * 34, dtype=np.float32))
+            early = pieces.step()
+            pieces.add(np.ones(16000, dtype=np.float32))
+            on_time = pieces.step()
+
+        self.assertEqual(cache_first.call_args.args[0], "mlx-community/Qwen3-ASR-1.7B-8bit")
+        stt_module.load.assert_called_once_with("mlx-community/Qwen3-ASR-1.7B-8bit")
+        self.assertEqual(text, "qwen words")
+        self.assertEqual((heard[0].shape, heard[0].dtype), ((16000,), np.float32))
+        # a piece is cut once PIECE_S + PIECE_SEARCH_S are in, within 5 s of the 30 s mark
+        self.assertEqual((early, on_time), (False, True))
+        self.assertTrue(16000 * 25 <= heard[1].size <= 16000 * 35, heard[1].size)
+        self.assertEqual((stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000))
+        self.assertFalse(hasattr(stt, "stream"))
+        self.assertEqual(modules["mlx.core"].clear_cache.call_count, 2, "MLX cache handed back per decode")
+
+    def test_qwen3_asr_decodes_nothing_for_empty_audio_and_reads_files_at_its_rate(self):
+        model = mock.Mock(sample_rate=16000)
+        model.generate.return_value = mock.Mock(text="from a file")
+        _stt_module, modules = self._mlx_audio(model)
+
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(backends, "cached_locally", return_value=False),
+            mock.patch.object(backends, "read_audio", return_value=np.ones(8000, dtype=np.float32)) as read,
+        ):
+            stt = backends.QwenASRSTT("mlx-community/Qwen3-ASR-1.7B-bf16")
+            empty = stt.decode(np.zeros((0, 1), dtype=np.float32))
+            text = stt.transcribe("clip.m4a")
+
+        self.assertEqual(empty, "")
+        self.assertEqual(text, "from a file")
+        read.assert_called_once_with("clip.m4a", 16000)
+        model.generate.assert_called_once()
+        self.assertEqual(backends.short_model("mlx-community/Qwen3-ASR-1.7B-8bit"), "qwen3-asr")
+
+    def test_qwen3_asr_decodes_a_long_file_whole_in_pieces_each_with_its_own_budget(self):
+        heard: list[int] = []
+        model = mock.Mock(sample_rate=16000)
+        model.generate.side_effect = lambda pcm: heard.append(pcm.size) or mock.Mock(text=f"part{len(heard)}")
+        _stt_module, modules = self._mlx_audio(model)
+
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(backends, "cached_locally", return_value=False),
+        ):
+            stt = backends.QwenASRSTT()
+            text = stt.decode(np.ones(16000 * 100, dtype=np.float32))
+
+        # mlx-audio would take 100 s as one chunk with one shared token budget
+        self.assertEqual(sum(heard), 16000 * 100, "every sample decoded once")
+        self.assertTrue(all(size <= 16000 * 35 for size in heard), heard)
+        self.assertEqual(text, " ".join(f"part{n}" for n in range(1, len(heard) + 1)))
+        self.assertGreaterEqual(len(heard), 3)
+
+    def test_qwen3_asr_without_mlx_audio_names_the_extra_to_install(self):
+        with (
+            mock.patch.dict(sys.modules, {"mlx_audio": None, "mlx_audio.stt": None}),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            backends.make_stt("qwen3-asr")
+
+        self.assertIn("uv tool install 'voice2text[qwen]'", str(caught.exception))
+
+    def test_config_accepts_the_qwen3_asr_backend_and_its_template_names_it(self):
+        config._validate(config.Config(backend="qwen3-asr"))  # no SystemExit
+        self.assertIn("qwen3-asr", config.DEFAULT_TOML)
+        self.assertIn("voice2text[qwen]", config.DEFAULT_TOML)
+
     def _streaming_stt(
         self, feeds: list, partial: str = "so far", final: str = "final words"
     ):
@@ -1619,6 +1714,27 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("p p p")
         record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("p p p", True))
+
+    def test_a_pieces_only_backend_without_previews_shows_only_its_pieces(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        decoded: list[int] = []
+        stt = mock.Mock(
+            spec=["streaming", "pieces_only", "previews", "sample_rate", "pieces", "decode"],
+            streaming=True, pieces_only=True, previews=False, sample_rate=16000,
+        )
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(
+            lambda piece: decoded.append(piece.size) or "p", 16000
+        )
+        voice.stt = stt
+
+        statuses, paste, _lines = self._hold_long(voice, [None, "p", None])
+
+        stt.decode.assert_not_called()  # Qwen3-ASR: a preview would be a full decode
+        self.assertEqual(decoded, list(self._PIECE_SIZES))
+        self.assertEqual(statuses[1], "p", "the partial grows a piece at a time")
+        paste.assert_called_once_with("p p p")
 
     def test_a_short_pieces_only_recording_is_one_decode_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -2704,6 +2820,17 @@ class V2TSmokeTests(unittest.TestCase):
             cli.cmd_setup([])
 
         self.assertIn("uv tool install 'voice2text[whisper]'", output.getvalue())
+
+    def test_setup_offers_qwen3_asr_and_names_its_extra(self):
+        output = io.StringIO()
+        with (
+            mock.patch("builtins.input", side_effect=["4", "n"]),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.cmd_setup([])
+
+        self.assertEqual(config.load().backend, "qwen3-asr")
+        self.assertIn("uv tool install 'voice2text[qwen]'", output.getvalue())
 
     def test_menubar_install_builds_a_grantable_native_app(self):
         destination = Path(self.tempdir.name) / "Voice2Text.app"

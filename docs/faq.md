@@ -198,8 +198,9 @@ them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 
   also transcribes silence. On 5 near-silent dictations it invented about 7,000 words, so it would
   need voice detection in front of it. It has no language detection and needs about 4.8 GB of
   memory.
-- **Qwen3-ASR 1.7B** (8-bit) is about as accurate on short clips (1.6 / 4.2 / 5.0%) but waits 0.3
-  to 0.6 s on them and 1.6 s (median) on real dictations.
+- **Qwen3-ASR 1.7B** (8-bit) is about as accurate on short labelled clips (1.6 / 4.2 / 5.0%) and
+  makes about half the mistakes on real dictations, but waits 0.3 to 0.9 s on short clips. It is an
+  opt-in backend: see [Should I switch to Qwen3-ASR?](#should-i-switch-to-qwen3-asr)
 - **Whisper large-v3-turbo** matches Parakeet on short clips but waits about 1 s, and makes more
   errors on long recordings.
 - **Voxtral** (4-bit, streaming) waits about 0.7 s, makes more errors on the labelled short clips,
@@ -214,10 +215,47 @@ them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 
   the default because it also handles other languages.
 - **Noisy recordings** (added late October 2026): on AMI meetings recorded with a room microphone
   Parakeet v3 scores 33.3%, against 28.4% for Qwen3-ASR and 25.5% for Cohere; on Earnings22 it
-  scores 10.8%, against 8.6% and 9.2%. Qwen3-ASR does not invent text on silence, which makes it
-  the likelier second engine for long dictations.
+  scores 10.8%, against 8.6% and 9.2%. Qwen3-ASR does not invent text on silence, unlike Cohere,
+  which is why it, not Cohere, became the opt-in second backend.
 - **Voxtral 3**, Mistral's October 2026 transcription models, are available only through its API;
   the newest open Voxtral is Voxtral Mini 4B Realtime.
+
+## Should I switch to Qwen3-ASR?
+
+If waiting under a second after you let go does not bother you, probably: on real dictations it
+makes about half the mistakes. Install the extra and set the backend:
+
+```bash
+uv tool install 'voice2text[qwen]'
+v2t config set transcription.backend qwen3-asr
+```
+
+Measured through v2t's own `qwen3-asr` backend on an M4 Pro (October 2026, other work keeping the
+load average around 45, so the waits are on the slow side), against the default Parakeet v3 on
+Core ML:
+
+| | Parakeet v3, Core ML | Qwen3-ASR 1.7B, 8-bit |
+|---|--:|--:|
+| Words wrong, 208 real dictations | 5.6% | 2.9% |
+| ...the 162 marked against Wispr Flow's text | 5.6% | 3.0% |
+| AMI meetings, room microphone (150 clips) | 29.5% | 29.0% |
+| Earnings22 phone calls (150 clips, grid) | 10.3% | 8.6% |
+| Wait after release, median (p90), real dictations | 0.13 s (0.26 s) | 0.77 s (1.24 s) |
+| ...under 15 s | | 0.38 s |
+| Memory at peak | 0.34 GB | about 3.7 GB |
+| Download | 0.63 GB | 2.5 GB |
+
+The dictations have no hand-made transcript, so each is marked against a silver one: the
+transcript that Wispr Flow, Cohere Transcribe and Qwen3-ASR (bf16) agree with most. Qwen3-ASR
+being one of those three flatters it, so the table also gives the score on the 162 clips whose
+silver text is Wispr Flow's; the gap barely moves. On AMI the newer mlx-audio v2t installs (0.6.2)
+scores 29.0%, against 28.4% for the 0.5.7 the grid used, on the same audio; on the dictations the
+two are within 0.02 points.
+
+While you hold the key, v2t decodes the recording in pieces of about 30 s cut at quiet moments, so
+release waits on the last piece only; there are no previews between pieces, since each would be a
+full decode. A Core ML build that could cut the wait and memory is tracked in
+[#64](https://github.com/lucharo/voice2text/issues/64).
 
 ## Which Macs were the benchmarks run on?
 

@@ -27,6 +27,9 @@ uv tool install 'voice2text[whisper]'
 
 Then set `backend = "whisper"` in the [config](reference/config.md).
 
+Fewer mistakes for a slightly longer wait: install `'voice2text[qwen]'` the same way and set
+`backend = "qwen3-asr"`. See [Should I switch to Qwen3-ASR?](faq.md#should-i-switch-to-qwen3-asr)
+
 ## Free the Fn key
 
 v2t listens for **Fn** (the 🌐 key, bottom left). macOS uses it for the emoji picker unless you
