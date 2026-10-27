@@ -1405,6 +1405,25 @@ class V2TSmokeTests(unittest.TestCase):
         model.generate.assert_called_once()
         self.assertEqual(backends.short_model("mlx-community/Qwen3-ASR-1.7B-8bit"), "qwen3-asr")
 
+    def test_qwen3_asr_decodes_a_long_file_whole_in_pieces_each_with_its_own_budget(self):
+        heard: list[int] = []
+        model = mock.Mock(sample_rate=16000)
+        model.generate.side_effect = lambda pcm: heard.append(pcm.size) or mock.Mock(text=f"part{len(heard)}")
+        _stt_module, modules = self._mlx_audio(model)
+
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch.object(backends, "cached_locally", return_value=False),
+        ):
+            stt = backends.QwenASRSTT()
+            text = stt.decode(np.ones(16000 * 100, dtype=np.float32))
+
+        # mlx-audio would take 100 s as one chunk with one shared token budget
+        self.assertEqual(sum(heard), 16000 * 100, "every sample decoded once")
+        self.assertTrue(all(size <= 16000 * 35 for size in heard), heard)
+        self.assertEqual(text, " ".join(f"part{n}" for n in range(1, len(heard) + 1)))
+        self.assertGreaterEqual(len(heard), 3)
+
     def test_qwen3_asr_without_mlx_audio_names_the_extra_to_install(self):
         with (
             mock.patch.dict(sys.modules, {"mlx_audio": None, "mlx_audio.stt": None}),

@@ -586,13 +586,23 @@ class QwenASRSTT:
         return int(self.model.sample_rate)
 
     def pieces(self) -> PieceDecoder:
-        return PieceDecoder(self.decode, self.sample_rate)
+        return PieceDecoder(self._decode_piece, self.sample_rate)
 
     def transcribe(self, wav_path: str) -> str:
         return self.decode(read_audio(wav_path, self.sample_rate))
 
     def decode(self, audio: np.ndarray) -> str:
-        """One decode of audio at `sample_rate`; mlx-audio splits it only past 20 min."""
+        """Audio at `sample_rate`, any length: the same pieces a held recording gets.
+
+        mlx-audio would split a file only past 20 min and share one 8,192-token budget
+        across those chunks, dropping what is left once it runs out; a piece of at
+        most PIECE_S + PIECE_SEARCH_S gets the whole budget to itself.
+        """
+        pieces = self.pieces()
+        pieces.add(audio)
+        return pieces.finish()
+
+    def _decode_piece(self, audio: np.ndarray) -> str:
         pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
         if not pcm.size:
             return ""
