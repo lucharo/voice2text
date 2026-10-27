@@ -1277,7 +1277,11 @@ class V2TSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fluid = Path(directory) / "fluid"
             fluid.mkdir()
-            download = mock.Mock(return_value=str(Path(directory) / "snapshot"))
+            snapshot = Path(directory) / "snapshot"
+            snapshot.mkdir()
+            for name in coreml.FILES:
+                (snapshot / name).touch()
+            download = mock.Mock(return_value=str(snapshot))
             hub = mock.Mock(snapshot_download=download)
             with (
                 mock.patch.object(coreml, "COREML_DIR", fluid),
@@ -1298,6 +1302,29 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(repo, coreml.COREML_REPO)
         self.assertEqual(len(patterns), len(coreml.FILES))
         self.assertTrue(all(p.endswith("/*") for p in patterns if ".mlmodelc" in p))
+
+    def test_coreml_model_folder_retries_online_after_a_partial_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            partial, whole = Path(directory) / "partial", Path(directory) / "whole"
+            for folder in (partial, whole):
+                folder.mkdir()
+            for name in coreml.FILES:
+                (whole / name).touch()
+            (partial / coreml.FILES[0]).touch()
+            hub = mock.Mock(snapshot_download=mock.Mock(side_effect=[str(partial), str(whole)]))
+
+            def cache_first(repo, fetch):  # load_cache_first: offline, then online on OSError
+                try:
+                    return fetch()
+                except OSError:
+                    return fetch()
+
+            with (
+                mock.patch.object(coreml, "COREML_DIR", Path(directory) / "none"),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_cache_first", cache_first),
+            ):
+                self.assertEqual(coreml.model_folder(), whole)
 
     def test_parakeet_coreml_reads_its_files_from_a_configured_folder(self):
         with mock.patch.object(coreml, "CoreMLParakeet") as load:
@@ -3344,6 +3371,9 @@ class V2TSmokeTests(unittest.TestCase):
             # a number in digits stays; a word changed beside it comes back
             ("send three red boxes tomorrow", "Send 3 blue boxes tomorrow.", "Send 3 red boxes tomorrow."),
             ("it says twenty five percent", "It said 25%.", "It says 25%."),
+            ("send three red boxes tomorrow", "Send 3 boxes tomorrow.", "Send three red boxes tomorrow."),
+            ("she says", "She said.", "She says."),
+            ("ship it", "Ship it to Claude.", "Ship it."),
             # one of a repeated word the cleanup dropped whole comes back
             ("I can can attend on Friday", "I attend on Friday.", "I can attend on Friday."),
             # words put back at the end go before the full stop, capitals kept

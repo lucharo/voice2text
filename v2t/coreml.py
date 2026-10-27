@@ -110,7 +110,15 @@ def model_folder(folder: Path | None = None) -> Path:
     from .backends import load_cache_first
 
     patterns = [f"{name}/*" if name.endswith(".mlmodelc") else name for name in FILES]
-    return Path(load_cache_first(COREML_REPO, lambda: snapshot_download(COREML_REPO, allow_patterns=patterns)))
+
+    def fetch() -> Path:
+        folder = Path(snapshot_download(COREML_REPO, allow_patterns=patterns))
+        if missing := missing_files(folder):
+            # an interrupted download: load_cache_first retries online on OSError
+            raise FileNotFoundError(f"{folder} lacks {', '.join(missing)}")
+        return folder
+
+    return load_cache_first(COREML_REPO, fetch)
 
 
 def _import_coremltools():

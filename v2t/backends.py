@@ -731,6 +731,14 @@ CASUAL_DROPPABLE = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"}
 _BARE = re.compile(r"[^\w']+")
 _TRAILING = re.compile(r"[.,;:!?…]+$")
 _END = re.compile(r"[.!?…]+$")
+# words a number written in digits can stand for ("twenty five percent" -> "25%")
+_NUMBER_WORDS = frozenset(
+    "zero oh one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+    "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty "
+    "ninety hundred thousand million billion trillion point and a percent per cent first second "
+    "third fourth fifth sixth seventh eighth ninth tenth half quarter minus dollars dollar pounds "
+    "pound euros euro cents pence o'clock am pm number".split()
+)
 
 
 def _bare(token: str) -> str:
@@ -760,9 +768,27 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
         """A word the cleanup may write: a number in digits or a dictionary word."""
         return number(token) or _bare(token) in allowed
 
-    def licensed(tokens: list[str], said: set[str]) -> bool:
-        """Each word licensed or said in this stretch, and at least one licensed."""
-        return all(license(t) or _bare(t) in said for t in tokens) and any(license(t) for t in tokens)
+    def droppable(i: int) -> bool:
+        """A filler, or one of an immediate repeat ("is is"): the cleanup may drop it."""
+        word = raw_bare[i]
+        return word in CASUAL_DROPPABLE or (i > 0 and raw_bare[i - 1] == word) or (
+            i + 1 < len(raw_bare) and raw_bare[i + 1] == word
+        )
+
+    def licensed(tokens: list[str], i1: int, i2: int) -> bool:
+        """Each written word licensed or said in this stretch, at least one licensed,
+        and each word said there written or a number word ("three red" -> "3" loses
+        "red", so it is not licensed) unless a dictionary word replaced it ("clod" ->
+        "Claude")."""
+        written, spoken = {_bare(t) for t in tokens}, raw_bare[i1:i2]
+        return (
+            all(license(t) or _bare(t) in set(spoken) for t in tokens)
+            and any(license(t) for t in tokens)
+            and (
+                bool(written & allowed)
+                or all(w in written or w in _NUMBER_WORDS or droppable(i) for i, w in enumerate(spoken, i1))
+            )
+        )
 
     def cased(word: str, like: str) -> str:
         """`word` capitalised when the cleaned word it replaces starts a sentence."""
@@ -781,16 +807,23 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
     counts = {"restored": 0, "reverted": 0, "removed": 0}
     matcher = difflib.SequenceMatcher(a=raw_bare, b=[_bare(t) for t in clean_tokens], autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal" or (tag != "delete" and licensed(clean_tokens[j1:j2], set(raw_bare[i1:i2]))):
+        if tag == "equal":
             out.extend(clean_tokens[j1:j2])
-        elif tag == "insert":
-            counts["removed"] += j2 - j1
+        elif tag == "insert":  # nothing was said there, so nothing is written
+            added = [t for t in clean_tokens[j1:j2] if _bare(t)]
+            counts["removed"] += len(added)
+            if not added:
+                out.extend(clean_tokens[j1:j2])
+            elif j2 == len(clean_tokens) and out and not _END.search(out[-1]) and (mark := _END.search(clean_tokens[j2 - 1])):
+                out[-1] += mark.group()  # the text still ends where the cleanup ended it
         elif tag == "replace":
             # peel word-for-word edits off both ends ("says twenty five" -> "said 25":
             # "says" comes back, "25" stays), then keep or revert what is left
             head, tail = [], []
             while i1 < i2 and j1 < j2 and not number(raw_tokens[i1]) and not license(clean_tokens[j1]):
-                head.append(cased(raw_tokens[i1], clean_tokens[j1]))
+                mark = _TRAILING.search(clean_tokens[j1])
+                word = cased(raw_tokens[i1], clean_tokens[j1])
+                head.append(word + (mark.group() if mark and not _TRAILING.search(word) else ""))
                 i1, j1 = i1 + 1, j1 + 1
             while i1 < i2 and j1 < j2 and not number(raw_tokens[i2 - 1]) and not license(clean_tokens[j2 - 1]):
                 mark = _TRAILING.search(clean_tokens[j2 - 1])
@@ -798,7 +831,7 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
                 i2, j2 = i2 - 1, j2 - 1
             out.extend(head)
             if i1 < i2 or j1 < j2:
-                if j1 < j2 and licensed(clean_tokens[j1:j2], set(raw_bare[i1:i2])):
+                if j1 < j2 and licensed(clean_tokens[j1:j2], i1, i2):
                     out.extend(clean_tokens[j1:j2])
                 elif i1 < i2:
                     mark = _TRAILING.search(clean_tokens[j2 - 1]) if j1 < j2 and not tail else None
