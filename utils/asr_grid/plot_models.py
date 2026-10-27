@@ -6,7 +6,9 @@ and on far-field meetings.
 Numbers only, from the grid's finished cells: word error rate over the `wispr` set (208
 of the maintainer's dictations, scored against silver.py's transcripts) and over
 `ami-sdm` (150 AMI meeting clips on a room microphone, human labels), against the
-median wait after release. Systems are taken with their `chunk` pass from 60 s up, as
+median decode time after release on the grid. That is the whole file under 60 s; v2t
+starts sooner on backends that cut pieces while the key is held (Core ML from 15 s,
+Qwen3-ASR from 35 s), so its real wait there is shorter. Systems are taken with their `chunk` pass from 60 s up, as
 v2t decodes long recordings. A self-contained SVG that follows the
 reader's light or dark mode, like plot_wait.py.
 """
@@ -27,14 +29,17 @@ OUT = grid.REPO / "docs/images/models.svg"
 SYSTEMS = {
     "parakeet-v3-coreml": "Parakeet v3, Core ML (default)",
     "qwen3-asr-1.7b-8bit": "Qwen3-ASR 1.7B (qwen3-asr)",
-    "parakeet-v3": "Parakeet v3, MLX (parakeet)",
-    "parakeet-unified-en": "Parakeet Unified EN",
+    "parakeet-v3": "Parakeet v3, MLX bf16",
+    "parakeet-unified-en": "Parakeet Unified EN, bf16",
     "whisper-turbo": "Whisper large-v3 turbo",
     "cohere-transcribe-vad": "Cohere Transcribe",
     "nemotron-3.5-stream": "Nemotron 3.5",
     "voxtral-rt-4bit": "Voxtral Mini 4B",
 }
 DEFAULT, QWEN = "parakeet-v3-coreml", "qwen3-asr-1.7b-8bit"
+# v2t backends: from 60 s v2t decodes these in pieces, so a missing chunk pass is an error
+# rather than a quiet fall back to the whole-file or stream text
+NEEDS_CHUNKS = {DEFAULT, QWEN, "parakeet-v3", "parakeet-unified-en"}
 PANELS = (
     ("wispr", "208 real dictations (errors against silver transcripts)", (0, 18)),
     ("ami-sdm", "150 meeting clips on a room microphone (human labels)", (20, 52)),
@@ -66,12 +71,16 @@ def rows_of(set_name: str, system: str) -> tuple[str, dict]:
     """
     rows = {r["id"]: r for r in grid.read_jsonl(grid.RESULTS / set_name / f"{system}.jsonl")}
     chunked = grid.RESULTS / set_name / f"{system}.chunked.jsonl"
-    if chunked.exists() and grid.mode_of(system) in ("offline", "hacky"):
-        extra = {r["id"]: r for r in grid.read_jsonl(chunked)}
-        long = [k for k, r in rows.items() if r["duration_s"] >= grid.TAKEOVER_S]
-        if all(k in extra for k in long):
-            merged = {k: {**r, **extra.get(k, {})} for k, r in rows.items()}
-            return system + grid.CHUNKED, merged
+    long = [k for k, r in rows.items() if r["duration_s"] >= grid.TAKEOVER_S]
+    extra = {r["id"]: r for r in grid.read_jsonl(chunked)} if chunked.exists() else {}
+    complete = grid.mode_of(system) in ("offline", "hacky") and all(k in extra for k in long)
+    if long and not complete and system in NEEDS_CHUNKS:
+        raise SystemExit(
+            f"{set_name}: {system} needs its chunk pass for {len(long)} clips from 60 s "
+            f"({sum(k in extra for k in long)} done): grid.py chunk --system {system} --set {set_name}"
+        )
+    if complete:
+        return system + grid.CHUNKED, {k: {**r, **extra.get(k, {})} for k, r in rows.items()}
     return system, rows
 
 
@@ -156,7 +165,7 @@ def main() -> int:
         out += panel(set_name, title, ylim, i * PH)
     out.append(
         f'<text class="axis" x="{(L + W - R) / 2}" y="{height - 12}" text-anchor="middle">'
-        "median wait after you let go of the key (log scale); lower left is better</text>"
+        "median decode time after release on the grid (log scale); lower left is better</text>"
     )
     out.append("</svg>")
     OUT.parent.mkdir(parents=True, exist_ok=True)
