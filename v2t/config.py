@@ -27,7 +27,7 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    backend: str = "parakeet-coreml"  # parakeet-coreml | parakeet | whisper
+    backend: str = "parakeet-coreml"  # parakeet-coreml | parakeet | whisper | qwen3-asr
     stt_model: str = ""  # blank = the backend's own default
     streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
     live_transcript: bool = False  # experimental: streamed words in the pill while speaking
@@ -247,7 +247,7 @@ def load(overrides: dict | None = None) -> Config:
 
 def _validate(cfg: Config) -> None:
     choices = {
-        "backend": {"parakeet", "parakeet-coreml", "whisper"},
+        "backend": {"parakeet", "parakeet-coreml", "whisper", "qwen3-asr"},
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
         "streaming_mode": {"off", "hacky"},
@@ -281,8 +281,9 @@ DEFAULT_TOML = """\
 [transcription]
 backend = "parakeet-coreml"  # parakeet-coreml (default: Parakeet v3 on the Neural Engine)
                        # | parakeet (Parakeet on MLX) | whisper (needs voice2text[whisper])
+                       # | qwen3-asr (Qwen3-ASR 1.7B: more accurate, slower; needs voice2text[qwen])
 model = ""             # blank = backend default (Parakeet v3 Core ML files / parakeet-tdt-0.6b-v3
-                       # / whisper-large-v3-turbo); littlebearlabs/parakeet-unified-en-0.6b-mlx
+                       # / whisper-large-v3-turbo / Qwen3-ASR-1.7B-8bit); littlebearlabs/parakeet-unified-en-0.6b-mlx
                        # with backend = "parakeet" is English-only and more accurate
 streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)

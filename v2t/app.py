@@ -853,7 +853,9 @@ class VoiceToText:
                 if self.cfg.live_transcript
                 else int(self.cfg.sample_rate * backends.STREAM_CHUNK_S)
             )
-            tail_previews = True  # off for the recording once one fails
+            # off for the recording once one fails, and from the start for a backend
+            # whose decode is too slow to preview with (`previews = False`, Qwen3-ASR)
+            tail_previews = getattr(self.stt, "previews", True) is not False
             previewed = 0  # unpushed (or undecoded) samples at the last preview
             previewing = self.cfg.live_transcript  # previews exist only to be shown
             while True:

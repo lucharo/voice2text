@@ -33,7 +33,7 @@ def cmd_run(argv: list[str]) -> int:
     p.add_argument("--config", help="path to a config.toml")
     p.add_argument(
         "--backend",
-        choices=["parakeet", "parakeet-coreml", "whisper"],
+        choices=["parakeet", "parakeet-coreml", "whisper", "qwen3-asr"],
         help="override transcription backend",
     )
     p.add_argument("--model", help="override STT model")
@@ -285,7 +285,7 @@ def cmd_transcribe(argv: list[str]) -> int:
     p.add_argument("--config", help="path to a config.toml")
     p.add_argument(
         "--backend",
-        choices=["parakeet", "parakeet-coreml", "whisper"],
+        choices=["parakeet", "parakeet-coreml", "whisper", "qwen3-asr"],
         help="override transcription backend",
     )
     p.add_argument("--model", help="override STT model")
@@ -622,6 +622,7 @@ def _setup() -> int:
             ("parakeet-coreml", "Parakeet on the Neural Engine — fast, light, multilingual (recommended)"),
             ("parakeet", "Parakeet on MLX — the same model on the GPU"),
             ("whisper", "Whisper — best for rare languages / accents"),
+            ("qwen3-asr", "Qwen3-ASR — most accurate on long and noisy dictations, slower, 2.5 GB"),
         ],
     )
     engine = "mlx"
@@ -649,7 +650,9 @@ def _setup() -> int:
     print(f"\nwrote {path}")
     if cleanup_enabled and engine == "ollama":
         print("next: ollama pull qwen3:4b-instruct-2507")
-    package = "'voice2text[whisper]'" if backend == "whisper" else "voice2text"
+    package = {"whisper": "'voice2text[whisper]'", "qwen3-asr": "'voice2text[qwen]'"}.get(
+        backend, "voice2text"
+    )
     print(f"run:  v2t   (install with: uv tool install {package})")
     return 0
 

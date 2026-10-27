@@ -1,7 +1,8 @@
 """Speech-to-text backends and text-cleanup engines, both pluggable.
 
-STT: parakeet (default) or whisper, both MLX, or parakeet-coreml (opt-in: Core
-ML on the Neural Engine, no MLX). Cleanup: mlx (in-process via
+STT: parakeet-coreml (default: Core ML on the Neural Engine, no MLX), parakeet
+or whisper on MLX, or qwen3-asr (opt-in, MLX through mlx-audio: slower, more
+accurate on long and noisy dictations). Cleanup: mlx (in-process via
 mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 `v2t config`/`v2t bench` work without a model loaded.
 """
@@ -27,6 +28,14 @@ PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
 # Published in NeMo's own layout, so it loads through load_nemo_layout.
 PARAKEET_UNIFIED_EN = "littlebearlabs/parakeet-unified-en-0.6b-mlx"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
+# Qwen3-ASR 1.7B, 8-bit, through mlx-audio (voice2text[qwen]). On the 2026-10 grid
+# (utils/asr_grid) it was the most accurate model v2t can run, at 3 to 10 times
+# Parakeet's wait: AMI far-field meetings 28.4% against 29.6% for Parakeet v3 on Core
+# ML, Earnings22 calls 8.65% against 10.30%, 208 of the maintainer's dictations 2.9%
+# against 5.8% (Parakeet on MLX, scored against silver transcripts one of whose three
+# voters is Qwen3-ASR's bf16 build, so that gap is flattered). Median wait 0.3 to
+# 0.4 s on clips under 15 s, 0.9 s at 15-30 s, against 0.05 s on Core ML.
+QWEN_ASR_DEFAULT = "mlx-community/Qwen3-ASR-1.7B-8bit"
 
 # Parakeet's Linear layers are quantized to this many bits at load (group size 64),
 # all but the encoder's self-attention: streaming swaps that module for a new one
@@ -545,10 +554,59 @@ class WhisperSTT:
         ].strip()
 
 
+class QwenASRSTT:
+    """Opt-in: Qwen3-ASR through mlx-audio (voice2text[qwen]), whole-file only.
+
+    Like Core ML it has no streaming recogniser, so while the key is held the app
+    decodes the recording in pieces of about PIECE_S (`pieces()`), cut where
+    utils/asr_grid's `chunked` pass cut them when it measured this model, and
+    release waits on the last piece. Each piece detects its own language.
+    """
+
+    default_model = QWEN_ASR_DEFAULT
+    streaming = True  # the app decodes it while held, in pieces
+    pieces_only = True  # ...from the start, with no streaming recogniser
+    # No previews of the audio after the last piece: each would be a full decode of
+    # up to PIECE_S + PIECE_SEARCH_S, and one still running at release adds to the
+    # wait. The partial text grows a piece at a time instead.
+    previews = False
+
+    def __init__(self, model: str = ""):
+        try:
+            from mlx_audio.stt import load
+        except ImportError as e:
+            raise SystemExit(
+                "qwen3-asr backend needs: uv tool install 'voice2text[qwen]'"
+            ) from e
+        repo = model or self.default_model
+        self.model = load_cache_first(repo, lambda: load(repo))
+
+    @property
+    def sample_rate(self) -> int:
+        return int(self.model.sample_rate)
+
+    def pieces(self) -> PieceDecoder:
+        return PieceDecoder(self.decode, self.sample_rate)
+
+    def transcribe(self, wav_path: str) -> str:
+        return self.decode(read_audio(wav_path, self.sample_rate))
+
+    def decode(self, audio: np.ndarray) -> str:
+        """One decode of audio at `sample_rate`; mlx-audio splits it only past 20 min."""
+        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if not pcm.size:
+            return ""
+        try:
+            return self.model.generate(pcm).text.strip()
+        finally:
+            release_cache()
+
+
 STT = {
     "parakeet": ParakeetSTT,
     "parakeet-coreml": ParakeetCoreMLSTT,
     "whisper": WhisperSTT,
+    "qwen3-asr": QwenASRSTT,
 }
 
 
@@ -1163,6 +1221,8 @@ _LABELS = {
     "parakeet-tdt-0.6b-v3-coreml": "parakeet-v3-coreml",
     "parakeet-tdt-0.6b-v2": "parakeet-v2",
     "whisper-large-v3-turbo": "whisper-turbo",
+    "Qwen3-ASR-1.7B-8bit": "qwen3-asr",
+    "Qwen3-ASR-1.7B-bf16": "qwen3-asr-bf16",
     "Qwen2.5-1.5B-Instruct-4bit": "Qwen2.5-1.5B",
     "Qwen3-4B-Instruct-2507-4bit": "Qwen3-4B",
     "Qwen2.5-3B-Instruct-4bit": "Qwen2.5-3B",
@@ -1181,9 +1241,11 @@ def short_model(name: str) -> str:
 
 if __name__ == "__main__":
     # ponytail: pure-logic checks only; live model calls are covered by `v2t bench`.
-    assert set(STT) == {"parakeet", "parakeet-coreml", "whisper"}
+    assert set(STT) == {"parakeet", "parakeet-coreml", "whisper", "qwen3-asr"}
     assert set(CLEANUP) == {"mlx", "ollama"}
     assert ParakeetSTT.streaming and not WhisperSTT.streaming
+    assert QwenASRSTT.pieces_only and not hasattr(QwenASRSTT, "stream")
+    assert short_model(QWEN_ASR_DEFAULT) == "qwen3-asr"
     sent: list[int] = []
     feeder = ChunkFeeder(lambda chunk: sent.append(chunk.size), 10, chunk_s=1.0)
     assert (
