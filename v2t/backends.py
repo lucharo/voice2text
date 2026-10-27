@@ -21,6 +21,11 @@ import numpy as np
 T = TypeVar("T")
 
 PARAKEET_DEFAULT = "mlx-community/parakeet-tdt-0.6b-v3"
+# English only, opt-in (transcription.model). On the 2026-10-26 grid it beat v3 on every
+# English set at the same size and speed: LibriSpeech clean 1.6% vs 1.9%, other 3.6% vs
+# 4.2%, Earnings22 8.3% vs 10.8%, the maintainer's dictations 5.2% vs 6.0% (30 s pieces).
+# Published in NeMo's own layout, so it loads through load_nemo_layout.
+PARAKEET_UNIFIED_EN = "littlebearlabs/parakeet-unified-en-0.6b-mlx"
 WHISPER_DEFAULT = "mlx-community/whisper-large-v3-turbo"
 
 # Parakeet's Linear layers are quantized to this many bits at load (group size 64),
@@ -350,6 +355,62 @@ class ParakeetStream:
         return self.text
 
 
+def _load_parakeet(repo: str, from_pretrained):
+    """A Parakeet repo in parakeet-mlx's layout (config.json) or NeMo's (model_config.yaml)."""
+    from huggingface_hub import snapshot_download, try_to_load_from_cache
+
+    if Path(repo).is_dir():
+        folder = Path(repo)
+        return from_pretrained(repo) if (folder / "config.json").exists() else load_nemo_layout(folder)
+    cached = lambda name: isinstance(try_to_load_from_cache(repo, name), str)  # noqa: E731
+    if cached("model_config.yaml") and not cached("config.json"):
+        return load_nemo_layout(Path(snapshot_download(repo)))
+    try:
+        return from_pretrained(repo)
+    except Exception:  # not yet cached and published in NeMo's layout: no config.json
+        folder = Path(snapshot_download(repo))
+        if (folder / "model_config.yaml").exists() and not (folder / "config.json").exists():
+            return load_nemo_layout(folder)
+        raise
+
+
+def load_nemo_layout(folder: Path):
+    """A Parakeet checkpoint kept in NeMo's own layout (model_config.yaml, PyTorch
+    LSTM names and conv layouts), as littlebearlabs publishes Parakeet Unified,
+    loaded into stock parakeet-mlx and cast to bf16 like `from_pretrained`.
+
+    The renaming follows MarkChen1214's compatibility loader for the same
+    checkpoint: fold the two LSTM biases, drop batch counters and the stored
+    featuriser, transpose conv kernels to MLX's channel-last order.
+    """
+    import mlx.core as mx
+    import yaml
+    from mlx.utils import tree_flatten, tree_unflatten
+    from parakeet_mlx.utils import from_config
+
+    folder = Path(folder)
+    model = from_config(yaml.safe_load((folder / "model_config.yaml").read_text()))
+    weights = dict(mx.load(str(folder / "model.safetensors")))
+    lstm = "decoder.prediction.dec_rnn.lstm."
+    for layer in range(2):
+        weights[f"{lstm}{layer}.Wx"] = weights.pop(f"{lstm}weight_ih_l{layer}")
+        weights[f"{lstm}{layer}.Wh"] = weights.pop(f"{lstm}weight_hh_l{layer}")
+        weights[f"{lstm}{layer}.bias"] = weights.pop(f"{lstm}bias_ih_l{layer}") + weights.pop(
+            f"{lstm}bias_hh_l{layer}"
+        )
+    for key in list(weights):
+        if key.endswith(".num_batches_tracked") or key.startswith("preprocessor.featurizer."):
+            del weights[key]
+    expected = dict(tree_flatten(model.parameters()))
+    for key in expected.keys() & weights.keys():
+        if expected[key].shape != weights[key].shape:
+            order = {3: (0, 2, 1), 4: (0, 2, 3, 1)}[weights[key].ndim]
+            weights[key] = weights[key].transpose(*order)
+    model.load_weights(list(weights.items()), strict=True)
+    model.update(tree_unflatten([(k, v.astype(mx.bfloat16)) for k, v in tree_flatten(model.parameters())]))
+    return model
+
+
 class ParakeetSTT:
     default_model = PARAKEET_DEFAULT
     streaming = True
@@ -362,7 +423,7 @@ class ParakeetSTT:
                 "parakeet-mlx missing — reinstall voice2text (Apple Silicon only)."
             ) from e
         repo = model or self.default_model
-        self.model = _quantized(load_cache_first(repo, lambda: from_pretrained(repo)))
+        self.model = _quantized(load_cache_first(repo, lambda: _load_parakeet(repo, from_pretrained)))
 
     @property
     def sample_rate(self) -> int:
@@ -401,10 +462,11 @@ class ParakeetCoreMLSTT:
     pieces_only = True  # ...from the start, with no streaming recogniser
 
     def __init__(self, model: str = ""):
-        from .coreml import COREML_DIR, CoreMLParakeet
+        from .coreml import CoreMLParakeet, model_folder
 
-        # `model` is a folder of the Core ML files; blank means FluidAudio's cache
-        self.coreml = CoreMLParakeet(Path(model).expanduser() if model else COREML_DIR)
+        # `model` is a folder of the Core ML files; blank means FluidAudio's folder,
+        # else the Hugging Face cache, downloading the files the first time
+        self.coreml = CoreMLParakeet(model_folder(Path(model).expanduser() if model else None))
 
     @property
     def sample_rate(self) -> int:
@@ -656,12 +718,173 @@ def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     return low <= clean_words / raw_words <= high
 
 
+# Casual cleanup may punctuate, capitalise, drop the fillers its prompt names and
+# immediate repeats, write numbers as digits and spell dictionary terms; every other
+# word stays as spoken (keep_spoken_words). Measured 2026-10-26 over 1,800 labelled
+# clips (LibriSpeech clean and other, AMI far-field, Earnings22; three recognisers):
+# the cleanup added 262 word errors and fixed 107, dropping small words the speaker
+# said (and, the, that, you know), editing grammar (says to said, it is to it's) and
+# adding words, so it scored worse than the raw transcript on every set
+# (utils/asr_grid/cleanup_bench.py). With this guard, what it still changes against
+# the raw text is mostly the repeats it removes.
+CASUAL_DROPPABLE = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
+_BARE = re.compile(r"[^\w']+")
+_TRAILING = re.compile(r"[.,;:!?…]+$")
+_END = re.compile(r"[.!?…]+$")
+# words a number written in digits can stand for ("twenty five percent" -> "25%")
+_NUMBER_WORDS = frozenset(
+    "zero oh one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+    "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty "
+    "ninety hundred thousand million billion trillion point and a percent per cent first second "
+    "third fourth fifth sixth seventh eighth ninth tenth half quarter minus dollars dollar pounds "
+    "pound euros euro cents pence o'clock am pm number".split()
+)
+
+
+def _bare(token: str) -> str:
+    return _BARE.sub("", token).lower()
+
+
+def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> tuple[str, dict]:
+    """`clean` held to the words of `raw`: returns the text and counts of words
+    `restored` (dropped, put back), `reverted` (changed, put back) and `removed`
+    (added, taken out).
+
+    The two are aligned on bare lowercase words, so punctuation and casing stay as
+    cleaned. A dropped stretch comes back unless it is a filler or an immediate
+    repeat ("the the", keeping one of a run the cleanup dropped whole); a changed or
+    added stretch is kept only when each of its words holds a digit or `#` (numbers
+    written as digits), is a dictionary word or was said in that stretch. Words put
+    back go before the punctuation that ended the cleaned word ahead of them.
+    """
+    import difflib
+
+    allowed = {_bare(w) for term in vocabulary for w in term.split()}
+
+    def number(token: str) -> bool:
+        return any(ch.isdigit() for ch in token) or "#" in token
+
+    def license(token: str) -> bool:
+        """A word the cleanup may write: a number in digits or a dictionary word."""
+        return number(token) or _bare(token) in allowed
+
+    def droppable(i: int) -> bool:
+        """A filler, or one of an immediate repeat ("is is"): the cleanup may drop it."""
+        word = raw_bare[i]
+        return word in CASUAL_DROPPABLE or (i > 0 and raw_bare[i - 1] == word) or (
+            i + 1 < len(raw_bare) and raw_bare[i + 1] == word
+        )
+
+    def licensed(tokens: list[str], i1: int, i2: int) -> bool:
+        """Each written word licensed or said in this stretch, at least one licensed,
+        and each word said there written or a number word ("three red" -> "3" loses
+        "red", so it is not licensed) unless a dictionary word replaced it ("clod" ->
+        "Claude")."""
+        written, spoken = {_bare(t) for t in tokens}, raw_bare[i1:i2]
+        digits = any(number(t) for t in tokens)
+        return (
+            all(license(t) or _bare(t) in set(spoken) for t in tokens)
+            and any(license(t) for t in tokens)
+            # each dictionary word written may stand for one word said ("clock code" ->
+            # "Claude Code"), not for a whole phrase it swallowed ("clod the report")
+            # (number words count as written only when a number is written there)
+            and sum(
+                not (w in written or (digits and w in _NUMBER_WORDS) or droppable(i))
+                for i, w in enumerate(spoken, i1)
+            ) <= sum(_bare(t) in allowed for t in tokens)
+        )
+
+    def cased(word: str, like: str) -> str:
+        """`word` capitalised when the cleaned word it replaces starts a sentence."""
+        return word[:1].upper() + word[1:] if like[:1].isupper() and word[:1].islower() else word
+
+    def put_back(words: list[str], trailing: str = "") -> None:
+        """Append `words`, ending with `trailing` unless they carry their own."""
+        words = list(words)
+        if trailing and not _TRAILING.search(words[-1]):
+            words[-1] += trailing
+        out.extend(words)
+
+    raw_tokens, clean_tokens = raw.split(), clean.split()
+    raw_bare = [_bare(t) for t in raw_tokens]
+    out: list[str] = []
+    counts = {"restored": 0, "reverted": 0, "removed": 0}
+    matcher = difflib.SequenceMatcher(a=raw_bare, b=[_bare(t) for t in clean_tokens], autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            out.extend(clean_tokens[j1:j2])
+        elif tag == "insert":  # nothing was said there, so nothing is written
+            added = [t for t in clean_tokens[j1:j2] if _bare(t)]
+            counts["removed"] += len(added)
+            if not added:
+                out.extend(clean_tokens[j1:j2])
+            elif j2 == len(clean_tokens) and out and not _END.search(out[-1]) and (mark := _END.search(clean_tokens[j2 - 1])):
+                out[-1] += mark.group()  # the text still ends where the cleanup ended it
+        elif tag == "replace":
+            # peel word-for-word edits off both ends ("says twenty five" -> "said 25":
+            # "says" comes back, "25" stays), then keep or revert what is left
+            head, tail = [], []
+            pending = ""  # punctuation of a peeled word, for the end of what comes back
+            while i1 < i2 and j1 < j2 and not number(raw_tokens[i1]) and not license(clean_tokens[j1]):
+                mark = _TRAILING.search(clean_tokens[j1])
+                head.append(cased(raw_tokens[i1], clean_tokens[j1]))
+                pending = mark.group() if mark and not _TRAILING.search(raw_tokens[i1]) else ""
+                i1, j1 = i1 + 1, j1 + 1
+            while i1 < i2 and j1 < j2 and not number(raw_tokens[i2 - 1]) and not license(clean_tokens[j2 - 1]):
+                mark = _TRAILING.search(clean_tokens[j2 - 1])
+                tail.insert(0, raw_tokens[i2 - 1] + (mark.group() if mark and not _TRAILING.search(raw_tokens[i2 - 1]) else ""))
+                i2, j2 = i2 - 1, j2 - 1
+            if pending and j1 == j2 and i1 < i2 and not tail:
+                # "it's." -> "it is.": the full stop goes after the last word put back
+                pending = "" if _TRAILING.search(raw_tokens[i2 - 1]) else pending
+            elif pending:  # "She said." -> "She says."; "left. Claude" -> "leaves. Claude"
+                head[-1] += pending
+                pending = ""
+            out.extend(head)
+            if i1 < i2 or j1 < j2:
+                if j1 < j2 and licensed(clean_tokens[j1:j2], i1, i2):
+                    out.extend(clean_tokens[j1:j2])
+                elif i1 < i2:
+                    mark = _TRAILING.search(clean_tokens[j2 - 1]) if j1 < j2 and not tail else None
+                    words = raw_tokens[i1:i2]
+                    if j1 < j2 and not head:
+                        words = [cased(words[0], clean_tokens[j1]), *words[1:]]
+                    put_back(words, (mark.group() if mark else "") or pending)
+                    counts["reverted"] += i2 - i1
+            out.extend(tail)
+            counts["reverted"] += len(head) + len(tail)
+        else:  # delete
+            kept = []
+            for i in range(i1, i2):
+                word = raw_bare[i]
+                # a repeat of a word kept just outside this stretch, or of one already
+                # handled inside it: of "can can" dropped whole, one "can" comes back
+                repeat = (
+                    (i > i1 and raw_bare[i - 1] == word)
+                    or (i == i1 and i > 0 and raw_bare[i - 1] == word)
+                    or (i == i2 - 1 and i + 1 < len(raw_bare) and raw_bare[i + 1] == word)
+                )
+                if word and word not in CASUAL_DROPPABLE and not repeat:
+                    kept.append(raw_tokens[i])
+            if kept:
+                # "Send it to me." + "please" reads "Send it to me please.": the
+                # punctuation that ended the cleaned text moves past the words put
+                # back at its end (a comma before "and" stays where it is)
+                trailing = ""
+                if j1 == len(clean_tokens) and out and (mark := _END.search(out[-1])):
+                    out[-1], trailing = out[-1][: mark.start()], mark.group()
+                put_back(kept, trailing)
+                counts["restored"] += len(kept)
+    return " ".join(out), counts
+
+
 class _ChunkedCleanup:
     """Shared driver: chunk, generate per chunk, guard length, keep raw on failure.
 
     Subclasses implement `_generate(chunk, mode) -> (text, ttft_s, hit_limit)`.
     `cleanup` keeps the (text, ttft, total) contract the app, CLI and bench use;
-    `last_stats` says how many chunks were guarded or hit their limit.
+    `last_stats` says how many chunks were guarded or hit their limit, and how many
+    words casual mode held to the dictation (keep_spoken_words).
     """
 
     model_id: str
@@ -676,7 +899,7 @@ class _ChunkedCleanup:
 
     def cleanup(self, text: str, mode: str = "casual"):
         t0, ttft, parts = time.perf_counter(), None, []
-        stats = {"chunks": 0, "guarded": 0, "limited": 0}
+        stats = {"chunks": 0, "guarded": 0, "limited": 0, "restored": 0, "reverted": 0, "removed": 0}
         for chunk in chunk_text(text):
             stats["chunks"] += 1
             clean, chunk_ttft, limited = self._generate(chunk, mode)
@@ -689,6 +912,10 @@ class _ChunkedCleanup:
             elif not clean or not within_length_guard(chunk, clean, mode):
                 stats["guarded"] += 1
                 clean = chunk
+            elif mode == "casual":
+                clean, counts = keep_spoken_words(chunk, clean, self.vocabulary)
+                for key, n in counts.items():
+                    stats[key] += n
             parts.append(clean)
         self.last_stats = stats
         return " ".join(parts).strip(), ttft, time.perf_counter() - t0

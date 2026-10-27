@@ -2622,6 +2622,7 @@ name = "voice2text"
 version = "0.5.16"
 source = { editable = "." }
 dependencies = [
+    { name = "coremltools" },
     { name = "loguru" },
     { name = "mlx-lm" },
     { name = "numpy" },
@@ -2633,9 +2634,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-coreml = [
-    { name = "coremltools" },
-]
 whisper = [
     { name = "mlx-whisper" },
 ]
@@ -2652,7 +2650,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coremltools", marker = "extra == 'coreml'", specifier = ">=9" },
+    { name = "coremltools", specifier = ">=9" },
     { name = "loguru" },
     { name = "mlx-lm" },
     { name = "mlx-whisper", marker = "extra == 'whisper'" },

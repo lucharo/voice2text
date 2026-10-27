@@ -109,6 +109,17 @@ about 2 s, measured on 201 real dictations on an M4 Pro.
 - For more speed, use `Qwen3.5-0.8B` ([cleanup models](reference/config.md#cleanup-models)) or
   `v2t --no-cleanup`.
 
+## Does cleanup make the transcript more accurate?
+
+No: at best it leaves your words as you said them. Cleanup reads only the text, so it cannot fix a
+word the speech model misheard; the maintainers score it separately from transcription, on 1,800
+labelled clips. Until the release after 0.5.16, casual cleanup dropped small words, changed tenses
+and added words, so on LibriSpeech clean it raised Parakeet v3's errors from 1.94% to 2.19%. It now
+undoes any word it dropped, changed or added, except fillers, repeats, numbers written as digits
+and your dictionary terms. LibriSpeech clean stays at 1.94%, and the extra errors fell from 1.4 to
+1.7 points to 0.5 to 0.7 on AMI meetings, and from 0.65 to 0.9 to 0.1 to 0.4 on Earnings22 calls
+(27 October 2026). What remains is mostly repeats such as "the the", which those references keep.
+
 ## Why do the models take a few seconds to load at startup?
 
 v2t reads both models from disk and prepares them before the first dictation. Across 24 real
@@ -117,10 +128,13 @@ starts on an M4 Pro (28 September to 15 October 2026):
 - **Parakeet**, the speech model: 1.7 s typical, 5.8 s for nine starts in ten, 15.6 s at worst.
 - **Cleanup** (`Qwen3.5-2B`): 4.4 s typical.
 
-That comes to about 6 s before the menu says **Ready**. Parakeet arrives as one 2.5 GB file, and
-since 0.5.15 v2t converts it to 8-bit each time it loads. Saving an 8-bit copy (0.75 GB) would
-make loading quicker; that is not done yet. Once the models are cached, startup never waits on the
-network ([How it works](how-it-works.md#startup)).
+That comes to about 6 s before the menu says **Ready**. These starts used Parakeet on MLX, now
+`backend = "parakeet"`, which arrives as one 2.5 GB file converted to 8-bit at each load. The
+default since the release after 0.5.16 runs Parakeet on the Neural Engine instead: it downloads
+0.63 GB once, then loads in 0.1 to 0.3 s plus 1.3 to 1.6 s to import coremltools
+([Neural Engine](#does-v2t-use-the-neural-engine)); real starts with it have not been timed yet.
+Once the models are cached, startup never waits on the network
+([How it works](how-it-works.md#startup)).
 
 ## Can v2t transcribe faster on a Mac?
 
@@ -136,17 +150,17 @@ changes:
 Errors barely moved: 2.03 / 4.28 / 5.40% against 1.94 / 4.21 / 5.42% on 450 labelled clips
 (LibriSpeech clean, LibriSpeech other, FLEURS Spanish). Two other options were tried and dropped.
 Attention in 8-bit broke the live transcript, and 4-bit was 0.3 to 0.5 points worse and no faster.
-The download stays 2.5 GB because the conversion happens at load. The next possible step is the
-Neural Engine (below).
+The download stays 2.5 GB because the conversion happens at load. The next step, Parakeet on the
+Neural Engine, is the default since the release after 0.5.16 (below).
 
 ## Does v2t use the Neural Engine?
 
-Only if you opt in, from 0.5.16. By default v2t runs Parakeet through MLX, which uses only the GPU
-and CPU. The Neural Engine is reachable only through Core ML, with a converted model such as the
-Parakeet v3 that [FluidAudio](https://github.com/FluidInference/FluidAudio) ships. Set
-`backend = "parakeet-coreml"` and install `voice2text[coreml]`, and v2t runs that model on the
-Neural Engine with no MLX at all; it reads FluidAudio's files and does not download them yet
-([#59](https://github.com/lucharo/voice2text/issues/59) would make it the default).
+Yes, by default since the release after 0.5.16 (opt-in in 0.5.16). The Neural Engine is reachable
+only through Core ML, with a converted model such as the Parakeet v3 that
+[FluidAudio](https://github.com/FluidInference/FluidAudio) ships, and v2t runs that model with no
+MLX at all. The first run downloads the four Core ML files it needs (about 0.63 GB), or reads
+FluidAudio's copy when there is one. `backend = "parakeet"` goes back to Parakeet on MLX, which uses
+the GPU and CPU ([#59](https://github.com/lucharo/voice2text/issues/59)).
 
 Measured on an M4 Pro, each pair run alternately clip by clip:
 
@@ -162,14 +176,15 @@ dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, int
 15 s, and decodes them while you speak, so release waits only for the last piece.
 
 - **Memory:** about 0.34 GB at its peak, against about 2.6 GB for MLX 8-bit.
-- **Start-up:** the models load in 0.1 to 0.3 s once compiled, but `import coremltools` takes
-  another 1.3 to 1.6 s, because it also imports scikit-learn, which every v2t install has
-  through parakeet-mlx (and torch, where installed: that made it 3.3 to 4.9 s in the
-  maintainers' environment on 19 October). That is about what MLX takes to load (1.4 to 2.7 s).
-  The first load after the model files change recompiles them for the Neural Engine, which took
-  28.8 s once.
+- **Start-up:** the models load in 0.1 to 0.3 s once compiled, and `import coremltools` takes
+  1.3 to 1.6 s. On a fresh install it took 5.0 to 5.2 s, because it imported transformers and
+  scikit-learn for model conversion v2t never does; v2t now hides them during the import
+  (27 October 2026). That is about what MLX takes to load (1.4 to 2.7 s). The very first run
+  downloads the four files and compiles them for the Neural Engine: 102 s on a fresh install,
+  ready at once the next time.
 - **Errors:** up to 0.4 points higher than MLX 8-bit on LibriSpeech other, FLEURS Spanish and long
-  recordings.
+  recordings, but lower on noisy ones: about 20% against 22% averaged over AMI meetings on a room
+  microphone and Earnings22 phone calls.
 
 ## Why does v2t use Parakeet v3 and not Cohere, Qwen3-ASR, Whisper or Voxtral?
 
@@ -191,7 +206,18 @@ them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 
   and disagrees more with the other models on real dictations.
 - **Nemotron** (streaming) waits less (0.07 s) but makes far more errors: 3.1 / 8.3 / 8.8%.
 - **Parakeet Redux** and **Phonon-2** are much smaller downloads (178 MB and 164 MB) and somewhat
-  less accurate. They are candidates for a phone.
+  less accurate. They are candidates for a phone. Phonon-2 is English only, so its published
+  average covers fewer sets: on the same English clips it scores 3.65% against Parakeet v3's 3.07%.
+- **Parakeet Unified EN** (English only, opt-in with `backend = "parakeet"`) makes fewer mistakes
+  on every English set: 1.6 / 3.6% on LibriSpeech, 8.3% against 10.8% on Earnings22 phone calls
+  and 5.2% against 6.0% on the real dictations, waiting 0.17 s against 0.13 s. Parakeet v3 stays
+  the default because it also handles other languages.
+- **Noisy recordings** (added late October 2026): on AMI meetings recorded with a room microphone
+  Parakeet v3 scores 33.3%, against 28.4% for Qwen3-ASR and 25.5% for Cohere; on Earnings22 it
+  scores 10.8%, against 8.6% and 9.2%. Qwen3-ASR does not invent text on silence, which makes it
+  the likelier second engine for long dictations.
+- **Voxtral 3**, Mistral's October 2026 transcription models, are available only through its API;
+  the newest open Voxtral is Voxtral Mini 4B Realtime.
 
 ## Which Macs were the benchmarks run on?
 

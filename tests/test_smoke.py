@@ -278,7 +278,7 @@ class V2TSmokeTests(unittest.TestCase):
             self.assertTrue(permissions.request_microphone(timeout=0.1))
 
     def test_status_reports_the_running_overrides(self):
-        cfg = config.Config(cleanup_enabled=False, mode="casual")
+        cfg = config.Config(backend="parakeet", cleanup_enabled=False, mode="casual")
         voice = app.VoiceToText(cfg)
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -1229,7 +1229,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("missing: JointDecisionv3.mlmodelc, parakeet_v3_vocab.json", message)
         self.assertIn("FluidInference/parakeet-tdt-0.6b-v3-coreml", message)
 
-    def test_coreml_without_coremltools_names_the_extra(self):
+    def test_coreml_without_coremltools_says_to_reinstall(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             for name in coreml.FILES:
@@ -1241,7 +1241,7 @@ class V2TSmokeTests(unittest.TestCase):
             ):
                 coreml.CoreMLParakeet(folder)
 
-        self.assertIn("voice2text[coreml]", str(caught.exception))
+        self.assertIn("reinstall voice2text", str(caught.exception))
 
     def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
         decoded: list[np.ndarray] = []
@@ -1253,6 +1253,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         with (
             mock.patch.object(coreml, "CoreMLParakeet", return_value=core_ml) as load,
+            mock.patch.object(coreml, "model_folder", return_value=Path("/models")) as folder,
             mock.patch.dict(sys.modules, {"parakeet_mlx": None, "mlx": None}),
         ):
             stt = backends.make_stt("parakeet-coreml")
@@ -1261,7 +1262,8 @@ class V2TSmokeTests(unittest.TestCase):
             pieces.add(np.ones(16000 * 20, dtype=np.float32))
             stepped = pieces.step()
 
-        load.assert_called_once_with(coreml.COREML_DIR)
+        folder.assert_called_once_with(None)
+        load.assert_called_once_with(Path("/models"))
         self.assertEqual(text, "core ml words")
         self.assertEqual([(a.shape, a.dtype) for a in decoded], [((16000,), np.float32)])
         # one window cut within 3 s of the 12 s mark, known once 15 s are in
@@ -1270,6 +1272,67 @@ class V2TSmokeTests(unittest.TestCase):
             (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
         )
         self.assertFalse(hasattr(stt, "stream"))
+
+    def test_coreml_model_folder_prefers_fluidaudio_then_downloads_only_its_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fluid = Path(directory) / "fluid"
+            fluid.mkdir()
+            snapshot = Path(directory) / "snapshot"
+            for name in coreml.FILES:
+                if name.endswith(".mlmodelc"):
+                    (snapshot / name).mkdir(parents=True)
+                    (snapshot / name / "coremldata.bin").touch()
+                else:
+                    snapshot.mkdir(exist_ok=True)
+                    (snapshot / name).touch()
+            download = mock.Mock(return_value=str(snapshot))
+            hub = mock.Mock(snapshot_download=download)
+            with (
+                mock.patch.object(coreml, "COREML_DIR", fluid),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_cache_first", lambda repo, fetch: fetch()),
+            ):
+                configured = coreml.model_folder(Path("/mine"))
+                fetched = coreml.model_folder()
+                for name in coreml.FILES:
+                    (fluid / name).touch()
+                fluid_folder = coreml.model_folder()
+
+        self.assertEqual(configured, Path("/mine"))
+        self.assertEqual(fetched, Path(directory) / "snapshot")
+        self.assertEqual(fluid_folder, fluid)
+        download.assert_called_once()
+        repo, patterns = download.call_args.args[0], download.call_args.kwargs["allow_patterns"]
+        self.assertEqual(repo, coreml.COREML_REPO)
+        self.assertEqual(len(patterns), len(coreml.FILES))
+        self.assertTrue(all(p.endswith("/*") for p in patterns if ".mlmodelc" in p))
+
+    def test_coreml_model_folder_retries_online_after_a_partial_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            partial, whole = Path(directory) / "partial", Path(directory) / "whole"
+            for folder in (partial, whole):
+                for name in coreml.FILES:
+                    if name.endswith(".mlmodelc"):
+                        (folder / name).mkdir(parents=True)
+                        # the partial download has every folder but one model's contents
+                        if folder is whole or name != coreml.FILES[0]:
+                            (folder / name / "coremldata.bin").touch()
+                    else:
+                        (folder / name).touch()
+            hub = mock.Mock(snapshot_download=mock.Mock(side_effect=[str(partial), str(whole)]))
+
+            def cache_first(repo, fetch):  # load_cache_first: offline, then online on OSError
+                try:
+                    return fetch()
+                except OSError:
+                    return fetch()
+
+            with (
+                mock.patch.object(coreml, "COREML_DIR", Path(directory) / "none"),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_cache_first", cache_first),
+            ):
+                self.assertEqual(coreml.model_folder(), whole)
 
     def test_parakeet_coreml_reads_its_files_from_a_configured_folder(self):
         with mock.patch.object(coreml, "CoreMLParakeet") as load:
@@ -1817,7 +1880,7 @@ class V2TSmokeTests(unittest.TestCase):
                 return events
 
     def test_status_changes_reach_the_menu_apps_pill(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
 
         voice._set_state("recording", partial="hello there")
@@ -1844,7 +1907,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_status_changes_work_with_no_menu_app_listening(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         config.ensure_dirs()
 
         voice._set_state("recording")
@@ -1867,7 +1930,7 @@ class V2TSmokeTests(unittest.TestCase):
         )
 
     def test_status_advertises_live_transcript_only_when_enabled_and_capture_can_stream(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False, mode="casual"))
+        voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
         voice.stt, _stream = self._streaming_stt([])
         for mode, rate, backend_streams, live, available in (
@@ -2590,7 +2653,7 @@ class V2TSmokeTests(unittest.TestCase):
             "home": self.tempdir.name,
             "config": str(config.config_path()),
             "settings": {
-                "transcription.backend": "parakeet", "transcription.model": "",
+                "transcription.backend": "parakeet-coreml", "transcription.model": "",
                 "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
                 "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
                 "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
@@ -2635,7 +2698,7 @@ class V2TSmokeTests(unittest.TestCase):
     def test_setup_quotes_the_whisper_extra_for_zsh(self):
         output = io.StringIO()
         with (
-            mock.patch("builtins.input", side_effect=["2", "n"]),
+            mock.patch("builtins.input", side_effect=["3", "n"]),
             contextlib.redirect_stdout(output),
         ):
             cli.cmd_setup([])
@@ -3218,8 +3281,8 @@ class V2TSmokeTests(unittest.TestCase):
                 "trigger": "file",
                 "source": str(path),
                 "audio_s": 10.0,
-                "backend": "parakeet",
-                "model": backends.PARAKEET_DEFAULT,
+                "backend": "parakeet-coreml",
+                "model": backends.ParakeetCoreMLSTT.default_model,
                 "mode": "casual",
                 "stt_s": record["stt_s"],
                 "cleanup_s": 0.0,
@@ -3287,7 +3350,7 @@ class V2TSmokeTests(unittest.TestCase):
         text, _ttft, _total = cleaner.cleanup("hello um there friend", "casual")
 
         self.assertEqual(text, "hello um there friend")
-        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 1})
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 1, "restored": 0, "reverted": 0, "removed": 0})
 
     def test_cleanup_keeps_the_raw_chunk_when_the_output_length_drifts(self):
         raw = "so um I think we should ship the migration on friday and watch the error rates"
@@ -3309,7 +3372,75 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(text, "So, I think we should ship the migration on Friday.")
         self.assertIsNotNone(ttft)
         self.assertGreaterEqual(total, ttft)
-        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0})
+        self.assertEqual(cleaner.last_stats, {"chunks": 1, "guarded": 0, "limited": 0, "restored": 0, "reverted": 0, "removed": 0})
+
+    def test_keep_spoken_words_holds_each_edit_to_what_was_said(self):
+        cases = [
+            # a number in digits stays; a word changed beside it comes back
+            ("send three red boxes tomorrow", "Send 3 blue boxes tomorrow.", "Send 3 red boxes tomorrow."),
+            ("it says twenty five percent", "It said 25%.", "It says 25%."),
+            ("send three red boxes tomorrow", "Send 3 boxes tomorrow.", "Send three red boxes tomorrow."),
+            ("she says", "She said.", "She says."),
+            ("ship it", "Ship it to Claude.", "Ship it."),
+            ("we think it is", "We think it's.", "We think it is."),
+            # a dictionary word fixes one misheard word, not the phrase it swallowed
+            ("send clod the report today", "Send Claude today.", "Send Clod the report today."),
+            ("clock code is great", "Claude Code is great.", "Claude Code is great."),
+            ("she leaves clod stays", "She left. Claude stays.", "She leaves. Claude stays."),
+            ("send clod one today", "Send Claude today.", "Send Clod one today."),
+            # one of a repeated word the cleanup dropped whole comes back
+            ("I can can attend on Friday", "I attend on Friday.", "I can attend on Friday."),
+            # words put back at the end go before the full stop, capitals kept
+            ("send it to me please", "Send it to me.", "Send it to me please."),
+            ("it is fine", "It's fine.", "It is fine."),
+            # dictionary words are the cleanup's to write
+            ("we met clod yesterday", "We met Claude yesterday.", "We met Claude yesterday."),
+        ]
+        for raw, clean, expected in cases:
+            with self.subTest(raw=raw):
+                text, _counts = backends.keep_spoken_words(raw, clean, ["Claude", "Claude Code"])
+                self.assertEqual(text, expected)
+
+    def test_parakeet_picks_the_loader_by_the_repos_file_layout(self):
+        def cached(files):
+            return lambda repo, name: f"/cache/{name}" if name in files else None
+
+        for files, expected in ((["config.json"], "parakeet-mlx"), (["model_config.yaml"], "nemo")):
+            hub = mock.Mock(try_to_load_from_cache=cached(files), snapshot_download=lambda repo: "/snap")
+            with (
+                self.subTest(files=files),
+                mock.patch.dict(sys.modules, {"huggingface_hub": hub}),
+                mock.patch.object(backends, "load_nemo_layout", return_value="nemo") as nemo,
+            ):
+                got = backends._load_parakeet("org/model", lambda repo: "parakeet-mlx")
+            self.assertEqual(got, expected)
+            if expected == "nemo":
+                nemo.assert_called_once_with(Path("/snap"))
+
+    def test_casual_cleanup_puts_back_words_it_dropped(self):
+        raw = "um I think that we should ship the migration and then test it on friday"
+        cleaner = self._mlx_cleaner(["I think we should ship the migration, then test it on Friday."])
+
+        text, _ttft, _total = cleaner.cleanup(raw, "casual")
+
+        self.assertEqual(text, "I think that we should ship the migration, and then test it on Friday.")
+        self.assertEqual(cleaner.last_stats["restored"], 2)
+
+    def test_cleanup_keeps_fillers_repeats_numbers_and_dictionary_fixes_out(self):
+        text, counts = backends.keep_spoken_words(
+            "uh PR three five nine is is done by clot", "PR #359 is done by Claude.", ["Claude"]
+        )
+
+        self.assertEqual(text, "PR #359 is done by Claude.")
+        self.assertEqual(counts, {"restored": 0, "reverted": 0, "removed": 0})
+
+    def test_cleanup_grammar_edits_and_added_words_are_undone(self):
+        text, counts = backends.keep_spoken_words(
+            "she says it is fine", "She said it's really fine."
+        )
+
+        self.assertEqual(text, "She says it is fine.")
+        self.assertEqual(counts, {"restored": 0, "reverted": 3, "removed": 0})
 
     def test_long_dictations_are_cleaned_in_sentence_chunks(self):
         sentences = [f"Sentence number {i} has exactly seven words." for i in range(40)]

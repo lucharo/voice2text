@@ -13,6 +13,7 @@ dependencies = [
     "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
     "loguru",
     "parakeet-mlx>=0.5.2",  # transcribe_stream + the config attributes streaming reads
+    "coremltools>=9",  # the default parakeet-coreml backend (Neural Engine)
     "mlx-lm",
 ]
 
@@ -21,7 +22,7 @@ dependencies = [
 # optional alternative STT backend.
 [project.optional-dependencies]
 whisper = ["mlx-whisper"]
-coreml = ["coremltools>=9"]  # the experimental parakeet-coreml backend
+coreml = []  # coremltools is a core dependency since parakeet-coreml became the default
 
 [project.scripts]
 v2t = "v2t.cli:main"

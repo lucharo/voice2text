@@ -27,8 +27,10 @@ import numpy as np
 
 from .backends import PieceDecoder
 
-# Where FluidAudio keeps the files it downloads from Hugging Face
-# (FluidInference/parakeet-tdt-0.6b-v3-coreml); v2t reads them, never fetches them.
+# The compiled models on Hugging Face. v2t downloads only the files in FILES (about
+# 0.63 GB of the repo's 3.6 GB) into the Hugging Face cache, unless FluidAudio has
+# already put them in its own folder, which is read first.
+COREML_REPO = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
 COREML_DIR = (
     Path.home() / "Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"
 )
@@ -96,6 +98,56 @@ def missing_files(folder: Path) -> list[str]:
     return [name for name in FILES if not (folder / name).exists()]
 
 
+def model_folder(folder: Path | None = None) -> Path:
+    """Where the Core ML files are: `folder` when given, else FluidAudio's folder when
+    complete, else the Hugging Face cache, downloading just FILES the first time."""
+    if folder is not None:
+        return folder
+    if not missing_files(COREML_DIR):
+        return COREML_DIR
+    from huggingface_hub import snapshot_download
+
+    from .backends import load_cache_first
+
+    patterns = [f"{name}/*" if name.endswith(".mlmodelc") else name for name in FILES]
+
+    def fetch() -> Path:
+        folder = Path(snapshot_download(COREML_REPO, allow_patterns=patterns))
+        # a compiled model is a folder: it is whole once its coremldata.bin arrived
+        missing = missing_files(folder) + [
+            name for name in FILES if name.endswith(".mlmodelc") and not (folder / name / "coremldata.bin").exists()
+        ]
+        if missing:
+            # an interrupted download: load_cache_first retries online on OSError
+            raise FileNotFoundError(f"{folder} lacks {', '.join(missing)}")
+        return folder
+
+    return load_cache_first(COREML_REPO, fetch)
+
+
+def _import_coremltools():
+    """coremltools without the converters' optional backends.
+
+    `import coremltools` imports transformers, torch and scikit-learn whenever they
+    are installed, for converting models, which v2t never does; on a fresh install
+    (mlx-lm brings transformers, librosa scikit-learn) that took 5.0 to 5.2 s against
+    1.3 to 1.6 s with them hidden (2026-10-26). They are hidden only during the import
+    and stay importable afterwards (the cleanup's mlx-lm needs transformers).
+    """
+    import sys
+
+    hidden = [name for name in ("transformers", "torch", "sklearn") if name not in sys.modules]
+    for name in hidden:
+        sys.modules[name] = None  # an import of it now raises ImportError
+    try:
+        import coremltools
+    finally:
+        for name in hidden:
+            if sys.modules.get(name) is None:
+                del sys.modules[name]
+    return coremltools
+
+
 class CoreMLParakeet:
     """Parakeet v3's four Core ML models; `decode(audio)` for 16 kHz float32 audio.
 
@@ -107,17 +159,15 @@ class CoreMLParakeet:
         missing = missing_files(folder)
         if missing:
             raise SystemExit(
-                f"parakeet-coreml needs FluidAudio's Parakeet v3 Core ML files in "
-                f"{folder}, missing: {', '.join(missing)}. Put the contents of "
-                "huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml there "
-                "(any FluidAudio app downloads them to that folder), or set "
-                'backend = "parakeet".'
+                f"parakeet-coreml needs Parakeet v3's Core ML files in {folder}, missing: "
+                f"{', '.join(missing)}. Leave transcription.model blank to download them "
+                f"from huggingface.co/{COREML_REPO}, or set backend = \"parakeet\"."
             )
         try:
-            import coremltools as ct
+            ct = _import_coremltools()
         except ImportError as e:
             raise SystemExit(
-                "parakeet-coreml needs coremltools: uv tool install 'voice2text[coreml]'"
+                "parakeet-coreml needs coremltools: reinstall voice2text (uv tool install --reinstall voice2text)"
             ) from e
         model, units = ct.models.CompiledMLModel, ct.ComputeUnit
         self.pre = model(str(folder / FILES[0]), compute_units=units.CPU_ONLY)
