@@ -102,6 +102,14 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
+def _write_wav(path: Path, data: np.ndarray) -> None:
+    """Write next to the target and rename, so an interrupted fetch never leaves a cut-off WAV
+    that a later run would take as done."""
+    partial = path.with_name(path.name + ".part")
+    sf.write(str(partial), data, RATE, subtype="PCM_16", format="WAV")
+    partial.replace(path)
+
+
 def _wav16(data_bytes: bytes) -> np.ndarray:
     data, rate = sf.read(io.BytesIO(data_bytes), dtype="float32", always_2d=True)
     data = data.mean(axis=1)
@@ -129,7 +137,7 @@ def fetch_ami_ihm(full: bool) -> None:
             if dirs:
                 data = _wav16(r["audio"]["bytes"])
                 for d in dirs:
-                    sf.write(str(d / f"{r['id']}.wav"), data, RATE, subtype="PCM_16")
+                    _write_wav(d / f"{r['id']}.wav", data)
     (out / "transcripts.tsv").write_text("".join(f"{i}\t{text[i]}\n" for i in sorted(keep)))
     if full:
         (out / "transcripts-full.tsv").write_text("".join(f"{i}\t{text[i]}\n" for i in sorted(text)))
@@ -151,7 +159,7 @@ def fetch_earnings22_aa() -> None:
             for attempt in range(3):  # 341 small downloads: retry a dropped connection
                 try:
                     with urllib.request.urlopen(url, timeout=60) as resp:
-                        sf.write(str(wav), _wav16(resp.read()), RATE, subtype="PCM_16")
+                        _write_wav(wav, _wav16(resp.read()))
                     break
                 except OSError:
                     if attempt == 2:

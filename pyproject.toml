@@ -31,7 +31,7 @@ coreml = []  # coremltools is a core dependency since parakeet-coreml became the
 v2t = "v2t.cli:main"
 
 [dependency-groups]
-dev = ["hatch", "mlx-whisper", "ruff"]
+dev = ["hatch", "kaldialign>=0.12", "mlx-whisper", "num2words", "regex", "ruff"]  # the three: the ASR grid's leaderboard scorer, which the smoke tests run
 docs = ["zensical>=0.0.62"]
 
 [build-system]
