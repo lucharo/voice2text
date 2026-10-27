@@ -158,6 +158,9 @@ SYSTEMS = {
     # ...and Bark 3.0 Pro, the full-precision member (bf16 safetensors, 1.25 GB)
     "bark-3.0-pro": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-16", "offline"),
     "bark-3.0-pro-4bit": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-4", "offline"),
+    # Pro's Core ML files have FluidAudio's Parakeet v3 layout and inputs, so v2t's
+    # own parakeet-coreml decode runs them unchanged (encoder: its default full15)
+    "bark-3.0-pro-coreml": ("parakeet-coreml", "ConwayResearch/Underdog-Bark-3.0-Pro", "offline"),
     # ...Bark 3.0 Plus (180 MB, a more accurate packing), and Bark 3.0 Clean, Plus
     # trained to drop fillers, false starts and repeats (verbatim references count
     # every one it drops against it)
@@ -529,14 +532,25 @@ class MLXWhisper:
 
 class ParakeetCoreML:
     """v2t's Core ML decode (backends.ParakeetCoreMLSTT.decode) without the MLX
-    model it keeps for the live text; reads FluidAudio's files, never the repo."""
+    model it keeps for the live text; reads FluidAudio's files, never the repo.
+
+    Another repository in the same layout (Bark 3.0 Pro) is read from
+    ~/.v2t/eval/grid-models/<name>-coreml: its .mlpackage files compiled with
+    `xcrun coremlcompiler compile`, the encoder renamed Encoder_v2.mlmodelc. Those
+    get its evaluated 0.25 s of leading silence.
+    """
 
     def __init__(self, repo: str, mode: str):
         sys.path.insert(0, str(REPO))
-        from v2t.coreml import CoreMLParakeet
+        from v2t.coreml import COREML_REPO, CoreMLParakeet
 
-        self.model = CoreMLParakeet()
         self.uses_mlx = False
+        self.pad = 0
+        if repo == COREML_REPO:
+            self.model = CoreMLParakeet()
+            return
+        self.model = CoreMLParakeet(EVAL / "grid-models" / f"{repo.split('/')[-1].lower()}-coreml")
+        self.pad = int(0.25 * SAMPLE_RATE)
 
     def run(self, clip: dict) -> dict:
         audio = load_audio(clip["path"])
@@ -545,6 +559,8 @@ class ParakeetCoreML:
         return {"offline": text, "offline_s": time.perf_counter() - t0}
 
     def decode(self, audio: np.ndarray) -> str:
+        if self.pad:
+            audio = np.concatenate([np.zeros(self.pad, np.float32), audio])
         return self.model.decode(audio)
 
 

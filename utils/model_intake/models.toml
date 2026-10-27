@@ -158,6 +158,34 @@ reported = [
   { source = "bark_card", metric = "ls-other", value = 3.11 },
 ]
 
+[models.bark-3.0-plus]
+label = "Underdog Bark 3.0 Plus"
+short = "Bark 3.0 Plus"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus"
+note = "A 180 MB packing of the Bark 3.0 weights, closer to Pro. The card's 4.76% average covers seven Open ASR sets."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.71 },
+  { source = "bark_card", metric = "ls-other", value = 3.82 },
+]
+
+[models.bark-3.0-clean]
+label = "Underdog Bark 3.0 Clean"
+short = "Bark 3.0 Clean"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean"
+note = "Bark 3.0 Plus trained to drop fillers, false starts and repeats; verbatim references count each drop as an error."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.71 },
+  { source = "bark_card", metric = "ls-other", value = 3.78 },
+]
+
 [models.whisper-large-v3-turbo]
 label = "Whisper large-v3 turbo"
 short = "Whisper turbo"
@@ -294,7 +322,7 @@ note = "model.bark unpacked, then quantised to 4 bits (group 64), as bark_mlx.py
 [systems."bark-3.0-coreml"]
 model = "bark-3.0"
 engine = "coreml"
-precision = "int8 weights, fp16 compute"
+precision = "palettised weights, fp16 compute"
 disk_gb = 0.202
 note = "Its coreml/ane package: encoder on the Neural Engine in 8 or 15 s windows, numpy TDT decoder, longer audio cut at pauses into 15 s pieces."
 
@@ -311,6 +339,34 @@ engine = "mlx-audio"
 precision = "4-bit"
 disk_gb = 1.254
 note = "The fp16 conversion quantised to 4 bits (group 64)."
+
+[systems."bark-3.0-plus"]
+model = "bark-3.0-plus"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 0.180
+note = "The 180 MB model.bark, unpacked once into a 1.25 GB fp16 folder."
+
+[systems."bark-3.0-plus-coreml"]
+model = "bark-3.0-plus"
+engine = "coreml"
+precision = "palettised weights, fp16 compute"
+disk_gb = 0.206
+note = "Its coreml/ane package, run as Bark 3.0's."
+
+[systems."bark-3.0-clean"]
+model = "bark-3.0-clean"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 0.179
+note = "No leading silence, its evaluated setting."
+
+[systems."bark-3.0-pro-coreml"]
+model = "bark-3.0-pro"
+engine = "coreml"
+precision = "fp16"
+disk_gb = 1.235
+note = "Its coreml/ files (FluidAudio's Parakeet v3 layout), compiled once with coremlcompiler and run through v2t's own parakeet-coreml decode, 0.25 s of leading silence."
 
 [systems.parakeet-v3-mlxaudio]
 model = "parakeet-tdt-0.6b-v3"
