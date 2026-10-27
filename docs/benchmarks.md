@@ -12,7 +12,9 @@ dot is one model on the maintainers' grid; lower and further left is better.
 | `parakeet` (MLX, bf16 on the grid) | 5.8% | 33.3% | 10.8% | 0.25 s |
 | `parakeet`, Parakeet Unified EN (bf16) | 5.1% | 33.2% | 8.3% | 0.48 s |
 
-Words wrong, after Whisper's text normalisation, so punctuation and capitals do not count.
+Words wrong, after Whisper's text normalisation, so punctuation and capitals do not count. Why
+these read higher than model cards and the Open ASR Leaderboard:
+[FAQ](faq.md#why-do-v2ts-error-rates-differ-from-model-cards-and-the-open-asr-leaderboard).
 
 - **Real dictations**: 208 of the maintainer's own, from a few seconds to 12 minutes. They have no
   hand-made transcript, so each is scored against the one that Wispr Flow, Cohere Transcribe and
