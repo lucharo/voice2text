@@ -39,6 +39,14 @@ system is scored against the consensus (medoid) of the other systems, its own mo
 measures agreement, not correctness. Wispr Flow takes part through a local script (kept out of the repo), which sends each clip to its own
 service (`wispr-flow-api`); the text its app stored is its final output, often formatted or truncated, and no longer votes.
 
+`ami-sdm` (AMI meetings on one distant microphone, CC-BY-4.0) and `earnings22` (earnings calls,
+references with punctuation and capitals) are the noisy labelled sets, 150 seeded clips each,
+fetched by `fetch_noisy.py`. Prefer a labelled set whenever one fits the question. `silver.py`
+builds a reference for the unlabelled dictations from three strong systems, but silver text cannot
+reward a name or vocabulary fix the voters never got right, so judge dictionary and cleanup changes
+on labelled sets. `cleanup_bench.py run|report` scores v2t's cleanup on its own: WER of raw against
+cleaned text on the labelled sets, plus formatted WER on Earnings22.
+
 ## Run
 
 Each runtime lives in its own environment so their pins never meet v2t's lock:
@@ -60,6 +68,10 @@ uv venv ~/.v2t/eval/grid-envs/phonon && VIRTUAL_ENV=~/.v2t/eval/grid-envs/phonon
 .venv/bin/python utils/asr_grid/plot_wait.py               # the README's wait-vs-length chart
 uv run --script utils/asr_grid/plot_pareto.py              # WER vs size and vs wait, short sets
 ```
+
+When disk is tight, sweep models one at a time: download one, run every set, delete it with
+Hugging Face's cache API (`scan_cache_dir().delete_revisions(...)`; moving the files to a trash
+frees nothing), then the next.
 
 Run cells one at a time: two models on the GPU contaminate each other's timings. Check `df -h /`
 and swap first: at 595 MB free a cell died with no traceback, and swapping inflated the waits of

@@ -12,8 +12,9 @@ Wispr Flow (macOS) keeps everything local in
 ~/Library/Application Support/Wispr Flow/flow.sqlite     # table: History
 ```
 
-Useful columns: `asrText` (its raw ASR), `formattedText` (after its LLM pass), `editedText` (what
-you left in the text box afterwards), `e2eLatency` (ms, stop-to-paste), `duration` /
+Useful columns: `asrText` (its raw ASR), `formattedText` (after its LLM pass), `editedText` (meant
+as what you left in the text box, but it matched `asrText` on 99.8% of 208 dictations read on
+24 October 2026, so it is neither your edits nor ground truth), `e2eLatency` (ms, stop-to-paste), `duration` /
 `speechDuration` (s), `numWords`, `app`, `status`, `timestamp`, and from recent versions the
 recorded `audio` (RIFF WAV) plus `opusChunks`. Older rows have no audio.
 
