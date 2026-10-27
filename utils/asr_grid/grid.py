@@ -158,6 +158,12 @@ SYSTEMS = {
     # ...and Bark 3.0 Pro, the full-precision member (bf16 safetensors, 1.25 GB)
     "bark-3.0-pro": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-16", "offline"),
     "bark-3.0-pro-4bit": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-4", "offline"),
+    # ...Bark 3.0 Plus (180 MB, a more accurate packing), and Bark 3.0 Clean, Plus
+    # trained to drop fillers, false starts and repeats (verbatim references count
+    # every one it drops against it)
+    "bark-3.0-plus": ("bark", "ConwayResearch/Underdog-Bark-3.0-Plus#mlx-16", "offline"),
+    "bark-3.0-plus-coreml": ("bark", "ConwayResearch/Underdog-Bark-3.0-Plus#coreml-ane", "offline"),
+    "bark-3.0-clean": ("bark", "ConwayResearch/Underdog-Bark-3.0-Clean#mlx-16", "offline"),
     # Parakeet v3 as v2t's `parakeet` backend loads it since 0.5.15 (8-bit), whole-file
     "parakeet-v3-8bit": ("parakeet-mlx", "mlx-community/parakeet-tdt-0.6b-v3#8bit", "offline"),
     # Wispr Flow's cloud service through the desktop app's own gRPC route, run by
@@ -720,24 +726,26 @@ class Fermion:
 
 
 class Bark:
-    """Underdog Bark 3.0 as its own scripts run it, 0.25 s of silence in front.
+    """Underdog Bark 3.0 as its own scripts run it, 0.25 s of silence in front (none
+    for Clean, its evaluated setting).
 
     The repository (model.bark, bark_mlx.py, bark_loader.py, coreml/) is read from
     ~/.v2t/eval/grid-models/underdog-bark-3.0, the Pro one (model.safetensors,
     mlx/config.json) from underdog-bark-3.0-pro: rsync them there from a machine that
-    reaches Hugging Face. `#mlx-16` / `#mlx-4` unpack the weights once into an
+    reaches Hugging Face (Plus and Clean likewise). `#mlx-16` / `#mlx-4` unpack the weights once into an
     mlx-audio folder beside them (bark_mlx.prepare's layout; the 4-bit one is that
     folder quantised the way prepare does, group 64 affine); `#coreml-ane` loads
-    bark_coreml.Transcriber on the Neural Engine. Past WHOLE_FILE_MAX_S the MLX
+    the repository's own bark_coreml.Transcriber on the Neural Engine. Past WHOLE_FILE_MAX_S the MLX
     rows use mlx-audio's own chunking, like every mlx-audio Parakeet row.
     """
-
-    PAD_S = 0.25
 
     def __init__(self, repo: str, mode: str):
         repo, _, flag = repo.partition("#")
         models = EVAL / "grid-models"
-        small = models / "underdog-bark-3.0"
+        name = repo.split("/")[-1].lower()
+        self.pad_s = 0.0 if name.endswith("-clean") else 0.25
+        # Pro ships no loader of its own: Bark 3.0's bark_mlx.py converts its names
+        small = models / name if (models / name / "bark_mlx.py").exists() else models / "underdog-bark-3.0"
         sys.path.insert(0, str(small))
         if flag == "coreml-ane":
             sys.path.insert(0, str(small / "coreml/ane"))
@@ -750,7 +758,6 @@ class Bark:
         import mlx.core as mx
         from mlx_audio.stt import load
 
-        name = repo.split("/")[-1].lower()
         bits = int(flag.removeprefix("mlx-"))
         fp16 = models / f"{name}-mlx-fp16"
         if not (fp16 / "model.safetensors").exists():
@@ -813,7 +820,7 @@ class Bark:
             return self.coreml.transcribe(audio, SAMPLE_RATE)  # adds its own 0.25 s
         import mlx.core as mx
 
-        wave = np.concatenate([np.zeros(int(self.PAD_S * SAMPLE_RATE), np.float32), audio])
+        wave = np.concatenate([np.zeros(int(self.pad_s * SAMPLE_RATE), np.float32), audio])
         long = len(wave) > WHOLE_FILE_MAX_S * SAMPLE_RATE
         return self.model.generate(
             mx.array(wave), dtype=mx.bfloat16,
