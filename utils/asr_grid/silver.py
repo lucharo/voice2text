@@ -77,7 +77,9 @@ def score(path: Path, field: str, ids: str = "all") -> dict:
         totals["clips"] += 1
         for op in ops:
             totals[{"delete": "del", "insert": "ins", "replace": "sub"}[op.tag]] += 1
-    n = max(totals["ref"], 1)
+    if not totals["clips"] or not totals["ref"]:
+        raise SystemExit(f"{field}: no clips scored; check the path, --field and that `silver.py build` ran")
+    n = totals["ref"]
     result = {
         "field": field, "clips": totals["clips"],
         "wer": (totals["del"] + totals["ins"] + totals["sub"]) / n,

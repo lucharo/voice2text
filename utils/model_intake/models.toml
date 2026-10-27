@@ -198,8 +198,8 @@ model = "parakeet-tdt-0.6b-v3"
 engine = "parakeet-mlx"
 precision = "bf16"
 disk_gb = 2.508
-v2t = "default"
-note = "fp32 files, run in bf16 by the grid; v2t loads it 8-bit since 0.5.15."
+v2t = "opt-in"
+note = "fp32 files, run in bf16 by the grid; v2t loads it 8-bit since 0.5.15 (backend = \"parakeet\"; the default until #61)."
 
 [systems.parakeet-v3-mlxaudio]
 model = "parakeet-tdt-0.6b-v3"
@@ -212,7 +212,7 @@ model = "parakeet-tdt-0.6b-v3"
 engine = "coreml"
 precision = "fp16"
 disk_gb = 0.633
-v2t = "opt-in"
+v2t = "default"
 note = "The four .mlmodelc folders v2t reads (Preprocessor, Encoder_v2, Decoder, JointDecisionv3); the repo holds 3.59 GB of variants."
 
 [systems.parakeet-ultra]

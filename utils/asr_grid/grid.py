@@ -970,16 +970,19 @@ def score_wispr_flow() -> list[dict]:
     """
     clips = {c["id"]: c for c in read_jsonl(SETS / "wispr.jsonl")}
     meta = {r["id"]: r for r in read_jsonl(WISPR / "results.jsonl")}
-    cells = {
+    every = {
         p.stem: {r["id"]: r for r in read_jsonl(p)}
         for p in sorted((RESULTS / "wispr").glob("*.jsonl"))
-        if p.stem in SYSTEMS and family(p.stem) != "wispr"  # Wispr never votes for Wispr
+        if p.stem in SYSTEMS
     }
+    # the clips every cell finished, Wispr's own API cell included, as score_set uses;
+    # only the voters leave Wispr out (Wispr never votes for Wispr)
+    cells = {name: rows for name, rows in every.items() if family(name) != "wispr"}
     if not cells:
         return []
     common = sorted(
         cid
-        for cid in set(clips).intersection(*[set(rows) for rows in cells.values()])
+        for cid in set(clips).intersection(*[set(rows) for rows in every.values()])
         if clips[cid].get("wispr_asr") and cid in meta
     )
     rows = []

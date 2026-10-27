@@ -408,34 +408,39 @@ def _(Path, grid, hashlib, json, pl, rescore, time):
         "n": pl.Int64, "wer": pl.Float64, "wait_p50": pl.Float64, "wait_p90": pl.Float64,
         "rtf": pl.Float64, "peak_gb": pl.Float64, "waits": pl.List(pl.Float64),
     }
-    _old = json.loads(_meta_path.read_text()) if _meta_path.exists() else {}
-    if _old.get("key") == _key and _data_path.exists():
-        scores = pl.read_parquet(_data_path)
-        score_meta = {**_old, "cached": True}
-    else:
-        _t0 = time.time()
-        _rows, _incomplete = [], {}
-        for _set in sorted(p.stem for p in grid.SETS.glob("*.jsonl")):
-            if _set == "smoke":
-                continue
-            if _short := grid.incomplete_cells(_set):
-                _incomplete[_set] = _short
-            for _r in grid.score_set(_set) + (grid.score_wispr_flow() if _set == "wispr" else []):
-                _rows.append({
-                    "set": _set, "system": _r["system"], "base": _r["system"].removesuffix(grid.CHUNKED),
-                    "chunked": _r["system"].endswith(grid.CHUNKED), "mode": _r["mode"], "n": _r["n"],
-                    "wer": 100 * _r["wer"], "wait_p50": _r["wait_p50"], "wait_p90": _r["wait_p90"],
-                    "rtf": _r["rtf"], "peak_gb": _r["peak_gb"], "waits": [float(w) for w in _r["waits"]],
-                })
-        scores = pl.DataFrame(_rows, schema=SCORE_SCHEMA)
-        score_meta = {"key": _key, "scored_at": time.time(), "seconds": time.time() - _t0, "incomplete": _incomplete}
-        _tmp = _cache / ".scores.parquet.tmp"
-        scores.write_parquet(_tmp)
-        _tmp.replace(_data_path)
-        _tmp = _cache / ".meta.json.tmp"
-        _tmp.write_text(json.dumps(score_meta))
-        _tmp.replace(_meta_path)
-        score_meta = {**score_meta, "cached": False}
+    import fcntl as _fcntl
+
+    # one notebook scores at a time: scores and their key are read and written as a pair
+    with open(_cache / ".lock", "w") as _lock:
+        _fcntl.flock(_lock, _fcntl.LOCK_EX)
+        _old = json.loads(_meta_path.read_text()) if _meta_path.exists() else {}
+        if _old.get("key") == _key and _data_path.exists():
+            scores = pl.read_parquet(_data_path)
+            score_meta = {**_old, "cached": True}
+        else:
+            _t0 = time.time()
+            _rows, _incomplete = [], {}
+            for _set in sorted(p.stem for p in grid.SETS.glob("*.jsonl")):
+                if _set == "smoke":
+                    continue
+                if _short := grid.incomplete_cells(_set):
+                    _incomplete[_set] = _short
+                for _r in grid.score_set(_set) + (grid.score_wispr_flow() if _set == "wispr" else []):
+                    _rows.append({
+                        "set": _set, "system": _r["system"], "base": _r["system"].removesuffix(grid.CHUNKED),
+                        "chunked": _r["system"].endswith(grid.CHUNKED), "mode": _r["mode"], "n": _r["n"],
+                        "wer": 100 * _r["wer"], "wait_p50": _r["wait_p50"], "wait_p90": _r["wait_p90"],
+                        "rtf": _r["rtf"], "peak_gb": _r["peak_gb"], "waits": [float(w) for w in _r["waits"]],
+                    })
+            scores = pl.DataFrame(_rows, schema=SCORE_SCHEMA)
+            score_meta = {"key": _key, "scored_at": time.time(), "seconds": time.time() - _t0, "incomplete": _incomplete}
+            _tmp = _cache / ".scores.parquet.tmp"
+            scores.write_parquet(_tmp)
+            _tmp.replace(_data_path)
+            _tmp = _cache / ".meta.json.tmp"
+            _tmp.write_text(json.dumps(score_meta))
+            _tmp.replace(_meta_path)
+            score_meta = {**score_meta, "cached": False}
     return score_meta, scores
 
 
@@ -589,6 +594,7 @@ def _(
     INK_2,
     legend_row,
     math,
+    mo,
     panel,
     pareto,
     pl,
@@ -658,6 +664,8 @@ def _(
     def _scatter(x, title, fmt):
         # a cloud system has nothing on disk (and a clip without a wait has no wait): left out
         src = _f.filter(pl.col(x).is_not_null() & (pl.col(x) > 0)).sort("wer")
+        if src.height == 0:
+            return mo.md("No run in this view has this measurement yet."), ""
         front = pareto(src, x)
         # outliers stay on the chart at its edge, labelled with their value, so the
         # rest are not squeezed into a band (a looping model reads 29%)
@@ -869,9 +877,13 @@ def _(
         scores.filter(pl.col("set").is_in(list(_sets)) & ~pl.col("chunked") & pl.col("base").is_in(list(SYSTEMS)))
         .group_by("base").agg(pl.col("wer").mean().alias("wer"), pl.len().alias("n"))
     )
+    # a system counts only once it has run on every set its model can do (English-only
+    # models skip FLEURS Spanish), so a run that skipped the harder sets cannot win
     _best_ours = {}
     for _r in _short.iter_rows(named=True):
         _m = SYSTEMS[_r["base"]]["model"]
+        if _r["n"] < (2 if MODELS[_m].get("languages") == 1 else len(_sets)):
+            continue
         if _m not in _best_ours or _r["wer"] < _best_ours[_m][0]:
             _best_ours[_m] = (_r["wer"], _r["n"], _r["base"])
 
@@ -892,7 +904,7 @@ def _(
     for _id, _m in sorted(MODELS.items(), key=lambda kv: _best_ours.get(kv[0], (99,))[0]):
         _o = _best_ours.get(_id)
         _params = f"{_m['params_b']:g}B" if "params_b" in _m else "–"
-        _en = " (EN, 2 sets)" if _o and _o[1] < 3 else ""
+        _en = " (EN, 2 sets)" if _o and _m.get("languages") == 1 else ""
         _ours = (f'<td{tip(f"best system: {_o[2]}; mean of {_o[1]} sets")} style="text-align:right;cursor:help">{_o[0]:.2f}{_en}</td>'
                  if _o else f'<td style="color:{INK_2};text-align:right">not run</td>')
         _body += (
@@ -995,7 +1007,7 @@ def _(
     engines_page = panel(
         "Which engine runs which model", "Each cell: WER and median wait for that model on that engine in the "
         "selected view, tinted on one scale (darker, more error). A dash: we have no system for that pair. "
-        "Engines are the runtimes the grid ran; v2t ships parakeet-mlx and, opt-in, Core ML and mlx-whisper.",
+        "Engines are the runtimes the grid ran; v2t ships Core ML (the default), parakeet-mlx and mlx-whisper.",
         f'<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:{INK}">'
         f"<thead><tr>{_hdr}</tr></thead><tbody>{_rows}</tbody></table></div>",
         subtitle=_view_name,
@@ -1014,6 +1026,7 @@ def _(
     alt,
     chart_ui,
     dot,
+    mo,
     html,
     legend_row,
     math,
@@ -1028,68 +1041,71 @@ def _(
     _view_name = next(k for k, v in VIEWS.items() if v == view.value)
     _f = view_frame.filter(pl.col("wait_p50").is_not_null()).sort("wer").with_row_index("rank", offset=1)
     _sized = _f.filter(pl.col("disk_gb").is_not_null())
-    _color = alt.Color("status:N", scale=alt.Scale(domain=STATUS, range=STATUS_COLORS), legend=None)
-    _tt = [
-        alt.Tooltip("label:N", title="system"), alt.Tooltip("wer:Q", format=".2f", title="WER %"),
-        alt.Tooltip("wait_p50:Q", format=".2f", title="wait p50 (s)"), alt.Tooltip("disk_gb:Q", format=".3f", title="disk (GB)"),
-        alt.Tooltip("engine:N"), alt.Tooltip("precision:N"), alt.Tooltip("status:N", title="v2t"),
-    ]
-    _shown = set(_sized["status"].to_list())
-    _status_legend = [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS) if s in _shown]
+    if _sized.height == 0:
+        tradeoff_page = mo.md(f"**{_view_name}**: no run in this view has a size, a wait and a WER yet.")
+    else:
+        _color = alt.Color("status:N", scale=alt.Scale(domain=STATUS, range=STATUS_COLORS), legend=None)
+        _tt = [
+            alt.Tooltip("label:N", title="system"), alt.Tooltip("wer:Q", format=".2f", title="WER %"),
+            alt.Tooltip("wait_p50:Q", format=".2f", title="wait p50 (s)"), alt.Tooltip("disk_gb:Q", format=".3f", title="disk (GB)"),
+            alt.Tooltip("engine:N"), alt.Tooltip("precision:N"), alt.Tooltip("status:N", title="v2t"),
+        ]
+        _shown = set(_sized["status"].to_list())
+        _status_legend = [(dot(c), s) for s, c in zip(STATUS, STATUS_COLORS) if s in _shown]
 
 
-    def _key(frame):
-        parts = []
-        for r in frame.iter_rows(named=True):
-            size = "cloud" if r["disk_gb"] is None else f"{r['disk_gb']:.2g} GB"
-            parts.append(
-                f'<span style="white-space:nowrap"><span style="color:{STATUS_COLORS[STATUS.index(r["status"])]};font-weight:600">'
-                f'{r["rank"]}</span> {html.escape(r["short"])} '
-                f'<span style="color:{INK_2}">{r["wer"]:.2f}% · {r["wait_p50"]:.2f} s · {size}</span></span>'
-            )
-        return f'<div style="display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;margin-top:4px">{"".join(parts)}</div>'
+        def _key(frame):
+            parts = []
+            for r in frame.iter_rows(named=True):
+                size = "cloud" if r["disk_gb"] is None else f"{r['disk_gb']:.2g} GB"
+                parts.append(
+                    f'<span style="white-space:nowrap"><span style="color:{STATUS_COLORS[STATUS.index(r["status"])]};font-weight:600">'
+                    f'{r["rank"]}</span> {html.escape(r["short"])} '
+                    f'<span style="color:{INK_2}">{r["wer"]:.2f}% · {r["wait_p50"]:.2f} s · {size}</span></span>'
+                )
+            return f'<div style="display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;margin-top:4px">{"".join(parts)}</div>'
 
 
-    # Every axis points the same way: values grow upwards, so the best (least) sits at the bottom
-    # and a line that stays low is good on all three. Disk and wait on log scales, WER linear.
-    _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
-    _rows, _ticks = [], []
-    for _i, (_col, _name, _log, _unit) in enumerate(_axes):
-        _vals = _sized[_col].to_list()
-        _t = (lambda v: math.log(v)) if _log else (lambda v: v)
-        _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
-        for _r in _sized.iter_rows(named=True):
-            _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
-                          "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
-        for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
-            _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
-        _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · lower is better ↓", "align": "center"})
-    _long = pl.DataFrame(_rows)
-    _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
-    _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
-    _chart = alt.layer(
-        alt.Chart(pl.DataFrame({"axis": [0, 1, 2], "y0": [0.0] * 3, "y1": [1.0] * 3}))
-        .mark_rule(color=CHART_REF, strokeWidth=1).encode(x=_x, y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12])), y2="y1:Q"),
-        alt.Chart(_long.filter(pl.col("status") != STATUS[0])).mark_line(strokeWidth=1.6, opacity=0.75).encode(
-            x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
-        alt.Chart(_long.filter(pl.col("status") == STATUS[0])).mark_line(strokeWidth=4, opacity=0.9).encode(
-            x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
-        alt.Chart(_long).mark_point(filled=True, size=40).encode(x=_x, y=_y, color=_color, tooltip=_tt),
-        alt.Chart(_long.filter(pl.col("axis") == 2)).mark_text(align="left", dx=8, fontSize=10, fontWeight=600, color=CHART_REF)
-        .encode(x=_x, y=_y, text="rank:Q"),
-        *[
-            alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
-            .mark_text(align=a, dx=-10 if a == "right" else 0, fontSize=11, color=CHART_REF)
-            .encode(x=_x, y=_y, text="text:N")
-            for a in ("right", "center")
-        ],
-    )
-    _body = chart_ui(_chart, 420)
-    _legend = legend_row(_status_legend)
-    _title, _note = "One line per run: size, wait and WER, best at the bottom of every axis", (
-        "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
-        "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
-    tradeoff_page = panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_sized))
+        # Every axis points the same way: values grow upwards, so the best (least) sits at the bottom
+        # and a line that stays low is good on all three. Disk and wait on log scales, WER linear.
+        _axes = [("disk_gb", "size on disk", True, "GB"), ("wait_p50", "wait", True, "s"), ("wer", "WER", False, "%")]
+        _rows, _ticks = [], []
+        for _i, (_col, _name, _log, _unit) in enumerate(_axes):
+            _vals = _sized[_col].to_list()
+            _t = (lambda v: math.log(v)) if _log else (lambda v: v)
+            _lo, _hi = min(_t(v) for v in _vals), max(_t(v) for v in _vals)
+            for _r in _sized.iter_rows(named=True):
+                _rows.append({**{k: _r[k] for k in ("system", "label", "short", "status", "wer", "wait_p50", "disk_gb", "engine", "precision", "rank")},
+                              "axis": _i, "axis_name": _name, "y": (_t(_r[_col]) - _lo) / ((_hi - _lo) or 1)})
+            for _v, _yy in ((min(_vals), 0.0), (max(_vals), 1.0)):
+                _ticks.append({"axis": _i, "y": _yy, "text": f"{_v:.2g} {_unit}", "align": "right"})
+            _ticks.append({"axis": _i, "y": 1.08, "text": f"{_name} · lower is better ↓", "align": "center"})
+        _long = pl.DataFrame(_rows)
+        _x = alt.X("axis:Q", axis=None, scale=alt.Scale(domain=[-0.15, 2.15]))
+        _y = alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12]))
+        _chart = alt.layer(
+            alt.Chart(pl.DataFrame({"axis": [0, 1, 2], "y0": [0.0] * 3, "y1": [1.0] * 3}))
+            .mark_rule(color=CHART_REF, strokeWidth=1).encode(x=_x, y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[-0.05, 1.12])), y2="y1:Q"),
+            alt.Chart(_long.filter(pl.col("status") != STATUS[0])).mark_line(strokeWidth=1.6, opacity=0.75).encode(
+                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+            alt.Chart(_long.filter(pl.col("status") == STATUS[0])).mark_line(strokeWidth=4, opacity=0.9).encode(
+                x=_x, y=_y, detail="system:N", color=_color, tooltip=_tt),
+            alt.Chart(_long).mark_point(filled=True, size=40).encode(x=_x, y=_y, color=_color, tooltip=_tt),
+            alt.Chart(_long.filter(pl.col("axis") == 2)).mark_text(align="left", dx=8, fontSize=10, fontWeight=600, color=CHART_REF)
+            .encode(x=_x, y=_y, text="rank:Q"),
+            *[
+                alt.Chart(pl.DataFrame(_ticks).filter(pl.col("align") == a))
+                .mark_text(align=a, dx=-10 if a == "right" else 0, fontSize=11, color=CHART_REF)
+                .encode(x=_x, y=_y, text="text:N")
+                for a in ("right", "center")
+            ],
+        )
+        _body = chart_ui(_chart, 420)
+        _legend = legend_row(_status_legend)
+        _title, _note = "One line per run: size, wait and WER, best at the bottom of every axis", (
+            "Each axis grows upwards over its own range (size and wait on log scales), so the lowest point is the "
+            "best and a line that stays low is good on all three. Cloud references have no size and are left out.")
+        tradeoff_page = panel(_title, _note, _body, subtitle=_view_name, legend=_legend, footer=_key(_sized))
     return (tradeoff_page,)
 
 
@@ -1114,7 +1130,7 @@ def _(MODELS, SYSTEMS, VIEWS, mo, pl, scores):
     )
     _wide = _wide.with_columns(pl.col("system").str.replace(r"\+chunked$", "").alias("_base"))
     _table = _facts.rename({"system": "_base"}).join(_wide, on="_base", how="right").drop("_base")
-    _order = ["ls-clean", "ls-other", "fleurs-es", "ls-long", "wispr"]
+    _order = ["ls-clean", "ls-other", "fleurs-es", "ami-sdm", "earnings22", "ls-long", "wispr"]
     _cols = [f"{m}_{s}" for s in _order for m in ("wer", "wait_p50") if f"{m}_{s}" in _table.columns]
     _table = _table.select(["system", "model", "engine", "precision", "disk GB", "v2t", *_cols]).rename(
         {c: f"{'WER %' if c.startswith('wer') else 'wait s'} · {_names.get(c.split('_', 2)[-1], c)}" for c in _cols}

@@ -42,6 +42,7 @@ def run() -> None:
     cleaner = backends.make_cleanup(cfg.cleanup_engine, cfg.cleanup_model, cfg.ollama_url)
     cleaner.vocabulary = tuple(vocabulary)
     print(f"cleanup: {cleaner.model_id}, {cfg.mode}, {len(vocabulary)} terms, {len(replacements)} replacements")
+    _check_signature(_signature(cleaner.model_id, cfg.mode, vocabulary, replacements))
     for set_name in SETS:
         clips = {c["id"]: c for c in grid.read_jsonl(grid.SETS / f"{set_name}.jsonl")}
         for system in SYSTEMS:
@@ -62,6 +63,35 @@ def run() -> None:
                     f.write(json.dumps({"id": r["id"], "raw": raw, "clean": clean,
                                         "seconds": round(time.perf_counter() - t0, 3),
                                         "stats": getattr(cleaner, "last_stats", {})}) + "\n")
+
+
+def _signature(model: str, mode: str, vocabulary, replacements) -> dict:
+    """What decides the cleaned text: model, mode, dictionary and v2t's own code."""
+    import hashlib
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(grid.REPO), *args], capture_output=True, text=True).stdout.strip()
+
+    dictionary = json.dumps([sorted(vocabulary), sorted(map(list, replacements))], sort_keys=True)
+    return {
+        "model": model, "mode": mode,
+        "dictionary": hashlib.sha256(dictionary.encode()).hexdigest()[:16],
+        "v2t": git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain", "--", "v2t") else ""),
+    }
+
+
+def _check_signature(signature: dict) -> None:
+    """Resume only results made by the same cleanup; anything else would mix runs."""
+    path = grid.private_dir(OUT) / "config.json"
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved != signature:
+            changed = ", ".join(k for k in signature if saved.get(k) != signature[k])
+            raise SystemExit(f"{OUT} holds results from another cleanup ({changed} changed): move it aside first")
+    elif any(OUT.glob("*/*.jsonl")):
+        raise SystemExit(f"{OUT} holds results with no record of the cleanup that made them: move it aside first")
+    path.write_text(json.dumps(signature, indent=1) + "\n")
 
 
 def _wer(pairs, tokenise) -> float:
