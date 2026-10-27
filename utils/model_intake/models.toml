@@ -130,7 +130,7 @@ reported = [
   { source = "oasr_en", metric = "earnings22-aa", value = 6.96 },
 ]
 
-[models.bark-3.0]
+[models."bark-3.0"]
 label = "Underdog Bark 3.0"
 short = "Bark 3.0"
 creator = "Conway Research"
@@ -144,7 +144,7 @@ reported = [
   { source = "bark_card", metric = "ls-other", value = 4.08 },
 ]
 
-[models.bark-3.0-pro]
+[models."bark-3.0-pro"]
 label = "Underdog Bark 3.0 Pro"
 short = "Bark 3.0 Pro"
 creator = "Conway Research"
@@ -158,7 +158,7 @@ reported = [
   { source = "bark_card", metric = "ls-other", value = 3.11 },
 ]
 
-[models.bark-3.0-plus]
+[models."bark-3.0-plus"]
 label = "Underdog Bark 3.0 Plus"
 short = "Bark 3.0 Plus"
 creator = "Conway Research"
@@ -172,7 +172,7 @@ reported = [
   { source = "bark_card", metric = "ls-other", value = 3.82 },
 ]
 
-[models.bark-3.0-clean]
+[models."bark-3.0-clean"]
 label = "Underdog Bark 3.0 Clean"
 short = "Bark 3.0 Clean"
 creator = "Conway Research"
