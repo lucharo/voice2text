@@ -650,6 +650,52 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
     return path
 
 
+# Spelled-out acronyms: two or more single capital letters separated by spaces, dots,
+# hyphens or dot-and-space ("C L I", "F.A.Q.", "C-L-I", "A. I."), with an optional
+# plural or possessive s on the last ("F A Qs", "C L I's"). Speech models write them
+# in about one dictation in sixteen (12 of 208 with Parakeet v3 on Core ML, 23 with
+# Bark 3.0 Pro, #81), and cleanup cannot join them: its guard keeps words as spoken.
+# A run that ends inside a word ("C L I'm") is left whole rather than joined short of
+# that word ("CL I'm"): without a full stop to end it, no letter may follow the run.
+_SPELLED = re.compile(
+    r"(?<![\w.'’-])([A-Z](?:(?:\. |[ .-])[A-Z])+)(s|['’]s)?"
+    r"(?:(\.)(?![\w'’-])|(?![\w'’-])(?!(?:\. |[ .-])[A-Z](?![a-z])))"
+)
+# words that follow "I" the pronoun but not an acronym ("the C L I I think")
+_AFTER_PRONOUN = frozenset(
+    "think guess mean know want need have do don't feel believe wonder remember am".split()
+)
+
+
+def join_spelled_acronyms(text: str) -> str:
+    """"C L I" -> "CLI", "F.A.Q." -> "FAQ", "F A Qs" -> "FAQs": runs of single
+    capital letters written as one word, before the replacements, so a
+    `heard => written` line can still restyle the result ("US => U.S.").
+
+    Left alone: runs of "I" only ("I I think"); an "I" that starts a clause
+    ("the C L I I think" -> "the CLI I think"); and "B. I" or "A. A" with no full stop
+    after, which is one sentence ending and the next starting ("option B. I think").
+    A dotted acronym's last full stop stays only where a sentence can end there.
+    """
+
+    def join(match: re.Match) -> str:
+        run, plural, dot = match.group(1), match.group(2) or "", match.group(3) or ""
+        letters = re.findall(r"[A-Z]", run)
+        rest = text[match.end() :]
+        if set(letters) == {"I"} or (". " in run and letters[-1] in "IA" and not (plural or dot)):
+            return match.group()
+        if run.endswith(" I") and not (plural or dot):
+            following = re.match(r"\s+([\w'’]+)", rest)
+            if following and following.group(1).lower() in _AFTER_PRONOUN:
+                head = join_spelled_acronyms(run[:-2])
+                return head + " I"
+        if dot and "." in run and not plural:  # the acronym's own full stop
+            dot = "." if not rest or re.match(r"\s+[A-Z]", rest) else ""
+        return "".join(letters) + plural + dot
+
+    return _SPELLED.sub(join, text)
+
+
 def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
     """Whole-word, case-insensitive `heard => written` substitutions."""
     import re
