@@ -1,0 +1,12 @@
+{
+  "name": "speech-3way",
+  "set": "speech",
+  "rounds": 3,
+  "block": 50,
+  "order": "abba",
+  "arms": [
+    {"id": "parakeet-coreml", "runtime": "parakeet-coreml"},
+    {"id": "parakeet-mlx", "runtime": "mlx-stt", "model": "mlx-community__parakeet-tdt-0.6b-v3", "options": {"model_type": "parakeet"}},
+    {"id": "bark-ane", "runtime": "bark", "options": {"units": "ane"}}
+  ]
+}

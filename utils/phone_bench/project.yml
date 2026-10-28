@@ -1,0 +1,71 @@
+# xcodegen spec for the iPhone bench app. Generate with ./setup.sh, which also fetches ANEMLL.
+name: V2TPhoneBench
+options:
+  bundleIdPrefix: es.luischav.v2t
+  deploymentTarget:
+    iOS: "26.0"
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    revision: 1b0ed50d686873128a4129b3510ce3914c849bab
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    revision: efcedcd4cd245eb03b65050a6bd2c103d7252d42
+  MLXAudioSwift:
+    url: https://github.com/Blaizzy/mlx-audio-swift
+    revision: fe2c182f4da8115fe2b6b99c9a4d2048fbf9b1e6
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.32.3
+  # One version for MLX's tokenizer loader and ANEMLL; setup.sh pins ANEMLL's own requirement to match.
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: 1.3.5
+  # The swift package is a subfolder of the Anemll repo, which SwiftPM cannot fetch by URL;
+  # setup.sh clones it at a pinned revision into .deps.
+  AnemllCLI:
+    path: .deps/Anemll/anemll-swift-cli
+targets:
+  BenchApp:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - path: Res/models
+        type: folder
+        buildPhase: resources
+      - path: Res/clips
+        type: folder
+        buildPhase: resources
+      - path: Res/cleanup
+        type: folder
+        buildPhase: resources
+      - path: Res/bark
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: FluidAudio
+      - package: MLXSwiftLM
+        product: MLXLLM
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: SwiftTransformers
+        product: Tokenizers
+      - package: MLXSwift
+        product: MLX
+      - package: MLXSwift
+        product: MLXNN
+      - package: MLXAudioSwift
+        product: MLXAudioSTT
+      - package: AnemllCLI
+        product: AnemllCore
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: ${V2T_TEAM}
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.phonebench
+      SWIFT_VERSION: "5.0"
+      INFOPLIST_KEY_UIFileSharingEnabled: YES
+      INFOPLIST_KEY_UISupportsDocumentBrowser: YES
