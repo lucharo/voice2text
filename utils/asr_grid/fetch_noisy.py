@@ -110,6 +110,12 @@ def _write_wav(path: Path, data: np.ndarray) -> None:
     partial.replace(path)
 
 
+def _write_text(path: Path, text: str) -> None:
+    partial = path.with_name(path.name + ".part")
+    partial.write_text(text)
+    partial.replace(path)
+
+
 def _wav16(data_bytes: bytes) -> np.ndarray:
     data, rate = sf.read(io.BytesIO(data_bytes), dtype="float32", always_2d=True)
     data = data.mean(axis=1)
@@ -164,12 +170,12 @@ def fetch_earnings22_aa() -> None:
                 except OSError:
                     if attempt == 2:
                         raise
-    # transcripts first: chunks.tsv is what makes grid.py treat the set as present
+    # transcripts first, each file written whole and renamed: chunks.tsv is what makes grid.py
+    # treat the set as present, so it must never appear cut short or before the transcripts
     calls = [json.loads(line) for line in parents.read_text().splitlines() if line]
-    (out / "parents.tsv").write_text("".join(f"{p['id']}\t{' '.join(p['transcript'].split())}\n" for p in calls))
-    (out / "chunks.tsv").write_text(
-        "".join(f"{c['file_name'].removesuffix('.wav')}\t{c['parent_id']}\t{c['chunk_index']}\n" for c in chunks)
-    )
+    _write_text(out / "parents.tsv", "".join(f"{p['id']}\t{' '.join(p['transcript'].split())}\n" for p in calls))
+    _write_text(out / "chunks.tsv", "".join(
+        f"{c['file_name'].removesuffix('.wav')}\t{c['parent_id']}\t{c['chunk_index']}\n" for c in chunks))
     print(f"earnings22-aa: {len(chunks)} chunks of {len(calls)} calls -> {out}")
 
 
