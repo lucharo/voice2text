@@ -352,15 +352,18 @@ _Created: 2026-10-19 · Verified: 2026-10-19 against the 2026-10-15 report._
 `ami-ihm` (150 clips of the leaderboard's AMI-Cleaned, all 16 test meetings) and `earnings22-aa`
 (its 6 cleaned calls, scored per call). Every grid system that was still in the model cache ran
 on both (24 cells, 2026-10-27, `~/.v2t/eval/grid/run-leaderboard-sets.log`); Qwen3-ASR bf16,
-Nemotron 3.5 and Voxtral were left out because downloading them again would have taken the disk
-under the 15 GB another session's timing needed. Leaderboard scorer, 95% interval from resampling
-clips (calls for Earnings22):
+Nemotron 3.5 and Voxtral, whose weights had been deleted, were downloaded again and run on
+2026-10-28 once the disk had room (`run-missing-three.log`, `finish-voxtral.log`), then deleted.
+Leaderboard scorer, 95% interval from resampling clips (calls for Earnings22):
 
 | System | ami-ihm | earnings22-aa | published (AMI-Cleaned / Earnings22-AA) |
 |---|--:|--:|--:|
 | parakeet-v3 (MLX bf16) | 8.92 (6.6–11.5) | 6.07 (4.0–8.1) | 9.42 / 5.85 |
 | parakeet-v3-coreml | 8.72 (6.5–11.1) | 7.15 (4.3–9.7) | 9.42 / 5.85 |
 | qwen3-asr-1.7b-8bit | 7.67 (5.8–9.8) | 5.90 (3.6–7.8) | 8.31 / 5.84 (bf16) |
+| qwen3-asr-1.7b (bf16) | 7.60 (5.8–9.6) | 5.77 (3.6–7.6) | 8.31 / 5.84 |
+| voxtral-rt-4bit | 11.63 (9.3–14.2) | 10.19 (5.3–15.4) | 13.34 / 9.31 (full precision) |
+| nemotron-3.5-stream | 13.75 (10.5–18.0) | 13.63 (8.9–17.1) | 13.43 / 15.30 |
 | parakeet-unified-en | 7.80 (5.7–10.3) | 6.66 (4.1–8.8) | – |
 | parakeet-ultra | 7.53 (5.9–9.5) | 5.97 (3.7–8.0) | – |
 | parakeet-redux | 8.53 (6.7–10.5) | 7.84 (5.0–10.2) | – |

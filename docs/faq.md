@@ -288,8 +288,8 @@ LibriSpeech other and FLEURS Spanish, against 1.52 / 3.13 / 3.25% on the leaderb
 | Qwen3-ASR 1.7B, 8-bit | 1.26 | 1.3 | 2.94 | 3.7 | 2.92 | 3.0 | 8.31 | 7.7 | 5.84 | 5.9 |
 | Whisper large-v3 turbo | 2.13 | 1.7 | 3.71 | 3.7 | 2.73 | 2.9 | 13.88 | 13.1 | 8.09 | 9.9 |
 | Cohere Transcribe | 0.97 | 1.3 | 2.05 | 2.3 | 3.26 | 3.5 | 7.02 | 6.7 | 7.88 | 6.8 |
-| Voxtral Mini 4B Realtime, 4-bit | 1.62 | 2.0 | 4.94 | 5.7 | 2.80 | 3.3 | 13.34 | | 9.31 | |
-| Nemotron 3.5 streaming | 2.83 | 2.7 | 6.79 | 7.6 | 4.23 | 4.3 | 13.43 | | 15.30 | |
+| Voxtral Mini 4B Realtime, 4-bit | 1.62 | 2.0 | 4.94 | 5.7 | 2.80 | 3.3 | 13.34 | 11.6 | 9.31 | 10.2 |
+| Nemotron 3.5 streaming | 2.83 | 2.7 | 6.79 | 7.6 | 4.23 | 4.3 | 13.43 | 13.8 | 15.30 | 13.6 |
 
 Published: the leaderboard as of 26 October 2026, or the model's card where the leaderboard has
 no row (Parakeet Ultra, Redux and Unified EN, Bark 3.0). AMI is the leaderboard's AMI-Cleaned
