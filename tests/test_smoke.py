@@ -4545,6 +4545,20 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(out.getvalue(), "in the U.S. office")
         self.assertEqual(err.getvalue(), "1 of 1 replacements fired: US => U.S.\n")
 
+    def test_a_replacement_heard_as_spelled_letters_still_fires_after_the_join(self):
+        config.write_dictionary([], [("A B testing", "A/B testing")])
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO("we ran A B testing")),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            cli.cmd_dictionary(["apply"])
+
+        self.assertEqual(out.getvalue(), "we ran A/B testing")
+        self.assertEqual(err.getvalue(), "1 of 1 replacements fired: A B testing => A/B testing\n")
+
     def test_join_spelled_acronyms(self):
         cases = [
             # spaces, dots, hyphens, dot and space; two letters are enough

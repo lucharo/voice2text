@@ -697,10 +697,15 @@ def join_spelled_acronyms(text: str) -> str:
 
 
 def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
-    """Whole-word, case-insensitive `heard => written` substitutions."""
+    """Whole-word, case-insensitive `heard => written` substitutions.
+
+    The text comes with its spelled-out acronyms joined, so a heard side written
+    that way is joined too: "A B testing => A/B testing" matches "AB testing".
+    """
     import re
 
     for heard, written in replacements:
+        heard = join_spelled_acronyms(heard)
         text = re.sub(
             rf"(?<!\w){re.escape(heard)}(?!\w)",
             lambda _match, written=written: written,  # literal: no \1 or \g<> parsing
