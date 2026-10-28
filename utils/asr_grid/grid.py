@@ -934,7 +934,12 @@ def score_set(set_name: str) -> list[dict]:
     errors = dict.fromkeys(scored, 0)
     words = dict.fromkeys(scored, 0)
     units: dict[str, list[tuple[int, int]]] = {s: [] for s in scored}  # for the interval
-    parents = parent_texts(set_name)
+    parents: dict[str, str] = {}
+    if any("parent" in c for c in clips.values()):  # a per-call set: every call needs its transcript
+        parents = parent_texts(set_name)
+        missing = sorted({c["parent"] for c in clips.values()} - {p for p, t in parents.items() if t.strip()})
+        if missing:
+            raise SystemExit(f"{set_name}: no transcript for calls {missing}; rerun fetch_noisy.py {set_name}")
     if parents:  # scored per call: each call's chunks joined in order, as the leaderboard does
         calls: dict[str, list[str]] = {}
         for cid in sorted(clips, key=lambda c: (clips[c]["parent"], clips[c]["chunk"])):

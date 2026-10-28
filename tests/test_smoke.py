@@ -104,6 +104,24 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual((row["n"], row["errors"], row["words"]), (2, 0, 2))
 
+    def test_grid_refuses_a_per_call_set_with_a_missing_call_transcript(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "calls").mkdir(parents=True)
+            (root / "sets").mkdir()
+            (root / "labelled" / "calls").mkdir(parents=True)
+            (root / "labelled" / "calls" / "parents.tsv").write_text("A\talpha\n")  # call B has none
+            (root / "sets" / "calls.jsonl").write_text("".join(
+                json.dumps({"id": c, "text": None, "lang": "en", "duration_s": 5, "parent": p, "chunk": 0}) + "\n"
+                for c, p in (("a0", "A"), ("b0", "B"))))
+            (root / "results" / "calls" / "cohere-transcribe.jsonl").write_text("".join(
+                json.dumps({"id": c, "duration_s": 5, "offline": "x", "offline_s": 1}) + "\n" for c in ("a0", "b0")))
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.object(grid, "EVAL", root):
+                with self.assertRaisesRegex(SystemExit, "no transcript for calls \\['B'\\]"):
+                    grid.score_set("calls")
+
     def test_grid_refuses_an_english_only_model_on_any_non_english_set(self):
         from utils.asr_grid import grid
 

@@ -164,11 +164,12 @@ def fetch_earnings22_aa() -> None:
                 except OSError:
                     if attempt == 2:
                         raise
+    # transcripts first: chunks.tsv is what makes grid.py treat the set as present
+    calls = [json.loads(line) for line in parents.read_text().splitlines() if line]
+    (out / "parents.tsv").write_text("".join(f"{p['id']}\t{' '.join(p['transcript'].split())}\n" for p in calls))
     (out / "chunks.tsv").write_text(
         "".join(f"{c['file_name'].removesuffix('.wav')}\t{c['parent_id']}\t{c['chunk_index']}\n" for c in chunks)
     )
-    calls = [json.loads(line) for line in parents.read_text().splitlines() if line]
-    (out / "parents.tsv").write_text("".join(f"{p['id']}\t{' '.join(p['transcript'].split())}\n" for p in calls))
     print(f"earnings22-aa: {len(chunks)} chunks of {len(calls)} calls -> {out}")
 
 
