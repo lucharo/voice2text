@@ -813,6 +813,24 @@ def _bare(token: str) -> str:
     return _BARE.sub("", token).lower()
 
 
+_SOFT = re.compile(r"[aeiouhwy']")
+
+
+def sounds_alike(spoken: str, written: str) -> bool:
+    """Whether a dictionary word could be what a misheard word meant ("clock",
+    "clot" -> "Claude"): their first letters and consonants ("clck", "cld") match
+    at least half way by difflib's ratio. Vowels, h, w and y are what a recogniser
+    most often gets wrong in a name, so they are left out; "the" -> "Claude" fails.
+    """
+    import difflib
+
+    def skeleton(word: str) -> str:
+        word = _bare(word)
+        return word[:1] + _SOFT.sub("", word[1:])
+
+    return difflib.SequenceMatcher(a=skeleton(spoken), b=skeleton(written)).ratio() >= 0.5
+
+
 def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> tuple[str, dict]:
     """`clean` held to the words of `raw`: returns the text and counts of words
     `restored` (dropped, put back), `reverted` (changed, put back) and `removed`
@@ -822,8 +840,9 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
     cleaned. A dropped stretch comes back unless it is a filler or an immediate
     repeat ("the the", keeping one of a run the cleanup dropped whole); a changed or
     added stretch is kept only when each of its words holds a digit or `#` (numbers
-    written as digits), is a dictionary word or was said in that stretch. Words put
-    back go before the punctuation that ended the cleaned word ahead of them.
+    written as digits), was said in that stretch or is a dictionary word standing in
+    for a similar-sounding word said there (sounds_alike), in order, one for one.
+    Words put back go before the punctuation that ended the cleaned word ahead of them.
     """
     import difflib
 
@@ -850,16 +869,23 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
         "Claude")."""
         written, spoken = {_bare(t) for t in tokens}, raw_bare[i1:i2]
         digits = any(number(t) for t in tokens)
+        # words said here that nothing written accounts for (number words count as
+        # written only when a number is written there), and dictionary words written
+        # here that were not said
+        unwritten = [
+            w for i, w in enumerate(spoken, i1)
+            if not (w in written or (digits and w in _NUMBER_WORDS) or droppable(i))
+        ]
+        swapped = [_bare(t) for t in tokens if not number(t) and _bare(t) in allowed and _bare(t) not in spoken]
         return (
             all(license(t) or _bare(t) in set(spoken) for t in tokens)
             and any(license(t) for t in tokens)
-            # each dictionary word written may stand for one word said ("clock code" ->
-            # "Claude Code"), not for a whole phrase it swallowed ("clod the report")
-            # (number words count as written only when a number is written there)
-            and sum(
-                not (w in written or (digits and w in _NUMBER_WORDS) or droppable(i))
-                for i, w in enumerate(spoken, i1)
-            ) <= sum(_bare(t) in allowed for t in tokens)
+            # each dictionary word not said replaces one similar-sounding word said
+            # there, in order ("clock code" -> "Claude Code"); never an unrelated word
+            # ("the" -> "Claude"), a phrase it swallowed ("clod the report") or nothing
+            # at all (a model reciting the dictionary from its prompt)
+            and len(unwritten) == len(swapped)
+            and all(sounds_alike(s, w) for s, w in zip(unwritten, swapped))
         )
 
     def cased(word: str, like: str) -> str:
