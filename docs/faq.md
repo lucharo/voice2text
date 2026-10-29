@@ -219,6 +219,10 @@ compare with model cards (see [below](#why-do-v2ts-error-rates-differ-from-model
   6.7% against 7.2% on its Earnings22 and 4.7% against 5.2% on the real dictations (against
   the default, Parakeet v3 on Core ML), waiting 0.17 s against 0.13 s. Parakeet v3 stays
   the default because it also handles other languages.
+- **Bark 3.0 Pro** (English only, opt-in with `backend = "parakeet-coreml"`) is a fine-tune of
+  Parakeet v3 that runs on the same Core ML path. It makes fewer mistakes on noisy recordings and
+  ties on read speech and real dictations, for 1.1 to 1.2 times the wait and twice the download:
+  see [Should I switch to Bark 3.0 Pro?](#should-i-switch-to-bark-30-pro)
 - **Noisy recordings** (added late October 2026): on AMI meetings recorded with a room microphone
   Parakeet v3 scores 33.3%, against 28.2% for Qwen3-ASR and 26.0% for Cohere; on the
   leaderboard's AMI (headsets) 8.9%, against 7.7% and 6.7%, and on its Earnings22 6.1%, against
@@ -265,6 +269,45 @@ While you hold the key, v2t decodes the recording in pieces of about 30 s cut at
 release waits on the last piece only; there are no previews between pieces, since each would be a
 full decode. A Core ML build that could cut the wait and memory is tracked in
 [#64](https://github.com/lucharo/voice2text/issues/64).
+
+## Should I switch to Bark 3.0 Pro?
+
+If you dictate only in English and often far from the microphone, it is worth a try. Conway
+Research's [Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro)
+(CC-BY-4.0) is a fine-tune of Parakeet v3 published in the same Core ML layout, so v2t runs it on
+the Neural Engine through its default `parakeet-coreml` backend, with the same live words while
+you hold the key. Pick it under Transcription Model in the menu, or:
+
+```bash
+v2t config set transcription.model ConwayResearch/Underdog-Bark-3.0-Pro
+```
+
+The first run downloads its Core ML files (1.23 GB), compiles them once (about 10 s) into
+`~/.v2t/models/underdog-bark-3.0-pro-coreml`, deletes the download, and loads them on the Neural
+Engine, which takes about a minute the first time and a few seconds after that. Set
+`transcription.model` back to blank to return to Parakeet v3.
+
+Measured on the maintainers' grid on an M4 Pro (October 2026, [#79](https://github.com/lucharo/voice2text/issues/79),
+[#80](https://github.com/lucharo/voice2text/issues/80)), errors counted the Open ASR Leaderboard's
+way, against the default Parakeet v3 on Core ML:
+
+| | Parakeet v3, Core ML | Bark 3.0 Pro, Core ML |
+|---|--:|--:|
+| AMI meetings, headset (150 clips) | 8.7% | 6.4% |
+| AMI meetings, room microphone (150 clips) | 29.2% | 26.6% |
+| Earnings22 phone calls (150 clips) | 9.9% | 9.2% |
+| LibriSpeech clean / other (150 clips each) | 1.7% / 4.1% | 1.7% / 3.8% |
+| Disagreement on 122 real dictations | 6.0% | 6.0% |
+| Wait after release, against the default's | 1 | 1.1 to 1.2 |
+| Download | 0.63 GB | 1.23 GB |
+
+Over the five labelled sets it makes 1.2 points fewer mistakes on average (95% interval 0.5 to
+2.0). It is English only, so Parakeet v3 stays the default. Bark writes acronyms as spaced letters
+("C L I") more often than Parakeet; v2t joins those after cleanup. v2t adds 0.25 s of silence
+before each recording, the setting its card was evaluated with. With the same files on 40 grid
+clips (short, noisy, five-minute and real dictations), v2t's decode gives the grid's text word for
+word, whole or in the pieces it decodes while you hold the key. Choosing between languages
+automatically is tracked in [#94](https://github.com/lucharo/voice2text/issues/94).
 
 ## Why do v2t's error rates differ from model cards and the Open ASR Leaderboard?
 
