@@ -121,7 +121,7 @@ def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> 
     s = progress(job, out, now)
     s["link"], s["pulled"] = link, pulled
     # remembered on disk, so a later poll with the phone out of reach cannot end the watch on the old files
-    flag = out / "DIVERGED"
+    flag = out / f"{job['name']}.DIVERGED"
     if any(v == "diverged" for v in pulled.values()):
         flag.write_text("a phone copy diverged from the local files; see the *.diverged-* copies\n")
     s["diverged"] = flag.exists()

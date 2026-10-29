@@ -53,10 +53,17 @@ def main() -> int:
         missing = [p for p in PARTS if not (a.src / p).is_dir()]
         if missing:
             sys.exit(f"{a.src} lacks {', '.join(missing)}")
+        # copy everything (following links) before removing anything, so no source can be deleted mid-copy
+        new = RES / ".staging"
+        if new.exists():
+            shutil.rmtree(new)
+        for p in PARTS:
+            shutil.copytree(a.src / p, new / p, ignore=shutil.ignore_patterns(".DS_Store"))
         for p in PARTS:
             if (RES / p).exists():
                 shutil.rmtree(RES / p)
-            shutil.copytree(a.src / p, RES / p, ignore=shutil.ignore_patterns(".DS_Store"))
+            (new / p).rename(RES / p)
+        new.rmdir()
         print(f"copied {', '.join(PARTS)} from {a.src}")
     have = files(RES)
     if a.write_manifest:
