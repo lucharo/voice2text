@@ -3036,6 +3036,22 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(states, [False, True])
 
+    def test_pickers_survive_an_ollama_url_that_does_not_parse(self):
+        row = self._pickers(config.Config(ollama_url="http://[::1"))["cleanup"][-1]
+
+        self.assertEqual((row["downloaded"], row["available"], row["note"]), (None, True, "on http://[::1"))
+
+    def test_whisper_counts_as_downloaded_only_with_its_weights(self):
+        config_only = self._snapshot(backends.WHISPER_DEFAULT, ("config.json",))
+        weights = self._snapshot("whole/whisper", ("config.json", "weights.safetensors"))
+
+        states = []
+        for snapshot in (config_only, weights):
+            with mock.patch.object(backends, "hf_snapshots", return_value=[snapshot]):
+                states.append(next(r for r in models.transcription(config.Config()) if r["id"] == "whisper")["downloaded"])
+
+        self.assertEqual(states, [False, True])
+
     def test_cleanup_picker_leaves_a_remote_ollama_selectable_as_it_cannot_see_its_models(self):
         cfg = config.Config(ollama_url="http://gpu-box:11434")
 
@@ -3166,6 +3182,8 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(routes, ["cask", "other", "local", "other", None])
         self.assertEqual(beside_the_cask, "other")  # menubar install would refuse the rebuild
 
+    UV_UPGRADE = ["/usr/bin/env", "UV_TOOL_DIR=/tools", "/bin/uv", "tool", "upgrade", "voice2text"]
+
     def _update_check(self, *, engine_route, app_route, app_version="0.5.16", engine_version="0.5.16"):
         tools = {"uv": "/bin/uv", "brew": "/bin/brew"}
         with (
@@ -3174,14 +3192,15 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(update, "app_route", return_value=app_route),
             mock.patch.object(update, "_which", side_effect=tools.get),
         ):
-            return update.check(Path("/Some.app"), app_version, now=0.0, fetch=lambda: "0.5.17")
+            return update.check(Path("/Some.app"), app_version, now=0.0, fetch=lambda: "0.5.17",
+                                prefix=Path("/tools/voice2text"))
 
     def test_update_upgrades_the_uv_engine_and_the_cask_then_reopens_the_app(self):
         result = self._update_check(engine_route="uv", app_route="cask")
 
         self.assertEqual({k: result[k] for k in ("update", "commands", "restart", "relaunch")}, {
             "update": True,
-            "commands": [["/bin/uv", "tool", "upgrade", "voice2text"], ["/bin/brew", "upgrade", "--cask", "voice2text"]],
+            "commands": [self.UV_UPGRADE, ["/bin/brew", "upgrade", "--cask", "voice2text"]],
             "restart": "app",
             "relaunch": ["/usr/bin/open", str(update.SYSTEM_APP)],
         })
@@ -3195,7 +3214,7 @@ class V2TSmokeTests(unittest.TestCase):
         result = self._update_check(engine_route="uv", app_route="other")
 
         self.assertEqual({k: result[k] for k in ("update", "commands", "restart", "relaunch")}, {
-            "update": True, "commands": [["/bin/uv", "tool", "upgrade", "voice2text"]],
+            "update": True, "commands": [self.UV_UPGRADE],
             "restart": "engine", "relaunch": [],
         })
 
@@ -3203,8 +3222,9 @@ class V2TSmokeTests(unittest.TestCase):
         result = self._update_check(engine_route="uv", app_route="local", engine_version="0.5.17")
 
         self.assertEqual((result["commands"], result["relaunch"]), (
-            [["/bin/uv", "tool", "upgrade", "voice2text"]],
-            [sys.executable, "-m", "v2t", "menubar", "install"],
+            [self.UV_UPGRADE],
+            # rebuild, and reopen the old bundle if the build fails
+            ["/bin/sh", "-c", '"$1" -m v2t menubar install || /usr/bin/open "$2"', "sh", sys.executable, "/Some.app"],
         ))
 
     def test_update_offers_nothing_when_up_to_date_or_not_upgradable_here(self):

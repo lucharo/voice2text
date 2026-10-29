@@ -42,8 +42,20 @@ def _ollama_pulled(tag: str) -> bool:
     return (root / "manifests" / "registry.ollama.ai" / name / (version or "latest")).is_file()
 
 
-def _local_ollama(url: str) -> bool:
-    return (urlparse(url).hostname or "") in ("localhost", "127.0.0.1", "::1")
+def _ollama_host(url: str) -> str:
+    """The host in ollama.url; the URL itself when it does not parse (config.toml
+    accepts any string, and a bad one must not break the pickers)."""
+    try:
+        return urlparse(url).hostname or url
+    except ValueError:
+        return url
+
+
+def _whole_whisper(repo: str) -> bool:
+    """A Whisper snapshot with its weights, as WhisperSTT needs; config.json alone is
+    an interrupted download."""
+    return any((s / "weights.safetensors").exists() or (s / "weights.npz").exists()
+               for s in backends.hf_snapshots(repo))
 
 
 def _downloaded(choice: backends.ModelChoice, cfg: config.Config) -> bool | None:
@@ -53,11 +65,14 @@ def _downloaded(choice: backends.ModelChoice, cfg: config.Config) -> bool | None
         return None
     model = choice.model or _default_model(choice.backend)
     if choice.backend == "ollama":
-        return _ollama_pulled(model) if _local_ollama(cfg.ollama_url) else None
+        local = _ollama_host(cfg.ollama_url) in ("localhost", "127.0.0.1", "::1")
+        return _ollama_pulled(model) if local else None
     if choice.backend == "parakeet-coreml":
         from . import coreml
 
         return coreml.downloaded(choice.model)
+    if choice.backend == "whisper" and not Path(model).is_dir():
+        return _whole_whisper(model)
     return backends.cached_locally(model)
 
 
@@ -72,7 +87,7 @@ def _row(choice: backends.ModelChoice, cfg: config.Config, current: bool, defaul
     if not _extra_installed(choice.extra):
         available, note = False, f"needs voice2text[{choice.extra}]"
     elif choice.backend == "ollama" and downloaded is None:
-        note = f"on {urlparse(cfg.ollama_url).hostname}"
+        note = f"on {_ollama_host(cfg.ollama_url)}"
     elif choice.backend == "ollama" and not downloaded:
         available = False
         note = f"needs: ollama pull {choice.model or _default_model('ollama')}"

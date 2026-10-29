@@ -190,9 +190,16 @@ def check(
     engine_behind = newer(latest, __version__)
     app_behind = menu in ("cask", "local") and newer(latest, app_version)
     if engine == "uv" and uv and (engine_behind or (app_behind and menu == "local")):
-        commands.append([uv, "tool", "upgrade", "voice2text"])
-        if menu == "local":  # compiled from the engine's package, so rebuilt from the new one
-            relaunch = [sys.executable, "-m", "v2t", "menubar", "install"]
+        # the tool folder this engine lives in, which a bundle may have baked from a
+        # custom UV_TOOL_DIR the app's environment no longer sets
+        tools = str((prefix or Path(sys.prefix)).parent)
+        commands.append(["/usr/bin/env", f"UV_TOOL_DIR={tools}", uv, "tool", "upgrade", "voice2text"])
+        if menu == "local" and app is not None:
+            # compiled from the engine's package, so rebuilt from the new one; a failed
+            # build leaves the old bundle in place (menubar.build swaps only on success),
+            # so reopen that rather than leave dictation stopped
+            relaunch = ["/bin/sh", "-c", '"$1" -m v2t menubar install || /usr/bin/open "$2"',
+                        "sh", sys.executable, str(app)]
     if menu == "cask" and app_behind and brew:
         commands.append([brew, "upgrade", "--cask", "voice2text"])
         relaunch = ["/usr/bin/open", str(SYSTEM_APP)]
