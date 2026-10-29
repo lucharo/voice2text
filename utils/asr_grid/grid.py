@@ -776,15 +776,29 @@ class Bark:
 
         bits = int(flag.removeprefix("mlx-"))
         fp16 = models / f"{name}-mlx-fp16"
-        if not (fp16 / "model.safetensors").exists():
-            self._unpack(models / name, small, fp16)
+        if not fp16.exists():
+            self._publish(fp16, lambda tmp: self._unpack(models / name, small, tmp))
         folder = fp16
         if bits < 16:
             folder = models / f"{name}-mlx-{bits}bit"
-            if not (folder / "model.safetensors").exists():
-                self._quantise(fp16, folder, bits)
+            if not folder.exists():
+                self._publish(folder, lambda tmp: self._quantise(fp16, tmp, bits))
         self.model = load(str(folder), strict=True, model_type="parakeet")
         mx.eval(self.model.parameters())
+
+    @staticmethod
+    def _publish(out: Path, build) -> None:
+        """Build a model folder beside `out` and rename it into place only once
+        complete, so an interrupted unpack never leaves a folder a rerun would trust."""
+        import shutil
+
+        tmp = out.with_name(out.name + ".partial")
+        shutil.rmtree(tmp, ignore_errors=True)  # a previous interrupted build
+        private_dir(tmp)
+        build(tmp)
+        if out.is_symlink():  # a link to a folder that is gone (exists() is False)
+            out.unlink()
+        tmp.rename(out)
 
     @staticmethod
     def _unpack(source: Path, small: Path, out: Path) -> None:
@@ -793,14 +807,13 @@ class Bark:
         if (source / "model.bark").exists():  # Bark 3.0's packed file
             from bark_mlx import prepare
 
-            prepare(str(source / "model.bark"), str(private_dir(out)), bits=16)
+            prepare(str(source / "model.bark"), str(out), bits=16)
             return
         import mlx.core as mx  # Pro: transformers' ParakeetForTDT safetensors (bf16)
         from bark_mlx import to_mlx_names
 
         sd = {k: np.array(v.astype(mx.float32)) for k, v in mx.load(str(source / "model.safetensors")).items()}
         weights = {k: mx.array(v).astype(mx.float16) for k, v in to_mlx_names(sd).items()}
-        private_dir(out)
         mx.save_safetensors(str(out / "model.safetensors"), weights)
         for f in ("tokenizer.model", "tokenizer.vocab", "vocab.txt"):
             shutil.copy(small / "mlx" / f, out / f)
@@ -817,7 +830,6 @@ class Bark:
 
         model = load(str(fp16), strict=True, model_type="parakeet")
         nn.quantize(model, group_size=64, bits=bits)
-        private_dir(out)
         for f in ("tokenizer.model", "tokenizer.vocab", "vocab.txt"):
             shutil.copy(fp16 / f, out / f)
         mx.save_safetensors(str(out / "model.safetensors"), dict(tree_flatten(model.parameters())))
