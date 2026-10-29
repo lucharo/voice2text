@@ -47,8 +47,9 @@ hf download mlx-community/Qwen2.5-0.5B-Instruct-4bit --local-dir ~/.v2t/eval/pho
    row says so; unplugged, rows show the battery falling.
 4. `phone_sync.py` copies the results whenever the phone answers, over USB or Wi-Fi, and prints one line:
    items done per arm, the rate, the estimated end, the current block, the last row's age, thermal state
-   and battery. Out of reach, it reports from the last copy. A local copy is never replaced by a shorter
-   one, so a reinstalled app cannot wipe synced results.
+   and battery. Out of reach, it reports from the last copy. A local copy is only replaced by a phone copy
+   that extends it; one that diverges (a reinstalled app, a job restarted under the same name) is kept
+   beside it as `<file>.diverged-<time>.jsonl`, so synced results are never lost.
 
 To see what the phone is doing without the Mac, look at its screen: it shows the arm, block and item.
 
@@ -67,7 +68,7 @@ Turn Low Power Mode off before a run; every row records it.
 
 If the app dies anyway (Jetsam, a crash), tap its icon: with no launch arguments it reads Documents/job.json
 and resumes. `phone_sync.py --relaunch-after 10` does the same from the Mac once the phone is reachable and
-no row has arrived for 10 minutes.
+no row has arrived for 10 minutes, provided the phone's job.json is still this job.
 
 Background execution (`BGProcessingTask` with `requiresExternalPower`) could in principle carry the
 Neural Engine and CPU arms while the phone is locked; it is not implemented or tested.
