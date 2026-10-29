@@ -4559,6 +4559,18 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(out.getvalue(), "we ran A/B testing")
         self.assertEqual(err.getvalue(), "1 of 1 replacements fired: A B testing => A/B testing\n")
 
+    def test_a_spelled_replacement_matches_spaced_lowercase_and_dotted_text(self):
+        replacements = [("A B testing", "A/B testing"), ("U.S.", "United States")]
+
+        for text, expected in [
+            ("we ran a b testing", "we ran A/B testing"),
+            ("in the US office", "in the United States office"),
+            ("in the U.S. office", "in the United States office"),
+        ]:
+            with self.subTest(text=text):
+                joined = config.join_spelled_acronyms(text)
+                self.assertEqual(config.apply_replacements(joined, replacements), expected)
+
     def test_join_spelled_acronyms(self):
         cases = [
             # spaces, dots, hyphens, dot and space; two letters are enough
@@ -4579,6 +4591,10 @@ class V2TSmokeTests(unittest.TestCase):
             # left alone: stutters, a clause's I, a sentence ending, single letters
             ("I I think so", "I I think so"),
             ("open the C L I I think", "open the CLI I think"),
+            ("open the C L I I can use", "open the CLI I can use"),
+            ("open the F.A.Q. I think", "open the FAQ. I think"),
+            ("open the F.A.Q.\n", "open the FAQ.\n"),
+            ('he said "see the F.A.Q."', 'he said "see the FAQ."'),
             ("the C L I and the agent", "the CLI and the agent"),
             ("go with option B. I think so", "go with option B. I think so"),
             ("plan B is fine", "plan B is fine"),

@@ -667,30 +667,37 @@ _AFTER_PRONOUN = frozenset(
 )
 
 
-def join_spelled_acronyms(text: str) -> str:
+def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
     """"C L I" -> "CLI", "F.A.Q." -> "FAQ", "F A Qs" -> "FAQs": runs of single
     capital letters written as one word, before the replacements, so a
     `heard => written` line can still restyle the result ("US => U.S.").
 
-    Left alone: runs of "I" only ("I I think"); an "I" that starts a clause
-    ("the C L I I think" -> "the CLI I think"); and "B. I" or "A. A" with no full stop
-    after, which is one sentence ending and the next starting ("option B. I think").
-    A dotted acronym's last full stop stays only where a sentence can end there.
+    Left alone: runs of "I" only ("I I think"); an "I" that starts a clause ("the
+    C L I I think" or "C L I I can" -> "CLI I"); and a sentence that ends just before
+    an "I" or "A" ("option B. I think", "the F.A.Q. I think" -> "the FAQ. I think").
+    A dotted acronym's last full stop stays where a sentence can end there, unless
+    `sentence_stops` is false (a replacement's heard side, which has no sentence).
     """
 
     def join(match: re.Match) -> str:
         run, plural, dot = match.group(1), match.group(2) or "", match.group(3) or ""
         letters = re.findall(r"[A-Z]", run)
         rest = text[match.end() :]
-        if set(letters) == {"I"} or (". " in run and letters[-1] in "IA" and not (plural or dot)):
+        if set(letters) == {"I"}:
             return match.group()
-        if run.endswith(" I") and not (plural or dot):
+        if not (plural or dot):
+            if ". " in run and letters[-1] in "IA":
+                cut = run.rfind(". ") + 1
+                return join_spelled_acronyms(run[:cut], sentence_stops=sentence_stops) + run[cut:]
             following = re.match(r"\s+([\w'’]+)", rest)
-            if following and following.group(1).lower() in _AFTER_PRONOUN:
-                head = join_spelled_acronyms(run[:-2])
-                return head + " I"
+            if run.endswith(" I") and (
+                run.endswith(" I I")
+                or (following and following.group(1).lower() in _AFTER_PRONOUN)
+            ):
+                return join_spelled_acronyms(run[:-2], sentence_stops=sentence_stops) + " I"
         if dot and "." in run and not plural:  # the acronym's own full stop
-            dot = "." if not rest or re.match(r"\s+[A-Z]", rest) else ""
+            ends = not rest.strip() or re.match(r"\s+[A-Z]|[\"”)\]]", rest)
+            dot = "." if sentence_stops and ends else ""
         return "".join(letters) + plural + dot
 
     return _SPELLED.sub(join, text)
@@ -700,14 +707,18 @@ def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
     """Whole-word, case-insensitive `heard => written` substitutions.
 
     The text comes with its spelled-out acronyms joined, so a heard side written
-    that way is joined too: "A B testing => A/B testing" matches "AB testing".
+    that way also matches joined: "A B testing => A/B testing" matches "AB testing"
+    as well as "a b testing", and "U.S. => United States" matches "US".
     """
     import re
 
     for heard, written in replacements:
-        heard = join_spelled_acronyms(heard)
+        pattern = re.escape(heard)
+        joined = join_spelled_acronyms(heard, sentence_stops=False)
+        if joined != heard:
+            pattern = f"(?:{re.escape(joined)}|{pattern})"
         text = re.sub(
-            rf"(?<!\w){re.escape(heard)}(?!\w)",
+            rf"(?<!\w){pattern}(?!\w)",
             lambda _match, written=written: written,  # literal: no \1 or \g<> parsing
             text,
             flags=re.IGNORECASE,
