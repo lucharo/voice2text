@@ -1074,9 +1074,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let on = settings[key] as? Bool ?? false
             row(title, key, on ? "false" : "true", on: on, enabled: enabled)
         }
-        let streaming = settings["transcription.streaming_mode"] as? String == "hacky"
-        row("Transcribe While Holding", "transcription.streaming_mode", streaming ? "off" : "hacky", on: streaming)
-        toggle("Live Words in Bubble (Experimental)", "transcription.live_transcript", enabled: streaming)
+        toggle("Live Words in Bubble (Experimental)", "transcription.live_transcript")
         submenu.addItem(.separator())
         let cleanup = settings["cleanup.enabled"] as? Bool ?? false
         toggle("Clean Up Text", "cleanup.enabled")

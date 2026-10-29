@@ -183,6 +183,10 @@ def export_clips(con: sqlite3.Connection, out: Path, limit: int | None) -> list[
 # --- v2t -----------------------------------------------------------------------
 
 
+# The push size v2t streamed with up to 0.5.16, when it removed the stream (#19).
+STREAM_CHUNK_S = 5.0
+
+
 def stream_clip(stt, wav: str, chunk_s: float) -> dict:
     """Feed one clip through the streaming recogniser the way the app does.
 
@@ -195,6 +199,11 @@ def stream_clip(stt, wav: str, chunk_s: float) -> dict:
 
     audio = np.array(load_audio(Path(wav), stt.sample_rate, mx.float32))
     pushes: list[float] = []
+    if not hasattr(stt, "stream"):
+        raise SystemExit(
+            "v2t removed Parakeet's streaming path after 0.5.16 (#19); "
+            "check out v0.5.16 to run --streaming"
+        )
     stream = stt.stream()
 
     def sink(chunk: np.ndarray) -> None:
@@ -235,7 +244,7 @@ def run_v2t(
     mode: str,
     cleanup_model: str = "",
     streaming: bool = False,
-    chunk_s: float = backends.STREAM_CHUNK_S,
+    chunk_s: float = STREAM_CHUNK_S,
 ) -> None:
     print(f"loading parakeet ({backends.PARAKEET_DEFAULT})…", flush=True)
     t0 = time.perf_counter()
@@ -501,7 +510,7 @@ def streaming_section(clips: list[dict], head: str) -> list[str]:
         p = percentiles(values)
         return f"| {p['p50']:.3f} | {p['p90']:.3f} | {sum(v > 0.25 for v in values)} |"
 
-    takeover = backends.STREAM_TAKEOVER_S
+    takeover = backends.WHOLE_FILE_S
     shipped_ms = [
         c["stream_eos_ms"] if (c["duration_s"] or 0) >= takeover else c["v2t_stt_ms"]
         for c in streamed
@@ -609,8 +618,8 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--chunk-s",
         type=float,
-        default=backends.STREAM_CHUNK_S,
-        help=f"seconds of audio per streaming push (default {backends.STREAM_CHUNK_S:g}, the app's)",
+        default=STREAM_CHUNK_S,
+        help=f"seconds of audio per streaming push (default {STREAM_CHUNK_S:g}, the app's)",
     )
     a = p.parse_args(argv)
 

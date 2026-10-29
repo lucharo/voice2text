@@ -33,7 +33,6 @@ v2t --strict
 | `--casual` | | Punctuation and fillers only (the default) |
 | `--strict` | | Also restructure and drop false starts |
 | `--pause-music` | | Pause media while recording (needs `nowplaying-cli`) |
-| `--streaming-mode` | `hacky`, `off` | Transcribe while the key is held (`hacky`, the default) or only after release |
 
 ## transcribe
 

@@ -92,24 +92,14 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
         constants.HF_HUB_OFFLINE = False
 
 
-# Streaming: Parakeet can decode the recording while the hotkey is still held,
-# so on release only the last few seconds are left to transcribe. Each push
-# re-encodes STREAM_CONTEXT[0] frames (80 ms each, ~20 s) of left context and
-# re-decodes the STREAM_CONTEXT[1] * STREAM_DEPTH frames that are not final yet,
-# so a push costs ~0.3 s on an M4 Pro whatever its length. Audio is pushed
-# every STREAM_CHUNK_S seconds: the streaming path normalises the log-mel
-# features per push, so short pushes decode worse (measured 2026-09-07, 10
-# clips: 1 s pushes disagreed with whole-file decoding by 0.19 of the words at
-# the median, 5 s pushes by 0.07) while the end-of-speech latency is the same.
-STREAM_CHUNK_S = 5.0
-STREAM_CONTEXT = (256, 256)
-STREAM_DEPTH = 1
-# Under this many seconds the stream only feeds the live text and release decodes
-# the whole file: ~11 ms per second of audio, about as quick as a last push, and
-# the reference text. From here up, the recording is decoded whole in pieces of
-# about PIECE_S while the key is held (PieceDecoder), so release waits on the
-# last piece only, not on the whole dictation.
-STREAM_TAKEOVER_S = 60.0
+# While the hotkey is held the recording is decoded in pieces (PieceDecoder) as their
+# cuts become known, so on release only the last piece is left. A backend whose
+# decoder takes any length (Parakeet on MLX) decodes a recording under WHOLE_FILE_S
+# whole on release instead: ~11 ms per second of audio, and the reference text. From
+# WHOLE_FILE_S up it is cut into pieces of about PIECE_S. Up to 0.5.16 Parakeet on MLX
+# also ran a local-attention stream it was not trained for (5 s pushes) for the
+# partial text under WHOLE_FILE_S; it was removed in favour of these pieces (#19).
+WHOLE_FILE_S = 60.0
 # Each piece ends at the quietest PIECE_QUIET_S within PIECE_SEARCH_S of its
 # PIECE_S mark (the splitter mlx-audio's Qwen3-ASR uses for long files), so a cut
 # is known PIECE_SEARCH_S after its mark. Measured 2026-10-06 on 40 labelled
@@ -119,80 +109,16 @@ STREAM_TAKEOVER_S = 60.0
 PIECE_S = 30.0
 PIECE_SEARCH_S = 5.0
 PIECE_QUIET_S = 0.1
-# Between pushes, every PREVIEW_STEP_S seconds the audio not pushed yet (under
-# STREAM_CHUNK_S of it) is decoded on its own and shown after the streamed text,
-# for display only, so a word shows ~1 s after it is said instead of ~3 s.
-# Measured 2026-10-06 on 21 dictations (674 previews, M4 Pro): ~120 ms per
-# preview; the streamed text identical with and without previews; 84% of the
-# preview's words survive into the final text (91% of the words a push adds),
-# the word at the seam with the last push least often (76%) until the next push
-# replaces it. From STREAM_TAKEOVER_S up the stream is closed, and the preview
-# decodes the audio after the last piece instead (at most PIECE_S + PIECE_SEARCH_S).
+# With the live transcript on, every PREVIEW_STEP_S seconds the audio after the last
+# piece is decoded on its own and shown after the pieces' text, display only, so a word
+# shows ~1 s after it is said. Measured 2026-10-06 on 21 dictations (M4 Pro): ~120 ms
+# per preview of a few seconds of audio; 84% of a preview's words survive into the
+# final text. A preview decodes at most PREVIEW_MAX_S of the newest audio (a recording
+# under WHOLE_FILE_S on MLX has no cut yet). With the live transcript off, the partial
+# text for the log and the menu-bar tooltip is refreshed every PARTIAL_STEP_S instead.
 PREVIEW_STEP_S = 1.0
-
-
-class ChunkFeeder:
-    """Gather audio frames and hand them on in chunks of at least `chunk_s` seconds.
-
-    `push(frame)` buffers; once the buffer holds a chunk it goes to `sink` as one
-    1-D float32 array and the buffer empties. `flush()` sends whatever is left,
-    however short. Pure numpy, shared by the app and the benchmark.
-    """
-
-    def __init__(
-        self,
-        sink: Callable[[np.ndarray], object],
-        sample_rate: int,
-        chunk_s: float = STREAM_CHUNK_S,
-    ):
-        self.sink = sink
-        self.chunk_samples = max(1, int(sample_rate * chunk_s))
-        self.pending: list[np.ndarray] = []
-        self.pending_samples = 0
-        self.sent_samples = 0
-        self.chunks = 0
-
-    def push(self, frame: np.ndarray) -> bool:
-        """Buffer one frame; True when that completed a chunk and it was sent."""
-        flat = np.asarray(frame, dtype=np.float32).reshape(-1)
-        if flat.size == 0:
-            return False
-        self.pending.append(flat)
-        self.pending_samples += flat.size
-        if self.pending_samples < self.chunk_samples:
-            return False
-        self._send()
-        return True
-
-    def flush(self) -> bool:
-        """Send the remainder, if any; True when something was sent."""
-        if not self.pending_samples:
-            return False
-        self._send()
-        return True
-
-    def take(self) -> np.ndarray:
-        """Hand back the buffered remainder (possibly empty) without sending it."""
-        chunk = (
-            np.concatenate(self.pending)
-            if self.pending
-            else np.zeros(0, dtype=np.float32)
-        )
-        self.pending, self.pending_samples = [], 0
-        return chunk
-
-    def peek(self) -> np.ndarray:
-        """The buffered remainder (possibly empty), left in the buffer."""
-        if not self.pending:
-            return np.zeros(0, dtype=np.float32)
-        return np.concatenate(self.pending)
-
-    def _send(self) -> None:
-        chunk = np.concatenate(self.pending)
-        self.pending, self.pending_samples = [], 0
-        self.sent_samples += chunk.size
-        self.chunks += 1
-        self.sink(chunk)
+PREVIEW_MAX_S = PIECE_S + PIECE_SEARCH_S
+PARTIAL_STEP_S = 5.0
 
 
 class PieceDecoder:
@@ -200,9 +126,10 @@ class PieceDecoder:
 
     `add(audio)` appends; `step()` decodes the next piece once its cut is known
     and says whether it did; `finish()` decodes what is left and returns the
-    pieces' texts joined. `decode` turns 1-D float32 audio into text with the
-    model in full attention, so no ParakeetStream may be open. Pure numpy apart
-    from `decode`; the cuts match utils/asr_grid's `chunk_cuts`, which measured it.
+    pieces' texts joined. `decode` turns 1-D float32 audio into text. With
+    `whole_s`, no cut is made until that much audio has arrived, so a shorter
+    recording is one decode of it all. Pure numpy apart from `decode`; the cuts
+    match utils/asr_grid's `chunk_cuts`, which measured it.
     """
 
     def __init__(
@@ -211,8 +138,10 @@ class PieceDecoder:
         sample_rate: int,
         piece_s: float = PIECE_S,
         search_s: float = PIECE_SEARCH_S,
+        whole_s: float = 0.0,
     ):
         self.decode = decode
+        self.whole = int(sample_rate * whole_s)
         self.piece = int(sample_rate * piece_s)
         self.search = int(sample_rate * search_s)
         self.window = max(1, int(sample_rate * PIECE_QUIET_S))
@@ -242,6 +171,8 @@ class PieceDecoder:
         """Decode the next piece if its cut is known; True when one was decoded."""
         if self.pending_samples < self.piece + self.search:
             return False
+        if not self.pieces and self.pending_samples < self.whole:
+            return False  # short enough so far to be decoded whole
         audio = self.peek()
         lo = self.piece - self.search
         region = audio[lo : lo + 2 * self.search]
@@ -305,68 +236,6 @@ def release_cache() -> None:
     mx.clear_cache()
 
 
-class ParakeetStream:
-    """One live Parakeet transcription: feed audio as it arrives, read the partial
-    text, then close. Opening switches the shared model to local attention and
-    closing switches it back, so hold at most one at a time and always close."""
-
-    def __init__(self, model):
-        import mlx.core as mx
-
-        self._mx = mx
-        self._model = model
-        # parakeet-mlx computes the log-mel of each push on its own, and a push
-        # shorter than one hop (10 ms) yields an empty spectrogram that crashes
-        # Metal with a negative allocation. Such a push only happens as the last
-        # remainder on release; padding it with silence up to one hop is harmless.
-        self._min_samples = int(model.preprocessor_config.hop_length)
-        # It also holds back a partial hop and any mel frames short of a whole
-        # subsampling block, and drops both on exit: up to ~90 ms of the end.
-        # `finish` pushes that much silence after the last audio to flush them.
-        self._tail_pad = int(
-            model.preprocessor_config.hop_length
-            * model.encoder_config.subsampling_factor
-        )
-        self._stream = model.transcribe_stream(
-            context_size=STREAM_CONTEXT, depth=STREAM_DEPTH
-        )
-        self._stream.__enter__()
-        self.text = ""
-
-    def feed(self, audio: np.ndarray) -> str:
-        """Push 1-D float32 audio at the model's sample rate; returns the partial text."""
-        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if pcm.size < self._min_samples:
-            pcm = np.pad(pcm, (0, self._min_samples - pcm.size))
-        self._stream.add_audio(self._mx.array(pcm))
-        self.text = self._stream.result.text.strip()
-        return self.text
-
-    def preview(self, audio: np.ndarray) -> str:
-        """Decode `audio` on its own, for display only; the stream is untouched."""
-        pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if pcm.size < self._min_samples:
-            return ""
-        return _decode_pcm(self._model, pcm)
-
-    def finish(self, audio: np.ndarray | None = None) -> str:
-        """Push the last audio (the remainder on release, possibly empty) plus the
-        silence that flushes the recogniser's buffered tail, then close."""
-        tail = np.asarray(() if audio is None else audio, dtype=np.float32).reshape(-1)
-        if self._stream is not None:
-            self.feed(
-                np.concatenate([tail, np.zeros(self._tail_pad, dtype=np.float32)])
-            )
-        return self.close()
-
-    def close(self) -> str:
-        """Release the streaming context; returns the final text. Safe to repeat."""
-        if self._stream is not None:
-            stream, self._stream = self._stream, None
-            stream.__exit__(None, None, None)
-        return self.text
-
-
 def _load_parakeet(repo: str, from_pretrained):
     """A Parakeet repo in parakeet-mlx's layout (config.json) or NeMo's (model_config.yaml)."""
     from huggingface_hub import snapshot_download, try_to_load_from_cache
@@ -425,7 +294,7 @@ def load_nemo_layout(folder: Path):
 
 class ParakeetSTT:
     default_model = PARAKEET_DEFAULT
-    streaming = True
+    streaming = True  # the app decodes it while held: whole-file under WHOLE_FILE_S, else pieces
 
     def __init__(self, model: str = ""):
         try:
@@ -439,14 +308,18 @@ class ParakeetSTT:
 
     @property
     def sample_rate(self) -> int:
-        """The rate streamed audio must arrive at (whole-file decoding resamples)."""
+        """The rate held audio must arrive at (a WAV file is resampled)."""
         return int(self.model.preprocessor_config.sample_rate)
 
     def transcribe(self, wav_path: str) -> str:
         return self.model.transcribe(wav_path).text.strip()
 
+    def pieces(self) -> PieceDecoder:
+        """Whole-file under WHOLE_FILE_S, pieces of about PIECE_S from there up."""
+        return PieceDecoder(self.decode, self.sample_rate, whole_s=WHOLE_FILE_S)
+
     def decode(self, audio: np.ndarray) -> str:
-        """Whole-file decoding of audio at `sample_rate`; close any stream first."""
+        """Whole-file decoding of audio at `sample_rate`."""
         pcm = np.asarray(audio, dtype=np.float32).reshape(-1)
         if pcm.size < int(self.model.preprocessor_config.hop_length):
             return ""  # under one hop the log-mel is empty and crashes Metal
@@ -455,15 +328,12 @@ class ParakeetSTT:
         finally:
             release_cache()
 
-    def stream(self) -> ParakeetStream:
-        return ParakeetStream(self.model)
-
 
 class ParakeetCoreMLSTT:
     """Opt-in: Parakeet v3 on the Neural Engine through Core ML (v2t/coreml.py), no MLX.
 
     Core ML has no streaming attention and its encoder takes one 15 s window, so
-    there is no stream(): while the key is held the app decodes the recording in
+    while the key is held the app decodes the recording in
     pieces of at most one window as their cuts become known (`pieces()`), and
     previews the audio after the last piece. The text on release is the same as
     decoding the whole recording at once, since the cuts are the same.
@@ -475,7 +345,6 @@ class ParakeetCoreMLSTT:
 
     default_model = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
     streaming = True  # the app decodes it while held, in pieces
-    pieces_only = True  # ...from the start, with no streaming recogniser
 
     def __init__(self, model: str = ""):
         from .coreml import BARK_PRO_REPO, COREML_REPO, LEAD_SILENCE_S, CoreMLParakeet, model_folder
@@ -564,7 +433,7 @@ class WhisperSTT:
 class QwenASRSTT:
     """Opt-in: Qwen3-ASR through mlx-audio (voice2text[qwen]), whole-file only.
 
-    Like Core ML it has no streaming recogniser, so while the key is held the app
+    Like Core ML, while the key is held the app
     decodes the recording in pieces of about PIECE_S (`pieces()`), cut where
     utils/asr_grid's `chunked` pass cut them when it measured this model, and
     release waits on the last piece. Each piece detects its own language.
@@ -572,7 +441,6 @@ class QwenASRSTT:
 
     default_model = QWEN_ASR_DEFAULT
     streaming = True  # the app decodes it while held, in pieces
-    pieces_only = True  # ...from the start, with no streaming recogniser
     # No previews of the audio after the last piece: each would be a full decode of
     # up to PIECE_S + PIECE_SEARCH_S, and one still running at release adds to the
     # wait. The partial text grows a piece at a time instead.
@@ -1341,15 +1209,16 @@ if __name__ == "__main__":
     assert set(STT) == {"parakeet", "parakeet-coreml", "whisper", "qwen3-asr"}
     assert set(CLEANUP) == {"mlx", "ollama"}
     assert ParakeetSTT.streaming and not WhisperSTT.streaming
-    assert QwenASRSTT.pieces_only and not hasattr(QwenASRSTT, "stream")
+    assert QwenASRSTT.streaming and QwenASRSTT.previews is False
     assert short_model(QWEN_ASR_DEFAULT) == "qwen3-asr"
-    sent: list[int] = []
-    feeder = ChunkFeeder(lambda chunk: sent.append(chunk.size), 10, chunk_s=1.0)
-    assert (
-        not feeder.push(np.zeros((6, 1))) and feeder.push(np.zeros(6)) and sent == [12]
-    )
-    assert feeder.flush() is False and feeder.push(np.zeros(3)) is False
-    assert feeder.flush() and sent == [12, 3] and feeder.sent_samples == 15
+    seen: list[int] = []
+    whole = PieceDecoder(lambda a: seen.append(a.size) or "w", 10, 3, 1, whole_s=6)
+    whole.add(np.zeros(50))
+    assert not whole.step() and whole.finish() == "w" and seen == [50]
+    seen.clear()
+    long = PieceDecoder(lambda a: seen.append(a.size) or "p", 10, 3, 1, whole_s=6)
+    long.add(np.zeros(70))
+    assert long.step() and 20 <= seen[0] <= 40
     assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
     assert short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit") == "Qwen2.5-1.5B"
     assert short_model("custom/unknown") == "unknown"
