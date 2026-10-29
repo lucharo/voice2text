@@ -50,9 +50,12 @@ class LoadJob(unittest.TestCase):
         self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), want)
 
     def test_names_that_are_not_plain_file_names_are_refused(self):
-        with self.assertRaises(SystemExit) as e:
-            self.load({**JOB, "name": "bench/q05"})
-        self.assertEqual(str(e.exception).split(": ", 1)[1], "job name and arm ids may use only letters, digits, . _ -")
+        msgs = []
+        for name in ("bench/q05", "..", "."):
+            with self.assertRaises(SystemExit) as e:
+                self.load({**JOB, "name": name})
+            msgs.append(str(e.exception).split(": ", 1)[1])
+        self.assertEqual(msgs, ["job name and arm ids may use only letters, digits, . _ -"] * 3)
 
 
 class ItemCount(unittest.TestCase):
@@ -156,8 +159,23 @@ class Finished(unittest.TestCase):
         self.assertEqual(got, [True, False, False, False])
 
     def test_a_diverged_phone_copy_keeps_the_watch_going(self):
-        s = {"ended": True, "done": 20, "total": 20, "pulled": {"j.log.jsonl": "unchanged", "j.a.jsonl": "diverged"}}
-        self.assertFalse(phone_sync.finished(s))
+        self.assertFalse(phone_sync.finished({"ended": True, "done": 20, "total": 20, "diverged": True}))
+
+    def test_divergence_outlives_an_unreachable_poll(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            write(out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "end", "t": 2}])
+            for arm in ("a", "b"):
+                write(out / f"j.{arm}.jsonl", [{"event": "clean", "id": "x", "t": 1}])
+            # one sync sees a diverged phone copy, the next finds no phone
+            copies = {"j.log.jsonl": "unchanged", "j.a.jsonl": "diverged", "j.b.jsonl": "unchanged"}
+            with mock.patch.object(pc, "reach", side_effect=lambda u: "wired"), \
+                 mock.patch.object(pc, "copy_from", side_effect=lambda u, n, p: copies[n]), \
+                 mock.patch("builtins.print"):
+                first = phone_sync.sync_once(JOB, out, "udid", None)
+            with mock.patch.object(pc, "reach", return_value=None), mock.patch("builtins.print"):
+                second = phone_sync.sync_once(JOB, out, "udid", None)
+            self.assertEqual([phone_sync.finished(first), phone_sync.finished(second)], [False, False])
 
 
 if __name__ == "__main__":

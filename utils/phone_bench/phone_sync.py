@@ -106,9 +106,9 @@ def phone_job_name(udid: str) -> str | None:
 
 def finished(s: dict) -> bool:
     """The log says the job ended and every arm's results are here in full. A phone copy that diverged from
-    the local one this sync (a restarted job of the same name) means the local files describe another run."""
-    diverged = any(v == "diverged" for v in s.get("pulled", {}).values())
-    return s["ended"] and s["total"] is not None and s["done"] >= s["total"] and not diverged
+    the local one (a restarted job of the same name) means the local files describe another run, so the
+    watch never ends on them; sync_once carries that across polls in s["diverged"]."""
+    return s["ended"] and s["total"] is not None and s["done"] >= s["total"] and not s.get("diverged")
 
 
 def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> dict:
@@ -120,6 +120,11 @@ def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> 
     now = time.time()
     s = progress(job, out, now)
     s["link"], s["pulled"] = link, pulled
+    # remembered on disk, so a later poll with the phone out of reach cannot end the watch on the old files
+    flag = out / "DIVERGED"
+    if any(v == "diverged" for v in pulled.values()):
+        flag.write_text("a phone copy diverged from the local files; see the *.diverged-* copies\n")
+    s["diverged"] = flag.exists()
     stale = now - s["last_row"]["t"] if "last_row" in s else None
     # relaunch only on fresh evidence, and only if the phone would resume this job rather than a newer one
     fresh = link and all(v in ("copied", "unchanged") for v in pulled.values())

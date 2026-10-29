@@ -44,7 +44,7 @@ struct JobSpec: Codable {
     guard !arms.isEmpty, Set(arms.map(\.id)).count == arms.count else { throw BenchError("arms must be non-empty with unique ids") }
     guard Self.order.contains(order ?? "abba") else { throw BenchError("order must be one of \(Self.order)") }
     // names become file names in Documents, so no path separators or other surprises
-    let safe = { (s: String) in !s.isEmpty && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) } }
+    let safe = { (s: String) in !s.isEmpty && s.contains { $0 != "." } && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) } }
     guard safe(name), arms.allSatisfy({ safe($0.id) }) else { throw BenchError("job name and arm ids may use only letters, digits, . _ -") }
     for a in arms {
       guard let s = runtimeSet[a.runtime] else { throw BenchError("arm \(a.id): unknown runtime \(a.runtime)") }
