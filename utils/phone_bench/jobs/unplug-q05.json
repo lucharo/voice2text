@@ -1,0 +1,12 @@
+{
+  "name": "unplug-q05",
+  "set": "cleanup",
+  "offset": 40,
+  "limit": 160,
+  "block": 20,
+  "order": "abba",
+  "arms": [
+    {"id": "anemll", "runtime": "anemll", "model": "anemll__anemll-Qwen-Qwen2.5-0.5B-Instruct-ctx2048-monolithic_0.3.5"},
+    {"id": "mlx", "runtime": "mlx", "model": "mlx-community__Qwen2.5-0.5B-Instruct-4bit"}
+  ]
+}

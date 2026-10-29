@@ -28,6 +28,8 @@ final class Rows: @unchecked Sendable {
   private let lock = NSLock()
   private(set) var done = Set<String>()
   private(set) var ended = false
+  /// The last `start` row with an `arm` field: which runtime, model and options wrote this file.
+  private(set) var lastStart: [String: Any]?
 
   init(_ name: String) {
     url = documents.appendingPathComponent(name)
@@ -38,6 +40,7 @@ final class Rows: @unchecked Sendable {
         let ev = d["event"] as? String
         if ev == "clean" || ev == "clip", let k = (d["key"] ?? d["id"]) as? String { done.insert(k) }
         if ev == "end" { ended = true }
+        if ev == "start", d["arm"] != nil { lastStart = d }
       }
     }
     if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
@@ -64,6 +67,7 @@ final class Rows: @unchecked Sendable {
     let ev = row["event"] as? String
     if ev == "clean" || ev == "clip", let k = (row["key"] ?? row["id"]) as? String { done.insert(k) }
     if ev == "end" { ended = true }
+    if ev == "start", row["arm"] != nil { lastStart = row }
     guard let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) else { return }
     let line = String(data: data, encoding: .utf8)! + "\n"
     print("V2TROW " + line, terminator: "")

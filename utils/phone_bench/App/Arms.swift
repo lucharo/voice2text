@@ -58,6 +58,12 @@ struct ArmSpec: Codable {
   let runtime: String
   var model: String?
   var options: [String: String]?
+
+  /// What makes two runs of an arm comparable; stored in each `start` row and checked on resume.
+  var signature: String {
+    let o = (options ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+    return "\(runtime)|\(model ?? "")|\(o)"
+  }
 }
 
 protocol Arm: AnyObject {
@@ -292,6 +298,8 @@ final class MLXSpeech: Arm, @unchecked Sendable {
   func load() async throws -> [String: Any] {
     MLX.GPU.set(cacheLimit: 256 * 1024 * 1024)
     let m = try await STT.loadModel(modelRepo: dir.path, modelType: type)
+    // the clips are 16 kHz and the library leaves resampling to the caller
+    guard m.sampleRate == 16000 else { throw BenchError("\(type) expects \(m.sampleRate) Hz audio; the bench clips are 16 kHz") }
     model = m
     _ = m.generate(audio: MLXArray(try loadWav(try ItemSet.speech.load()[0].file)), generationParameters: STTGenerateParameters())
     return [:]

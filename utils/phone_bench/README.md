@@ -51,7 +51,8 @@ hf download mlx-community/Qwen2.5-0.5B-Instruct-4bit --local-dir ~/.v2t/eval/pho
    that extends it; one that diverges (a reinstalled app, a job restarted under the same name) is kept
    beside it as `<file>.diverged-<time>.jsonl`, so synced results are never lost.
 
-To see what the phone is doing without the Mac, look at its screen: it shows the arm, block and item.
+To see progress without the Mac, look at the phone: the app shows the current arm, block and item, a bar
+per arm with items done out of the total, the estimated end, and battery, charging and thermal state.
 
 ### Keeping the app in front
 
@@ -99,7 +100,8 @@ Neural Engine and CPU arms while the phone is locked; it is not implemented or t
 | `order` | `abba` (default: arms take turns, and each round reverses who goes first), `alternate` (ABAB) or `sequential` (all of one arm, then the next) |
 | `arms` | `id` (unique, names its result file), `runtime` (table above), `model` (folder in Documents/models), `options` |
 
-Every arm runs every item. The schedule is a fixed list of (arm, block) steps. At each launch the app takes
+Every arm runs every item. A changed arm (another runtime, model or options) under the same job name and arm
+id stops with an error rather than mixing two configurations in one file; give the job a new name. The schedule is a fixed list of (arm, block) steps. At each launch the app takes
 the first step whose arm has not done all of that block's items, so the result files are the only state:
 kill the app mid-block and the next launch reruns only the items with no row. Two blocks in a row for the
 same arm keep its model loaded; switching arms unloads one model and loads the other.

@@ -17,19 +17,28 @@ from pathlib import Path
 import phone_common as pc
 
 
-def phone_models(udid: str) -> set[str]:
-    """Folders already in the app's Documents/models."""
+def phone_files(udid: str, sub: str) -> set[str] | None:
+    """Relative paths of the files under Documents/<sub> in the app, or None if it cannot be listed."""
     with tempfile.NamedTemporaryFile(suffix=".json") as f:
         r = pc.devicectl("device", "info", "files", "--device", udid, "--domain-type", "appDataContainer",
-                         "--domain-identifier", pc.BUNDLE, "--subdirectory", "Documents/models", "--no-recurse",
-                         "--json-output", f.name, timeout=120)
+                         "--domain-identifier", pc.BUNDLE, "--subdirectory", f"Documents/{sub}",
+                         "--json-output", f.name, timeout=300)
         if r.returncode != 0:
-            return set()
+            return None
         try:
             files = json.loads(Path(f.name).read_text())["result"]["files"]
         except (ValueError, KeyError):
-            return set()
-    return {Path(x.get("relativePath", x.get("name", ""))).name for x in files}
+            return None
+    return {x["relativePath"] for x in files if "relativePath" in x}
+
+
+def model_complete(udid: str, local: Path) -> bool:
+    """Every file of the local model folder is on the phone, so an interrupted copy is not mistaken for a done one."""
+    have = phone_files(udid, f"models/{local.name}")
+    if not have:
+        return False
+    want = {str(p.relative_to(local)) for p in local.rglob("*") if p.is_file() and p.name != ".DS_Store"}
+    return want <= have
 
 
 def main() -> int:
@@ -59,9 +68,8 @@ def main() -> int:
         if r.returncode != 0:
             sys.exit("install failed:\n" + r.stderr[-2000:])
         print("installed", a.app.name)
-    have = set() if a.recopy_models else phone_models(udid)
     for m in models:
-        if m in have:
+        if not a.recopy_models and model_complete(udid, a.models / m):
             print(f"model {m}: already on the phone")
             continue
         print(f"model {m}: copying ...", flush=True)

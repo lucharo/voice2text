@@ -33,7 +33,10 @@ def progress(job: dict, out: Path, now: float, total: int | None = None) -> dict
     """Summarises the local copies: items done per arm, rate, estimated end, and the phone's last known state."""
     log = pc.read_rows(out / f"{job['name']}.log.jsonl")
     starts = [r for r in log if r.get("event") == "start"]
-    total = total or (starts[-1].get("items") if starts else None) or pc.item_count(job)
+    if total is None and starts:
+        total = starts[-1].get("items")
+    if total is None:
+        total = pc.item_count(job)
     arms, done_t, last = {}, [], {}
     for a in job["arms"]:
         rows = pc.read_rows(out / f"{job['name']}.{a['id']}.jsonl")
@@ -47,7 +50,7 @@ def progress(job: dict, out: Path, now: float, total: int | None = None) -> dict
         if r.get("t", 0) >= last.get("t", 0):
             last = r
     done = sum(v["done"] for v in arms.values())
-    want = total * len(job["arms"]) if total else None
+    want = total * len(job["arms"]) if total is not None else None
     s = {"job": job["name"], "at": now, "done": done, "total": want, "arms": arms,
          "ended": any(r.get("event") == "end" for r in log[log.index(starts[-1]):]) if starts else False}
     if done_t:

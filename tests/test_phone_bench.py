@@ -135,6 +135,10 @@ class Progress(unittest.TestCase):
         write(self.out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "end", "t": 2}])
         self.assertTrue(phone_sync.progress(JOB, self.out, 3)["ended"])
 
+    def test_an_empty_job_counts_as_finished(self):
+        write(self.out / "j.log.jsonl", [{"event": "start", "items": 0, "t": 1}, {"event": "end", "t": 2}])
+        self.assertTrue(phone_sync.finished(phone_sync.progress(JOB, self.out, 3)))
+
     def test_end_from_an_earlier_launch_does_not_count(self):
         write(self.out / "j.log.jsonl", [{"event": "start", "t": 1}, {"event": "end", "t": 2}, {"event": "start", "t": 3}])
         self.assertFalse(phone_sync.progress(JOB, self.out, 4)["ended"])

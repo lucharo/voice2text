@@ -52,9 +52,33 @@ final class JobRunner: @unchecked Sendable {
   let spec: JobSpec
   let log: Rows
   let files: [Rows]
-  let status: (String) -> Void
+  let status: (Progress) -> Void
 
-  init(spec: JobSpec, status: @escaping (String) -> Void) {
+  /// What the app's screen shows, so progress can be read off the phone without the Mac.
+  struct ArmProgress: Identifiable { let id: String; let done: Int; let total: Int }
+  struct Progress {
+    var line: String
+    var arms: [ArmProgress] = []
+    var eta: Date? = nil
+    var perMin: Double? = nil
+  }
+
+  private var stamps: [Date] = []  // when each item finished this launch, for the rate
+
+  private func report(_ line: String, total: Int) {
+    let now = Date()
+    stamps = stamps.filter { now.timeIntervalSince($0) < 1800 }
+    var p = Progress(line: line, arms: zip(spec.arms, files).map { ArmProgress(id: $0.id, done: $1.done.count, total: total) })
+    let left = p.arms.reduce(0) { $0 + max($1.total - $1.done, 0) }
+    if stamps.count >= 5, let first = stamps.first, now.timeIntervalSince(first) >= 60 {
+      let rate = Double(stamps.count - 1) / now.timeIntervalSince(first)
+      p.perMin = rate * 60
+      p.eta = now.addingTimeInterval(Double(left) / rate)
+    }
+    status(p)
+  }
+
+  init(spec: JobSpec, status: @escaping (Progress) -> Void) {
     self.spec = spec
     self.status = status
     log = Rows(spec.logFile)
@@ -77,11 +101,18 @@ final class JobRunner: @unchecked Sendable {
       let spec = self.spec.arms[a], out = files[a]
       let todo = items[(k * self.spec.block)..<min((k + 1) * self.spec.block, items.count)].filter { !out.done.contains($0.key) }
       if todo.isEmpty || failed.contains(a) { continue }
+      if let prev = out.lastStart?["signature"] as? String, prev != spec.signature {
+        // resuming would mix two configurations in one file, or skip the new one as already done
+        let msg = "arm \(spec.id) was \(prev) in earlier rows and is \(spec.signature) now; give the job a new name"
+        out.emit(["event": "error", "arm": spec.id, "stage": "resume", "msg": msg])
+        log.emit(["event": "arm_failed", "arm": spec.id, "msg": msg])
+        failed.insert(a); continue
+      }
       if loaded?.index != a {
         if let l = loaded { unload(l.arm, index: l.index) }
         loaded = nil
-        status("\(self.spec.name): loading \(spec.id)")
-        out.emit(["event": "start", "arm": spec.id, "runtime": spec.runtime, "model": spec.model ?? "", "mb": footprintMB(),
+        report("loading \(spec.id)", total: items.count)
+        out.emit(["event": "start", "arm": spec.id, "runtime": spec.runtime, "model": spec.model ?? "", "signature": spec.signature, "mb": footprintMB(),
                   "thermal": pi.thermalState.rawValue, "lowPower": pi.isLowPowerModeEnabled])
         let t0 = ContinuousClock.now
         do {
@@ -99,7 +130,7 @@ final class JobRunner: @unchecked Sendable {
       let arm = loaded!.arm
       log.emit(["event": "block_start", "arm": spec.id, "block": k, "i": bi, "of": sched.count, "n": todo.count, "mb": footprintMB()])
       for (j, it) in todo.enumerated() {
-        status("\(self.spec.name): \(spec.id) block \(k + 1), \(j + 1)/\(todo.count) · step \(bi + 1)/\(sched.count)")
+        report("\(spec.id) block \(k + 1), item \(j + 1)/\(todo.count) · step \(bi + 1)/\(sched.count)", total: items.count)
         let t = ContinuousClock.now
         var row: [String: Any]
         do { row = try await arm.process(it.item) } catch { row = ["errors": ["\(error)"]] }
@@ -108,6 +139,7 @@ final class JobRunner: @unchecked Sendable {
         if arm.set == .cleanup { row["s"] = (ContinuousClock.now - t).seconds }
         row["mb"] = footprintMB()
         out.emit(row)
+        stamps.append(Date())
       }
       log.emit(["event": "block_end", "arm": spec.id, "block": k, "i": bi, "mb": footprintMB()])
       if !out.ended && items.allSatisfy({ out.done.contains($0.key) }) { out.emit(["event": "end", "arm": spec.id]) }
@@ -119,7 +151,7 @@ final class JobRunner: @unchecked Sendable {
     log.emit(["event": complete ? "end" : "stopped", "job": spec.name,
               "done": Dictionary(uniqueKeysWithValues: zip(spec.arms.map(\.id), files.map(\.done.count))),
               "failed": failed.map { spec.arms[$0].id }])
-    status("\(spec.name): \(complete ? "done" : "stopped, an arm failed to load (see log)")")
+    report(complete ? "done" : "stopped: an arm failed to load (see the log)", total: items.count)
   }
 
   private func unload(_ arm: Arm, index: Int) {
