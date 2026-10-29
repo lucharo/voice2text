@@ -59,8 +59,12 @@ Names, products and jargon that come out wrong go in `~/.v2t/dictionary.txt`, on
 
 | Line | Effect |
 |---|---|
-| `Parakeet` | Shown to the cleanup model, which spells similar-sounding words this way |
+| `Parakeet` | Shown to the cleanup model, which may write it in place of a word that sounds like it |
 | `my sequel => MySQL` | Exact, case-insensitive replacement after cleanup; works with cleanup off too |
+
+Before the replacements, v2t joins acronyms the speech model spelled out ("C L I", "F.A.Q." become
+"CLI", "FAQ"), so a replacement can restyle the joined word (`US => U.S.`). A line written with spaced
+capitals (`A B testing => A/B testing`) still matches.
 
 ```bash
 v2t dictionary                          # list

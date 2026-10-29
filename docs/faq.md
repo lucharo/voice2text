@@ -116,7 +116,7 @@ word the speech model misheard; the maintainers score it separately from transcr
 labelled clips. Until the release after 0.5.16, casual cleanup dropped small words, changed tenses
 and added words, so on LibriSpeech clean it raised Parakeet v3's errors from 1.94% to 2.19%. It now
 undoes any word it dropped, changed or added, except fillers, repeats, numbers written as digits
-and your dictionary terms. LibriSpeech clean stays at 1.94%, and the extra errors fell from 1.4 to
+and a dictionary term written in place of a word that sounds like it. LibriSpeech clean stays at 1.94%, and the extra errors fell from 1.4 to
 1.7 points to 0.5 to 0.7 on AMI meetings, and from 0.65 to 0.9 to 0.1 to 0.4 on Earnings22 calls
 (27 October 2026). What remains is mostly repeats such as "the the", which those references keep.
 
