@@ -760,14 +760,20 @@ class Bark:
         models = EVAL / "grid-models"
         name = repo.split("/")[-1].lower()
         self.pad_s = 0.0 if name.endswith("-clean") else 0.25
-        # Pro ships no loader of its own: Bark 3.0's bark_mlx.py converts its names
-        small = models / name if (models / name / "bark_mlx.py").exists() else models / "underdog-bark-3.0"
+        source = models / name  # this model's own files: weights never come from another
+        if not source.is_dir():
+            raise SystemExit(f"{repo}: download it elsewhere and rsync it to {source}")
+        # code only: Pro ships no loader of its own, so Bark 3.0's bark_mlx.py converts its names
+        small = source if (source / "bark_mlx.py").exists() else models / "underdog-bark-3.0"
         sys.path.insert(0, str(small))
         if flag == "coreml-ane":
-            sys.path.insert(0, str(small / "coreml/ane"))
+            package = source / "coreml/ane"
+            if not (package / "bark_coreml.py").exists():
+                raise SystemExit(f"{repo}: no Core ML package at {package}")
+            sys.path.insert(0, str(package))
             from bark_coreml import Transcriber
 
-            self.coreml = Transcriber(str(small / "coreml/ane"), "ane")
+            self.coreml = Transcriber(str(package), "ane")
             self.uses_mlx = False
             return
         self.coreml = None
