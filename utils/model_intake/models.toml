@@ -46,6 +46,12 @@ url = "https://artificialanalysis.ai/speech-to-text"
 read = "2026-10-23"
 note = "AA-WER v2, non-streaming. Measured through a hosted API, which can differ from the open weights."
 
+[sources.bark_card]
+name = "Underdog Bark 3.0 model card"
+url = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0"
+read = "2026-10-27"
+note = "The creator's own run of the Open ASR Leaderboard scoring code on the full English test sets; not on the leaderboard yet."
+
 # --- models -------------------------------------------------------------------
 
 [models."parakeet-tdt-0.6b-v3"]
@@ -122,6 +128,70 @@ reported = [
   { source = "oasr_en", metric = "ls-other", value = 3.92 },
   { source = "oasr_en", metric = "ami-ihm", value = 9.32 },
   { source = "oasr_en", metric = "earnings22-aa", value = 6.96 },
+]
+
+[models."bark-3.0"]
+label = "Underdog Bark 3.0"
+short = "Bark 3.0"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0"
+note = "Parakeet v3 retrained through Parakeet Ultra, packed into a 163 MB model.bark (unpacked to fp16 or 4-bit for MLX). The card's 4.94% average covers seven Open ASR sets, not the leaderboard's nine, so it is left out of oasr-avg."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.89 },
+  { source = "bark_card", metric = "ls-other", value = 4.08 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.82 },
+  { source = "bark_card", metric = "earnings22-aa", value = 7.05 },
+]
+
+[models."bark-3.0-pro"]
+label = "Underdog Bark 3.0 Pro"
+short = "Bark 3.0 Pro"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro"
+note = "The full-precision (bf16) member of the Bark 3.0 family. The card's 4.29% average covers seven Open ASR sets, not the leaderboard's nine."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.38 },
+  { source = "bark_card", metric = "ls-other", value = 3.11 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.16 },
+  { source = "bark_card", metric = "earnings22-aa", value = 5.65 },
+]
+
+[models."bark-3.0-plus"]
+label = "Underdog Bark 3.0 Plus"
+short = "Bark 3.0 Plus"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus"
+note = "A 180 MB packing of the Bark 3.0 weights, closer to Pro. The card's 4.76% average covers seven Open ASR sets."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.71 },
+  { source = "bark_card", metric = "ls-other", value = 3.82 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.76 },
+  { source = "bark_card", metric = "earnings22-aa", value = 6.70 },
+]
+
+[models."bark-3.0-clean"]
+label = "Underdog Bark 3.0 Clean"
+short = "Bark 3.0 Clean"
+creator = "Conway Research"
+params_b = 0.6
+licence = "CC-BY-4.0"
+languages = 1
+card = "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean"
+note = "Bark 3.0 Plus trained to drop fillers, false starts and repeats; verbatim references count each drop as an error."
+reported = [
+  { source = "bark_card", metric = "ls-clean", value = 1.71 },
+  { source = "bark_card", metric = "ls-other", value = 3.78 },
+  { source = "bark_card", metric = "ami-ihm", value = 12.12 },
+  { source = "bark_card", metric = "earnings22-aa", value = 8.55 },
 ]
 
 [models.whisper-large-v3-turbo]
@@ -234,6 +304,77 @@ precision = "bf16"
 disk_gb = 2.508
 v2t = "opt-in"
 note = "fp32 files, run in bf16 by the grid; v2t loads it 8-bit since 0.5.15 (backend = \"parakeet\"; the default until #61)."
+
+[systems.parakeet-v3-8bit]
+model = "parakeet-tdt-0.6b-v3"
+engine = "parakeet-mlx"
+precision = "8-bit"
+disk_gb = 2.508
+v2t = "opt-in"
+note = "As v2t's `parakeet` backend loads it since 0.5.15: fp32 files quantised to 8 bits at load, whole-file."
+
+[systems."bark-3.0"]
+model = "bark-3.0"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 1.254
+note = "The fp16 folder its bark_mlx.py unpacks once from the 163 MB model.bark download; disk_gb is that folder, the weights MLX reads."
+
+[systems."bark-3.0-4bit"]
+model = "bark-3.0"
+engine = "mlx-audio"
+precision = "4-bit"
+disk_gb = 0.472
+note = "model.bark unpacked, then quantised to 4 bits (group 64), as bark_mlx.py --bits 4; disk_gb is the quantised folder."
+
+[systems."bark-3.0-coreml"]
+model = "bark-3.0"
+engine = "coreml"
+precision = "palettised weights, fp16 compute"
+disk_gb = 0.202
+note = "Its coreml/ane package: encoder on the Neural Engine in 8 or 15 s windows, numpy TDT decoder, longer audio cut at pauses into 15 s pieces."
+
+[systems."bark-3.0-pro"]
+model = "bark-3.0-pro"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 1.254
+note = "bf16 safetensors converted to mlx-audio's fp16 layout."
+
+[systems."bark-3.0-pro-4bit"]
+model = "bark-3.0-pro"
+engine = "mlx-audio"
+precision = "4-bit"
+disk_gb = 0.472
+note = "The fp16 conversion quantised to 4 bits (group 64); disk_gb is the quantised folder."
+
+[systems."bark-3.0-plus"]
+model = "bark-3.0-plus"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 1.254
+note = "The fp16 folder unpacked once from the 180 MB model.bark download."
+
+[systems."bark-3.0-plus-coreml"]
+model = "bark-3.0-plus"
+engine = "coreml"
+precision = "palettised weights, fp16 compute"
+disk_gb = 0.206
+note = "Its coreml/ane package, run as Bark 3.0's."
+
+[systems."bark-3.0-clean"]
+model = "bark-3.0-clean"
+engine = "mlx-audio"
+precision = "fp16"
+disk_gb = 1.254
+note = "The fp16 folder unpacked once from the 179 MB model.bark download. No leading silence, its evaluated setting."
+
+[systems."bark-3.0-pro-coreml"]
+model = "bark-3.0-pro"
+engine = "coreml"
+precision = "fp16"
+disk_gb = 1.235
+note = "Its coreml/ files (FluidAudio's Parakeet v3 layout), compiled once with coremlcompiler and run through v2t's own parakeet-coreml decode, 0.25 s of leading silence."
 
 [systems.parakeet-v3-mlxaudio]
 model = "parakeet-tdt-0.6b-v3"

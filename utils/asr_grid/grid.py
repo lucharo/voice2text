@@ -147,11 +147,35 @@ SYSTEMS = {
     # ...and with the encoder kept packed (FERMION_P2_FAST=tdt16, its bit-exact
     # path): the memory a phone would need
     "phonon-2-packed": ("fermion", "FermionResearch/Phonon-2#tdt16", "offline"),
+    # Underdog Bark 3.0 (ConwayResearch, 2026-10-21): Parakeet v3 retrained through
+    # Parakeet Ultra and packed into a 163 MB `model.bark`, English only. MLX runs it
+    # through mlx-audio's Parakeet graph as its own bark_mlx.py does (unpacked to
+    # fp16, or 4-bit affine); Core ML through its bark_coreml.py (encoder on the
+    # Neural Engine, numpy TDT decoder, audio over 15 s cut at pauses)
+    "bark-3.0": ("bark", "ConwayResearch/Underdog-Bark-3.0#mlx-16", "offline"),
+    "bark-3.0-4bit": ("bark", "ConwayResearch/Underdog-Bark-3.0#mlx-4", "offline"),
+    "bark-3.0-coreml": ("bark", "ConwayResearch/Underdog-Bark-3.0#coreml-ane", "offline"),
+    # ...and Bark 3.0 Pro, the full-precision member (bf16 safetensors, 1.25 GB)
+    "bark-3.0-pro": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-16", "offline"),
+    "bark-3.0-pro-4bit": ("bark", "ConwayResearch/Underdog-Bark-3.0-Pro#mlx-4", "offline"),
+    # Pro's Core ML files have FluidAudio's Parakeet v3 layout and inputs, so v2t's
+    # own parakeet-coreml decode runs them unchanged (encoder: its default full15)
+    "bark-3.0-pro-coreml": ("parakeet-coreml", "ConwayResearch/Underdog-Bark-3.0-Pro", "offline"),
+    # ...Bark 3.0 Plus (180 MB, a more accurate packing), and Bark 3.0 Clean, Plus
+    # trained to drop fillers, false starts and repeats (verbatim references count
+    # every one it drops against it)
+    "bark-3.0-plus": ("bark", "ConwayResearch/Underdog-Bark-3.0-Plus#mlx-16", "offline"),
+    "bark-3.0-plus-coreml": ("bark", "ConwayResearch/Underdog-Bark-3.0-Plus#coreml-ane", "offline"),
+    "bark-3.0-clean": ("bark", "ConwayResearch/Underdog-Bark-3.0-Clean#mlx-16", "offline"),
+    # Parakeet v3 as v2t's `parakeet` backend loads it since 0.5.15 (8-bit), whole-file
+    "parakeet-v3-8bit": ("parakeet-mlx", "mlx-community/parakeet-tdt-0.6b-v3#8bit", "offline"),
     # Wispr Flow's cloud service through the desktop app's own gRPC route, run by
     # .ignored_scripts/wispr_api.py, local only (not `run`): one request per clip after release
     "wispr-flow-api": ("wispr-cloud", "flow_api.v1.TranscriptionService/Transcribe", "offline"),
 }
-ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"}  # no fleurs-es
+ENGLISH_ONLY = {"parakeet-unified-en", "phonon-2", "phonon-2-packed"} | {
+    s for s in SYSTEMS if s.startswith("bark-")
+}  # no fleurs-es
 
 
 # --- text -------------------------------------------------------------------
@@ -415,9 +439,11 @@ class ParakeetMLX:
         from v2t import backends
 
         self.backends = backends
+        repo, _, flag = repo.partition("#")
         # v2t quantizes Parakeet to PARAKEET_BITS at load since 0.5.15; the grid's
-        # parakeet-mlx rows are bf16, so this process keeps full precision
-        backends._quantized = lambda model: model
+        # parakeet-mlx rows are bf16 unless the repo ends in `#8bit`
+        if flag != "8bit":
+            backends._quantized = lambda model: model
         if (Path(_snapshot(repo)) / "config.json").exists():
             self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
         else:
@@ -506,13 +532,25 @@ class MLXWhisper:
 
 class ParakeetCoreML:
     """v2t's Core ML decode (backends.ParakeetCoreMLSTT.decode) without the MLX
-    model it keeps for the live text; reads FluidAudio's files, never the repo."""
+    model it keeps for the live text; reads FluidAudio's files, never the repo.
+
+    Another repository in the same layout (Bark 3.0 Pro) is read from
+    ~/.v2t/eval/grid-models/<name>-coreml: its .mlpackage files compiled with
+    `xcrun coremlcompiler compile`, the encoder renamed Encoder_v2.mlmodelc. Those
+    get its evaluated 0.25 s of leading silence.
+    """
 
     def __init__(self, repo: str, mode: str):
         sys.path.insert(0, str(REPO))
-        from v2t.coreml import CoreMLParakeet
+        from v2t.coreml import COREML_REPO, CoreMLParakeet
 
-        self.model = CoreMLParakeet()
+        self.uses_mlx = False
+        self.pad = 0
+        if repo == COREML_REPO:
+            self.model = CoreMLParakeet()
+            return
+        self.model = CoreMLParakeet(EVAL / "grid-models" / f"{repo.split('/')[-1].lower()}-coreml")
+        self.pad = int(0.25 * SAMPLE_RATE)
 
     def run(self, clip: dict) -> dict:
         audio = load_audio(clip["path"])
@@ -521,6 +559,8 @@ class ParakeetCoreML:
         return {"offline": text, "offline_s": time.perf_counter() - t0}
 
     def decode(self, audio: np.ndarray) -> str:
+        if self.pad:
+            audio = np.concatenate([np.zeros(self.pad, np.float32), audio])
         return self.model.decode(audio)
 
 
@@ -701,7 +741,129 @@ class Fermion:
         return self.model.transcribe_array(audio)[0].strip()
 
 
+class Bark:
+    """Underdog Bark 3.0 as its own scripts run it, 0.25 s of silence in front (none
+    for Clean, its evaluated setting).
+
+    The repository (model.bark, bark_mlx.py, bark_loader.py, coreml/) is read from
+    ~/.v2t/eval/grid-models/underdog-bark-3.0, the Pro one (model.safetensors,
+    mlx/config.json) from underdog-bark-3.0-pro: rsync them there from a machine that
+    reaches Hugging Face (Plus and Clean likewise). `#mlx-16` / `#mlx-4` unpack the weights once into an
+    mlx-audio folder beside them (bark_mlx.prepare's layout; the 4-bit one is that
+    folder quantised the way prepare does, group 64 affine); `#coreml-ane` loads
+    the repository's own bark_coreml.Transcriber on the Neural Engine. Past WHOLE_FILE_MAX_S the MLX
+    rows use mlx-audio's own chunking, like every mlx-audio Parakeet row.
+    """
+
+    def __init__(self, repo: str, mode: str):
+        repo, _, flag = repo.partition("#")
+        models = EVAL / "grid-models"
+        name = repo.split("/")[-1].lower()
+        self.pad_s = 0.0 if name.endswith("-clean") else 0.25
+        source = models / name  # this model's own files: weights never come from another
+        if not source.is_dir():
+            raise SystemExit(f"{repo}: download it elsewhere and rsync it to {source}")
+        # code only: Pro ships no loader of its own, so Bark 3.0's bark_mlx.py converts its names
+        small = source if (source / "bark_mlx.py").exists() else models / "underdog-bark-3.0"
+        sys.path.insert(0, str(small))
+        if flag == "coreml-ane":
+            package = source / "coreml/ane"
+            if not (package / "bark_coreml.py").exists():
+                raise SystemExit(f"{repo}: no Core ML package at {package}")
+            sys.path.insert(0, str(package))
+            from bark_coreml import Transcriber
+
+            self.coreml = Transcriber(str(package), "ane")
+            self.uses_mlx = False
+            return
+        self.coreml = None
+        import mlx.core as mx
+        from mlx_audio.stt import load
+
+        bits = int(flag.removeprefix("mlx-"))
+        fp16 = models / f"{name}-mlx-fp16"
+        if not fp16.exists():
+            self._publish(fp16, lambda tmp: self._unpack(models / name, small, tmp))
+        folder = fp16
+        if bits < 16:
+            folder = models / f"{name}-mlx-{bits}bit"
+            if not folder.exists():
+                self._publish(folder, lambda tmp: self._quantise(fp16, tmp, bits))
+        self.model = load(str(folder), strict=True, model_type="parakeet")
+        mx.eval(self.model.parameters())
+
+    @staticmethod
+    def _publish(out: Path, build) -> None:
+        """Build a model folder beside `out` and rename it into place only once
+        complete, so an interrupted unpack never leaves a folder a rerun would trust."""
+        import shutil
+
+        tmp = out.with_name(out.name + ".partial")
+        shutil.rmtree(tmp, ignore_errors=True)  # a previous interrupted build
+        private_dir(tmp)
+        build(tmp)
+        if out.is_symlink():  # a link to a folder that is gone (exists() is False)
+            out.unlink()
+        tmp.rename(out)
+
+    @staticmethod
+    def _unpack(source: Path, small: Path, out: Path) -> None:
+        import shutil
+
+        if (source / "model.bark").exists():  # Bark 3.0's packed file
+            from bark_mlx import prepare
+
+            prepare(str(source / "model.bark"), str(out), bits=16)
+            return
+        import mlx.core as mx  # Pro: transformers' ParakeetForTDT safetensors (bf16)
+        from bark_mlx import to_mlx_names
+
+        sd = {k: np.array(v.astype(mx.float32)) for k, v in mx.load(str(source / "model.safetensors")).items()}
+        weights = {k: mx.array(v).astype(mx.float16) for k, v in to_mlx_names(sd).items()}
+        mx.save_safetensors(str(out / "model.safetensors"), weights)
+        for f in ("tokenizer.model", "tokenizer.vocab", "vocab.txt"):
+            shutil.copy(small / "mlx" / f, out / f)
+        shutil.copy(source / "mlx/config.json", out / "config.json")
+
+    @staticmethod
+    def _quantise(fp16: Path, out: Path, bits: int) -> None:
+        import shutil
+
+        import mlx.core as mx
+        from mlx import nn
+        from mlx.utils import tree_flatten
+        from mlx_audio.stt import load
+
+        model = load(str(fp16), strict=True, model_type="parakeet")
+        nn.quantize(model, group_size=64, bits=bits)
+        for f in ("tokenizer.model", "tokenizer.vocab", "vocab.txt"):
+            shutil.copy(fp16 / f, out / f)
+        mx.save_safetensors(str(out / "model.safetensors"), dict(tree_flatten(model.parameters())))
+        cfg = json.loads((fp16 / "config.json").read_text())
+        cfg["quantization"] = {"bits": bits, "group_size": 64, "mode": "affine"}
+        (out / "config.json").write_text(json.dumps(cfg))
+
+    def run(self, clip: dict) -> dict:
+        audio = load_audio(clip["path"])
+        t0 = time.perf_counter()
+        text = self.decode(audio)
+        return {"offline": text, "offline_s": time.perf_counter() - t0}
+
+    def decode(self, audio: np.ndarray) -> str:
+        if self.coreml is not None:
+            return self.coreml.transcribe(audio, SAMPLE_RATE)  # adds its own 0.25 s
+        import mlx.core as mx
+
+        wave = np.concatenate([np.zeros(int(self.pad_s * SAMPLE_RATE), np.float32), audio])
+        long = len(wave) > WHOLE_FILE_MAX_S * SAMPLE_RATE
+        return self.model.generate(
+            mx.array(wave), dtype=mx.bfloat16,
+            chunk_duration=WHOLE_FILE_MAX_S if long else None, verbose=False,
+        ).text.strip()
+
+
 RUNTIMES = {
+    "bark": Bark,
     "fermion": Fermion,
     "parakeet-mlx": ParakeetMLX,
     "mlx-whisper": MLXWhisper,
@@ -740,7 +902,9 @@ def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -
             result = {
                 "id": clip["id"],
                 "duration_s": clip["duration_s"],
-                **measured(lambda: engine.run(clip)),
+                # MLX's peak means nothing for a Core ML engine: leave it out
+                **(measured(lambda: engine.run(clip)) if getattr(engine, "uses_mlx", True)
+                   else engine.run(clip)),
             }
             out.write(json.dumps(result) + "\n")
             out.flush()
@@ -821,7 +985,8 @@ def run_chunked(system: str, set_name: str, limit: int | None) -> None:
         for n, clip in enumerate(todo, 1):
             result = {"id": clip["id"], "duration_s": clip["duration_s"]}
             audio = load_audio(clip["path"])
-            result.update(measured(lambda: chunked(engine, audio)))
+            work = lambda: chunked(engine, audio)
+            result.update(measured(work) if getattr(engine, "uses_mlx", True) else work())
             out.write(json.dumps(result) + "\n")
             out.flush()
             release_cache()
@@ -892,7 +1057,7 @@ def family(system: str) -> str:
     """parakeet-v3, its fine-tunes and its low-bit retrains (Ultra, Redux, Phonon-2) are
     one family; so are the two Qwen3-ASR builds."""
     head = system.split("-")[0]
-    return "parakeet" if head == "phonon" else head
+    return "parakeet" if head in ("phonon", "bark") else head
 
 
 def incomplete_cells(set_name: str) -> dict[str, tuple[int, int]]:

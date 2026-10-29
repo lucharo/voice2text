@@ -18,6 +18,10 @@ dictation on this Mac?**
 | `cohere-transcribe` | mlx-audio | Cohere Transcribe 03-2026, 2B, Apache-2.0, offline, told each clip's language (it has no language detection). Full precision from `viethang/cohere-transcribe-03-2026`, an ungated mirror of the gated `CohereLabs` checkpoint, because mlx-audio reads that layout; the MLX conversions on the Hub (`beshkenadze/*`, `mlx-community/*`) use mlx-audio-swift or mlx-speech tensor names and come out as noise (2026-10-14) |
 | `parakeet-redux` | mlx-audio | Moondream's ternary (1.58-bit) Parakeet v3, 178 MB, offline. Phone candidate |
 | `phonon-2` (and `-packed`) | fermion-research | Fermion's Parakeet v3 retrained at ~2.1 bits, 164 MB, English only, through its own MLX engine (on mlx-audio's Parakeet graph) in an env of its own. `phonon-2` is the engine's default, which dequantises the encoder to fp16; `-packed` keeps it packed (`FERMION_P2_FAST=tdt16`), the memory a phone would need. Phone candidate |
+| `parakeet-v3-8bit` | parakeet-mlx | Parakeet v3 as v2t's `parakeet` backend loads it since 0.5.15 (8-bit), whole-file |
+| `bark-3.0` (and `-4bit`, `-coreml`) | bark | Conway Research's Underdog Bark 3.0 (October 2026): Parakeet v3 retrained through Parakeet Ultra, a 163 MB `model.bark`, English only. MLX through its own `bark_mlx.py` (mlx-audio's Parakeet graph, unpacked to fp16 or 4-bit); Core ML through its `bark_coreml.py` (encoder on the Neural Engine, numpy decoder, audio over 15 s cut at pauses). Each load of its `.mlpackage` recompiles for 5 to 6 minutes. Phone candidate |
+| `bark-3.0-plus` (and `-plus-coreml`), `bark-3.0-clean` | bark | Bark 3.0 Plus (180 MB) and Clean, Plus trained to drop fillers and false starts (verbatim references count each drop) |
+| `bark-3.0-pro` (and `-pro-4bit`, `-pro-coreml`) | bark, coremltools | Bark 3.0 Pro, bf16 (1.25 GB). Its Core ML files have FluidAudio's Parakeet v3 layout, so `-pro-coreml` runs them through v2t's own `parakeet-coreml` decode, compiled once with `xcrun coremlcompiler compile` into `~/.v2t/eval/grid-models/underdog-bark-3.0-pro-coreml` (encoder renamed `Encoder_v2.mlmodelc`) |
 | `parakeet-unified-en` | parakeet-mlx | NVIDIA's English Parakeet Unified, offline mode only: `littlebearlabs/parakeet-unified-en-0.6b-mlx` (fp32, NeMo layout) mapped onto stock parakeet-mlx by `grid.load_nemo_layout` and cast to bf16 like every parakeet-mlx row. Its streaming mode is not run |
 
 Each cell from 2026-10-14 also records MLX's peak memory per clip (weights included), the
@@ -80,6 +84,10 @@ VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio uv pip install sentencepiece  # Coher
 VIRTUAL_ENV=.venv uv pip install ${=SCORE} pyyaml  # Parakeet and Whisper run in v2t's own venv
 uv venv ~/.v2t/eval/grid-envs/phonon && VIRTUAL_ENV=~/.v2t/eval/grid-envs/phonon \
   uv pip install 'fermion-research[mlx]==0.2.11' soundfile ${=SCORE}
+
+uv venv ~/.v2t/eval/grid-envs/bark && VIRTUAL_ENV=~/.v2t/eval/grid-envs/bark \
+  uv pip install mlx-audio==0.5.7 coremltools==9.0 constriction==0.5.0 soundfile soxr whisper-normalizer
+# Bark's repositories go in ~/.v2t/eval/grid-models/underdog-bark-3.0{,-plus,-clean,-pro} (hf download elsewhere, then rsync)
 
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py prepare
 .venv/bin/python utils/asr_grid/grid.py run --system parakeet-v3 --set ls-clean
