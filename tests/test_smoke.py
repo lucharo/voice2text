@@ -24,7 +24,7 @@ from unittest import mock
 import numpy as np
 from scipy.io import wavfile
 
-from v2t import app, backends, bench, cli, config, coreml, menubar, permissions, service
+from v2t import app, backends, bench, cli, config, coreml, menubar, models, permissions, service, update
 
 
 class V2TSmokeTests(unittest.TestCase):
@@ -2890,13 +2890,16 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_config_json_prints_paths_and_every_setting_after_a_set(self):
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with contextlib.redirect_stdout(output), mock.patch.object(
+            models, "pickers", return_value={"transcription": [], "cleanup": []}
+        ):
             code = cli.cmd_config(["set", "hotkey.key", "alt_r", "--json"])
 
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output.getvalue()), {
             "home": self.tempdir.name,
             "config": str(config.config_path()),
+            "models": {"transcription": [], "cleanup": []},
             "settings": {
                 "transcription.backend": "parakeet-coreml", "transcription.model": "",
                 "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
@@ -2913,6 +2916,279 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse(config.config_path().exists())
+
+    def test_config_set_writes_several_pairs_in_one_write(self):
+        config.write_config('[transcription]\nbackend = "parakeet-coreml"  # engine\nmodel = ""\n')
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            code = cli.cmd_config([
+                "set", "transcription.backend", "parakeet",
+                "transcription.model", backends.PARAKEET_UNIFIED_EN,
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            config.config_path().read_text(),
+            '[transcription]\nbackend = "parakeet"  # engine\n'
+            f'model = "{backends.PARAKEET_UNIFIED_EN}"\n',
+        )
+        self.assertEqual(output.getvalue().splitlines(), [
+            f"transcription.backend = 'parakeet'  ({config.config_path()})",
+            f"transcription.model = '{backends.PARAKEET_UNIFIED_EN}'  ({config.config_path()})",
+        ])
+
+    def test_config_set_refuses_every_pair_when_one_is_bad(self):
+        config.write_config('[transcription]\nbackend = "parakeet-coreml"\n')
+
+        with self.assertRaises(SystemExit) as refused:
+            config.set_values([("transcription.backend", "parakeet"), ("cleanup.enabled", "maybe")])
+
+        self.assertIn("cleanup.enabled must be true or false", str(refused.exception))
+        self.assertEqual(config.config_path().read_text(), '[transcription]\nbackend = "parakeet-coreml"\n')
+
+    def test_config_set_needs_whole_pairs(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+            cli.cmd_config(["set", "transcription.backend", "parakeet", "transcription.model"])
+
+        self.assertEqual(refused.exception.code, 2)
+        self.assertFalse(config.config_path().exists())
+
+    def _pickers(self, cfg, *, cached=(), extras=("mlx_whisper", "mlx_audio"), ollama=()):
+        """The pickers with the download caches, extras and Ollama's store faked."""
+        ollama_root = Path(self.tempdir.name) / "ollama"
+        for tag in ollama:
+            name, _, version = tag.partition(":")
+            manifest = ollama_root / "manifests" / "registry.ollama.ai" / "library" / name / version
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text("{}")
+        find_spec = lambda name: object() if name in extras else None  # noqa: E731
+        with (
+            mock.patch.object(backends, "cached_locally", side_effect=lambda repo: repo in cached),
+            mock.patch.object(coreml, "COREML_DIR", Path(self.tempdir.name) / "no-fluidaudio"),
+            mock.patch.object(models.importlib.util, "find_spec", side_effect=find_spec),
+            mock.patch.dict(os.environ, {"OLLAMA_MODELS": str(ollama_root)}),
+        ):
+            return models.pickers(cfg)
+
+    @staticmethod
+    def _rows(rows):
+        return [(r["id"], r["label"], r["downloaded"], r["available"], r["current"], r["note"]) for r in rows]
+
+    def test_transcription_picker_marks_downloads_missing_extras_and_the_model_in_use(self):
+        cfg = config.Config(backend="parakeet", stt_model=backends.PARAKEET_UNIFIED_EN)
+
+        rows = self._pickers(cfg, cached={coreml.COREML_REPO, backends.PARAKEET_UNIFIED_EN},
+                             extras={"mlx_whisper"})["transcription"]
+
+        self.assertEqual(self._rows(rows), [
+            ("parakeet-coreml", "Parakeet v3 · Core ML (default)", True, True, False, "0.63 GB, downloaded"),
+            ("parakeet", "Parakeet v3 · MLX", False, True, False, "downloads 2.5 GB on first use"),
+            (f"parakeet:{backends.PARAKEET_UNIFIED_EN}", "Parakeet Unified · English only",
+             True, True, True, "2.5 GB, downloaded"),
+            ("qwen3-asr", "Qwen3-ASR 1.7B · 8-bit", False, False, False, "needs voice2text[qwen]"),
+            ("whisper", "Whisper large-v3 turbo", False, True, False, "downloads 1.6 GB on first use"),
+        ])
+        self.assertEqual(rows[2]["set"], [["transcription.backend", "parakeet"],
+                                          ["transcription.model", backends.PARAKEET_UNIFIED_EN]])
+
+    def test_transcription_picker_reads_fluidaudios_folder_and_ticks_a_spelled_out_default(self):
+        fluidaudio = Path(self.tempdir.name) / "fluidaudio"
+        for name in coreml.FILES:
+            (fluidaudio / name).mkdir(parents=True)
+        cfg = config.Config(backend="parakeet", stt_model=backends.PARAKEET_DEFAULT)
+
+        with mock.patch.object(backends, "cached_locally", return_value=False), \
+                mock.patch.object(coreml, "COREML_DIR", fluidaudio):
+            rows = models.transcription(cfg)
+
+        self.assertEqual([(r["id"], r["downloaded"], r["current"]) for r in rows[:2]],
+                         [("parakeet-coreml", True, False), ("parakeet", False, True)])
+
+    def test_transcription_picker_adds_a_hand_set_model_as_a_ticked_row_that_cannot_be_picked(self):
+        cfg = config.Config(backend="whisper", stt_model="mlx-community/whisper-small")
+
+        rows = self._pickers(cfg)["transcription"]
+
+        self.assertEqual([r["current"] for r in rows], [False] * 5 + [True])
+        self.assertEqual(rows[-1], {
+            "id": "custom", "label": "whisper-small", "size_gb": None, "downloaded": None,
+            "available": False, "current": True, "note": "set in config.toml", "set": [],
+        })
+
+    def test_cleanup_picker_offers_off_the_mlx_sizes_and_ollama_once_pulled(self):
+        for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507"),
+                             (("qwen3:4b-instruct-2507",), "2.5 GB, downloaded")):
+            with self.subTest(pulled=pulled):
+                rows = self._pickers(config.Config(), cached={backends.MLX_CLEANUP_DEFAULT},
+                                     ollama=pulled)["cleanup"]
+
+                self.assertEqual(self._rows(rows), [
+                    ("off", "Off", None, True, False, ""),
+                    (f"mlx:{backends.MLX_CLEANUP_FAST}", "Qwen3.5 0.8B · fastest", False, True, False,
+                     "downloads 0.65 GB on first use"),
+                    ("mlx", "Qwen3.5 2B (default)", True, True, True, "1.7 GB, downloaded"),
+                    (f"mlx:{backends.MLX_CLEANUP_QUALITY}", "Qwen3.5 4B", False, True, False,
+                     "downloads 3.1 GB on first use"),
+                    ("ollama", "Ollama · qwen3:4b", bool(pulled), bool(pulled), False, note),
+                ])
+
+    def test_cleanup_picker_ticks_off_and_each_row_writes_its_engine_and_model(self):
+        rows = self._pickers(config.Config(cleanup_enabled=False, cleanup_engine="ollama"))["cleanup"]
+
+        self.assertEqual([r["id"] for r in rows if r["current"]], ["off"])
+        self.assertEqual([r["set"] for r in rows[:2]], [
+            [["cleanup.enabled", "false"]],
+            [["cleanup.enabled", "true"], ["cleanup.engine", "mlx"], ["cleanup.model", backends.MLX_CLEANUP_FAST]],
+        ])
+
+    def test_every_picker_row_names_a_backend_v2t_accepts_once(self):
+        for picker, accepted in ((backends.STT_CHOICES, backends.STT),
+                                 (backends.CLEANUP_CHOICES, {**backends.CLEANUP, "off": None})):
+            ids = [(choice.backend, choice.model) for choice in picker]
+            with self.subTest(picker=picker[0].backend):
+                self.assertEqual([b for b, _ in ids if b not in accepted], [])
+                self.assertEqual(len(ids), len(set(ids)))
+
+    def test_choosing_a_picker_row_writes_what_the_picker_then_ticks(self):
+        rows = self._pickers(config.Config())["transcription"]
+        unified = next(r for r in rows if r["id"].endswith(backends.PARAKEET_UNIFIED_EN))
+
+        cfg = config.set_values([tuple(pair) for pair in unified["set"]])
+
+        self.assertEqual([r["id"] for r in self._pickers(cfg)["transcription"] if r["current"]],
+                         [unified["id"]])
+
+    # --- update -------------------------------------------------------------
+
+    def test_update_versions_compare_as_numbers_and_ignore_prereleases(self):
+        self.assertEqual(
+            [update.newer("0.5.10", "0.5.9"), update.newer("0.5.9", "0.5.10"),
+             update.newer("0.6.0rc1", "0.5.16"), update.newer("0.5.16", "0.5.16"), update.newer(None, "0.5.16")],
+            [True, False, False, False, False],
+        )
+
+    def test_update_asks_pypi_at_most_once_a_day(self):
+        fetch = mock.Mock(side_effect=["0.5.17", "0.5.18"])
+
+        first = update.latest_release(now=1000.0, fetch=fetch)
+        same_day = update.latest_release(now=1000.0 + update.CHECK_EVERY_S - 1, fetch=fetch)
+        next_day = update.latest_release(now=1000.0 + update.CHECK_EVERY_S, fetch=fetch)
+
+        self.assertEqual([first["latest"], same_day["latest"], next_day["latest"]], ["0.5.17", "0.5.17", "0.5.18"])
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(stat.S_IMODE(update.cache_path().stat().st_mode), 0o600)
+
+    def test_update_keeps_the_last_good_answer_when_pypi_fails_and_retries_after_an_hour(self):
+        update.latest_release(now=0.0, fetch=lambda: "0.5.17")
+        failing = mock.Mock(side_effect=OSError("offline"))
+        day = float(update.CHECK_EVERY_S)
+
+        failed = update.latest_release(now=day, fetch=failing)
+        within_the_hour = update.latest_release(now=day + update.RETRY_AFTER_S - 1, fetch=failing)
+        after_the_hour = update.latest_release(now=day + update.RETRY_AFTER_S, fetch=lambda: "0.5.18")
+
+        self.assertEqual((failed["latest"], failed["error"]), ("0.5.17", "offline"))
+        self.assertEqual(within_the_hour["latest"], "0.5.17")
+        self.assertEqual(failing.call_count, 1)
+        self.assertEqual(after_the_hour, {"latest": "0.5.18", "checked_at": day + update.RETRY_AFTER_S})
+
+    def test_update_reads_how_uv_installed_the_engine(self):
+        prefix = Path(self.tempdir.name) / "tool"
+        prefix.mkdir()
+        receipts = {
+            "uv": '[tool]\nrequirements = [{ name = "voice2text", extras = ["qwen"] }]\n',
+            "uv-source": '[tool]\nrequirements = [{ name = "voice2text", editable = "/src/voice2text" }]\n',
+        }
+        for route, receipt in receipts.items():
+            (prefix / "uv-receipt.toml").write_text(receipt)
+            with self.subTest(route=route):
+                self.assertEqual(update.engine_route(prefix), route)
+        (prefix / "uv-receipt.toml").unlink()
+        self.assertEqual(update.engine_route(prefix), "other")
+
+    def test_update_tells_the_cask_from_a_local_build_and_a_build_folder(self):
+        root = Path(self.tempdir.name)
+        system, home, caskroom = root / "Applications/Voice2Text.app", root / "home", root / "Caskroom/voice2text"
+        for folder in (system, home / "Applications/Voice2Text.app", root / "build/Voice2Text.app", caskroom):
+            folder.mkdir(parents=True)
+        with mock.patch.object(update, "SYSTEM_APP", system), mock.patch.object(Path, "home", return_value=home):
+            routes = [
+                update.app_route(system, (caskroom,)),
+                update.app_route(system, (root / "no-caskroom",)),
+                update.app_route(home / "Applications/Voice2Text.app", (caskroom,)),
+                update.app_route(root / "build/Voice2Text.app", (caskroom,)),
+                update.app_route(None, (caskroom,)),
+            ]
+
+        self.assertEqual(routes, ["cask", "other", "local", "other", None])
+
+    def _update_check(self, *, engine_route, app_route, app_version="0.5.16", engine_version="0.5.16"):
+        tools = {"uv": "/bin/uv", "brew": "/bin/brew"}
+        with (
+            mock.patch.object(update, "__version__", engine_version),
+            mock.patch.object(update, "engine_route", return_value=engine_route),
+            mock.patch.object(update, "app_route", return_value=app_route),
+            mock.patch.object(update, "_which", side_effect=tools.get),
+        ):
+            return update.check(Path("/Some.app"), app_version, now=0.0, fetch=lambda: "0.5.17")
+
+    def test_update_upgrades_the_uv_engine_and_the_cask_then_reopens_the_app(self):
+        result = self._update_check(engine_route="uv", app_route="cask")
+
+        self.assertEqual({k: result[k] for k in ("update", "commands", "restart", "relaunch")}, {
+            "update": True,
+            "commands": [["/bin/uv", "tool", "upgrade", "voice2text"], ["/bin/brew", "upgrade", "--cask", "voice2text"]],
+            "restart": "app",
+            "relaunch": ["/usr/bin/open", str(update.SYSTEM_APP)],
+        })
+
+    def test_update_leaves_a_source_engine_alone_and_upgrades_only_the_cask(self):
+        result = self._update_check(engine_route="uv-source", app_route="cask")
+
+        self.assertEqual(result["commands"], [["/bin/brew", "upgrade", "--cask", "voice2text"]])
+
+    def test_update_restarts_only_the_engine_when_the_app_is_a_build_folder(self):
+        result = self._update_check(engine_route="uv", app_route="other")
+
+        self.assertEqual({k: result[k] for k in ("update", "commands", "restart", "relaunch")}, {
+            "update": True, "commands": [["/bin/uv", "tool", "upgrade", "voice2text"]],
+            "restart": "engine", "relaunch": [],
+        })
+
+    def test_update_rebuilds_a_local_app_from_the_upgraded_engine(self):
+        result = self._update_check(engine_route="uv", app_route="local", engine_version="0.5.17")
+
+        self.assertEqual((result["commands"], result["relaunch"]), (
+            [["/bin/uv", "tool", "upgrade", "voice2text"]],
+            [sys.executable, "-m", "v2t", "menubar", "install"],
+        ))
+
+    def test_update_offers_nothing_when_up_to_date_or_not_upgradable_here(self):
+        for engine_route, app_route, versions in (
+            ("uv", "cask", {"engine_version": "0.5.17", "app_version": "0.5.17"}),
+            ("uv-source", "other", {}),
+            ("other", None, {}),
+        ):
+            with self.subTest(engine=engine_route, app=app_route):
+                result = self._update_check(engine_route=engine_route, app_route=app_route, **versions)
+                self.assertEqual((result["update"], result["commands"]), (False, []))
+
+    def test_update_json_names_the_versions_and_routes_for_the_menu(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(update, "fetch_pypi", return_value="0.5.17"),
+            mock.patch.object(update, "engine_route", return_value="uv-source"),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.main(["update", "--json", "--app", "/tmp/Voice2Text.app", "--app-version", "0.5.15"])
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(
+            {k: result[k] for k in ("engine_version", "app_version", "latest", "engine_route", "app_route", "update")},
+            {"engine_version": update.__version__, "app_version": "0.5.15", "latest": "0.5.17",
+             "engine_route": "uv-source", "app_route": "other", "update": False},
+        )
 
     def test_setup_help_prints_usage_and_asks_nothing(self):
         output = io.StringIO()

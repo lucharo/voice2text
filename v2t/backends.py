@@ -15,7 +15,7 @@ import re
 import time
 import urllib.request
 from pathlib import Path
-from typing import Callable, Iterable, TypeVar
+from typing import Callable, Iterable, NamedTuple, TypeVar
 
 import numpy as np
 
@@ -619,6 +619,34 @@ STT = {
     "qwen3-asr": QwenASRSTT,
 }
 
+
+class ModelChoice(NamedTuple):
+    """One row of the menu app's model pickers (v2t/models.py adds its state).
+
+    `model` is what `transcription.model` or `cleanup.model` is set to: blank for
+    the backend's own default, so the row follows a later change of default.
+    `size_gb` is the first-use download, from the Hugging Face file listing of
+    each repo (2026-10-29), or the files v2t fetches for parakeet-coreml.
+    """
+
+    backend: str  # transcription.backend, or cleanup.engine ("off": cleanup.enabled = false)
+    model: str
+    label: str
+    size_gb: float
+    extra: str = ""  # the voice2text[extra] it needs, if any
+
+
+# The menu app's Transcription Model picker, in menu order.
+STT_CHOICES = (
+    ModelChoice("parakeet-coreml", "", "Parakeet v3 · Core ML", 0.63),
+    ModelChoice("parakeet", "", "Parakeet v3 · MLX", 2.5),
+    ModelChoice("parakeet", PARAKEET_UNIFIED_EN, "Parakeet Unified · English only", 2.5),
+    ModelChoice("qwen3-asr", "", "Qwen3-ASR 1.7B · 8-bit", 2.5, extra="qwen"),
+    ModelChoice("whisper", "", "Whisper large-v3 turbo", 1.6, extra="whisper"),
+    # Bark 3.0 Pro (#80) goes here once parakeet-coreml can load it as a
+    # transcription.model: ModelChoice("parakeet-coreml", <its model value>,
+    # "Bark 3.0 Pro · Core ML", 1.23).
+)
 
 def make_stt(backend: str, model: str = ""):
     if backend not in STT:
@@ -1258,6 +1286,16 @@ class OllamaCleanup(_ChunkedCleanup):
 
 
 CLEANUP = {"mlx": MLXCleanup, "ollama": OllamaCleanup}
+
+# The menu app's Cleanup Model picker, in menu order, smallest model first.
+CLEANUP_CHOICES = (
+    ModelChoice("off", "", "Off", 0),
+    ModelChoice("mlx", MLX_CLEANUP_FAST, "Qwen3.5 0.8B · fastest", 0.65),
+    ModelChoice("mlx", "", "Qwen3.5 2B", 1.7),
+    ModelChoice("mlx", MLX_CLEANUP_QUALITY, "Qwen3.5 4B", 3.1),
+    # Ollama pulls its own models: v2t never downloads this one
+    ModelChoice("ollama", "", "Ollama · qwen3:4b", 2.5),
+)
 
 
 def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434"):

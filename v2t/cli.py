@@ -10,6 +10,7 @@ v2t setup           guided first-run config (pick models, detect Ollama)
     v2t stop            stop a running v2t
     v2t menubar         install/open the optional native menu-bar app
     v2t service         start the menu app automatically at login
+    v2t update          is a newer v2t out, and the commands that upgrade it
 """
 
 from __future__ import annotations
@@ -522,27 +523,34 @@ def cmd_config(argv: list[str]) -> int:
     )
     p.add_argument("--path", action="store_true", help="print paths only")
     p.add_argument(
-        "--json", action="store_true", help="paths and settings as JSON (the menu app reads this)"
+        "--json", action="store_true",
+        help="paths, settings and the model pickers as JSON (the menu app reads this)",
     )
     p.add_argument(
         "set", nargs="*", metavar="set SECTION.KEY VALUE",
-        help="change one setting in config.toml, e.g. `v2t config set cleanup.mode strict`",
+        help="change settings in config.toml, e.g. `v2t config set cleanup.mode strict`; "
+        "several KEY VALUE pairs are written together",
     )
     a = p.parse_args(argv)
 
     if a.set:
-        if len(a.set) != 3 or a.set[0] != "set":
-            p.error("usage: v2t config set SECTION.KEY VALUE")
-        cfg = config.set_value(a.set[1], a.set[2])
+        if len(a.set) < 3 or len(a.set) % 2 == 0 or a.set[0] != "set":
+            p.error("usage: v2t config set SECTION.KEY VALUE [SECTION.KEY VALUE ...]")
+        pairs = list(zip(a.set[1::2], a.set[2::2]))
+        cfg = config.set_values(pairs)
         if not a.json:
-            print(f"{a.set[1]} = {config.settings(cfg)[a.set[1]]!r}  ({config.config_path()})")
+            for setting, _ in pairs:
+                print(f"{setting} = {config.settings(cfg)[setting]!r}  ({config.config_path()})")
             return 0
     if a.json:
+        from . import models
+
         cfg = cfg if a.set else config.load()
         print(json.dumps({
             "home": str(config.home()),
             "config": str(config.config_path()),
             "settings": config.settings(cfg),
+            "models": models.pickers(cfg),
         }))
         return 0
     if a.init:
@@ -784,6 +792,40 @@ def cmd_service(argv: list[str]) -> int:
     return 0
 
 
+def cmd_update(argv: list[str]) -> int:
+    from . import update
+
+    parser = argparse.ArgumentParser(
+        prog="v2t update",
+        description="say whether a newer v2t is out (asks PyPI at most once a day) "
+        "and the commands that upgrade this install",
+    )
+    parser.add_argument("--json", action="store_true", help="as JSON (the menu app reads this)")
+    parser.add_argument("--app", help="the menu app bundle asking, to find how it was installed")
+    parser.add_argument("--app-version", help="that bundle's version")
+    args = parser.parse_args(argv)
+    result = update.check(Path(args.app) if args.app else None, args.app_version)
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    if not result["latest"]:
+        print(f"v2t {result['engine_version']}; could not reach PyPI: {result['error']}")
+        return 1
+    if not result["update"]:
+        behind = update.newer(result["latest"], result["engine_version"])
+        how = {"uv-source": "update your checkout", "other": "upgrade it the way you installed it"}
+        if behind and result["engine_route"] in how:
+            print(f"v2t {result['latest']} is out (you have {result['engine_version']}); "
+                  f"{how[result['engine_route']]}")
+        else:
+            print(f"v2t {result['engine_version']} is up to date")
+        return 0
+    print(f"v2t {result['latest']} is out (you have {result['engine_version']}). Run:")
+    for command in result["commands"]:
+        print("  " + " ".join(command))
+    return 0
+
+
 def _which(name: str) -> bool:
     from shutil import which
 
@@ -802,6 +844,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop": cmd_stop,
         "service": cmd_service,
         "menubar": cmd_menubar,
+        "update": cmd_update,
     }
     if argv and argv[0] in table:
         return table[argv[0]](argv[1:])

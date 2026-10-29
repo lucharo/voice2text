@@ -339,13 +339,8 @@ def settings(cfg: Config | None = None) -> dict:
     }
 
 
-def set_value(setting: str, raw: str) -> Config:
-    """Set one `section.key` in config.toml, as the menu app's switches do.
-
-    Only that line changes, so comments and other keys survive; a missing file
-    starts from the commented template. The value is parsed to the default's
-    type and the whole config validated before anything is written.
-    """
+def _parse_setting(setting: str, raw: str) -> tuple[str, str, str, object, str]:
+    """(section, key, field, value, TOML literal) for one `section.key` and its text."""
     section, _, key = setting.partition(".")
     field = _SECTIONS.get(section, {}).get(key)
     if field is None:
@@ -355,30 +350,49 @@ def set_value(setting: str, raw: str) -> Config:
     if isinstance(default, bool):
         if raw not in ("true", "false"):
             raise SystemExit(f"{setting} must be true or false")
-        value, literal = raw == "true", raw
-    elif isinstance(default, int):
+        return section, key, field, raw == "true", raw
+    if isinstance(default, int):
         try:
             value = int(raw)
         except ValueError:
             raise SystemExit(f"{setting} must be an integer") from None
-        literal = str(value)
-    else:
-        # A JSON string is a TOML basic string; ensure_ascii would write an emoji
-        # as a surrogate pair, which TOML rejects.
-        value, literal = raw, json.dumps(raw, ensure_ascii=False)
+        return section, key, field, value, str(value)
+    # A JSON string is a TOML basic string; ensure_ascii would write an emoji
+    # as a surrogate pair, which TOML rejects.
+    return section, key, field, raw, json.dumps(raw, ensure_ascii=False)
+
+
+def set_value(setting: str, raw: str) -> Config:
+    """Set one `section.key` in config.toml, as the menu app's switches do."""
+    return set_values([(setting, raw)])
+
+
+def set_values(pairs: list[tuple[str, str]]) -> Config:
+    """Set several `section.key`s in config.toml in one write, as the menu app's
+    model pickers do (a backend and its model change together).
+
+    Only those lines change, so comments and other keys survive; a missing file
+    starts from the commented template. Each value is parsed to the default's
+    type and the whole config validated before anything is written, so a refused
+    pair leaves the file as it was.
+    """
+    parsed = [_parse_setting(setting, raw) for setting, raw in pairs]
     # One writer at a time: two setters reading the same file would each put
     # back the other's old value.
     with open(_private_dir(run_dir()) / "config.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        cfg = load({field: value})
+        cfg = load({field: value for _, _, field, value, _ in parsed})
         path = config_path().resolve()  # a symlinked config (dotfiles) keeps its link
-        text = _set_line(path.read_text() if path.exists() else DEFAULT_TOML, section, key, literal)
-        try:
-            written = tomllib.loads(text).get(section, {}).get(key)
-        except tomllib.TOMLDecodeError as error:
-            raise SystemExit(f"could not write {setting} to {path}: {error}") from None
-        if written != value:
-            raise SystemExit(f"could not write {setting} to {path}")
+        text = path.read_text() if path.exists() else DEFAULT_TOML
+        for section, key, _, _, literal in parsed:
+            text = _set_line(text, section, key, literal)
+        for (setting, _), (section, key, _, value, _) in zip(pairs, parsed):
+            try:
+                written = tomllib.loads(text).get(section, {}).get(key)
+            except tomllib.TOMLDecodeError as error:
+                raise SystemExit(f"could not write {setting} to {path}: {error}") from None
+            if written != value:
+                raise SystemExit(f"could not write {setting} to {path}")
         _config_parent(path)
         fd, temp = tempfile.mkstemp(dir=path.parent)
         with os.fdopen(fd, "w") as handle:
