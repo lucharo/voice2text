@@ -3642,6 +3642,28 @@ class V2TSmokeTests(unittest.TestCase):
                 text, _counts = backends.keep_spoken_words(raw, clean, ["Claude", "Claude Code"])
                 self.assertEqual(text, expected)
 
+    def test_keep_spoken_words_keeps_a_dictionary_word_only_for_a_similar_spoken_word(self):
+        vocabulary = ["Claude", "Claude Code", "Codex", "GPT-4", "5.1"]
+        # (a word put back takes the capital of the cleaned word it replaces)
+        cases = [
+            # a misheard name fixed, one for one, also with a number in it or said twice
+            ("ask codecs and clot", "Ask Codex and Claude.", "Ask Codex and Claude."),
+            ("ask gpt four for help", "Ask GPT-4 for help.", "Ask GPT-4 for help."),
+            ("please ask clot clot about it", "Please ask Claude about it.", "Please ask Claude about it."),
+            # a dictionary term in digits for the number words said
+            ("use model five point one", "Use model 5.1.", "Use model 5.1."),
+            # a dictionary word swapped in for an unrelated word, or for a filler
+            ("we met him yesterday", "We met Claude yesterday.", "We met Him yesterday."),
+            ("uh at a good size", "Codex at a good size.", "Uh at a good size."),
+            # dictionary words recited beside the word they replace
+            ("ship it on friday", "Ship Claude Code Codex on Friday.", "Ship It on Friday."),
+            ("ask clot today", "Ask Claude Codex today.", "Ask Clot today."),
+        ]
+        for raw, clean, expected in cases:
+            with self.subTest(raw=raw):
+                text, _counts = backends.keep_spoken_words(raw, clean, vocabulary)
+                self.assertEqual(text, expected)
+
     def test_parakeet_picks_the_loader_by_the_repos_file_layout(self):
         def cached(files):
             return lambda repo, name: f"/cache/{name}" if name in files else None
