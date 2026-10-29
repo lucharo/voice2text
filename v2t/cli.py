@@ -817,17 +817,26 @@ def cmd_update(argv: list[str]) -> int:
     have = f"engine {result['engine_version']}" + (
         f", menu app {result['app_version']}" if result["app_version"] else ""
     )
+    import shlex
+
+    behind = update.newer(result["latest"], result["engine_version"]) or update.newer(
+        result["latest"], result["app_version"]
+    )
+    if not behind:
+        print(f"v2t is up to date ({have})")
+        return 0
     if not result["update"]:
-        behind = update.newer(result["latest"], result["engine_version"])
         how = {"uv-source": "update your checkout", "other": "upgrade it the way you installed it"}
-        if behind and result["engine_route"] in how:
-            print(f"v2t {result['latest']} is out (you have {have}); {how[result['engine_route']]}")
-        else:
-            print(f"v2t is up to date ({have})")
+        print(f"v2t {result['latest']} is out (you have {have}); "
+              f"{how.get(result['engine_route'], 'uv or brew was not found to upgrade it')}")
         return 0
     print(f"v2t {result['latest']} is out (you have {have}). Run:")
     for command in result["commands"]:
-        print("  " + " ".join(command))
+        print("  " + shlex.join(command))
+    if result["restart"] == "app":
+        print("then quit Voice2Text and run: " + (
+            "v2t menubar install" if result["app_route"] == "local" else "open -a Voice2Text"
+        ))
     return 0
 
 

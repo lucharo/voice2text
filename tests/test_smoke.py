@@ -3253,6 +3253,43 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(output.getvalue().splitlines(), [
             "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16). Run:",
             "  /bin/brew upgrade --cask voice2text",
+            "then quit Voice2Text and run: open -a Voice2Text",
+        ])
+
+    def test_update_in_a_terminal_quotes_paths_and_says_how_to_rebuild_a_local_app(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(update, "fetch_pypi", return_value="0.5.17"),
+            mock.patch.object(update, "installed_app", return_value=(Path("/Users/a/Applications/Voice2Text.app"), "0.5.16")),
+            mock.patch.object(update, "engine_route", return_value="uv"),
+            mock.patch.object(update, "app_route", return_value="local"),
+            mock.patch.object(update, "_which", return_value="/bin/uv"),
+            mock.patch.object(update, "__version__", "0.5.17"),
+            mock.patch.object(update.sys, "prefix", "/Users/a/Voice Tools/voice2text"),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.main(["update"])
+
+        self.assertEqual(output.getvalue().splitlines(), [
+            "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16). Run:",
+            "  /usr/bin/env 'UV_TOOL_DIR=/Users/a/Voice Tools' /bin/uv tool upgrade voice2text",
+            "then quit Voice2Text and run: v2t menubar install",
+        ])
+
+    def test_update_in_a_terminal_does_not_call_an_old_engine_current_when_uv_is_missing(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(update, "fetch_pypi", return_value="0.5.17"),
+            mock.patch.object(update, "installed_app", return_value=(None, None)),
+            mock.patch.object(update, "engine_route", return_value="uv"),
+            mock.patch.object(update, "_which", return_value=None),
+            mock.patch.object(update, "__version__", "0.5.16"),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.main(["update"])
+
+        self.assertEqual(output.getvalue().splitlines(), [
+            "v2t 0.5.17 is out (you have engine 0.5.16); uv or brew was not found to upgrade it",
         ])
 
     def test_update_json_names_the_versions_and_routes_for_the_menu(self):
