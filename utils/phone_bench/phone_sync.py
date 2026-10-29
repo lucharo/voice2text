@@ -11,6 +11,7 @@ and each sync appends one summary row to sync.jsonl there.
 import argparse
 import json
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +85,25 @@ def line(s: dict, link: str | None, now: float) -> str:
     if s.get("app_state") in ("background", "resign_active", "locked"):
         parts.append(f"app state {s['app_state']}: bring it to the front")
     parts.append(f"phone {'over ' + link if link else 'not reachable, showing the last copy'}")
+    if diverged := [k for k, v in s.get("pulled", {}).items() if v == "diverged"]:
+        parts.append(f"phone copy diverged from the local one, kept beside it: {', '.join(diverged)}")
     return " | ".join(parts)
+
+
+def phone_job_name(udid: str) -> str | None:
+    """The name in the phone's Documents/job.json: the job a relaunch would resume."""
+    with tempfile.TemporaryDirectory() as d:
+        if pc.copy_from(udid, "job.json", Path(d) / "job.json") != "copied":
+            return None
+        try:
+            return json.loads((Path(d) / "job.json").read_text()).get("name")
+        except ValueError:
+            return None
+
+
+def finished(s: dict) -> bool:
+    """The log says the job ended and every arm's results are here in full."""
+    return s["ended"] and s["total"] is not None and s["done"] >= s["total"]
 
 
 def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> dict:
@@ -97,8 +116,11 @@ def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> 
     s = progress(job, out, now)
     s["link"], s["pulled"] = link, pulled
     stale = now - s["last_row"]["t"] if "last_row" in s else None
-    if link and relaunch_after and not s["ended"] and stale is not None and stale > relaunch_after * 60:
-        s["relaunched"] = pc.launch(udid)
+    # relaunch only on fresh evidence, and only if the phone would resume this job rather than a newer one
+    fresh = link and all(v in ("copied", "unchanged") for v in pulled.values())
+    if fresh and relaunch_after and not s["ended"] and stale is not None and stale > relaunch_after * 60:
+        current = phone_job_name(udid)
+        s["relaunched"] = pc.launch(udid) if current == job["name"] else f"no: the phone's job is {current}"
     print(line(s, link, now) + (f" | relaunched: {s['relaunched']}" if "relaunched" in s else ""), flush=True)
     with open(out / "sync.jsonl", "a") as f:
         f.write(json.dumps(s, sort_keys=True) + "\n")
@@ -121,7 +143,7 @@ def main() -> int:
     udid = pc.pick_device(a.device)
     while True:
         s = sync_once(job, out, udid, a.relaunch_after)
-        if not a.watch or s["ended"]:
+        if not a.watch or finished(s):
             return 0
         time.sleep(a.watch)
 

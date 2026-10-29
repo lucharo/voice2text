@@ -33,17 +33,19 @@ class LoadJob(unittest.TestCase):
         self.assertEqual(self.load(JOB), JOB)
 
     def test_every_problem_is_reported_at_once(self):
-        bad = {**JOB, "block": 0, "order": "random", "arms": [
-            {"id": "a", "runtime": "parakeet-coreml"}, {"id": "a", "runtime": "mlx"}, {"id": "c", "runtime": "tpu"}]}
+        bad = {**JOB, "block": 0, "offset": -1, "order": "random", "arms": [
+            {"id": "a", "runtime": "parakeet-coreml"}, {"id": "a", "runtime": "mlx"}, {"id": "log", "runtime": "tpu"}]}
         with self.assertRaises(SystemExit) as e:
             self.load(bad)
         want = [
             "block must be a positive integer",
+            "offset must be an integer >= 0",
             "order must be one of ('abba', 'alternate', 'sequential')",
             "arms need unique ids",
+            "arm id log is reserved for the job log",
             "arm a: runtime parakeet-coreml runs on the speech set, not cleanup",
             "arm a: runtime mlx needs a model",
-            "arm c: unknown runtime 'tpu'",
+            "arm log: unknown runtime 'tpu'",
         ]
         self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), want)
 
@@ -63,7 +65,8 @@ class ItemCount(unittest.TestCase):
 class CopyFrom(unittest.TestCase):
     """devicectl is the external dependency; it is replaced by a stand-in that writes the phone's copy."""
 
-    def run_copy(self, phone: bytes | None, local: bytes | None) -> tuple[str, bytes]:
+    def run_copy(self, phone: bytes | None, local: bytes | None) -> tuple[str, bytes, dict[str, bytes]]:
+        """Returns what copy_from reported, the local file after, and any diverged copies kept beside it."""
         with tempfile.TemporaryDirectory() as d:
             dest = Path(d) / "r.jsonl"
             if local is not None:
@@ -77,16 +80,29 @@ class CopyFrom(unittest.TestCase):
 
             with mock.patch.object(pc, "devicectl", fake):
                 what = pc.copy_from("udid", "r.jsonl", dest)
-            return what, dest.read_bytes() if dest.exists() else b""
+            beside = {p.name.split(".diverged-")[0]: p.read_bytes() for p in Path(d).glob("r.diverged-*.jsonl")}
+            return what, dest.read_bytes() if dest.exists() else b"", beside
 
-    def test_longer_phone_copy_replaces_local(self):
-        self.assertEqual(self.run_copy(b"1\n2\n", b"1\n"), ("copied", b"1\n2\n"))
+    def test_phone_copy_extending_local_replaces_it(self):
+        self.assertEqual(self.run_copy(b"1\n2\n", b"1\n"), ("copied", b"1\n2\n", {}))
 
-    def test_shorter_phone_copy_keeps_local(self):
-        self.assertEqual(self.run_copy(b"", b"1\n2\n"), ("kept-local", b"1\n2\n"))
+    def test_identical_copy_is_unchanged(self):
+        self.assertEqual(self.run_copy(b"1\n", b"1\n"), ("unchanged", b"1\n", {}))
+
+    def test_diverging_phone_copy_is_kept_beside_local(self):
+        # a restarted job as long as the old one: neither copy may be lost
+        self.assertEqual(self.run_copy(b"9\n9\n", b"1\n2\n"), ("diverged", b"1\n2\n", {"r": b"9\n9\n"}))
 
     def test_missing_on_phone_leaves_nothing_behind(self):
-        self.assertEqual(self.run_copy(None, None), ("absent", b""))
+        self.assertEqual(self.run_copy(None, None), ("absent", b"", {}))
+
+
+class ReadRows(unittest.TestCase):
+    def test_row_cut_mid_character_is_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "r.jsonl"
+            p.write_bytes(b'{"id": "a"}\n' + '{"clean": "caf\u00e9"}'.encode()[:-3])
+            self.assertEqual(pc.read_rows(p), [{"id": "a"}])
 
 
 class Progress(unittest.TestCase):
@@ -122,6 +138,13 @@ class Progress(unittest.TestCase):
     def test_end_from_an_earlier_launch_does_not_count(self):
         write(self.out / "j.log.jsonl", [{"event": "start", "t": 1}, {"event": "end", "t": 2}, {"event": "start", "t": 3}])
         self.assertFalse(phone_sync.progress(JOB, self.out, 4)["ended"])
+
+
+class Finished(unittest.TestCase):
+    def test_watch_stops_only_with_the_end_row_and_every_result_here(self):
+        cases = [(True, 20, 20), (True, 19, 20), (False, 20, 20), (True, 20, None)]
+        got = [phone_sync.finished({"ended": e, "done": d, "total": t}) for e, d, t in cases]
+        self.assertEqual(got, [True, False, False, False])
 
 
 if __name__ == "__main__":

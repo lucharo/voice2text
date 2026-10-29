@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -26,11 +27,16 @@ def load_job(path: Path) -> dict:
         errs.append("set must be cleanup or speech")
     if not isinstance(job["block"], int) or job["block"] < 1:
         errs.append("block must be a positive integer")
+    for k, lo in (("offset", 0), ("limit", 0), ("rounds", 1)):
+        if k in job and (not isinstance(job[k], int) or job[k] < lo):
+            errs.append(f"{k} must be an integer >= {lo}")
     if job.get("order", "abba") not in ORDERS:
         errs.append(f"order must be one of {ORDERS}")
     ids = [a.get("id") for a in job["arms"]]
     if not ids or len(set(ids)) != len(ids) or None in ids:
         errs.append("arms need unique ids")
+    if "log" in ids:
+        errs.append("arm id log is reserved for the job log")
     for a in job["arms"]:
         rt = a.get("runtime")
         if rt not in RUNTIMES:
@@ -61,14 +67,14 @@ def item_count(job: dict, res: Path = HERE / "Res") -> int | None:
 
 
 def read_rows(path: Path) -> list[dict]:
-    """JSONL rows; a line cut short mid-write is skipped."""
+    """JSONL rows; a line cut short mid-write (even mid-character) is skipped."""
     rows = []
     try:
-        with path.open() as f:
+        with path.open("rb") as f:
             for line in f:
                 try:
-                    rows.append(json.loads(line))
-                except ValueError:
+                    rows.append(json.loads(line.decode("utf-8")))
+                except ValueError:  # UnicodeDecodeError is a ValueError too
                     pass
     except OSError:
         pass
@@ -117,8 +123,9 @@ def reach(udid: str) -> str | None:
 
 
 def copy_from(udid: str, name: str, dest: Path) -> str:
-    """Copies Documents/<name> from the app to dest. Never replaces a local copy with a shorter one
-    (a reinstalled app starts with empty Documents), so synced results only grow. Returns what happened."""
+    """Copies Documents/<name> from the app to dest, replacing the local copy only when the local bytes are
+    a prefix of the phone's, so synced results only grow. A phone copy that diverges (the app was reinstalled,
+    or the job restarted under the same name) is kept beside it as <name>.diverged-<time>.jsonl and reported."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
     r = devicectl("device", "copy", "from", "--device", udid, "--domain-type", "appDataContainer",
@@ -126,9 +133,14 @@ def copy_from(udid: str, name: str, dest: Path) -> str:
     if r.returncode != 0 or not tmp.exists():
         tmp.unlink(missing_ok=True)
         return "absent"
-    if dest.exists() and tmp.stat().st_size < dest.stat().st_size:
-        tmp.unlink()
-        return "kept-local"  # the phone's copy is shorter than ours
+    if dest.exists():
+        have, new = dest.read_bytes(), tmp.read_bytes()
+        if new == have:
+            tmp.unlink()
+            return "unchanged"
+        if not new.startswith(have):
+            tmp.replace(dest.with_name(f"{dest.stem}.diverged-{time.strftime('%Y%m%d-%H%M%S')}{dest.suffix}"))
+            return "diverged"
     tmp.replace(dest)
     return "copied"
 

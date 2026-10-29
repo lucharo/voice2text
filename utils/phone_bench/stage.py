@@ -46,6 +46,9 @@ def main() -> int:
     ap.add_argument("--from", dest="src", type=Path, help="a Res folder to copy clips/, cleanup/, models/, bark/ from")
     ap.add_argument("--write-manifest", action="store_true", help="re-pin res-manifest.json from the staged files")
     a = ap.parse_args()
+    if a.src and a.src.resolve() == RES.resolve():
+        print("source is Res itself; nothing to copy")
+        a.src = None
     if a.src:
         missing = [p for p in PARTS if not (a.src / p).is_dir()]
         if missing:

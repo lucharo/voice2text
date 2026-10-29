@@ -39,6 +39,8 @@ struct JobSpec: Codable {
 
   func validate() throws {
     guard block > 0 else { throw BenchError("block must be at least 1") }
+    guard (offset ?? 0) >= 0, (limit ?? 0) >= 0, (rounds ?? 1) >= 1 else { throw BenchError("offset and limit must be >= 0, rounds >= 1") }
+    guard !arms.contains(where: { $0.id == "log" }) else { throw BenchError("arm id log is reserved for the job log") }
     guard !arms.isEmpty, Set(arms.map(\.id)).count == arms.count else { throw BenchError("arms must be non-empty with unique ids") }
     guard Self.order.contains(order ?? "abba") else { throw BenchError("order must be one of \(Self.order)") }
   }

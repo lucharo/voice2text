@@ -69,3 +69,4 @@ targets:
       SWIFT_VERSION: "5.0"
       INFOPLIST_KEY_UIFileSharingEnabled: YES
       INFOPLIST_KEY_UISupportsDocumentBrowser: YES
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
