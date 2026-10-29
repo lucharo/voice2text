@@ -345,6 +345,141 @@ read 15 to 30% high; the short-set waits were rerun on a quieter Mac on 2026-10-
 
 _Created: 2026-10-19 · Verified: 2026-10-19 against the 2026-10-15 report._
 
+## Why do v2t's error rates differ from model cards and the Open ASR Leaderboard?
+
+**Since 2026-10-27 the grid follows the leaderboard.** `utils/asr_grid/oasr` holds its scorer
+(commit 2aaa07a), FLEURS references lose their parentheses (#76), and two sets were added:
+`ami-ihm` (150 clips of the leaderboard's AMI-Cleaned, all 16 test meetings) and `earnings22-aa`
+(its 6 cleaned calls, scored per call). Every grid system that was still in the model cache ran
+on both (24 cells, 2026-10-27, `~/.v2t/eval/grid/run-leaderboard-sets.log`); Qwen3-ASR bf16,
+Nemotron 3.5 and Voxtral, whose weights had been deleted, were downloaded again and run on
+2026-10-28 once the disk had room (`run-missing-three.log`, `finish-voxtral.log`), then deleted.
+Leaderboard scorer, 95% interval from resampling clips (calls for Earnings22):
+
+| System | ami-ihm | earnings22-aa | published (AMI-Cleaned / Earnings22-AA) |
+|---|--:|--:|--:|
+| parakeet-v3 (MLX bf16) | 8.92 (6.6–11.5) | 6.07 (4.0–8.1) | 9.42 / 5.85 |
+| parakeet-v3-coreml | 8.72 (6.5–11.1) | 7.15 (4.3–9.7) | 9.42 / 5.85 |
+| qwen3-asr-1.7b-8bit | 7.67 (5.8–9.8) | 5.90 (3.6–7.8) | 8.31 / 5.84 (bf16) |
+| qwen3-asr-1.7b (bf16) | 7.60 (5.8–9.6) | 5.77 (3.6–7.6) | 8.31 / 5.84 |
+| voxtral-rt-4bit | 11.63 (9.3–14.2) | 10.19 (5.3–15.4) | 13.34 / 9.31 (full precision) |
+| nemotron-3.5-stream | 13.75 (10.5–18.0) | 13.63 (8.9–17.1) | 13.43 / 15.30 |
+| parakeet-unified-en | 7.80 (5.7–10.3) | 6.66 (4.1–8.8) | – |
+| parakeet-ultra | 7.53 (5.9–9.5) | 5.97 (3.7–8.0) | – |
+| parakeet-redux | 8.53 (6.7–10.5) | 7.84 (5.0–10.2) | – |
+| phonon-2 | 9.78 (7.6–12.3) | 6.98 (4.3–9.4) | 9.32 / 6.96 |
+| cohere-transcribe | 6.68 (4.8–8.9) | 6.82 (4.0–9.1) | 7.02 / 7.88 |
+| whisper-turbo | 13.09 (10.4–16.2) | 9.87 (5.8–13.6) | 13.88 / 8.09 |
+| bark-3.0 (other session's cell) | 7.34 | – | 7.82 / 7.05 (card) |
+
+The analysis below is the one that led there, on the grid as it was before.
+
+**Short answer (before the change):** Scoring and set preparation explain nearly every gap. Parakeet v3 (parakeet-mlx,
+bf16) over the *full* test sets on the M4 Pro, scored with the leaderboard's own normaliser and
+alignment: LibriSpeech clean 1.48% (2,620 utterances), other 3.14% (2,939), FLEURS es_419 3.31%
+(908, parentheses taken out of the references as in the leaderboard's copy). Leaderboard: 1.52 /
+3.13 / 3.25%. The same run in 8-bit (v2t's `_quantized`): FLEURS 3.27%.
+
+Per model, three numbers per set: published | grid scorer (`grid.normalise` + rapidfuzz, as in the
+reports) | leaderboard scorer on the same 150 clips, with the 95% interval from 4,000 bootstrap
+resamples of clips.
+
+| System | LS clean | LS other | FLEURS es |
+|---|---|---|---|
+| parakeet-v3 (MLX bf16) | 1.52 \| 1.94 \| 1.74 (1.0–2.6) | 3.13 \| 4.21 \| 3.69 (2.8–4.6) | 3.25 \| 5.42 \| 3.24 (2.5–4.1) |
+| parakeet-v3-coreml (Mac ANE) | 1.52 \| 2.00 \| 1.68 (1.0–2.5) | 3.13 \| 4.66 \| 4.06 (3.3–5.0) | 3.25 \| 5.67 \| 3.40 (2.6–4.3) |
+| Parakeet v3 Core ML, iPhone 16 Pro (`phone-r1`) | 1.52 \| 2.29 \| 1.90 (1.1–2.8) | 3.13 \| 4.51 \| 3.91 (3.1–4.8) | 3.25 \| 6.42 \| 4.13 (3.0–5.5) |
+| parakeet-ultra (selcukkubur MLX) | 1.41 \| 1.77 \| 1.52 (0.8–2.4) | 2.98 \| 4.66 \| 4.14 (3.2–5.2) | 2.72 \| 4.72 \| 2.75 (2.1–3.5) |
+| parakeet-redux | 1.96 \| 2.55 \| 2.23 (1.4–3.2) | 4.34 \| 5.52 \| 5.01 (3.8–6.2) | 3.71 \| 5.72 \| 3.74 (3.0–4.5) |
+| parakeet-unified-en | 1.63 \| 1.58 \| 1.45 (0.8–2.3) | 3.11 \| 3.57 \| 2.90 (2.1–3.7) | – |
+| phonon-2 | 1.73 \| 2.26 \| 1.94 (1.2–2.8) | 3.92 \| 5.04 \| 4.44 (3.5–5.5) | – |
+| Bark 3.0, Core ML ANE (`bark-mac.jsonl`) | 1.89 \| 2.55 \| 2.10 (1.2–3.1) | 4.08 \| 5.82 \| 5.31 (4.1–6.6) | English only \| 15.74 \| 12.14 |
+| qwen3-asr-1.7b | 1.26 \| 1.65 \| 1.26 (0.6–2.1) | 2.94 \| 4.36 \| 3.76 (2.8–4.8) | 2.92 \| 4.85 \| 3.36 (2.6–4.2) |
+| qwen3-asr-1.7b-8bit | 1.26 \| 1.65 \| 1.26 (0.6–2.1) | 2.94 \| 4.25 \| 3.65 (2.7–4.7) | 2.92 \| 4.97 \| 3.02 (2.3–3.7) |
+| whisper-turbo | 2.13 \| 1.81 \| 1.68 (0.9–2.6) | 3.71 \| 4.55 \| 3.65 (2.7–4.7) | 2.73 \| 5.02 \| 2.92 (2.2–3.7) |
+| cohere-transcribe | 0.97 \| 1.42 \| 1.29 (0.6–2.2) | 2.05 \| 2.71 \| 2.33 (1.6–3.1) | 3.26 \| 4.92 \| 3.48 (2.6–4.4) |
+| voxtral-rt-4bit | 1.62 \| 2.48 \| 2.00 (1.2–3.0) | 4.94 \| 6.39 \| 5.68 (4.3–7.3) | 2.80 \| 5.45 \| 3.31 (2.5–4.2) |
+| nemotron-3.5-stream | 2.83 \| 3.06 \| 2.68 (1.8–3.7) | 6.79 \| 8.31 \| 7.60 (5.8–9.8) | 4.23 \| 8.82 \| 4.35 (3.5–5.2) |
+
+What each gap comes from:
+
+- **Compound merging** (English). The leaderboard aligns with kaldialign `merge_compounds=True`
+  and normalises compounds; LibriSpeech's references split many (`to night`, `any one`,
+  `neo platonists`). Full test-clean, Parakeet v3: 1,008 errors with the grid scorer, 785 with the
+  leaderboard's. On the full sets the grid scorer reads 1.90 / 3.64% against 1.48 / 3.14%.
+- **FLEURS parentheses** (Spanish). The grid scores the raw transcription; 94 of the 908
+  references contain parentheses, and Whisper's basic normaliser (the grid's and the
+  leaderboard's) deletes `(...)` with its words, so the speaker's words become insertions. The
+  leaderboard's `hf-audio/open-asr-leaderboard-multilingual-datasets` `fleurs_es` text has no
+  parentheses (0 of 908; otherwise the same text up to quote marks). Those 94 clips hold 511 of
+  Parakeet v3's 1,196 full-set errors. Stripping the parenthesis characters from the reference
+  brings the full set from 4.98% to 3.31%. The leaderboard also turns digits into words
+  (`num2words`) for Spanish; that moves little.
+- **Sampling.** The full-set runs place our 150-clip samples within the range of random 150-clip
+  draws (4,000 draws): LS clean 1.74% against 1.48% full (18% of draws as high), LS other 3.69%
+  against 3.14% (11% as high), FLEURS 3.24% against 3.31%. Resampling LibriSpeech speakers (37 and
+  33) instead of clips gives about the same intervals (Parakeet v3: 1.0–3.1 and 3.4–5.1 with the
+  grid scorer, against 1.2–2.9 and 3.3–5.2). AMI and Earnings22 each come from 3
+  recordings (one Parquet shard each: meetings EN2002a/b/c; three calls), so a cluster interval is
+  meaningless there; read those sets as three recordings, not as the corpus.
+- **Relative order.** Paired bootstrap of each model's difference from parakeet-v3 on the same
+  clips: 25 of the 27 published differences between distinct models fall inside the interval
+  (each source's own Parakeet v3 figure as its baseline: NVIDIA's card for Unified EN, Moondream's
+  cards for Ultra and Redux). Outside: whisper-turbo on LS clean (ours −0.06, interval −0.41 to
+  +0.27; leaderboard +0.61, unexplained) and parakeet-ultra on LS other (ours +0.45, −0.03 to
+  +1.03; card −0.15; we run a third-party MLX conversion, not Moondream's runtime, an untested
+  explanation).
+- **AMI microphone.** The leaderboard's AMI is IHM (headset): its loader reads
+  `speech-seq2seq/ami` `audio/ihm/`, and `AMI-Cleaned` also drops clips under 1 s. The grid's is
+  SDM (room). 127 of the grid's 150 segments are in the IHM test shard 0 with identical text;
+  leaderboard scorer, same segments:
+
+  | System | Headset (IHM) | Room (SDM) | Leaderboard AMI-Cleaned | AMI original IHM |
+  |---|--:|--:|--:|--:|
+  | Parakeet v3, MLX bf16 | 12.06 | 34.94 | 9.42 | 10.86 (Moondream card), 11.31 (NVIDIA card) |
+  | Qwen3-ASR 1.7B, 8-bit | 10.16 | 29.31 | 8.31 (bf16) | |
+  | Whisper large-v3 turbo | 17.14 | 43.27 | 13.88 | |
+
+- **Earnings22 references.** The leaderboard switched on 2026-08-21 to
+  `Earnings22-Cleaned-AA-chunked`: corrected transcripts, chunks joined and scored per call
+  (Parakeet v3 5.85%). The grid uses `distil-whisper/earnings22` chunked with the original
+  transcripts, which carry `<unk>` and `<inaudible>` tags. Parakeet v3 on original references:
+  10.75% (Moondream's card, leaderboard pipeline, Sept 2026), 11.42% (NVIDIA's card), 10.26% on
+  the grid's 150 clips with the leaderboard scorer (10.78% grid scorer).
+- **Quantisation and runtime.** Paired against parakeet-v3 (MLX bf16): Core ML on the Mac −0.06 /
+  +0.38 / +0.17, iPhone +0.16 / +0.23 / +0.89 (interval +0.03 to +2.14). Qwen3-ASR 8-bit against
+  bf16 and phonon-2 packed against default are within noise. Parakeet v3 8-bit on all of FLEURS:
+  3.27% against 3.31% bf16.
+- **Long audio.** Every clip in these sets is under 35 s, and the leaderboard's short-form track
+  decodes whole clips too, so chunking plays no part here. Its long-form track (Earnings21,
+  Earnings22, CORAAL) has no counterpart in the grid's `ls-long`.
+- **Language coverage.** Bark 3.0's card says English only; 12.14% on FLEURS Spanish.
+- **Averages.** Bark's 4.94% is a seven-set average (cleaned AMI, Earnings22, VoxPopuli). The
+  leaderboard's default average now covers eleven sets including private ones (Parakeet v3 6.18%);
+  `utils/model_intake/models.toml` holds the 2026-10-23 average (6.51%) and its results-dataset
+  URLs now ask for a sign-in.
+
+### Sources
+
+- Open ASR Leaderboard Space (`hf-audio/open_asr_leaderboard`, last modified 2026-10-26), main and
+  Spanish-zoom tables read 2026-10-27 through its Gradio config and API, version `26-10-2026`.
+  Scorer: [`normalizer/`](https://github.com/huggingface/open_asr_leaderboard/tree/2aaa07a5ea7c5b18ea53c511426d2079b35d1200/normalizer)
+  and [`nemo_asr/run_eval_ml.py`](https://github.com/huggingface/open_asr_leaderboard/blob/2aaa07a5ea7c5b18ea53c511426d2079b35d1200/nemo_asr/run_eval_ml.py)
+  at commit 2aaa07a. AMI loader:
+  [`open-asr-leaderboard/datasets-test-only`](https://huggingface.co/datasets/open-asr-leaderboard/datasets-test-only/blob/main/datasets-test-only.py)
+  (`_AMI_AUDIO_ARCHIVE_URL`).
+- Model cards, read 2026-10-27 (revision): `nvidia/parakeet-tdt-0.6b-v3` (541d1f9),
+  `nvidia/parakeet-unified-en-0.6b` (fe53cd8), `moondream/parakeet-ultra` (73175eb),
+  `moondream/parakeet-redux` (2bf1286), `FermionResearch/Phonon-2` (3e6ab3a),
+  `ConwayResearch/Underdog-Bark-3.0` (85db2ad), `Qwen/Qwen3-ASR-1.7B` (7278e1e),
+  `mistralai/Voxtral-Mini-4B-Realtime-2602` (2769294), `nvidia/nemotron-3.5-asr-streaming-0.6b`
+  (ea30d66).
+- Ours: the grid cells under `~/.v2t/eval/grid/results/`, the Core ML files of #52, and the
+  scripts, full-set transcripts, AMI headset run and a snapshot of the leaderboard tables under
+  `~/.v2t/eval/public-vs-ours/` (private).
+
+_Created: 2026-10-27 · Updated: 2026-10-27 (grid follows the leaderboard) · Verified: 2026-10-27 · Leaderboard version 26-10-2026._
+
 ## Which Macs were the benchmarks run on?
 
 **Short answer:** The ASR grid (#54, #51, #56) ran on an M4 Pro with 48 GB. The `just bench`

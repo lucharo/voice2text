@@ -171,6 +171,10 @@ Measured on an M4 Pro, each pair run alternately clip by clip:
 | 19 Oct 2026 | Same, 40 recordings of 1 to 5 minutes, whole transcription | 0.88 s against 1.36 s, quicker on every one | 2.45% against 2.28% |
 | 19 Oct 2026 | Same, 40 real dictations replayed with the live transcript on | 0.058 s against 0.29 s after release | – |
 
+Errors in this table were counted with the grid's earlier scorer (Whisper's normaliser), which
+reads 0.1 to 0.9 points higher on LibriSpeech and about 2 points higher on FLEURS Spanish than the
+leaderboard's scorer the grid uses now.
+
 FluidAudio's model decodes in fixed 15 s windows, which is where its extra errors on longer
 dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, into pieces of up to
 15 s, and decodes them while you speak, so release waits only for the last piece.
@@ -190,33 +194,36 @@ dictations come from. `parakeet-coreml` cuts audio at quiet moments instead, int
 
 Parakeet v3 is accurate and the quickest of the accurate models. [Benchmarks](benchmarks.md) has the chart. The maintainers' grid compares
 them on 450 labelled clips, 40 long recordings and 208 real dictations on an M4 Pro
-([#54](https://github.com/lucharo/voice2text/pull/54), October 2026). Parakeet v3 scores 1.9 / 4.2 /
-5.4% (LibriSpeech clean, LibriSpeech other, FLEURS Spanish), 2.3% on long recordings, and waits
-0.1 to 0.2 s on short clips.
+([#54](https://github.com/lucharo/voice2text/pull/54), October 2026). Parakeet v3 scores 1.7 / 3.7 /
+3.2% (LibriSpeech clean, LibriSpeech other, FLEURS Spanish), 1.9% on long recordings, and waits
+0.1 to 0.2 s on short clips. Errors here are counted the Open ASR Leaderboard's way, so they
+compare with model cards (see [below](#why-do-v2ts-error-rates-differ-from-model-cards-and-the-open-asr-leaderboard)).
 
-- **Cohere Transcribe** is the most accurate: 1.4 / 2.7 / 4.9%, and 1.5% on long recordings. It
+- **Cohere Transcribe** is the most accurate in English: 1.3 / 2.3 / 3.5%, and 1.2% on long recordings. It
   also transcribes silence. On 5 near-silent dictations it invented about 7,000 words, so it would
   need voice detection in front of it. It has no language detection and needs about 4.8 GB of
   memory.
-- **Qwen3-ASR 1.7B** (8-bit) is about as accurate on short labelled clips (1.6 / 4.2 / 5.0%) and
+- **Qwen3-ASR 1.7B** (8-bit) is about as accurate on short labelled clips (1.3 / 3.7 / 3.0%) and
   makes about half the mistakes on real dictations, but waits 0.3 to 0.9 s on short clips. It is an
   opt-in backend: see [Should I switch to Qwen3-ASR?](#should-i-switch-to-qwen3-asr)
 - **Whisper large-v3-turbo** matches Parakeet on short clips but waits about 1 s, and makes more
   errors on long recordings.
 - **Voxtral** (4-bit, streaming) waits about 0.7 s, makes more errors on the labelled short clips,
   and disagrees more with the other models on real dictations.
-- **Nemotron** (streaming) waits less (0.07 s) but makes far more errors: 3.1 / 8.3 / 8.8%.
+- **Nemotron** (streaming) waits less (0.07 s) but makes more errors: 2.7 / 7.6 / 4.3%.
 - **Parakeet Redux** and **Phonon-2** are much smaller downloads (178 MB and 164 MB) and somewhat
   less accurate. They are candidates for a phone. Phonon-2 is English only, so its published
-  average covers fewer sets: on the same English clips it scores 3.65% against Parakeet v3's 3.07%.
+  average covers fewer sets: on the same English clips it scores 3.2% against Parakeet v3's 2.7%.
 - **Parakeet Unified EN** (English only, opt-in with `backend = "parakeet"`) makes fewer mistakes
-  on every English set: 1.6 / 3.6% on LibriSpeech, 8.3% against 10.8% on Earnings22 phone calls
-  and 5.2% against 6.0% on the real dictations, waiting 0.17 s against 0.13 s. Parakeet v3 stays
+  on most English sets: 1.5 / 2.9% on LibriSpeech, 7.8% against 8.7% on the leaderboard's AMI,
+  6.7% against 7.2% on its Earnings22 and 4.7% against 5.2% on the real dictations (against
+  the default, Parakeet v3 on Core ML), waiting 0.17 s against 0.13 s. Parakeet v3 stays
   the default because it also handles other languages.
 - **Noisy recordings** (added late October 2026): on AMI meetings recorded with a room microphone
-  Parakeet v3 scores 33.3%, against 28.4% for Qwen3-ASR and 25.5% for Cohere; on Earnings22 it
-  scores 10.8%, against 8.6% and 9.2%. Qwen3-ASR does not invent text on silence, unlike Cohere,
-  which is why it, not Cohere, became the opt-in second backend.
+  Parakeet v3 scores 33.3%, against 28.2% for Qwen3-ASR and 26.0% for Cohere; on the
+  leaderboard's AMI (headsets) 8.9%, against 7.7% and 6.7%, and on its Earnings22 6.1%, against
+  5.9% and 6.8%. Qwen3-ASR does not invent text on silence, unlike Cohere, which is why it, not
+  Cohere, became the opt-in second backend.
 - **Voxtral 3**, Mistral's October 2026 transcription models, are available only through its API;
   the newest open Voxtral is Voxtral Mini 4B Realtime.
 
@@ -250,12 +257,81 @@ transcript that Wispr Flow, Cohere Transcribe and Qwen3-ASR (bf16) agree with mo
 being one of those three flatters it, so the table also gives the score on the 162 clips whose
 silver text is Wispr Flow's; the gap barely moves. On AMI the newer mlx-audio v2t installs (0.6.2)
 scores 29.0%, against 28.4% for the 0.5.7 the grid used, on the same audio; on the dictations the
-two are within 0.02 points.
+two are within 0.02 points. These rates were counted with the grid's earlier scorer. Counted the
+Open ASR Leaderboard's way on the grid's own runs, the same comparison reads 5.0% against 2.4% on
+the dictations, 29.2% against 28.2% on AMI and 9.9% against 8.5% on Earnings22.
 
 While you hold the key, v2t decodes the recording in pieces of about 30 s cut at quiet moments, so
 release waits on the last piece only; there are no previews between pieces, since each would be a
 full decode. A Core ML build that could cut the wait and memory is tracked in
 [#64](https://github.com/lucharo/voice2text/issues/64).
+
+## Why do v2t's error rates differ from model cards and the Open ASR Leaderboard?
+
+Since late October 2026 they mostly do not: the maintainers' grid counts errors with the
+[Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)'s own code
+and runs the leaderboard's own AMI and Earnings22 sets, so a model card's number and the grid's
+can be read side by side. Before that the grid read 0.1 to 0.9 points higher on LibriSpeech and
+about 2 points higher on FLEURS Spanish, and its AMI was a different recording. Run on the full
+test sets on an M4 Pro, Parakeet v3 (MLX, bf16) scores 1.48 / 3.14 / 3.31% on LibriSpeech clean,
+LibriSpeech other and FLEURS Spanish, against 1.52 / 3.13 / 3.25% on the leaderboard.
+
+| Model | LibriSpeech clean, published | ours | LibriSpeech other, published | ours | FLEURS Spanish, published | ours | AMI, published | ours | Earnings22, published | ours |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| Parakeet v3, MLX bf16 | 1.52 | 1.7 | 3.13 | 3.7 | 3.25 | 3.2 | 9.42 | 8.9 | 5.85 | 6.1 |
+| Parakeet v3, Core ML (default) | 1.52 | 1.7 | 3.13 | 4.1 | 3.25 | 3.4 | 9.42 | 8.7 | 5.85 | 7.2 |
+| Parakeet Ultra (MLX conversion) | 1.41 | 1.5 | 2.98 | 4.1 | 2.72 | 2.8 | | 7.5 | | 6.0 |
+| Parakeet Redux | 1.96 | 2.2 | 4.34 | 5.0 | 3.71 | 3.7 | | 8.5 | | 7.8 |
+| Parakeet Unified EN | 1.63 | 1.5 | 3.11 | 2.9 | English only | | | 7.8 | | 6.7 |
+| Phonon-2 | 1.73 | 1.9 | 3.92 | 4.4 | English only | | 9.32 | 9.8 | 6.96 | 7.0 |
+| Bark 3.0 | 1.89 | 2.1 | 4.08 | 5.3 | English only | | 7.82 | 7.3 | 7.05 | |
+| Qwen3-ASR 1.7B, 8-bit | 1.26 | 1.3 | 2.94 | 3.7 | 2.92 | 3.0 | 8.31 | 7.7 | 5.84 | 5.9 |
+| Whisper large-v3 turbo | 2.13 | 1.7 | 3.71 | 3.7 | 2.73 | 2.9 | 13.88 | 13.1 | 8.09 | 9.9 |
+| Cohere Transcribe | 0.97 | 1.3 | 2.05 | 2.3 | 3.26 | 3.5 | 7.02 | 6.7 | 7.88 | 6.8 |
+| Voxtral Mini 4B Realtime, 4-bit | 1.62 | 2.0 | 4.94 | 5.7 | 2.80 | 3.3 | 13.34 | 11.6 | 9.31 | 10.2 |
+| Nemotron 3.5 streaming | 2.83 | 2.7 | 6.79 | 7.6 | 4.23 | 4.3 | 13.43 | 13.8 | 15.30 | 13.6 |
+
+Published: the leaderboard as of 26 October 2026, or the model's card where the leaderboard has
+no row (Parakeet Ultra, Redux and Unified EN, Bark 3.0). AMI is the leaderboard's AMI-Cleaned
+(each speaker's headset microphone), Earnings22 its six calls with corrected transcripts. Ours:
+150 clips per set (all six calls for Earnings22), on an M4 Pro; a blank was not run.
+
+Three things still separate the two columns:
+
+- **Sample size.** 150 clips give an interval 1.5 to 2 points wide on LibriSpeech and 4 to 5
+  points on AMI, and six calls leave Earnings22 good to 2 or 3 points either way; the grid's
+  report prints each row's interval. Our LibriSpeech other sample happens to be harder than the
+  full set (3.7% against 3.1% for Parakeet v3), which is why most of that column reads high. For a
+  close call the grid can run a model over the full test sets (`ls-clean-full` and friends).
+- **Runtime.** Core ML on the Mac adds up to 0.4 points against MLX on the short sets and about a
+  point on Earnings22, the iPhone up to 0.9 on FLEURS; 8-bit Parakeet v3 and Qwen3-ASR stay within
+  noise of full precision (Parakeet v3 on all of FLEURS Spanish: 3.27% against 3.31%). Parakeet
+  Ultra through a third-party MLX conversion and Bark 3.0 through its own runtime both trail
+  their cards on LibriSpeech other by about half a point more than Parakeet v3 trails its.
+- **The room microphone.** The grid also keeps AMI on a single room microphone, which is how a
+  laptop hears a meeting and which no leaderboard reports. On the same 127 segments Parakeet v3
+  makes 12.1% errors on the headsets and 34.9% on the room microphone, so a card's 8% on AMI and
+  the grid's 30% do not contradict each other.
+
+How much to trust a published number when picking a model:
+
+- **Trust the order, on one dataset from one source.** Measured against Parakeet v3 on the same
+  clips, 25 of 27 published differences between models fall inside our intervals. The two that do
+  not: Parakeet Ultra on LibriSpeech other (see Runtime above) and Whisper on LibriSpeech clean,
+  which the leaderboard puts 0.6 points behind Parakeet and our clips do not.
+- **Check which version of a dataset a number is on.** The leaderboard's AMI drops clips under
+  1 s and its Earnings22 has corrected transcripts; the same Parakeet v3 scores 5.85% there,
+  10.75% on the original Earnings22 transcripts (through the same code, by Moondream's card) and
+  11.42% on NVIDIA's own card. An "average WER" also changes with the list of sets: Bark 3.0's
+  4.94% averages seven, the leaderboard now averages eleven (6.18% for Parakeet v3).
+- **Treat gaps under about half a point as ties.** That is within our sampling noise, and within
+  the gap between the leaderboard's two rows for the same Parakeet v3 weights on two runtimes
+  (6.08% and 6.18%).
+- **Check the languages.** Phonon-2, Parakeet Unified EN and Bark 3.0 are English only; Bark makes
+  12% errors on Spanish.
+- **Nothing published measures dictation.** On real dictations the order changes: Qwen3-ASR makes
+  about half of Parakeet v3's mistakes, and Whisper turbo, close to Parakeet on LibriSpeech, makes
+  about three times as many.
 
 ## Which Macs were the benchmarks run on?
 
@@ -274,8 +350,8 @@ This is a proposal; nothing has been measured on an iPhone yet.
 [#52](https://github.com/lucharo/voice2text/issues/52) tracks a real test on an iPhone 16 Pro.
 
 - **Speech:** FluidAudio running Parakeet v3 through Core ML on the Neural Engine, about 600 MB of
-  model files. Smaller candidates are Parakeet Redux (178 MB; 2.5 / 5.5 / 5.7%) and Phonon-2
-  (164 MB, English only; 2.3 / 5.0%).
+  model files. Smaller candidates are Parakeet Redux (178 MB; 2.2 / 5.0 / 3.7%) and Phonon-2
+  (164 MB, English only; 1.9 / 4.4%).
 - **Cleanup:** Apple's Foundation Models.
 - **Where it runs:** in the main app. An iOS custom keyboard cannot use the microphone and is
   stopped above about 60 to 70 MB of memory.

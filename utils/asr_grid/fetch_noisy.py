@@ -2,26 +2,34 @@
 # requires-python = ">=3.11"
 # dependencies = ["numpy", "pyarrow", "scipy", "soundfile"]
 # ///
-"""Fetch the two noisy labelled sets the grid adds: AMI far-field and Earnings22.
+"""Fetch the meeting and earnings-call sets the grid adds, ours and the Open ASR Leaderboard's.
 
-Maintainer-only. Downloads one Parquet shard of each test split from Hugging Face's
-Parquet conversion, keeps a seeded sample of 150 clips of 2 to 35 s, and writes them
-as 16 kHz WAVs plus `transcripts.tsv` (id, text) under ~/.v2t/eval/labelled/<set>/.
-`grid.py prepare` then builds the `ami-sdm` and `earnings22` manifests from those.
+Maintainer-only. Writes 16 kHz WAVs plus `transcripts.tsv` (id, text) under
+~/.v2t/eval/labelled/<set>/; `grid.py prepare` then builds the manifests from those.
 
-    uv run --script utils/asr_grid/fetch_noisy.py
+    uv run --script utils/asr_grid/fetch_noisy.py            # every set below
+    uv run --script utils/asr_grid/fetch_noisy.py ami-ihm    # one set
+    uv run --script utils/asr_grid/fetch_noisy.py --full ami-ihm   # all 7,805 clips too
 
-- ami-sdm: AMI meetings on the single distant (room) microphone, test split
-  (edinburghcstr/ami, config sdm, CC-BY-4.0): far-field, overlapping speech, um/uh.
-- earnings22: earnings calls cut into short chunks (distil-whisper/earnings22,
-  config chunked, the Open ASR Leaderboard's source): phone quality, accents,
-  company names and numbers.
+- ami-sdm: AMI meetings on the single distant (room) microphone, as a laptop hears a meeting
+  (edinburghcstr/ami, config sdm, test, CC-BY-4.0). One Parquet shard, so three meetings;
+  150 seeded clips of 2 to 35 s. The leaderboard does not use this microphone.
+- ami-ihm: the leaderboard's own AMI, `AMI-Cleaned`: each speaker's headset microphone, clips
+  under 1 s removed (hf-audio/open-asr-leaderboard, config ami_cleaned, all 16 test meetings).
+  150 clips seeded across the whole split; `--full` also writes all of them to `audio-full/`.
+- earnings22: earnings calls cut into short chunks with their original transcripts
+  (distil-whisper/earnings22, config chunked). One shard, three calls, 150 seeded clips.
+- earnings22-aa: the leaderboard's `Earnings22-Cleaned-AA-chunked`: 6 calls (115 min) in 341
+  chunks, transcripts corrected by Artificial Analysis. All of it; scored per call, the chunks'
+  text joined in order against the call's transcript (`parents.tsv`), as the leaderboard does.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import random
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -81,6 +89,106 @@ def fetch(name: str, url: str, text_col: str) -> None:
     print(f"{name}: {len(picked)} of {len(candidates)} eligible clips, {hours:.2f} h -> {out}")
 
 
+LB_AMI = "https://huggingface.co/api/datasets/hf-audio/open-asr-leaderboard/parquet/ami_cleaned/test/{}.parquet"
+AA = "https://huggingface.co/datasets/ArtificialAnalysis/{}/resolve/main/{}"
+
+
+def _download(url: str, dest: Path) -> Path:
+    if not dest.exists():
+        print(f"downloading {url}")
+        partial = dest.with_suffix(dest.suffix + ".part")
+        urllib.request.urlretrieve(url, partial)
+        partial.replace(dest)
+    return dest
+
+
+def _write_wav(path: Path, data: np.ndarray) -> None:
+    """Write next to the target and rename, so an interrupted fetch never leaves a cut-off WAV
+    that a later run would take as done."""
+    partial = path.with_name(path.name + ".part")
+    sf.write(str(partial), data, RATE, subtype="PCM_16", format="WAV")
+    partial.replace(path)
+
+
+def _write_text(path: Path, text: str) -> None:
+    partial = path.with_name(path.name + ".part")
+    partial.write_text(text)
+    partial.replace(path)
+
+
+def _wav16(data_bytes: bytes) -> np.ndarray:
+    data, rate = sf.read(io.BytesIO(data_bytes), dtype="float32", always_2d=True)
+    data = data.mean(axis=1)
+    return resample_poly(data, RATE, rate).astype(np.float32) if rate != RATE else data
+
+
+def fetch_ami_ihm(full: bool) -> None:
+    """A seeded sample of the leaderboard's AMI-Cleaned, from every test meeting."""
+    out = LABELLED / "ami-ihm"
+    (out / "audio").mkdir(parents=True, exist_ok=True)
+    rows = []
+    for shard in range(3):
+        path = _download(LB_AMI.format(shard), out / f"test-{shard}.parquet")
+        rows += pq.read_table(path, columns=["id", "text"]).to_pylist()
+    ids = sorted(r["id"] for r in rows)
+    random.Random(SEED).shuffle(ids)
+    keep = set(ids[:SAMPLE])
+    text = {r["id"]: r["text"] for r in rows}
+    full_dir = out / "audio-full"
+    if full:
+        full_dir.mkdir(exist_ok=True)
+    for shard in range(3):
+        for r in pq.read_table(out / f"test-{shard}.parquet", columns=["id", "audio"]).to_pylist():
+            dirs = ([out / "audio"] if r["id"] in keep else []) + ([full_dir] if full else [])
+            if dirs:
+                data = _wav16(r["audio"]["bytes"])
+                for d in dirs:
+                    _write_wav(d / f"{r['id']}.wav", data)
+    (out / "transcripts.tsv").write_text("".join(f"{i}\t{text[i]}\n" for i in sorted(keep)))
+    if full:
+        (out / "transcripts-full.tsv").write_text("".join(f"{i}\t{text[i]}\n" for i in sorted(text)))
+    print(f"ami-ihm: {len(keep)} of {len(rows)} clips{' (and all of them in audio-full/)' if full else ''} -> {out}")
+
+
+def fetch_earnings22_aa() -> None:
+    """All of the leaderboard's Earnings22-Cleaned-AA-chunked, with each call's transcript."""
+    out = LABELLED / "earnings22-aa"
+    (out / "audio").mkdir(parents=True, exist_ok=True)
+    meta = _download(AA.format("Earnings22-Cleaned-AA-chunked", "earnings22_cleaned_aa_chunked_v1.jsonl"),
+                     out / "chunks.jsonl")
+    parents = _download(AA.format("Earnings22-Cleaned-AA", "earnings22_cleaned_aa_v1.jsonl"), out / "parents.jsonl")
+    chunks = [json.loads(line) for line in meta.read_text().splitlines() if line]
+    for c in chunks:
+        wav = out / "audio" / c["file_name"]
+        if not wav.exists():
+            url = AA.format("Earnings22-Cleaned-AA-chunked", f"audio/{c['file_name']}")
+            for attempt in range(3):  # 341 small downloads: retry a dropped connection
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as resp:
+                        _write_wav(wav, _wav16(resp.read()))
+                    break
+                except OSError:
+                    if attempt == 2:
+                        raise
+    # transcripts first, each file written whole and renamed: chunks.tsv is what makes grid.py
+    # treat the set as present, so it must never appear cut short or before the transcripts
+    calls = [json.loads(line) for line in parents.read_text().splitlines() if line]
+    _write_text(out / "parents.tsv", "".join(f"{p['id']}\t{' '.join(p['transcript'].split())}\n" for p in calls))
+    _write_text(out / "chunks.tsv", "".join(
+        f"{c['file_name'].removesuffix('.wav')}\t{c['parent_id']}\t{c['chunk_index']}\n" for c in chunks))
+    print(f"earnings22-aa: {len(chunks)} chunks of {len(calls)} calls -> {out}")
+
+
 if __name__ == "__main__":
-    for name, (url, col) in SETS.items():
-        fetch(name, url, col)
+    args = sys.argv[1:]
+    full = "--full" in args
+    names = [a for a in args if a != "--full"] or [*SETS, "ami-ihm", "earnings22-aa"]
+    for name in names:
+        if name in SETS:
+            fetch(name, *SETS[name])
+        elif name == "ami-ihm":
+            fetch_ami_ihm(full)
+        elif name == "earnings22-aa":
+            fetch_earnings22_aa()
+        else:
+            raise SystemExit(f"unknown set {name}")

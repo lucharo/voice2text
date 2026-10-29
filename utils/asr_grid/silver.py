@@ -10,8 +10,8 @@ other two agree with most. Cohere is taken with its silence trimmed
     python silver.py score FILE.jsonl --field F     # WER of each row's F against silver
     python silver.py score FILE.jsonl --field F --ids held-out
 
-Scores are word error rates after Whisper normalisation, so punctuation and casing do
-not count; they split into missing words (deletions: content cut), extra words
+Scores are word error rates counted the Open ASR Leaderboard's way (grid.normalise and its
+compound-merging alignment), so punctuation, casing and split compounds do not count; they split into missing words (deletions: content cut), extra words
 (insertions: content invented) and substitutions. A score against silver measures
 closeness to the best available systems, not correctness.
 """
@@ -61,7 +61,7 @@ def held_out(cid: str) -> bool:
 
 
 def score(path: Path, field: str, ids: str = "all") -> dict:
-    from rapidfuzz.distance import Levenshtein
+    from kaldialign import edit_distance
 
     silver = {r["id"]: r for r in grid.read_jsonl(SILVER / "wispr.jsonl")}
     rows = grid.read_jsonl(path)
@@ -78,11 +78,11 @@ def score(path: Path, field: str, ids: str = "all") -> dict:
             continue
         ref = grid.normalise(silver[cid]["text"], "en")
         hyp = grid.normalise(r[field], "en")
-        ops = Levenshtein.editops(ref, hyp)
+        counts = edit_distance(tuple(ref), tuple(hyp), merge_compounds=True)  # as grid.edits
         totals["ref"] += len(ref)
         totals["clips"] += 1
-        for op in ops:
-            totals[{"delete": "del", "insert": "ins", "replace": "sub"}[op.tag]] += 1
+        for key in ("del", "ins", "sub"):
+            totals[key] += counts[key]
     if not totals["clips"] or not totals["ref"]:
         raise SystemExit(f"{field}: no clips scored; check the path, --field and that `silver.py build` ran")
     n = totals["ref"]

@@ -48,15 +48,90 @@ class V2TSmokeTests(unittest.TestCase):
                 result = {"id": "clip", "offline": "hello", "stream": "hello", **row}
                 (root / "sets" / "fixture.jsonl").write_text(json.dumps(clip) + "\n")
                 (root / "results" / "fixture" / "parakeet-v3.jsonl").write_text(json.dumps(result) + "\n")
-                scoring_dependencies = {
-                    "whisper_normalizer.basic": types.SimpleNamespace(BasicTextNormalizer=lambda: str.lower),
-                    "whisper_normalizer.english": types.SimpleNamespace(EnglishTextNormalizer=lambda: str.lower),
-                    "rapidfuzz.distance": types.SimpleNamespace(Levenshtein=types.SimpleNamespace(distance=lambda a, b: 0 if a == b else 1)),
-                }
-                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.dict(sys.modules, scoring_dependencies):
+                # the leaderboard scorer needs kaldialign and num2words, absent from v2t's env
+                words = lambda text, lang: (text or "").lower().split()  # noqa: E731
+                errors = lambda ref, hyp, lang="en": 0 if ref == hyp else 1  # noqa: E731
+                with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.object(grid, "normalise", words), mock.patch.object(grid, "edits", errors):
                     scored = grid.score_set("fixture")
                 self.assertEqual(scored[0]["busy_s"], expected)
                 self.assertEqual(scored[0]["rtf"], expected / duration)
+
+    def test_grid_scores_compounds_numbers_and_real_errors_the_leaderboards_way(self):
+        from utils.asr_grid import grid
+        from oasr import score_pair  # on sys.path once grid is imported
+
+        compound = grid.edits(grid.normalise("We go to night.", "en"), grid.normalise("we go tonight", "en"))
+        spanish_numbers = score_pair("En 1960 llegó.", "en mil novecientos sesenta llegó", "es")
+        wrong_word = score_pair("The cat sat.", "the dog sat", "en")
+
+        self.assertEqual(compound, 0)
+        self.assertEqual(spanish_numbers, (0, 5))
+        self.assertEqual(wrong_word, (1, 3))
+
+    def test_grid_fleurs_references_keep_the_words_inside_parentheses(self):
+        from utils.asr_grid import grid
+        from oasr import score_pair
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "audio" / "test").mkdir(parents=True)
+            wavfile.write(root / "audio" / "test" / "1.wav", 16000, np.zeros(1600, dtype=np.int16))
+            (root / "test.tsv").write_text("7\t1.wav\tA 50 kilómetros (31 millas) de aquí.\tx\n")
+            with mock.patch.object(grid, "FLEURS_ES", root), mock.patch.object(grid, "_duration", lambda path: 0.1):
+                clip = grid.fleurs_set()[0]
+
+        self.assertEqual(clip["text"], "A 50 kilómetros 31 millas de aquí.")
+        self.assertEqual(score_pair(clip["text"], "a cincuenta kilómetros treinta y uno millas de aquí", "es")[0], 0)
+
+    def test_grid_scores_only_calls_every_system_finished(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "calls").mkdir(parents=True)
+            (root / "sets").mkdir()
+            (root / "labelled" / "calls").mkdir(parents=True)
+            (root / "labelled" / "calls" / "parents.tsv").write_text("A\talpha beta\nB\tgamma delta\n")
+            chunks = [("a0", "A", 0, "alpha"), ("a1", "A", 1, "beta"), ("b0", "B", 0, "gamma"), ("b1", "B", 1, "delta")]
+            (root / "sets" / "calls.jsonl").write_text("".join(
+                json.dumps({"id": c, "text": None, "lang": "en", "duration_s": 5, "parent": p, "chunk": i}) + "\n"
+                for c, p, i, _ in chunks))
+            (root / "results" / "calls" / "cohere-transcribe.jsonl").write_text("".join(
+                json.dumps({"id": c, "duration_s": 5, "offline": t, "offline_s": 1}) + "\n"
+                for c, _, _, t in chunks[:3]))  # call B is missing its last chunk
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.object(grid, "EVAL", root):
+                row = grid.score_set("calls")[0]
+
+        self.assertEqual((row["n"], row["errors"], row["words"]), (2, 0, 2))
+
+    def test_grid_refuses_a_per_call_set_with_a_missing_call_transcript(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "results" / "calls").mkdir(parents=True)
+            (root / "sets").mkdir()
+            (root / "labelled" / "calls").mkdir(parents=True)
+            (root / "labelled" / "calls" / "parents.tsv").write_text("A\talpha\n")  # call B has none
+            (root / "sets" / "calls.jsonl").write_text("".join(
+                json.dumps({"id": c, "text": None, "lang": "en", "duration_s": 5, "parent": p, "chunk": 0}) + "\n"
+                for c, p in (("a0", "A"), ("b0", "B"))))
+            (root / "results" / "calls" / "cohere-transcribe.jsonl").write_text("".join(
+                json.dumps({"id": c, "duration_s": 5, "offline": "x", "offline_s": 1}) + "\n" for c in ("a0", "b0")))
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.object(grid, "RESULTS", root / "results"), mock.patch.object(grid, "EVAL", root):
+                with self.assertRaisesRegex(SystemExit, "no transcript for calls \\['B'\\]"):
+                    grid.score_set("calls")
+
+    def test_grid_refuses_an_english_only_model_on_any_non_english_set(self):
+        from utils.asr_grid import grid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sets").mkdir()
+            (root / "sets" / "fleurs-es-full.jsonl").write_text(json.dumps({"id": "c", "lang": "es", "duration_s": 5}) + "\n")
+            with mock.patch.object(grid, "SETS", root / "sets"), mock.patch.dict(grid.RUNTIMES, {"fermion": mock.Mock(side_effect=AssertionError("loaded"))}):
+                with self.assertRaisesRegex(SystemExit, "English only"):
+                    grid.run("phonon-2", "fleurs-es-full", None)
 
     def test_grid_empty_cell_has_no_scored_results(self):
         from utils.asr_grid import grid

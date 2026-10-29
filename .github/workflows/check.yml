@@ -22,6 +22,7 @@ jobs:
         run: >-
           uv run --no-project --python 3.12
           --with 'numpy<2.4' --with scipy --with sounddevice --with loguru
+          --with 'kaldialign>=0.12' --with num2words --with regex
           python -m unittest -v tests.test_smoke
       - run: uv build
       - run: uvx twine check dist/*

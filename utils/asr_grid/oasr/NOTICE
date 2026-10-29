@@ -1,0 +1,9 @@
+normalizer.py and english_abbreviations.py are copied unchanged from the Open ASR Leaderboard
+repository, https://github.com/huggingface/open_asr_leaderboard, directory normalizer/, at commit
+2aaa07a5ea7c5b18ea53c511426d2079b35d1200 (2026-10-26).
+
+Copyright 2022 The OpenAI team and The HuggingFace Team. Licensed under the Apache License,
+Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+
+score.py reproduces, in this repository's words, the scoring of one text pair from that
+repository's normalizer/data_utils.py and normalizer/eval_utils.py at the same commit.
