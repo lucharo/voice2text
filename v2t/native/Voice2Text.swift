@@ -34,6 +34,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// config.toml as `v2t config --json` reports it, keyed `section.key`; empty
     /// when no engine is installed to ask. Re-read when the file's date changes.
     private var settings: [String: Any] = [:]
+    /// The model pickers from the same call: `transcription` and `cleanup`, each a
+    /// list of rows (label, note, current, available, and the `set` pairs that pick
+    /// it). Empty for an engine older than the pickers, which then shows none.
+    private var models: [String: Any] = [:]
     private var configFile: URL?
     private var configDate: Date?
     /// The engine that was running, too old to reload itself, when a setting changed.
@@ -44,6 +48,15 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A setting changed while our engine was between processes (a reload in
     /// progress holds no lock yet): signal the replacement once it holds one.
     private var reloadWhenReady = false
+    /// Restart v2t on an engine too old to restart itself: Start once it has stopped.
+    private var restartWhenStopped = false
+    /// `v2t update --json`, asked in the background at most hourly (the engine asks
+    /// PyPI at most daily); nil until then, or when the engine predates it.
+    private var updateInfo: [String: Any]?
+    private var updateCheckedAt: Date?
+    private var checkingForUpdate = false
+    private var updating = false
+    private var updateFailed = false
 
     /// The running engine reloads on SIGHUP and reads the config.toml these switches write
     /// (not one from --config, and no flags overriding it).
@@ -93,11 +106,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
+            self?.checkForUpdate()
         }
         // Opening the app starts dictation once both grants exist, so nobody
         // has to press Start after a login, an upgrade or a relaunch. Without
         // them, Start stays a deliberate click that leads to the prompts.
         refresh()
+        checkForUpdate()
         let granted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && AXIsProcessTrusted()
         if CommandLine.arguments.contains("--start") || granted {
             start()
@@ -359,6 +374,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return false
         }
         settings = read
+        models = value["models"] as? [String: Any] ?? [:]
         configFile = URL(fileURLWithPath: path)
         configDate = modified(configFile)
         return true
@@ -374,9 +390,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.isEmpty || modified(configFile) != configDate { runConfig([]) }
     }
 
+    /// `representedObject` is [key, value, key, value, …]: a model picker row sets
+    /// a backend and its model in one write.
     @objc private func chooseSetting(_ sender: NSMenuItem) {
-        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
-        guard runConfig(["set", pair[0], pair[1]]) else { NSSound.beep(); return }
+        guard let pairs = sender.representedObject as? [String], pairs.count >= 2, pairs.count % 2 == 0 else { return }
+        guard runConfig(["set"] + pairs) else { NSSound.beep(); return }
         // The engine reads config.toml once, at start. SIGHUP asks it to restart
         // itself once nothing is in hand, so a dictation is never cut off.
         if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
@@ -425,6 +443,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let shouldQuit = self.terminationPending
+                let restart = self.restartWhenStopped
+                self.restartWhenStopped = false
                 self.reloadWhenReady = false  // the next engine reads the latest config.toml itself
                 self.engine = nil
                 self.logHandle?.closeFile()
@@ -432,6 +452,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.phase = "off"
                 if shouldQuit {
                     NSApp.reply(toApplicationShouldTerminate: true)
+                } else if restart {
+                    self.refresh()
+                    self.start()
                 } else {
                     self.refresh()
                 }
@@ -451,9 +474,170 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func stop() {
+        restartWhenStopped = false
         if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
+    }
+
+    /// Whether the running engine restarts itself on SIGHUP: every engine that
+    /// reports `reload` (true or false) installs the handler; an older one dies of it.
+    private var engineRestartsOnSignal: Bool {
+        status["reload"] is Bool
+    }
+
+    /// Restarts only the engine, never this app: SIGHUP, so it restarts itself once
+    /// nothing is in hand (same PID, fresh code and config), else Stop then Start.
+    @objc private func restartEngine() {
+        if let pid = status["pid"] as? Int, engineOwnsLock(pid), engineRestartsOnSignal {
+            appendLog("restart requested")
+            kill(pid_t(pid), SIGHUP)
+        } else if let engine {
+            appendLog("restart requested: stopping, then starting")
+            terminateEngine(engine)
+            phase = "stopping"
+            restartWhenStopped = true  // after the reset in a Stop, which this is not
+            render()
+        }
+    }
+
+    /// Runs `python -m v2t <arguments>` off the main thread and parses the JSON it prints.
+    private static func engineJSON(_ python: String, _ arguments: [String], _ environment: [String: String]) -> [String: Any]? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-m", "v2t"] + arguments
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }  // an engine with no `update` verb
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// Asks the engine, in the background and at most hourly, whether a newer v2t is
+    /// out and how this install upgrades; the engine itself asks PyPI at most daily.
+    private func checkForUpdate() {
+        guard !checkingForUpdate, !updating, let python = pythonExecutable else { return }
+        if let last = updateCheckedAt, Date().timeIntervalSince(last) < 3600 { return }
+        updateCheckedAt = Date()
+        checkingForUpdate = true
+        var arguments = ["update", "--json", "--app", Bundle.main.bundlePath]
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            arguments += ["--app-version", version]
+        }
+        let environment = engineEnvironment(python: python)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Self.engineJSON(python, arguments, environment)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.checkingForUpdate = false
+                self.updateInfo = result
+                self.rendered = ""
+                self.render()
+            }
+        }
+    }
+
+    private var availableUpdate: String? {
+        guard let info = updateInfo, info["update"] as? Bool == true else { return nil }
+        return info["latest"] as? String
+    }
+
+    /// Runs the upgrade commands the engine named (uv, brew), their output going to
+    /// the log, then restarts the engine, or quits and reopens the app when the app
+    /// itself was replaced.
+    @objc private func runUpdate() {
+        guard !updating, let info = updateInfo, info["update"] as? Bool == true,
+              let commands = info["commands"] as? [[String]], !commands.isEmpty,
+              let python = pythonExecutable else { return }
+        updating = true
+        updateFailed = false
+        rendered = ""
+        render()
+        appendLog("updating to \(info["latest"] as? String ?? "?"): "
+            + commands.map { $0.joined(separator: " ") }.joined(separator: "; "))
+        let environment = engineEnvironment(python: python)
+        let log = home.appendingPathComponent("run/v2t.log").path
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var failed: String?
+            for command in commands where failed == nil {
+                guard let executable = command.first else { continue }
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: executable)
+                process.arguments = Array(command.dropFirst())
+                process.environment = environment
+                process.standardInput = FileHandle.nullDevice
+                let fd = open(log, O_WRONLY | O_CREAT | O_APPEND, 0o600)
+                if fd >= 0 {
+                    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+                    process.standardOutput = handle
+                    process.standardError = handle
+                }
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    if process.terminationStatus != 0 { failed = "\(executable) exited \(process.terminationStatus)" }
+                } catch {
+                    failed = "\(executable): \(error.localizedDescription)"
+                }
+            }
+            DispatchQueue.main.async { self?.finishUpdate(failed: failed, info: info, python: python) }
+        }
+    }
+
+    private func finishUpdate(failed: String?, info: [String: Any], python: String) {
+        updating = false
+        if let failed {
+            updateFailed = true
+            appendLog("update failed: \(failed)")
+            rendered = ""
+            render()
+            return
+        }
+        appendLog("update done")
+        updateInfo = nil
+        updateCheckedAt = nil  // the next check reads the new versions
+        if info["restart"] as? String == "app", let relaunch = info["relaunch"] as? [String], !relaunch.isEmpty {
+            relaunchApp(relaunch, python: python)
+        } else {
+            restartEngine()
+            rendered = ""
+            render()
+        }
+    }
+
+    /// Quits, and runs `command` (reopen, or rebuild and reopen) once this process
+    /// has gone. The waiter leaves this app's process group first, so a login
+    /// agent's teardown of the group does not take it along.
+    private func relaunchApp(_ command: [String], python: String) {
+        let waiter = Process()
+        waiter.executableURL = URL(fileURLWithPath: python)
+        waiter.arguments = ["-c", """
+            import os, sys, time
+            if os.fork(): os._exit(0)
+            os.setsid()
+            pid = int(sys.argv[1])
+            while True:
+                try: os.kill(pid, 0)
+                except ProcessLookupError: break
+                time.sleep(0.5)
+            os.execv(sys.argv[2], sys.argv[2:])
+            """, String(getpid())] + command
+        waiter.environment = engineEnvironment(python: python)
+        waiter.standardInput = FileHandle.nullDevice
+        do {
+            try waiter.run()
+            waiter.waitUntilExit()  // the fork returns at once
+        } catch {
+            appendLog("could not relaunch: \(error.localizedDescription); quit and reopen Voice2Text")
+            return
+        }
+        appendLog("quitting to relaunch: \(command.joined(separator: " "))")
+        NSApp.terminate(nil)
     }
 
     private func refresh() {
@@ -466,7 +650,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 status = value
                 externalEngine = engine == nil
                 if phase != "stopping" {
+                    let before = phase
                     phase = value["state"] as? String ?? phase
+                    // a model just loaded may have just downloaded: re-read the pickers
+                    if phase == "idle" && before != "idle" { configDate = nil }
                 }
             }
         }
@@ -567,7 +754,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
         let other = otherCopy
-        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)|\(availableUpdate ?? "")|\(updating)|\(updateFailed)|\(engineRestartsOnSignal)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
@@ -637,6 +824,19 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else if phase == "awaiting-accessibility" { add("Cancel Start", action: #selector(cancelStart), image: symbol("xmark")) }
         else if engine == nil { add("Start v2t", action: #selector(start), image: symbol("play.fill"), key: "s") }
         else { add("Stop v2t", action: #selector(stop), image: symbol("stop.fill"), key: "s") }
+        // Restart only the engine: the app stays, and so does its menu-bar icon.
+        if !["permissions", "starting", "stopping", "awaiting-accessibility"].contains(phase)
+            && (engine != nil || (externalEngine && engineRestartsOnSignal)) {
+            add("Restart v2t", action: #selector(restartEngine), image: symbol("arrow.clockwise"), key: "r")
+        }
+        if updating {
+            add("Updating Voice2Text…", image: symbol("hourglass"), enabled: false)
+        } else if let latest = availableUpdate {
+            add("Update to v\(latest)", action: #selector(runUpdate), image: symbol("arrow.down.circle"))
+            if updateFailed {
+                add("Last update failed — open Log", enabled: false).attributedTitle = secondary("Last update failed — open Log")
+            }
+        }
         menu.addItem(.separator())
 
         if let last = lastTranscription {
@@ -666,6 +866,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pillStyles.addItem(row)
         }
         add("Pill", image: symbol("capsule")).submenu = pillStyles
+        if let rows = models["transcription"] as? [[String: Any]], !rows.isEmpty {
+            add("Transcription Model", image: symbol("waveform")).submenu = modelMenu(rows)
+        }
+        if let rows = models["cleanup"] as? [[String: Any]], !rows.isEmpty {
+            add("Cleanup Model", image: symbol("text.badge.checkmark")).submenu = modelMenu(rows)
+        }
         if !settings.isEmpty { add("Settings", image: symbol("slider.horizontal.3")).submenu = settingsMenu() }
         add("Config Folder", image: symbol("gearshape")).submenu = configMenu()
         add("Transcription History", action: #selector(openHistory), image: symbol("clock.arrow.circlepath"))
@@ -797,6 +1003,35 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         _ = AXIsProcessTrustedWithOptions(prompt)
         rendered = ""
         render()
+    }
+
+    /// One picker, drawn from the rows the engine sent: the label, then in small
+    /// grey type whether it is downloaded or what choosing it would download. A
+    /// row is picked through `chooseSetting`, so the engine reloads as for any
+    /// setting; rows that cannot be picked here (an extra not installed, an
+    /// Ollama model not pulled, a model set by hand) are greyed out.
+    private func modelMenu(_ rows: [[String: Any]]) -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for row in rows {
+            let label = row["label"] as? String ?? "?"
+            let note = row["note"] as? String ?? ""
+            let pairs = (row["set"] as? [[String]] ?? []).flatMap { $0 }
+            let enabled = row["available"] as? Bool == true && !pairs.isEmpty
+            let item = NSMenuItem(title: label, action: #selector(chooseSetting(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = pairs
+            item.state = row["current"] as? Bool == true ? .on : .off
+            item.isEnabled = enabled
+            // No colour on an enabled label, so the highlighted row draws it in white
+            var attributes: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0)]
+            if !enabled { attributes[.foregroundColor] = NSColor.disabledControlTextColor }
+            let title = NSMutableAttributedString(string: label, attributes: attributes)
+            if !note.isEmpty { title.append(NSAttributedString(string: "  ")); title.append(secondary(note)) }
+            item.attributedTitle = title
+            submenu.addItem(item)
+        }
+        return submenu
     }
 
     /// Each switch writes one line of config.toml through `v2t config set`, so
