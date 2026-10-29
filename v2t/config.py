@@ -650,13 +650,90 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
     return path
 
 
+# Spelled-out acronyms: two or more single capital letters separated by spaces, dots,
+# hyphens or dot-and-space ("C L I", "F.A.Q.", "C-L-I", "A. I."), with an optional
+# plural or possessive s on the last ("F A Qs", "C L I's"). Speech models write them
+# in about one dictation in sixteen (12 of 208 with Parakeet v3 on Core ML, 23 with
+# Bark 3.0 Pro, #81), and cleanup cannot join them: its guard keeps words as spoken.
+# A run that ends inside a word ("C L I'm") is left whole rather than joined short of
+# that word ("CL I'm"): without a full stop or an s to end it, no letter may follow it.
+_SPELLED = re.compile(
+    r"(?<![\w.'’-])([A-Z](?:(?:\. |[ .-])[A-Z])+)"
+    r"(?:(s['’]?|['’]s)(?![\w'’-])|(\.)(?![\w'’-])"
+    r"|(?![\w'’-])(?!(?:\. |[ .-])[A-Z](?![a-z])))"
+)
+# verbs that follow "I" the pronoun but not an acronym ("the C L I I think"), even in
+# a question ("does the C L I mean"), so not do, have, want or the modals
+_AFTER_PRONOUN = frozenset("think guess mean feel believe wonder remember am".split())
+
+
+def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
+    """"C L I" -> "CLI", "F.A.Q." -> "FAQ", "F A Qs" -> "FAQs": runs of single
+    capital letters written as one word, before the replacements, so a
+    `heard => written` line can still restyle the result ("US => U.S.").
+
+    Left alone: runs of "I" only ("I I think"); an "I" that starts a clause ("the
+    C L I I think" or "C L I I can" -> "CLI I") or a sentence ("I S S H in" -> "I SSH in"); and letters spaced with full stops
+    unless one ends them ("A. I." joins, "option B. C was" does not), though dotted
+    letters before such a gap still join ("the F.A.Q. I think" -> "the FAQ. I think").
+    A dotted acronym joins without its last full stop before a lowercase word or a
+    comma, and with it at the end of the text or a quote; before a capital or a digit
+    ("the U.S. Congress", "the F.A.Q. Then") that stop may end a sentence or not, so
+    the acronym stays as written. A replacement's heard side (`sentence_stops` false)
+    always drops it.
+    """
+
+    def join(match: re.Match) -> str:
+        run, plural, dot = match.group(1), match.group(2) or "", match.group(3) or ""
+        letters = re.findall(r"[A-Z]", run)
+        rest = text[match.end() :]
+        if set(letters) == {"I"}:
+            return match.group()
+        start = text[: match.start()].rstrip()
+        if sentence_stops and run.startswith("I ") and len(letters) > 2 and (not start or start[-1] in ".!?"):
+            # "I S S H into the server": a sentence's own I, then the acronym
+            return "I " + join_spelled_acronyms(match.group()[2:], sentence_stops=sentence_stops)
+        if not (plural or dot):
+            if ". " in run:  # perhaps a sentence ending, then a one-letter word
+                cut = run.rfind(". ") + 1
+                if ". " in run[:cut]:
+                    return match.group()
+                return join_spelled_acronyms(run[:cut], sentence_stops=sentence_stops) + run[cut:]
+            following = re.match(r"\s+([\w'’]+)", rest)
+            if run.endswith(" I") and (
+                run.endswith(" I I")
+                or (following and following.group(1).lower() in _AFTER_PRONOUN)
+            ):
+                return join_spelled_acronyms(run[:-2], sentence_stops=sentence_stops) + " I"
+        if dot and "." in run and not plural:  # the acronym's own full stop
+            if not sentence_stops or re.match(r"\s*[a-z,;:]", rest):
+                dot = ""  # mid-sentence: "the U.S. office" -> "the US office"
+            elif rest.strip() and not re.match(r"[\"”)\]]", rest):
+                return match.group()  # "the U.S. Congress" or "the F.A.Q. Then": unclear
+
+        return "".join(letters) + plural + dot
+
+    return _SPELLED.sub(join, text)
+
+
 def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
-    """Whole-word, case-insensitive `heard => written` substitutions."""
+    """Whole-word, case-insensitive `heard => written` substitutions.
+
+    The text comes with its spelled-out acronyms joined, so a heard side written
+    that way also matches joined: "A B testing => A/B testing" matches "AB testing"
+    as well as "a b testing", and "U.S. => United States" matches "US".
+    """
     import re
 
     for heard, written in replacements:
+        pattern = re.escape(heard)
+        # one-letter words capitalised, so "a b testing" is heard as "AB testing" too
+        letters = re.sub(r"(?<![\w'’])[a-z](?![\w'’])", lambda m: m.group().upper(), heard)
+        joined = join_spelled_acronyms(letters, sentence_stops=False)
+        if joined != letters:
+            pattern = f"(?:{re.escape(joined)}|{pattern})"
         text = re.sub(
-            rf"(?<!\w){re.escape(heard)}(?!\w)",
+            rf"(?<!\w){pattern}(?!\w)",
             lambda _match, written=written: written,  # literal: no \1 or \g<> parsing
             text,
             flags=re.IGNORECASE,

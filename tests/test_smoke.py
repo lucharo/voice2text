@@ -854,6 +854,21 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIsNotNone(audio_path)
         self.assertFalse(Path(audio_path).exists())
 
+    def test_spelled_acronyms_are_joined_after_cleanup_and_before_replacements(self):
+        voice = app.VoiceToText(config.Config(save_history=False))
+        voice.stt = mock.Mock(transcribe=lambda path: "raw words")
+        voice.cleaner = mock.Mock(model_id="cleaner")
+        voice.cleaner.cleanup.return_value = ("Ask the C L I.", 0.1, 0.2)
+        config.write_dictionary([], [("CLI", "command line")])
+        voice.processing = True
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_audio([np.ones((8, 1), dtype=np.float32)], 1.0)
+
+        paste.assert_called_once_with("Ask the command line.")
+
     def test_whole_file_decoding_hands_parakeet_the_array_without_a_wav(self):
         voice = app.VoiceToText(config.Config(save_history=False))
         decoded = []
@@ -3465,6 +3480,13 @@ class V2TSmokeTests(unittest.TestCase):
         self.make_cleanup = make_cleanup
         return output.getvalue()
 
+    def test_transcribe_joins_spelled_acronyms(self):
+        stt = mock.Mock(transcribe=mock.Mock(return_value="see the F A Q page"))
+
+        text = self._transcribe([str(self._audio_file())], stt)
+
+        self.assertEqual(text, "see the FAQ page\n")
+
     def test_transcribe_is_verbatim_and_loads_no_cleaner_by_default(self):
         path = self._audio_file()
         stt = mock.Mock(transcribe=mock.Mock(return_value="hey um there"))
@@ -4507,6 +4529,97 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             err.getvalue(), "1 of 2 replacements fired: Alpha Kive => alphaXiv\n"
         )
+
+    def test_dictionary_apply_joins_spelled_acronyms_before_the_replacements(self):
+        config.write_dictionary([], [("US", "U.S.")])
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO("in the U S office")),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            code = cli.cmd_dictionary(["apply"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "in the U.S. office")
+        self.assertEqual(err.getvalue(), "1 of 1 replacements fired: US => U.S.\n")
+
+    def test_a_replacement_heard_as_spelled_letters_still_fires_after_the_join(self):
+        config.write_dictionary([], [("A B testing", "A/B testing")])
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO("we ran A B testing")),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            cli.cmd_dictionary(["apply"])
+
+        self.assertEqual(out.getvalue(), "we ran A/B testing")
+        self.assertEqual(err.getvalue(), "1 of 1 replacements fired: A B testing => A/B testing\n")
+
+    def test_a_spelled_replacement_matches_spaced_lowercase_and_dotted_text(self):
+        replacements = [
+            ("A B testing", "A/B testing"), ("U.S.", "United States"), ("f a q page", "help page"), ("I B M", "IBM Corp"),
+        ]
+
+        for text, expected in [
+            ("we ran a b testing", "we ran A/B testing"),
+            ("in the US office", "in the United States office"),
+            ("in the U.S. office", "in the United States office"),
+            ("see the F A Q page", "see the help page"),
+            ("so I B M said no", "so IBM Corp said no"),
+        ]:
+            with self.subTest(text=text):
+                joined = config.join_spelled_acronyms(text)
+                self.assertEqual(config.apply_replacements(joined, replacements), expected)
+
+    def test_join_spelled_acronyms(self):
+        cases = [
+            # spaces, dots, hyphens, dot and space; two letters are enough
+            ("try the C L I now", "try the CLI now"),
+            ("an F.A.Q page", "an FAQ page"),
+            ("the C-L-I flags", "the CLI flags"),
+            ("ask the A. I. agent", "ask the AI agent"),
+            ("a D B table", "a DB table"),
+            ("all the F A Qs", "all the FAQs"),
+            # a dotted acronym's last full stop stays only where a sentence can end
+            ("the U.S. office", "the US office"),
+            ("update the F.A.Q. Then ship", "update the F.A.Q. Then ship"),
+            ("the U.S. Congress", "the U.S. Congress"),
+            ("read the F.A.Q. 10 examples follow", "read the F.A.Q. 10 examples follow"),
+            ("in the U. K. I've lived", "in the U. K. I've lived"),
+            ("the U.K., for one", "the UK, for one"),
+            ("open the F.A.Q.", "open the FAQ."),
+            ("the U.V., for example", "the UV, for example"),
+            # a space-separated run keeps the sentence's full stop
+            ("from within B B. Next", "from within BB. Next"),
+            # left alone: stutters, a clause's I, a sentence ending, single letters
+            ("I I think so", "I I think so"),
+            ("open the C L I I think", "open the CLI I think"),
+            ("open the C L I I can use", "open the CLI I can use"),
+            ("what does the C L I do?", "what does the CLI do?"),
+            ("the F A Qs I wrote", "the FAQs I wrote"),
+            ("the F A Qs' answers", "the FAQs' answers"),
+            ("I S S H into the server", "I SSH into the server"),
+            ("so I B M said no", "so IBM said no"),
+            ("call the A. P. I endpoint", "call the A. P. I endpoint"),
+            ("I chose option B. C was down", "I chose option B. C was down"),
+            ("open the F.A.Q. I think", "open the FAQ. I think"),
+            ("open the F.A.Q.\n", "open the FAQ.\n"),
+            ('he said "see the F.A.Q."', 'he said "see the FAQ."'),
+            ("the C L I and the agent", "the CLI and the agent"),
+            ("go with option B. I think so", "go with option B. I think so"),
+            ("plan B is fine", "plan B is fine"),
+            ("the C L I's flags", "the CLI's flags"),
+            ("the C L I'm using", "the C L I'm using"),
+            ("a C L I-based tool", "a C L I-based tool"),
+            ("Mr T and Mr B", "Mr T and Mr B"),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(config.join_spelled_acronyms(text), expected)
 
     def test_dictionary_apply_reports_a_missing_file_instead_of_raising(self):
         config.write_dictionary([], [("a", "b")])

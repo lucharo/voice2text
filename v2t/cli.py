@@ -226,6 +226,7 @@ def _transcribe_files(cfg, paths: list[Path], clean: bool) -> int:
                         file=sys.stderr,
                     )
             cleanup_s = time.perf_counter() - started
+        text = config.join_spelled_acronyms(text)
         fired = config.replacements_fired(text, replacements)
         text = config.apply_replacements(text, replacements)
         elapsed = stt_s + cleanup_s
@@ -469,6 +470,7 @@ def cmd_dictionary(argv: list[str]) -> int:
                 print(f"no such file: {a.file}", file=sys.stderr)
                 return 1
         text = a.file.read_text() if a.file else sys.stdin.read()
+        text = config.join_spelled_acronyms(text)  # as after cleanup, before replacements
         fired = config.replacements_fired(text, replacements)
         text = config.apply_replacements(text, replacements)
         sys.stdout.write(text)

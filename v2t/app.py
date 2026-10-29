@@ -1090,6 +1090,7 @@ class VoiceToText:
                 logger.error(f"LLM cleanup failed: {e}")
                 logger.warning("Falling back to raw transcription")
                 cleaned_text = raw_text
+        cleaned_text = config.join_spelled_acronyms(cleaned_text)
         fired = config.replacements_fired(cleaned_text, self.replacements)
         cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
