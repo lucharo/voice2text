@@ -105,8 +105,10 @@ def phone_job_name(udid: str) -> str | None:
 
 
 def finished(s: dict) -> bool:
-    """The log says the job ended and every arm's results are here in full."""
-    return s["ended"] and s["total"] is not None and s["done"] >= s["total"]
+    """The log says the job ended and every arm's results are here in full. A phone copy that diverged from
+    the local one this sync (a restarted job of the same name) means the local files describe another run."""
+    diverged = any(v == "diverged" for v in s.get("pulled", {}).values())
+    return s["ended"] and s["total"] is not None and s["done"] >= s["total"] and not diverged
 
 
 def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> dict:

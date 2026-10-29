@@ -49,6 +49,11 @@ class LoadJob(unittest.TestCase):
         ]
         self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), want)
 
+    def test_names_that_are_not_plain_file_names_are_refused(self):
+        with self.assertRaises(SystemExit) as e:
+            self.load({**JOB, "name": "bench/q05"})
+        self.assertEqual(str(e.exception).split(": ", 1)[1], "job name and arm ids may use only letters, digits, . _ -")
+
 
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
@@ -149,6 +154,10 @@ class Finished(unittest.TestCase):
         cases = [(True, 20, 20), (True, 19, 20), (False, 20, 20), (True, 20, None)]
         got = [phone_sync.finished({"ended": e, "done": d, "total": t}) for e, d, t in cases]
         self.assertEqual(got, [True, False, False, False])
+
+    def test_a_diverged_phone_copy_keeps_the_watch_going(self):
+        s = {"ended": True, "done": 20, "total": 20, "pulled": {"j.log.jsonl": "unchanged", "j.a.jsonl": "diverged"}}
+        self.assertFalse(phone_sync.finished(s))
 
 
 if __name__ == "__main__":

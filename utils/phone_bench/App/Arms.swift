@@ -75,6 +75,10 @@ protocol Arm: AnyObject {
   func unload()
 }
 
+/// Which item set each runtime processes; JobSpec.validate refuses a mismatch.
+let runtimeSet: [String: ItemSet] = ["mlx": .cleanup, "anemll": .cleanup, "afm": .cleanup,
+                                     "parakeet-coreml": .speech, "mlx-stt": .speech, "bark": .speech]
+
 func makeArm(_ s: ArmSpec) throws -> Arm {
   let modelDir = s.model.map { documents.appendingPathComponent("models/\($0)") }
   let opt = s.options ?? [:]

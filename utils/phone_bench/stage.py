@@ -46,8 +46,9 @@ def main() -> int:
     ap.add_argument("--from", dest="src", type=Path, help="a Res folder to copy clips/, cleanup/, models/, bark/ from")
     ap.add_argument("--write-manifest", action="store_true", help="re-pin res-manifest.json from the staged files")
     a = ap.parse_args()
-    if a.src and any((a.src / p).resolve() == (RES / p).resolve() for p in PARTS):
-        sys.exit(f"{a.src} is (or links into) Res itself; nothing to copy")
+    if a.src and any((a.src / p).resolve().is_relative_to((RES / p).resolve())
+                     or (RES / p).resolve().is_relative_to((a.src / p).resolve()) for p in PARTS):
+        sys.exit(f"{a.src} overlaps Res (is, links into or sits inside it); copy from somewhere else")
     if a.src:
         missing = [p for p in PARTS if not (a.src / p).is_dir()]
         if missing:

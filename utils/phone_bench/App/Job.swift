@@ -43,6 +43,13 @@ struct JobSpec: Codable {
     guard !arms.contains(where: { $0.id == "log" }) else { throw BenchError("arm id log is reserved for the job log") }
     guard !arms.isEmpty, Set(arms.map(\.id)).count == arms.count else { throw BenchError("arms must be non-empty with unique ids") }
     guard Self.order.contains(order ?? "abba") else { throw BenchError("order must be one of \(Self.order)") }
+    // names become file names in Documents, so no path separators or other surprises
+    let safe = { (s: String) in !s.isEmpty && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) } }
+    guard safe(name), arms.allSatisfy({ safe($0.id) }) else { throw BenchError("job name and arm ids may use only letters, digits, . _ -") }
+    for a in arms {
+      guard let s = runtimeSet[a.runtime] else { throw BenchError("arm \(a.id): unknown runtime \(a.runtime)") }
+      guard s == set else { throw BenchError("arm \(a.id): runtime \(a.runtime) runs on the \(s.rawValue) set, not \(set.rawValue)") }
+    }
   }
 }
 
@@ -78,7 +85,8 @@ final class JobRunner: @unchecked Sendable {
     status(p)
   }
 
-  init(spec: JobSpec, status: @escaping (Progress) -> Void) {
+  init(spec: JobSpec, status: @escaping (Progress) -> Void) throws {
+    try spec.validate()  // before any file is opened: names become file names
     self.spec = spec
     self.status = status
     log = Rows(spec.logFile)
@@ -86,7 +94,6 @@ final class JobRunner: @unchecked Sendable {
   }
 
   func run() async throws {
-    try spec.validate()
     log.startHeartbeat()
     let items = try spec.items()
     let sched = spec.schedule(itemCount: items.count)
@@ -96,18 +103,20 @@ final class JobRunner: @unchecked Sendable {
               "done": Dictionary(uniqueKeysWithValues: zip(spec.arms.map(\.id), files.map(\.done.count))),
               "os": ProcessInfo.processInfo.operatingSystemVersionString, "mb": footprintMB()])
     var loaded: (index: Int, arm: Arm)? = nil
-    var failed = Set<Int>()  // arms whose model failed to load this launch; a relaunch tries them again
+    var failed = Set<Int>()  // arms that cannot run this launch (changed config, failed load); a relaunch tries again
+    for (a, arm) in spec.arms.enumerated() {
+      // checked up front, so a finished arm with a changed config is refused too, not reported as done
+      if let prev = files[a].lastStart?["signature"] as? String, prev != arm.signature {
+        let msg = "arm \(arm.id) was \(prev) in earlier rows and is \(arm.signature) now; give the job a new name"
+        files[a].emit(["event": "error", "arm": arm.id, "stage": "resume", "msg": msg])
+        log.emit(["event": "arm_failed", "arm": arm.id, "msg": msg])
+        failed.insert(a)
+      }
+    }
     for (bi, (a, k)) in sched.enumerated() {
       let spec = self.spec.arms[a], out = files[a]
       let todo = items[(k * self.spec.block)..<min((k + 1) * self.spec.block, items.count)].filter { !out.done.contains($0.key) }
       if todo.isEmpty || failed.contains(a) { continue }
-      if let prev = out.lastStart?["signature"] as? String, prev != spec.signature {
-        // resuming would mix two configurations in one file, or skip the new one as already done
-        let msg = "arm \(spec.id) was \(prev) in earlier rows and is \(spec.signature) now; give the job a new name"
-        out.emit(["event": "error", "arm": spec.id, "stage": "resume", "msg": msg])
-        log.emit(["event": "arm_failed", "arm": spec.id, "msg": msg])
-        failed.insert(a); continue
-      }
       if loaded?.index != a {
         if let l = loaded { unload(l.arm, index: l.index) }
         loaded = nil
@@ -146,8 +155,10 @@ final class JobRunner: @unchecked Sendable {
     }
     if let l = loaded { unload(l.arm, index: l.index) }
     // an arm finished in an earlier launch that died before writing its end row gets one now
-    for (f, arm) in zip(files, spec.arms) where !f.ended && items.allSatisfy({ f.done.contains($0.key) }) { f.emit(["event": "end", "arm": arm.id]) }
-    let complete = files.allSatisfy { f in items.allSatisfy { f.done.contains($0.key) } }
+    for (i, (f, arm)) in zip(files, spec.arms).enumerated() where !failed.contains(i) && !f.ended && items.allSatisfy({ f.done.contains($0.key) }) {
+      f.emit(["event": "end", "arm": arm.id])
+    }
+    let complete = failed.isEmpty && files.allSatisfy { f in items.allSatisfy { f.done.contains($0.key) } }
     log.emit(["event": complete ? "end" : "stopped", "job": spec.name,
               "done": Dictionary(uniqueKeysWithValues: zip(spec.arms.map(\.id), files.map(\.done.count))),
               "failed": failed.map { spec.arms[$0].id }])

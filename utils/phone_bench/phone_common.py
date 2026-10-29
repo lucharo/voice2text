@@ -1,6 +1,7 @@
 """Shared helpers for phone_push.py and phone_sync.py: the job file, devicectl, and reading result rows."""
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -37,6 +38,8 @@ def load_job(path: Path) -> dict:
         errs.append("arms need unique ids")
     if "log" in ids:
         errs.append("arm id log is reserved for the job log")
+    if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._-]+", x) for x in [job["name"], *ids]):
+        errs.append("job name and arm ids may use only letters, digits, . _ -")
     for a in job["arms"]:
         rt = a.get("runtime")
         if rt not in RUNTIMES:

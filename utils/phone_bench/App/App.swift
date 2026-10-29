@@ -61,7 +61,8 @@ func jobURL() -> URL {
         do { spec = try JSONDecoder().decode(JobSpec.self, from: data) } catch { status.line = "bad job file: \(error)"; return }
         let s = status
         s.job = spec.name
-        let runner = JobRunner(spec: spec) { p in Task { @MainActor in s.progress = p } }
+        let runner: JobRunner
+        do { runner = try JobRunner(spec: spec) { p in Task { @MainActor in s.progress = p } } } catch { status.line = "bad job: \(error)"; return }
         // Off the main thread: a synchronous model load on the main actor during launch trips iOS's 20 s
         // scene-create watchdog (0x8BADF00D).
         let work = Task.detached(priority: .userInitiated) { try await runner.run() }
