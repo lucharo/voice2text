@@ -71,8 +71,16 @@ If the app dies anyway (Jetsam, a crash), tap its icon: with no launch arguments
 and resumes. `phone_sync.py --relaunch-after 10` does the same from the Mac once the phone is reachable and
 no row has arrived for 10 minutes, provided the phone's job.json is still this job.
 
-Background execution (`BGProcessingTask` with `requiresExternalPower`) could in principle carry the
-Neural Engine and CPU arms while the phone is locked; it is not implemented or tested.
+**Known limitation: while a job runs, the phone can't be used for anything else.** Switching apps or
+locking the phone sends the bench to the background, where iOS suspends it: an MLX arm stops at once,
+since iPhones give background apps no GPU, and a Core ML arm stalls within minutes. Keep the bench on
+screen, with Guided Access if needed.
+
+A possible future route, untested: iOS 26's `BGContinuedProcessingTask` could keep the Core ML arms
+(Neural Engine and CPU) running in the background; background GPU work, and so MLX, appears to be
+allowed on iPad only. Timings taken while the phone is in use are not comparable with foreground ones,
+so such runs would suit accuracy, not speed. Details in
+[#84](https://github.com/lucharo/voice2text/issues/84#issuecomment-6495607003).
 
 ## The job file
 
