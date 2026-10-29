@@ -8,6 +8,7 @@ import json
 import os
 import plistlib
 import queue
+import shlex
 import signal
 import socket
 import sqlite3
@@ -3273,7 +3274,24 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(output.getvalue().splitlines(), [
             "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16). Run:",
             "  /usr/bin/env 'UV_TOOL_DIR=/Users/a/Voice Tools' /bin/uv tool upgrade voice2text",
-            "then quit Voice2Text and run: v2t menubar install",
+            f"then quit Voice2Text and run: {shlex.join([sys.executable, '-m', 'v2t', 'menubar', 'install'])}",
+        ])
+
+    def test_update_in_a_terminal_rebuilds_a_stale_local_app_beside_a_current_source_engine(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(update, "fetch_pypi", return_value="0.5.17"),
+            mock.patch.object(update, "installed_app", return_value=(Path("/Users/a/Applications/Voice2Text.app"), "0.5.16")),
+            mock.patch.object(update, "engine_route", return_value="uv-source"),
+            mock.patch.object(update, "app_route", return_value="local"),
+            mock.patch.object(update, "__version__", "0.5.17"),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.main(["update"])
+
+        self.assertEqual(output.getvalue().splitlines(), [
+            "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16); quit Voice2Text and run: "
+            + shlex.join([sys.executable, "-m", "v2t", "menubar", "install"]),
         ])
 
     def test_update_in_a_terminal_does_not_call_an_old_engine_current_when_uv_is_missing(self):

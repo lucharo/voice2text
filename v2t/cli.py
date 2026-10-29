@@ -819,24 +819,29 @@ def cmd_update(argv: list[str]) -> int:
     )
     import shlex
 
-    behind = update.newer(result["latest"], result["engine_version"]) or update.newer(
-        result["latest"], result["app_version"]
-    )
-    if not behind:
+    engine_behind = update.newer(result["latest"], result["engine_version"])
+    app_behind = update.newer(result["latest"], result["app_version"])
+    # this engine's own interpreter, so the rebuild uses this install, not another v2t on PATH
+    rebuild = shlex.join([sys.executable, "-m", "v2t", "menubar", "install"])
+    if not (engine_behind or app_behind):
         print(f"v2t is up to date ({have})")
         return 0
     if not result["update"]:
-        how = {"uv-source": "update your checkout", "other": "upgrade it the way you installed it"}
-        print(f"v2t {result['latest']} is out (you have {have}); "
-              f"{how.get(result['engine_route'], 'uv or brew was not found to upgrade it')}")
+        if engine_behind:
+            how = {"uv-source": "update your checkout", "other": "upgrade it the way you installed it"}
+            hint = how.get(result["engine_route"], "uv or brew was not found to upgrade it")
+        elif result["app_route"] == "local":  # a current engine, a menu app built from an older one
+            hint = f"quit Voice2Text and run: {rebuild}"
+        else:
+            hint = "brew was not found to upgrade the menu app"
+        print(f"v2t {result['latest']} is out (you have {have}); {hint}")
         return 0
     print(f"v2t {result['latest']} is out (you have {have}). Run:")
     for command in result["commands"]:
         print("  " + shlex.join(command))
     if result["restart"] == "app":
-        print("then quit Voice2Text and run: " + (
-            "v2t menubar install" if result["app_route"] == "local" else "open -a Voice2Text"
-        ))
+        print("then quit Voice2Text and run: "
+              + (rebuild if result["app_route"] == "local" else "open -a Voice2Text"))
     return 0
 
 
