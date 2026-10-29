@@ -690,7 +690,7 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
         if set(letters) == {"I"}:
             return match.group()
         start = text[: match.start()].rstrip()
-        if run.startswith("I ") and len(letters) > 2 and (not start or start[-1] in ".!?"):
+        if sentence_stops and run.startswith("I ") and len(letters) > 2 and (not start or start[-1] in ".!?"):
             # "I S S H into the server": a sentence's own I, then the acronym
             return "I " + join_spelled_acronyms(match.group()[2:], sentence_stops=sentence_stops)
         if not (plural or dot):
