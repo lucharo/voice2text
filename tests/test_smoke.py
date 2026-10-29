@@ -2954,8 +2954,27 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(refused.exception.code, 2)
         self.assertFalse(config.config_path().exists())
 
+    def _snapshot(self, repo, files=("model.safetensors",)):
+        """A fake Hugging Face snapshot of `repo` holding `files` (a trailing / makes a folder)."""
+        snapshot = Path(self.tempdir.name) / "hf" / repo.replace("/", "--") / "abc123"
+        for name in files:
+            target = snapshot / name
+            if name.endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+        return snapshot
+
+    def _complete_coreml(self):
+        return [f"{n}/coremldata.bin" if n.endswith(".mlmodelc") else n for n in coreml.FILES]
+
     def _pickers(self, cfg, *, cached=(), extras=("mlx_whisper", "mlx_audio"), ollama=()):
         """The pickers with the download caches, extras and Ollama's store faked."""
+        snapshots = {
+            repo: [self._snapshot(repo, self._complete_coreml() if repo == coreml.COREML_REPO else ("w",))]
+            for repo in cached
+        }
         ollama_root = Path(self.tempdir.name) / "ollama"
         for tag in ollama:
             name, _, version = tag.partition(":")
@@ -2964,7 +2983,7 @@ class V2TSmokeTests(unittest.TestCase):
             manifest.write_text("{}")
         find_spec = lambda name: object() if name in extras else None  # noqa: E731
         with (
-            mock.patch.object(backends, "cached_locally", side_effect=lambda repo: repo in cached),
+            mock.patch.object(backends, "hf_snapshots", side_effect=lambda repo: snapshots.get(repo, [])),
             mock.patch.object(coreml, "COREML_DIR", Path(self.tempdir.name) / "no-fluidaudio"),
             mock.patch.object(models.importlib.util, "find_spec", side_effect=find_spec),
             mock.patch.dict(os.environ, {"OLLAMA_MODELS": str(ollama_root)}),
@@ -2998,12 +3017,32 @@ class V2TSmokeTests(unittest.TestCase):
             (fluidaudio / name).mkdir(parents=True)
         cfg = config.Config(backend="parakeet", stt_model=backends.PARAKEET_DEFAULT)
 
-        with mock.patch.object(backends, "cached_locally", return_value=False), \
+        with mock.patch.object(backends, "hf_snapshots", return_value=[]), \
                 mock.patch.object(coreml, "COREML_DIR", fluidaudio):
             rows = models.transcription(cfg)
 
         self.assertEqual([(r["id"], r["downloaded"], r["current"]) for r in rows[:2]],
                          [("parakeet-coreml", True, False), ("parakeet", False, True)])
+
+    def test_coreml_counts_as_downloaded_only_once_every_compiled_model_is_whole(self):
+        partial = self._snapshot(coreml.COREML_REPO, ("parakeet_v3_vocab.json", *(f"{n}/" for n in coreml.FILES if n.endswith(".mlmodelc"))))
+        whole = self._snapshot("whole/coreml", self._complete_coreml())
+
+        with mock.patch.object(coreml, "COREML_DIR", Path(self.tempdir.name) / "no-fluidaudio"):
+            states = []
+            for snapshot in (partial, whole):
+                with mock.patch.object(backends, "hf_snapshots", return_value=[snapshot]):
+                    states.append(coreml.downloaded())
+
+        self.assertEqual(states, [False, True])
+
+    def test_cleanup_picker_leaves_a_remote_ollama_selectable_as_it_cannot_see_its_models(self):
+        cfg = config.Config(ollama_url="http://gpu-box:11434")
+
+        row = self._pickers(cfg)["cleanup"][-1]
+
+        self.assertEqual((row["id"], row["downloaded"], row["available"], row["note"]),
+                         ("ollama", None, True, "on gpu-box"))
 
     def test_transcription_picker_adds_a_hand_set_model_as_a_ticked_row_that_cannot_be_picked(self):
         cfg = config.Config(backend="whisper", stt_model="mlx-community/whisper-small")
@@ -3120,8 +3159,12 @@ class V2TSmokeTests(unittest.TestCase):
                 update.app_route(root / "build/Voice2Text.app", (caskroom,)),
                 update.app_route(None, (caskroom,)),
             ]
+            (system / "Contents/MacOS").mkdir(parents=True)
+            (system / "Contents/MacOS/Voice2Text").touch()
+            beside_the_cask = update.app_route(home / "Applications/Voice2Text.app", (caskroom,))
 
         self.assertEqual(routes, ["cask", "other", "local", "other", None])
+        self.assertEqual(beside_the_cask, "other")  # menubar install would refuse the rebuild
 
     def _update_check(self, *, engine_route, app_route, app_version="0.5.16", engine_version="0.5.16"):
         tools = {"uv": "/bin/uv", "brew": "/bin/brew"}
@@ -3173,6 +3216,24 @@ class V2TSmokeTests(unittest.TestCase):
             with self.subTest(engine=engine_route, app=app_route):
                 result = self._update_check(engine_route=engine_route, app_route=app_route, **versions)
                 self.assertEqual((result["update"], result["commands"]), (False, []))
+
+    def test_update_in_a_terminal_finds_the_installed_app_and_prints_its_upgrade(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(update, "fetch_pypi", return_value="0.5.17"),
+            mock.patch.object(update, "installed_app", return_value=(update.SYSTEM_APP, "0.5.16")),
+            mock.patch.object(update, "engine_route", return_value="uv-source"),
+            mock.patch.object(update, "app_route", side_effect=lambda app, rooms: "cask" if app else None),
+            mock.patch.object(update, "_which", return_value="/bin/brew"),
+            mock.patch.object(update, "__version__", "0.5.17"),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.main(["update"])
+
+        self.assertEqual(output.getvalue().splitlines(), [
+            "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16). Run:",
+            "  /bin/brew upgrade --cask voice2text",
+        ])
 
     def test_update_json_names_the_versions_and_routes_for_the_menu(self):
         output = io.StringIO()

@@ -804,23 +804,28 @@ def cmd_update(argv: list[str]) -> int:
     parser.add_argument("--app", help="the menu app bundle asking, to find how it was installed")
     parser.add_argument("--app-version", help="that bundle's version")
     args = parser.parse_args(argv)
-    result = update.check(Path(args.app) if args.app else None, args.app_version)
+    app, app_version = (Path(args.app) if args.app else None), args.app_version
+    if app is None:  # from a terminal: the installed menu app, if any
+        app, app_version = update.installed_app()
+    result = update.check(app, app_version)
     if args.json:
         print(json.dumps(result))
         return 0
     if not result["latest"]:
         print(f"v2t {result['engine_version']}; could not reach PyPI: {result['error']}")
         return 1
+    have = f"engine {result['engine_version']}" + (
+        f", menu app {result['app_version']}" if result["app_version"] else ""
+    )
     if not result["update"]:
         behind = update.newer(result["latest"], result["engine_version"])
         how = {"uv-source": "update your checkout", "other": "upgrade it the way you installed it"}
         if behind and result["engine_route"] in how:
-            print(f"v2t {result['latest']} is out (you have {result['engine_version']}); "
-                  f"{how[result['engine_route']]}")
+            print(f"v2t {result['latest']} is out (you have {have}); {how[result['engine_route']]}")
         else:
-            print(f"v2t {result['engine_version']} is up to date")
+            print(f"v2t is up to date ({have})")
         return 0
-    print(f"v2t {result['latest']} is out (you have {result['engine_version']}). Run:")
+    print(f"v2t {result['latest']} is out (you have {have}). Run:")
     for command in result["commands"]:
         print("  " + " ".join(command))
     return 0

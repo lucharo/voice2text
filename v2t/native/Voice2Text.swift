@@ -38,6 +38,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// list of rows (label, note, current, available, and the `set` pairs that pick
     /// it). Empty for an engine older than the pickers, which then shows none.
     private var models: [String: Any] = [:]
+    private var modelsReadAt: Date?
+    /// The two pickers, refilled as each opens: a model pulled or downloaded since
+    /// (by Ollama, or by the engine while it loaded) changes no config.toml date.
+    /// New ones with each render: a menu can be the submenu of only one item.
+    private var transcriptionPicker = NSMenu()
+    private var cleanupPicker = NSMenu()
     private var configFile: URL?
     private var configDate: Date?
     /// The engine that was running, too old to reload itself, when a setting changed.
@@ -375,6 +381,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         settings = read
         models = value["models"] as? [String: Any] ?? [:]
+        modelsReadAt = Date()
         configFile = URL(fileURLWithPath: path)
         configDate = modified(configFile)
         return true
@@ -867,10 +874,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         add("Pill", image: symbol("capsule")).submenu = pillStyles
         if let rows = models["transcription"] as? [[String: Any]], !rows.isEmpty {
-            add("Transcription Model", image: symbol("waveform")).submenu = modelMenu(rows)
+            transcriptionPicker = NSMenu()
+            fillModelMenu(transcriptionPicker, rows)
+            add("Transcription Model", image: symbol("waveform")).submenu = transcriptionPicker
         }
         if let rows = models["cleanup"] as? [[String: Any]], !rows.isEmpty {
-            add("Cleanup Model", image: symbol("text.badge.checkmark")).submenu = modelMenu(rows)
+            cleanupPicker = NSMenu()
+            fillModelMenu(cleanupPicker, rows)
+            add("Cleanup Model", image: symbol("text.badge.checkmark")).submenu = cleanupPicker
         }
         if !settings.isEmpty { add("Settings", image: symbol("slider.horizontal.3")).submenu = settingsMenu() }
         add("Config Folder", image: symbol("gearshape")).submenu = configMenu()
@@ -882,7 +893,17 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add("Quit Voice2Text", action: #selector(quit), key: "q")
     }
 
+    /// A picker about to open re-reads the rows (about 90 ms), unless they were read
+    /// in the last few seconds, as when the menu itself just opened.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let key = menu === transcriptionPicker ? "transcription" : menu === cleanupPicker ? "cleanup" : nil
+        guard let key else { return }
+        if Date().timeIntervalSince(modelsReadAt ?? .distantPast) > 3 { runConfig([]) }
+        fillModelMenu(menu, models[key] as? [[String: Any]] ?? [])
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
         loadLastTranscription()
         loadSettings()
         rendered = ""
@@ -891,6 +912,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
         menuIsOpen = false
     }
 
@@ -1010,9 +1032,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// row is picked through `chooseSetting`, so the engine reloads as for any
     /// setting; rows that cannot be picked here (an extra not installed, an
     /// Ollama model not pulled, a model set by hand) are greyed out.
-    private func modelMenu(_ rows: [[String: Any]]) -> NSMenu {
-        let submenu = NSMenu()
+    private func fillModelMenu(_ submenu: NSMenu, _ rows: [[String: Any]]) {
+        submenu.removeAllItems()
         submenu.autoenablesItems = false
+        submenu.delegate = self
         for row in rows {
             let label = row["label"] as? String ?? "?"
             let note = row["note"] as? String ?? ""
@@ -1031,7 +1054,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.attributedTitle = title
             submenu.addItem(item)
         }
-        return submenu
     }
 
     /// Each switch writes one line of config.toml through `v2t config set`, so

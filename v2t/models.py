@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import backends, config
 
@@ -41,18 +42,22 @@ def _ollama_pulled(tag: str) -> bool:
     return (root / "manifests" / "registry.ollama.ai" / name / (version or "latest")).is_file()
 
 
-def _downloaded(choice: backends.ModelChoice) -> bool | None:
-    """True or False for a model v2t loads; None for Off."""
+def _local_ollama(url: str) -> bool:
+    return (urlparse(url).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
+def _downloaded(choice: backends.ModelChoice, cfg: config.Config) -> bool | None:
+    """True or False for a model v2t loads; None for Off, or for an Ollama on
+    another machine, whose models this Mac cannot see."""
     if choice.backend == "off":
         return None
     model = choice.model or _default_model(choice.backend)
     if choice.backend == "ollama":
-        return _ollama_pulled(model)
-    if choice.backend == "parakeet-coreml" and not choice.model:
+        return _ollama_pulled(model) if _local_ollama(cfg.ollama_url) else None
+    if choice.backend == "parakeet-coreml":
         from . import coreml
 
-        # FluidAudio's own folder is read first, else the Hugging Face cache
-        return not coreml.missing_files(coreml.COREML_DIR) or backends.cached_locally(model)
+        return coreml.downloaded(choice.model)
     return backends.cached_locally(model)
 
 
@@ -60,11 +65,14 @@ def _size(gb: float) -> str:
     return f"{gb:.2g} GB"
 
 
-def _row(choice: backends.ModelChoice, current: bool, default: bool, settings: list[list[str]]) -> dict:
-    downloaded = _downloaded(choice)
+def _row(choice: backends.ModelChoice, cfg: config.Config, current: bool, default: bool,
+         settings: list[list[str]]) -> dict:
+    downloaded = _downloaded(choice, cfg)
     available, note = True, ""
     if not _extra_installed(choice.extra):
         available, note = False, f"needs voice2text[{choice.extra}]"
+    elif choice.backend == "ollama" and downloaded is None:
+        note = f"on {urlparse(cfg.ollama_url).hostname}"
     elif choice.backend == "ollama" and not downloaded:
         available = False
         note = f"needs: ollama pull {choice.model or _default_model('ollama')}"
@@ -101,7 +109,7 @@ def transcription(cfg: config.Config) -> list[dict]:
         if choice.backend not in backends.STT:
             continue
         rows.append(_row(
-            choice,
+            choice, cfg,
             current=in_use == (choice.backend, choice.model or _default_model(choice.backend)),
             default=(choice.backend, choice.model) == (default.backend, default.stt_model),
             settings=[["transcription.backend", choice.backend], ["transcription.model", choice.model]],
@@ -120,11 +128,11 @@ def cleanup(cfg: config.Config) -> list[dict]:
     rows = []
     for choice in backends.CLEANUP_CHOICES:
         if choice.backend == "off":
-            rows.append(_row(choice, current=in_use[0] == "off", default=False,
+            rows.append(_row(choice, cfg, current=in_use[0] == "off", default=False,
                              settings=[["cleanup.enabled", "false"]]))
             continue
         rows.append(_row(
-            choice,
+            choice, cfg,
             current=in_use == (choice.backend, choice.model or _default_model(choice.backend)),
             default=(choice.backend, choice.model) == (default.cleanup_engine, default.cleanup_model),
             settings=[["cleanup.enabled", "true"], ["cleanup.engine", choice.backend],

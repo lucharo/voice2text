@@ -17,10 +17,12 @@ last good answer.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 import tomllib
 import urllib.request
@@ -67,18 +69,29 @@ def _read_cache() -> dict:
 
 
 def _write_cache(data: dict) -> None:
-    config.ensure_dirs()
     path = cache_path()
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data))
-    temporary.chmod(0o600)
-    os.replace(temporary, path)
+    fd, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(data, stream)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def latest_release(now: float | None = None, fetch: Callable[[], str] | None = None) -> dict:
     """{"latest", "checked_at", and "error" after a failed read}, asking PyPI only
     when the last good answer is a day old and no failure happened in the last hour."""
     now = time.time() if now is None else now
+    config.ensure_dirs()
+    # The menu and a terminal may ask at once: one asks PyPI, the other reads its answer.
+    with open(config.run_dir() / "update-check.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _latest_release(now, fetch)
+
+
+def _latest_release(now: float, fetch: Callable[[], str] | None) -> dict:
     cached = _read_cache()
     checked_at, failed_at = cached.get("checked_at"), cached.get("failed_at")
     fresh = isinstance(checked_at, (int, float)) and now - checked_at < CHECK_EVERY_S
@@ -122,16 +135,34 @@ def engine_route(prefix: Path | None = None) -> str:
 
 
 def app_route(bundle: Path | None, caskrooms: tuple[Path, ...] = CASKROOMS) -> str | None:
-    """`cask`, `local` (`v2t menubar install`), `other` (a build folder), or None
-    when no app asked."""
+    """`cask`, `local` (`v2t menubar install`), `other` (a build folder, or a local
+    build beside the cask's copy), or None when no app asked."""
     if bundle is None:
         return None
     resolved = bundle.expanduser().resolve()
     if resolved == SYSTEM_APP.resolve() and any(room.is_dir() for room in caskrooms):
         return "cask"
     if resolved == (Path.home() / "Applications" / "Voice2Text.app").resolve():
-        return "local"
+        # `v2t menubar install` refuses to rebuild beside the cask's copy, so a
+        # rebuild there would quit the app and never reopen it
+        cask_copy = (SYSTEM_APP / "Contents" / "MacOS" / "Voice2Text").is_file()
+        return "other" if cask_copy else "local"
     return "other"
+
+
+def installed_app() -> tuple[Path | None, str | None]:
+    """The installed menu app and its version, as `v2t menubar open` finds it."""
+    import plistlib
+
+    from . import menubar
+
+    if not menubar.installed():
+        return None, None
+    try:
+        info = plistlib.loads((menubar.app_path() / "Contents" / "Info.plist").read_bytes())
+    except (OSError, plistlib.InvalidFileException):
+        return menubar.app_path(), None
+    return menubar.app_path(), info.get("CFBundleShortVersionString")
 
 
 def check(

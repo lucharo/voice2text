@@ -49,20 +49,23 @@ QWEN_ASR_DEFAULT = "mlx-community/Qwen3-ASR-1.7B-8bit"
 PARAKEET_BITS = 8
 
 
-def cached_locally(repo_id: str) -> bool:
-    """True when the Hugging Face cache already holds a snapshot of this model."""
+def hf_snapshots(repo_id: str) -> list[Path]:
+    """The snapshot folders the Hugging Face cache holds for this model, if any."""
     try:
         from huggingface_hub import constants
     except ImportError:
-        return False
+        return []
     snapshots = (
         Path(constants.HF_HUB_CACHE)
         / f"models--{repo_id.replace('/', '--')}"
         / "snapshots"
     )
-    if not snapshots.is_dir():
-        return False
-    return any(p.is_dir() and any(p.iterdir()) for p in snapshots.iterdir())
+    return [p for p in snapshots.iterdir() if p.is_dir()] if snapshots.is_dir() else []
+
+
+def cached_locally(repo_id: str) -> bool:
+    """True when the Hugging Face cache already holds a snapshot of this model."""
+    return any(any(p.iterdir()) for p in hf_snapshots(repo_id))
 
 
 def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
