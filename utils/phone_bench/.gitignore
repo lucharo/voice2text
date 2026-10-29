@@ -1,0 +1,5 @@
+# fetched by setup.sh / stage.py, never committed
+.deps/
+Res/
+build/
+*.xcodeproj/

@@ -1,0 +1,11 @@
+{
+  "name": "smoke-q05",
+  "set": "cleanup",
+  "limit": 40,
+  "block": 10,
+  "order": "abba",
+  "arms": [
+    {"id": "anemll", "runtime": "anemll", "model": "anemll__anemll-Qwen-Qwen2.5-0.5B-Instruct-ctx2048-monolithic_0.3.5"},
+    {"id": "mlx", "runtime": "mlx", "model": "mlx-community__Qwen2.5-0.5B-Instruct-4bit"}
+  ]
+}
