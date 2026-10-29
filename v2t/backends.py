@@ -877,10 +877,14 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
             )
         ]
         # dictionary words written here that were not said; one holding a digit may
-        # also stand for number words alone ("five point one" -> "5.1")
+        # instead stand for a run of number words said there ("five point one" -> "5.1")
         swapped = [
             (_bare(t), number(t)) for t in tokens if _bare(t) in allowed and _bare(t) not in spoken
         ]
+        number_runs = sum(
+            w in _NUMBER_WORDS and not (i > 0 and spoken[i - 1] in _NUMBER_WORDS)
+            for i, w in enumerate(spoken)
+        )
 
         def pairs_up() -> bool:
             """Each dictionary word not said replaces one similar-sounding word said
@@ -889,11 +893,13 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
             ("clod the report") or nothing at all (a model reciting the dictionary
             from its prompt)."""
             said = iter(unwritten)
-            pending = next(said, None)
+            pending, runs = next(said, None), number_runs
             for word, has_digit in swapped:
                 if pending is not None and sounds_alike(pending, word):
                     pending = next(said, None)
-                elif not has_digit:
+                elif has_digit and runs:
+                    runs -= 1
+                else:
                     return False
             return pending is None
 
