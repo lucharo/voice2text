@@ -531,26 +531,25 @@ class MLXWhisper:
 
 
 class ParakeetCoreML:
-    """v2t's Core ML decode (backends.ParakeetCoreMLSTT.decode) without the MLX
-    model it keeps for the live text; reads FluidAudio's files, never the repo.
+    """v2t's Core ML decode (backends.ParakeetCoreMLSTT.decode); reads FluidAudio's
+    files, never the repo.
 
     Another repository in the same layout (Bark 3.0 Pro) is read from
-    ~/.v2t/eval/grid-models/<name>-coreml: its .mlpackage files compiled with
-    `xcrun coremlcompiler compile`, the encoder renamed Encoder_v2.mlmodelc. Those
-    get its evaluated 0.25 s of leading silence.
+    ~/.v2t/eval/grid-models/<name>-coreml: its .mlpackage files compiled (v2t's
+    coreml.model_folder does the same), the encoder named Encoder_v2.mlmodelc. Those
+    get v2t's lead silence for that repository (coreml.LEAD_SILENCE_S, 0.25 s).
     """
 
     def __init__(self, repo: str, mode: str):
         sys.path.insert(0, str(REPO))
-        from v2t.coreml import COREML_REPO, CoreMLParakeet
+        from v2t.coreml import COREML_REPO, LEAD_SILENCE_S, CoreMLParakeet
 
         self.uses_mlx = False
-        self.pad = 0
         if repo == COREML_REPO:
             self.model = CoreMLParakeet()
             return
-        self.model = CoreMLParakeet(EVAL / "grid-models" / f"{repo.split('/')[-1].lower()}-coreml")
-        self.pad = int(0.25 * SAMPLE_RATE)
+        folder = EVAL / "grid-models" / f"{repo.split('/')[-1].lower()}-coreml"
+        self.model = CoreMLParakeet(folder, LEAD_SILENCE_S.get(repo, 0.25))
 
     def run(self, clip: dict) -> dict:
         audio = load_audio(clip["path"])
@@ -559,8 +558,6 @@ class ParakeetCoreML:
         return {"offline": text, "offline_s": time.perf_counter() - t0}
 
     def decode(self, audio: np.ndarray) -> str:
-        if self.pad:
-            audio = np.concatenate([np.zeros(self.pad, np.float32), audio])
         return self.model.decode(audio)
 
 

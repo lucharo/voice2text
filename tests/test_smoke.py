@@ -1374,11 +1374,9 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("reinstall voice2text", str(caught.exception))
 
     def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
-        decoded: list[np.ndarray] = []
-        windows: list[int] = []
-        core_ml = mock.Mock(
-            decode=lambda pcm: decoded.append(pcm) or "core ml words",
-            window=lambda pcm: windows.append(pcm.size) or "w",
+        windows: list[tuple[tuple, np.dtype]] = []
+        core_ml = self._coreml_with_window(
+            lambda pcm: windows.append((pcm.shape, pcm.dtype)) or "core ml words"
         )
 
         with (
@@ -1393,11 +1391,14 @@ class V2TSmokeTests(unittest.TestCase):
             stepped = pieces.step()
 
         folder.assert_called_once_with(None)
-        load.assert_called_once_with(Path("/models"))
+        load.assert_called_once_with(Path("/models"), 0.0)
         self.assertEqual(text, "core ml words")
-        self.assertEqual([(a.shape, a.dtype) for a in decoded], [((16000,), np.float32)])
-        # one window cut within 3 s of the 12 s mark, known once 15 s are in
-        self.assertEqual((stepped, windows), (True, [16000 * 9 + 800]))
+        # the whole-file decode as one window; then one piece cut within 3 s of the
+        # 12 s mark, known once 15 s are in
+        self.assertEqual(stepped, True)
+        self.assertEqual(
+            windows, [((16000,), np.float32), ((16000 * 9 + 800,), np.float32)]
+        )
         self.assertEqual(
             (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
         )
@@ -1468,7 +1469,176 @@ class V2TSmokeTests(unittest.TestCase):
         with mock.patch.object(coreml, "CoreMLParakeet") as load:
             backends.ParakeetCoreMLSTT("~/models/parakeet-coreml")
 
-        load.assert_called_once_with(Path.home() / "models/parakeet-coreml")
+        load.assert_called_once_with(Path.home() / "models/parakeet-coreml", 0.0)
+
+    def test_parakeet_coreml_reads_bark_pro_from_its_compiled_copy_with_lead_silence(self):
+        with (
+            mock.patch.object(coreml, "CoreMLParakeet") as load,
+            mock.patch.object(coreml, "model_folder", return_value=Path("/bark")) as folder,
+        ):
+            backends.ParakeetCoreMLSTT("ConwayResearch/Underdog-Bark-3.0-Pro")
+
+        folder.assert_called_once_with(repo="ConwayResearch/Underdog-Bark-3.0-Pro")
+        load.assert_called_once_with(Path("/bark"), 0.25)
+
+    def test_parakeet_coreml_reads_its_own_repo_name_as_the_default(self):
+        with (
+            mock.patch.object(coreml, "CoreMLParakeet") as load,
+            mock.patch.object(coreml, "model_folder", return_value=Path("/fluid")) as folder,
+        ):
+            backends.ParakeetCoreMLSTT("FluidInference/parakeet-tdt-0.6b-v3-coreml")
+
+        folder.assert_called_once_with(None)
+        load.assert_called_once_with(Path("/fluid"), 0.0)
+
+    def test_coreml_lead_silence_goes_before_the_recording_once(self):
+        sizes: list[int] = []
+        firsts: list[float] = []
+        model = self._coreml_with_window(
+            lambda piece: sizes.append(piece.size) or firsts.append(float(piece[:4000].max())) or "w"
+        )
+        model.lead = 4000  # 0.25 s at 16 kHz
+
+        text = model.decode(np.full(16000 * 20, 0.5, dtype=np.float32))
+
+        # 20.25 s in two pieces, cut on the padded audio; only the first starts silent
+        self.assertEqual(text, "w w")
+        self.assertEqual(sum(sizes), 16000 * 20 + 4000)
+        self.assertEqual(firsts, [0.0, 0.5])
+
+    def test_coreml_held_pieces_cut_where_the_whole_file_decode_cuts(self):
+        audio = self._speech_with_pauses(40, (10.0, 21.0, 31.5))
+        whole: list[int] = []
+        held: list[int] = []
+        model = self._coreml_with_window(lambda piece: whole.append(piece.size) or "w")
+        model.lead = 4000
+        model.decode(audio)
+        model.window = lambda piece: held.append(piece.size) or "w"
+
+        pieces = model.pieces()
+        for second in range(40):  # arriving a second at a time, as while the key is held
+            pieces.add(audio[second * 16000 : (second + 1) * 16000])
+            pieces.step()
+        pieces.finish()
+
+        self.assertEqual(held, whole)
+        self.assertEqual(sum(held), audio.size + 4000)
+
+    def _bark_pro_hub(self, compiled: list[tuple[str, str]], fail_on: str = ""):
+        """Stand-ins for huggingface_hub (snapshot_download fills its local_dir with
+        Bark Pro's packages and vocab) and coremltools (compile_model makes a
+        compiled folder, or raises for the package named `fail_on`)."""
+
+        def snapshot_download(repo, revision, allow_patterns, local_dir):
+            folder = Path(local_dir)
+            for package in coreml.BARK_PRO_PACKAGES.values():
+                (folder / package).mkdir(parents=True)
+            (folder / coreml.BARK_PRO_VOCAB).write_text('{"0": "x"}')
+            return str(folder)
+
+        def compile_model(source, destination):
+            if fail_on and source.endswith(fail_on):
+                raise RuntimeError("compile failed")
+            compiled.append((Path(source).name, Path(destination).name))
+            (Path(destination) / "coremldata.bin").parent.mkdir(parents=True)
+            (Path(destination) / "coremldata.bin").touch()
+            return destination
+
+        download = mock.Mock(side_effect=snapshot_download)
+        ct = mock.Mock()
+        ct.utils.compile_model = compile_model
+        return download, ct
+
+    def test_bark_pro_downloads_its_packages_and_compiles_them_once(self):
+        compiled: list[tuple[str, str]] = []
+        download, ct = self._bark_pro_hub(compiled)
+        home = Path(self.tempdir.name)
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": mock.Mock(snapshot_download=download)}),
+            mock.patch.object(coreml, "_import_coremltools", return_value=ct),
+        ):
+            first = coreml.model_folder(repo=coreml.BARK_PRO_REPO)
+            second = coreml.model_folder(repo=coreml.BARK_PRO_REPO)
+
+        self.assertEqual(first, home / "models/underdog-bark-3.0-pro-coreml")
+        self.assertEqual(second, first)
+        download.assert_called_once_with(
+            "ConwayResearch/Underdog-Bark-3.0-Pro",
+            revision="4b5c51e04aa8d16dda9ecdff71bc29f7360149e4",
+            allow_patterns=[
+                "coreml/Preprocessor.mlpackage/*",
+                "coreml/Encoder.mlpackage/*",
+                "coreml/Decoder.mlpackage/*",
+                "coreml/JointDecisionv3.mlpackage/*",
+                "coreml/parakeet_v3_vocab.json",
+            ],
+            local_dir=home / "models/underdog-bark-3.0-pro-coreml-download",
+        )
+        self.assertEqual(
+            compiled,
+            [
+                ("Preprocessor.mlpackage", "Preprocessor.mlmodelc"),
+                ("Encoder.mlpackage", "Encoder_v2.mlmodelc"),
+                ("Decoder.mlpackage", "Decoder.mlmodelc"),
+                ("JointDecisionv3.mlpackage", "JointDecisionv3.mlmodelc"),
+            ],
+        )
+        # the compiled copy alone is left: no download, no partial folder
+        self.assertEqual(
+            sorted(p.name for p in (home / "models").iterdir()), ["underdog-bark-3.0-pro-coreml"]
+        )
+        self.assertEqual(
+            sorted(p.name for p in first.iterdir()),
+            [
+                "Decoder.mlmodelc",
+                "Encoder_v2.mlmodelc",
+                "JointDecisionv3.mlmodelc",
+                "Preprocessor.mlmodelc",
+                "parakeet_v3_vocab.json",
+                "revision",
+            ],
+        )
+        self.assertTrue(coreml.bark_pro_ready())
+
+    def test_bark_pro_compiled_from_another_revision_is_compiled_again(self):
+        compiled: list[tuple[str, str]] = []
+        download, ct = self._bark_pro_hub(compiled)
+        old = coreml.bark_pro_folder()
+        old.mkdir(parents=True)
+        for name in coreml.FILES:
+            (old / name).mkdir()
+        (old / "revision").write_text("an older revision\n")
+        self.assertFalse(coreml.bark_pro_ready())
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": mock.Mock(snapshot_download=download)}),
+            mock.patch.object(coreml, "_import_coremltools", return_value=ct),
+        ):
+            folder = coreml.model_folder(repo=coreml.BARK_PRO_REPO)
+
+        self.assertEqual(len(compiled), 4)
+        self.assertEqual((folder / "revision").read_text(), coreml.BARK_PRO_REVISION + "\n")
+        self.assertTrue((folder / "Encoder_v2.mlmodelc/coremldata.bin").exists())
+
+    def test_bark_pro_compile_failure_leaves_no_compiled_copy_and_keeps_the_download(self):
+        compiled: list[tuple[str, str]] = []
+        download, ct = self._bark_pro_hub(compiled, fail_on="Decoder.mlpackage")
+        home = Path(self.tempdir.name)
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": mock.Mock(snapshot_download=download)}),
+            mock.patch.object(coreml, "_import_coremltools", return_value=ct),
+            self.assertRaises(RuntimeError),
+        ):
+            coreml.model_folder(repo=coreml.BARK_PRO_REPO)
+
+        # the download stays for the next try (Hugging Face resumes it); nothing half-compiled
+        self.assertEqual(
+            sorted(p.name for p in (home / "models").iterdir()),
+            ["underdog-bark-3.0-pro-coreml-download"],
+        )
+        self.assertFalse(coreml.bark_pro_ready())
 
     def test_config_accepts_the_parakeet_coreml_backend(self):
         config._validate(config.Config(backend="parakeet-coreml"))  # no SystemExit
@@ -3008,6 +3178,8 @@ class V2TSmokeTests(unittest.TestCase):
              True, True, True, "2.5 GB, downloaded"),
             ("qwen3-asr", "Qwen3-ASR 1.7B · 8-bit", False, False, False, "needs voice2text[qwen]"),
             ("whisper", "Whisper large-v3 turbo", False, True, False, "downloads 1.6 GB on first use"),
+            (f"parakeet-coreml:{coreml.BARK_PRO_REPO}", "Bark 3.0 Pro · English only",
+             False, True, False, "downloads 1.2 GB on first use"),
         ])
         self.assertEqual(rows[2]["set"], [["transcription.backend", "parakeet"],
                                           ["transcription.model", backends.PARAKEET_UNIFIED_EN]])
@@ -3036,6 +3208,26 @@ class V2TSmokeTests(unittest.TestCase):
                     states.append(coreml.downloaded())
 
         self.assertEqual(states, [False, True])
+
+    def test_transcription_picker_counts_bark_pro_downloaded_once_compiled_and_ticks_it(self):
+        cfg = config.Config(backend="parakeet-coreml", stt_model=coreml.BARK_PRO_REPO)
+        compiled = coreml.bark_pro_folder()  # under this test's V2T_HOME
+        for name in coreml.FILES:
+            (compiled / name).mkdir(parents=True)
+
+        states = []
+        for revision in ("", coreml.BARK_PRO_REVISION):  # the revision file comes last
+            if revision:
+                (compiled / "revision").write_text(revision + "\n")
+            row = self._pickers(cfg)["transcription"][-1]
+            states.append((row["downloaded"], row["note"]))
+
+        self.assertEqual(states, [(False, "downloads 1.2 GB on first use"), (True, "1.2 GB, downloaded")])
+        self.assertEqual((row["current"], row["set"]), (True, [
+            ["transcription.backend", "parakeet-coreml"],
+            ["transcription.model", "ConwayResearch/Underdog-Bark-3.0-Pro"],
+        ]))
+        self.assertEqual([r["current"] for r in self._pickers(cfg)["transcription"]], [False] * 5 + [True])
 
     def test_pickers_survive_an_ollama_url_that_does_not_parse(self):
         row = self._pickers(config.Config(ollama_url="http://[::1"))["cleanup"][-1]
@@ -3066,7 +3258,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         rows = self._pickers(cfg)["transcription"]
 
-        self.assertEqual([r["current"] for r in rows], [False] * 5 + [True])
+        self.assertEqual([r["current"] for r in rows], [False] * 6 + [True])
         self.assertEqual(rows[-1], {
             "id": "custom", "label": "whisper-small", "size_gb": None, "downloaded": None,
             "available": False, "current": True, "note": "set in config.toml", "set": [],
