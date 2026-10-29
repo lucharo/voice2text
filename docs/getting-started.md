@@ -94,7 +94,12 @@ uv tool upgrade voice2text
 brew upgrade --cask voice2text
 ```
 
-Then choose **Stop v2t** and **Start v2t** in the menu, or restart `v2t` in the terminal.
+Then choose **Restart v2t** in the menu, or restart `v2t` in the terminal.
+
+The menu app checks for a new release once a day and shows **Update to vX.Y.Z** when there is one.
+Choosing it runs the commands above that match how you installed v2t, then restarts the engine,
+or quits and reopens the app when the app itself was updated. `v2t update` prints the same
+commands in a terminal.
 
 ??? note "Other ways to install"
 
