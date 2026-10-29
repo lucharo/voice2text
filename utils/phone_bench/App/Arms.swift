@@ -94,6 +94,7 @@ func makeArm(_ s: ArmSpec) throws -> Arm {
   case "parakeet-coreml": return ParakeetCoreML()
   case "mlx-stt": return MLXSpeech(dir: try need(), type: opt["model_type"] ?? "parakeet")
   case "bark": return BarkSpeech(units: computeUnits(opt["units"]))
+  case "nemotron-unified": return NemotronUnified(dir: try need(), options: opt)
   default: throw BenchError("arm \(s.id): unknown runtime \(s.runtime)")
   }
 }

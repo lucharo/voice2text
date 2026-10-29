@@ -1,0 +1,12 @@
+{
+  "name": "nemotron-unified",
+  "set": "speech",
+  "rounds": 1,
+  "block": 50,
+  "order": "abba",
+  "arms": [
+    {"id": "parakeet-coreml", "runtime": "parakeet-coreml"},
+    {"id": "nemotron-offline-int8", "runtime": "nemotron-unified", "model": "FluidInference__nemotron-labs-unified-asr-0.6b-coreml", "options": {"mode": "offline", "precision": "int8"}},
+    {"id": "nemotron-stream-1.12", "runtime": "nemotron-unified", "model": "FluidInference__nemotron-labs-unified-asr-0.6b-coreml", "options": {"mode": "stream", "precision": "fp16", "context": "70,7,7"}}
+  ]
+}

@@ -14,6 +14,7 @@ Runtimes ("arms") one app can alternate:
 | `parakeet-coreml` | speech | Parakeet TDT v3 through FluidAudio on Core ML | bundled in Res/models |
 | `mlx-stt` | speech | a speech model through mlx-audio-swift (`options.model_type`, default parakeet) | folder in Documents/models |
 | `bark` | speech | Bark 3.0's Core ML encoder plus a Swift decoder (`options.units`: ane, gpu, cpu, all) | bundled in Res/bark |
+| `nemotron-unified` | speech | Nemotron-Labs Unified ASR through FluidAudio on Core ML (`options`: `mode` offline or stream, `precision` int8 or fp16, `context` 70,7,7, `lang` clip, auto or a code) | folder in Documents/models holding the repo's `coreml/` files |
 
 ## Set up
 
@@ -31,6 +32,16 @@ for example:
 
 ```sh
 hf download mlx-community/Qwen2.5-0.5B-Instruct-4bit --local-dir ~/.v2t/eval/phone-models/mlx-community__Qwen2.5-0.5B-Instruct-4bit
+```
+
+The `nemotron-unified` arm reads the `coreml/` files of FluidInference/nemotron-labs-unified-asr-0.6b-coreml,
+flattened into one folder (`jobs/nemotron-unified.json` uses the int8 offline encoder and the fp16 1.12 s one):
+
+```sh
+hf download FluidInference/nemotron-labs-unified-asr-0.6b-coreml --local-dir /tmp/nemotron-unified \
+  --include 'coreml/*.json' 'coreml/nemotron_unified_decoder.mlmodelc/*' 'coreml/nemotron_unified_joint_decision_single_step.mlmodelc/*' \
+  'coreml/nemotron_unified_encoder_int8.mlmodelc/*' 'coreml/nemotron_unified_encoder_streaming_70_7_7.mlmodelc/*'
+mv /tmp/nemotron-unified/coreml ~/.v2t/eval/phone-models/FluidInference__nemotron-labs-unified-asr-0.6b-coreml
 ```
 
 ## Run a job
