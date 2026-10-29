@@ -8,7 +8,7 @@ import Foundation
 
 /// Options: `mode` offline (default) or stream; `precision` int8 (default) or fp16; `context` the streaming
 /// encoder's left,chunk,right in 80 ms frames (default 70,7,7, 1.12 s latency); `lang` clip (default: es for
-/// the FLEURS clips, whose ids are all digits, en for LibriSpeech), auto, or a language code.
+/// the FLEURS clips, whose ids start fleurs-es/, en for the rest), auto, or a language code.
 ///
 /// The model folder holds FluidInference/nemotron-labs-unified-asr-0.6b-coreml's `coreml/` files: the
 /// decoder, joint_decision_single_step, vocab.json, metadata.json and the encoder the options name.
@@ -36,7 +36,7 @@ final class NemotronUnified: Arm, @unchecked Sendable {
   }
 
   func language(for item: Item) throws -> NemotronUnifiedLanguage {
-    if lang == "clip" { return item.id.allSatisfy(\.isNumber) ? .es : .en }
+    if lang == "clip" { return item.id.hasPrefix("fleurs-es/") ? .es : .en }
     guard let l = NemotronUnifiedLanguage(rawValue: lang) else { throw BenchError("nemotron-unified: unknown lang \(lang)") }
     return l
   }
