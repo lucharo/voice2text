@@ -14,6 +14,7 @@ Every verb, with its flags as `v2t <verb> --help` prints them.
 | [`config`](#config) | Show the resolved config and paths |
 | [`menubar`](#menubar) | Install or open the menu app |
 | [`service`](#service) | Start the menu app at login |
+| [`update`](#update) | Say whether a newer v2t is out, and how to upgrade |
 
 ## v2t
 
@@ -114,8 +115,8 @@ mode, any launch error, and any warning about the last dictation (a silent micro
 |---|---|
 | `--init` | Write a commented `config.toml` if there is none |
 | `--path` | Print the paths only |
-| `--json` | Print the paths and every setting as JSON |
-| `set KEY VALUE` | Change one setting, e.g. `v2t config set cleanup.mode strict`; only that line of `config.toml` changes |
+| `--json` | Print the paths, every setting and the menu's model pickers as JSON |
+| `set KEY VALUE` | Change one setting, e.g. `v2t config set cleanup.mode strict`; only that line of `config.toml` changes. Several `KEY VALUE` pairs are written together, or not at all: `v2t config set transcription.backend parakeet transcription.model ""` |
 
 ## menubar
 
@@ -142,3 +143,20 @@ v2t service install
 | `start`, `stop` | Start or stop it now |
 | `status` | Show whether it is loaded |
 | `uninstall` | Remove the login item |
+
+## update
+
+```bash
+v2t update
+```
+
+Says whether a newer release is out and prints the commands that upgrade this install: `uv tool
+upgrade voice2text` for a `uv tool install` from PyPI, and `brew upgrade --cask voice2text` for the
+Homebrew menu app. An install from a source checkout is left to you. It asks PyPI at most once a
+day; the answer is kept in `~/.v2t/run/update-check.json`.
+
+| Flag | Does |
+|---|---|
+| `--json` | Print the result as JSON (the menu app reads this) |
+| `--app` | The menu app bundle asking, so the cask is recognised |
+| `--app-version` | That bundle's version |

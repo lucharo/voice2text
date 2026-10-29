@@ -99,6 +99,28 @@ def missing_files(folder: Path) -> list[str]:
     return [name for name in FILES if not (folder / name).exists()]
 
 
+def incomplete_files(folder: Path) -> list[str]:
+    """missing_files, plus each compiled model that lacks its coremldata.bin: a
+    compiled model is a folder, whole once that last file arrived."""
+    return missing_files(folder) + [
+        name for name in FILES
+        if name.endswith(".mlmodelc") and (folder / name).exists() and not (folder / name / "coremldata.bin").exists()
+    ]
+
+
+def downloaded(model: str = "") -> bool:
+    """Whether `model` (a `transcription.model` for parakeet-coreml; blank for the
+    default) loads without a download, by the rules model_folder() loads by. The
+    menu app's Transcription Model picker reads this."""
+    if model:
+        return not missing_files(Path(model).expanduser())
+    if not missing_files(COREML_DIR):
+        return True
+    from .backends import hf_snapshots
+
+    return any(not incomplete_files(snapshot) for snapshot in hf_snapshots(COREML_REPO))
+
+
 def model_folder(folder: Path | None = None) -> Path:
     """Where the Core ML files are: `folder` when given, else FluidAudio's folder when
     complete, else the Hugging Face cache, downloading just FILES the first time."""
@@ -114,10 +136,7 @@ def model_folder(folder: Path | None = None) -> Path:
 
     def fetch() -> Path:
         folder = Path(snapshot_download(COREML_REPO, allow_patterns=patterns))
-        # a compiled model is a folder: it is whole once its coremldata.bin arrived
-        missing = missing_files(folder) + [
-            name for name in FILES if name.endswith(".mlmodelc") and not (folder / name / "coremldata.bin").exists()
-        ]
+        missing = incomplete_files(folder)
         if missing:
             # an interrupted download: load_cache_first retries online on OSError
             raise FileNotFoundError(f"{folder} lacks {', '.join(missing)}")
