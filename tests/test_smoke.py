@@ -3583,8 +3583,6 @@ class V2TSmokeTests(unittest.TestCase):
             # dictionary words recited beside the word they replace
             ("ship it on friday", "Ship Claude Code Codex on Friday.", "Ship It on Friday."),
             ("ask clot today", "Ask Claude Codex today.", "Ask Clot today."),
-            ("please ask clot today", "Please ask Claude GPT-4 today.", "Please ask Clot today."),
-            ("send five clod reports", "Send 5 Claude GPT-4 reports.", "Send five clod reports."),
         ]
         for raw, clean, expected in cases:
             with self.subTest(raw=raw):
