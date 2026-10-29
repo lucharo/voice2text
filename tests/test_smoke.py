@@ -2008,17 +2008,29 @@ class V2TSmokeTests(unittest.TestCase):
         record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("piece piece piece", True))
 
-    def _pieces_only_stt(self, voice, decoded: list):
-        """A Core ML-shaped STT: no stream(), pieces() of the default 30 s rule
-        (its pieces answer 'p' and land on `decoded`), and decode() for previews."""
+    def _pieces_only_stt(self, voice, decoded: list, previews: list | None = None):
+        """A Core ML-shaped STT: no stream(), pieces() of the default 30 s rule whose
+        decode answers 'p' for a piece (its size lands on `decoded`) and 'tail' for a
+        preview of the audio after the last piece (its size lands on `previews`).
+        The last preview while held sees exactly the audio the last piece will, so
+        that size is a piece only after release."""
         stt = mock.Mock(
             spec=["streaming", "pieces_only", "sample_rate", "pieces", "decode"],
             streaming=True, pieces_only=True, sample_rate=16000,
         )
-        stt.pieces.side_effect = lambda: backends.PieceDecoder(
-            lambda piece: decoded.append(piece.size) or "p", 16000
-        )
-        stt.decode.return_value = "tail"
+        first, second, _last = self._PIECE_SIZES
+        held = {}  # the recording, kept: release detaches it from voice.live
+
+        def decode(piece):
+            live = held.setdefault("live", voice.live)
+            if piece.size in (first, second) or live is None or live.done.is_set():
+                decoded.append(piece.size)
+                return "p"
+            if previews is not None:
+                previews.append(piece.size)
+            return "tail"
+
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(decode, 16000)
         voice.stt = stt
         return stt
 
@@ -2027,12 +2039,18 @@ class V2TSmokeTests(unittest.TestCase):
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
         decoded: list[int] = []
-        self._pieces_only_stt(voice, decoded)
+        previews: list[int] = []
+        stt = self._pieces_only_stt(voice, decoded, previews)
 
         statuses, paste, lines = self._hold_long(voice, [None, None, None])
 
         self.assertEqual(decoded, list(self._PIECE_SIZES), "each piece once, the last on release")
         self.assertEqual(statuses[1], "p tail", "the pieces so far plus a preview of the rest")
+        # previews decode through the pieces' own decode, not stt.decode (Bark's lead
+        # silence would go in twice), each under one piece's worth of audio
+        stt.decode.assert_not_called()
+        self.assertTrue(previews)
+        self.assertLess(max(previews), 16000 * 35)
         self.assertTrue(
             any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
         )
@@ -2067,7 +2085,8 @@ class V2TSmokeTests(unittest.TestCase):
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
         decoded: list[int] = []
-        stt = self._pieces_only_stt(voice, decoded)
+        previews: list[int] = []
+        stt = self._pieces_only_stt(voice, decoded, previews)
         lines: list[str] = []
         sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
         self.addCleanup(app.logger.remove, sink)
@@ -2084,8 +2103,8 @@ class V2TSmokeTests(unittest.TestCase):
             worker.join(timeout=5)
         voice.live = None
 
-        self.assertEqual(decoded, [16000 * 3])
-        stt.decode.assert_not_called()  # no preview: under one push's worth of audio
+        self.assertEqual((decoded, previews), ([16000 * 3], []))  # no preview: under one push
+        stt.decode.assert_not_called()
         self.assertTrue(any("whole-file: one window)" in line for line in lines))
         paste.assert_called_once_with("p")
         self.assertFalse(config.read_history()[-1]["streamed"])

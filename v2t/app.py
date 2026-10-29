@@ -877,7 +877,9 @@ class VoiceToText:
                     ):
                         previewed = pieces.pending_samples
                         try:
-                            tail = self.stt.decode(pieces.peek())
+                            # as its piece will be decoded: Core ML's one window, with
+                            # the lead silence (Bark) already in the first piece's audio
+                            tail = pieces.decode(pieces.peek())
                         except Exception as error:  # display only: never the recording
                             logger.warning(f"Live preview off for this recording: {error}")
                             tail_previews = False
