@@ -142,6 +142,8 @@ note = "Parakeet v3 retrained through Parakeet Ultra, packed into a 163 MB model
 reported = [
   { source = "bark_card", metric = "ls-clean", value = 1.89 },
   { source = "bark_card", metric = "ls-other", value = 4.08 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.82 },
+  { source = "bark_card", metric = "earnings22-aa", value = 7.05 },
 ]
 
 [models."bark-3.0-pro"]
@@ -156,6 +158,8 @@ note = "The full-precision (bf16) member of the Bark 3.0 family. The card's 4.29
 reported = [
   { source = "bark_card", metric = "ls-clean", value = 1.38 },
   { source = "bark_card", metric = "ls-other", value = 3.11 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.16 },
+  { source = "bark_card", metric = "earnings22-aa", value = 5.65 },
 ]
 
 [models."bark-3.0-plus"]
@@ -170,6 +174,8 @@ note = "A 180 MB packing of the Bark 3.0 weights, closer to Pro. The card's 4.76
 reported = [
   { source = "bark_card", metric = "ls-clean", value = 1.71 },
   { source = "bark_card", metric = "ls-other", value = 3.82 },
+  { source = "bark_card", metric = "ami-ihm", value = 7.76 },
+  { source = "bark_card", metric = "earnings22-aa", value = 6.70 },
 ]
 
 [models."bark-3.0-clean"]
@@ -184,6 +190,8 @@ note = "Bark 3.0 Plus trained to drop fillers, false starts and repeats; verbati
 reported = [
   { source = "bark_card", metric = "ls-clean", value = 1.71 },
   { source = "bark_card", metric = "ls-other", value = 3.78 },
+  { source = "bark_card", metric = "ami-ihm", value = 12.12 },
+  { source = "bark_card", metric = "earnings22-aa", value = 8.55 },
 ]
 
 [models.whisper-large-v3-turbo]
