@@ -4583,8 +4583,11 @@ class V2TSmokeTests(unittest.TestCase):
             ("all the F A Qs", "all the FAQs"),
             # a dotted acronym's last full stop stays only where a sentence can end
             ("the U.S. office", "the US office"),
-            ("update the F.A.Q. Then ship", "update the FAQ. Then ship"),
-            ("in the U. K. I've lived", "in the UK. I've lived"),
+            ("update the F.A.Q. Then ship", "update the F.A.Q. Then ship"),
+            ("the U.S. Congress", "the U.S. Congress"),
+            ("read the F.A.Q. 10 examples follow", "read the F.A.Q. 10 examples follow"),
+            ("in the U. K. I've lived", "in the U. K. I've lived"),
+            ("the U.K., for one", "the UK, for one"),
             ("open the F.A.Q.", "open the FAQ."),
             ("the U.V., for example", "the UV, for example"),
             # a space-separated run keeps the sentence's full stop

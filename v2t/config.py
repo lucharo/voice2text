@@ -676,8 +676,11 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
     C L I I think" or "C L I I can" -> "CLI I"); and letters spaced with full stops
     unless one ends them ("A. I." joins, "option B. C was" does not), though dotted
     letters before such a gap still join ("the F.A.Q. I think" -> "the FAQ. I think").
-    A dotted acronym's last full stop stays where a sentence can end there, unless
-    `sentence_stops` is false (a replacement's heard side, which has no sentence).
+    A dotted acronym joins without its last full stop before a lowercase word or a
+    comma, and with it at the end of the text or a quote; before a capital or a digit
+    ("the U.S. Congress", "the F.A.Q. Then") that stop may end a sentence or not, so
+    the acronym stays as written. A replacement's heard side (`sentence_stops` false)
+    always drops it.
     """
 
     def join(match: re.Match) -> str:
@@ -699,8 +702,11 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
             ):
                 return join_spelled_acronyms(run[:-2], sentence_stops=sentence_stops) + " I"
         if dot and "." in run and not plural:  # the acronym's own full stop
-            ends = not rest.strip() or re.match(r"\s+[A-Z]|[\"”)\]]", rest)
-            dot = "." if sentence_stops and ends else ""
+            if not sentence_stops or re.match(r"\s*[a-z,;:]", rest):
+                dot = ""  # mid-sentence: "the U.S. office" -> "the US office"
+            elif rest.strip() and not re.match(r"[\"”)\]]", rest):
+                return match.group()  # "the U.S. Congress" or "the F.A.Q. Then": unclear
+
         return "".join(letters) + plural + dot
 
     return _SPELLED.sub(join, text)
