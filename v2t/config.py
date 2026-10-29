@@ -659,7 +659,7 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
 # that word ("CL I'm"): without a full stop or an s to end it, no letter may follow it.
 _SPELLED = re.compile(
     r"(?<![\w.'’-])([A-Z](?:(?:\. |[ .-])[A-Z])+)"
-    r"(?:(s|['’]s)(?![\w'’-])|(\.)(?![\w'’-])"
+    r"(?:(s['’]?|['’]s)(?![\w'’-])|(\.)(?![\w'’-])"
     r"|(?![\w'’-])(?!(?:\. |[ .-])[A-Z](?![a-z])))"
 )
 # verbs that follow "I" the pronoun but not an acronym ("the C L I I think"), even in
@@ -673,7 +673,7 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
     `heard => written` line can still restyle the result ("US => U.S.").
 
     Left alone: runs of "I" only ("I I think"); an "I" that starts a clause ("the
-    C L I I think" or "C L I I can" -> "CLI I"); and letters spaced with full stops
+    C L I I think" or "C L I I can" -> "CLI I") or a sentence ("I S S H in" -> "I SSH in"); and letters spaced with full stops
     unless one ends them ("A. I." joins, "option B. C was" does not), though dotted
     letters before such a gap still join ("the F.A.Q. I think" -> "the FAQ. I think").
     A dotted acronym joins without its last full stop before a lowercase word or a
@@ -689,6 +689,10 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
         rest = text[match.end() :]
         if set(letters) == {"I"}:
             return match.group()
+        start = text[: match.start()].rstrip()
+        if run.startswith("I ") and len(letters) > 2 and (not start or start[-1] in ".!?"):
+            # "I S S H into the server": a sentence's own I, then the acronym
+            return "I " + join_spelled_acronyms(match.group()[2:], sentence_stops=sentence_stops)
         if not (plural or dot):
             if ". " in run:  # perhaps a sentence ending, then a one-letter word
                 cut = run.rfind(". ") + 1
