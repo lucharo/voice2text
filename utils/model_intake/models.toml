@@ -317,15 +317,15 @@ note = "As v2t's `parakeet` backend loads it since 0.5.15: fp32 files quantised 
 model = "bark-3.0"
 engine = "mlx-audio"
 precision = "fp16"
-disk_gb = 0.163
-note = "The 163 MB model.bark, unpacked once into a 1.25 GB fp16 folder (its bark_mlx.py)."
+disk_gb = 1.254
+note = "The fp16 folder its bark_mlx.py unpacks once from the 163 MB model.bark download; disk_gb is that folder, the weights MLX reads."
 
 [systems."bark-3.0-4bit"]
 model = "bark-3.0"
 engine = "mlx-audio"
 precision = "4-bit"
-disk_gb = 0.163
-note = "model.bark unpacked, then quantised to 4 bits (group 64), as bark_mlx.py --bits 4."
+disk_gb = 0.472
+note = "model.bark unpacked, then quantised to 4 bits (group 64), as bark_mlx.py --bits 4; disk_gb is the quantised folder."
 
 [systems."bark-3.0-coreml"]
 model = "bark-3.0"
@@ -345,15 +345,15 @@ note = "bf16 safetensors converted to mlx-audio's fp16 layout."
 model = "bark-3.0-pro"
 engine = "mlx-audio"
 precision = "4-bit"
-disk_gb = 1.254
-note = "The fp16 conversion quantised to 4 bits (group 64)."
+disk_gb = 0.472
+note = "The fp16 conversion quantised to 4 bits (group 64); disk_gb is the quantised folder."
 
 [systems."bark-3.0-plus"]
 model = "bark-3.0-plus"
 engine = "mlx-audio"
 precision = "fp16"
-disk_gb = 0.180
-note = "The 180 MB model.bark, unpacked once into a 1.25 GB fp16 folder."
+disk_gb = 1.254
+note = "The fp16 folder unpacked once from the 180 MB model.bark download."
 
 [systems."bark-3.0-plus-coreml"]
 model = "bark-3.0-plus"
@@ -366,8 +366,8 @@ note = "Its coreml/ane package, run as Bark 3.0's."
 model = "bark-3.0-clean"
 engine = "mlx-audio"
 precision = "fp16"
-disk_gb = 0.179
-note = "No leading silence, its evaluated setting."
+disk_gb = 1.254
+note = "The fp16 folder unpacked once from the 179 MB model.bark download. No leading silence, its evaluated setting."
 
 [systems."bark-3.0-pro-coreml"]
 model = "bark-3.0-pro"
