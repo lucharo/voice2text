@@ -881,10 +881,11 @@ def keep_spoken_words(raw: str, clean: str, vocabulary: Iterable[str] = ()) -> t
         swapped = [
             (_bare(t), number(t)) for t in tokens if _bare(t) in allowed and _bare(t) not in spoken
         ]
+        # (less the runs that numbers outside the dictionary already stand for)
         number_runs = sum(
             w in _NUMBER_WORDS and not (i > 0 and spoken[i - 1] in _NUMBER_WORDS)
             for i, w in enumerate(spoken)
-        )
+        ) - sum(number(t) and _bare(t) not in allowed for t in tokens)
 
         def pairs_up() -> bool:
             """Each dictionary word not said replaces one similar-sounding word said
