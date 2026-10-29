@@ -656,15 +656,15 @@ def write_dictionary(terms: list[str], replacements: list[tuple[str, str]]) -> P
 # in about one dictation in sixteen (12 of 208 with Parakeet v3 on Core ML, 23 with
 # Bark 3.0 Pro, #81), and cleanup cannot join them: its guard keeps words as spoken.
 # A run that ends inside a word ("C L I'm") is left whole rather than joined short of
-# that word ("CL I'm"): without a full stop to end it, no letter may follow the run.
+# that word ("CL I'm"): without a full stop or an s to end it, no letter may follow it.
 _SPELLED = re.compile(
-    r"(?<![\w.'’-])([A-Z](?:(?:\. |[ .-])[A-Z])+)(s|['’]s)?"
-    r"(?:(\.)(?![\w'’-])|(?![\w'’-])(?!(?:\. |[ .-])[A-Z](?![a-z])))"
+    r"(?<![\w.'’-])([A-Z](?:(?:\. |[ .-])[A-Z])+)"
+    r"(?:(s|['’]s)(?![\w'’-])|(\.)(?![\w'’-])"
+    r"|(?![\w'’-])(?!(?:\. |[ .-])[A-Z](?![a-z])))"
 )
-# words that follow "I" the pronoun but not an acronym ("the C L I I think")
-_AFTER_PRONOUN = frozenset(
-    "think guess mean know want need have do don't feel believe wonder remember am".split()
-)
+# verbs that follow "I" the pronoun but not an acronym ("the C L I I think"), even in
+# a question ("does the C L I mean"), so not do, have, want or the modals
+_AFTER_PRONOUN = frozenset("think guess mean feel believe wonder remember am".split())
 
 
 def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
@@ -673,8 +673,9 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
     `heard => written` line can still restyle the result ("US => U.S.").
 
     Left alone: runs of "I" only ("I I think"); an "I" that starts a clause ("the
-    C L I I think" or "C L I I can" -> "CLI I"); and a sentence that ends just before
-    an "I" or "A" ("option B. I think", "the F.A.Q. I think" -> "the FAQ. I think").
+    C L I I think" or "C L I I can" -> "CLI I"); and letters spaced with full stops
+    unless one ends them ("A. I." joins, "option B. C was" does not), though dotted
+    letters before such a gap still join ("the F.A.Q. I think" -> "the FAQ. I think").
     A dotted acronym's last full stop stays where a sentence can end there, unless
     `sentence_stops` is false (a replacement's heard side, which has no sentence).
     """
@@ -686,8 +687,10 @@ def join_spelled_acronyms(text: str, *, sentence_stops: bool = True) -> str:
         if set(letters) == {"I"}:
             return match.group()
         if not (plural or dot):
-            if ". " in run and letters[-1] in "IA":
+            if ". " in run:  # perhaps a sentence ending, then a one-letter word
                 cut = run.rfind(". ") + 1
+                if ". " in run[:cut]:
+                    return match.group()
                 return join_spelled_acronyms(run[:cut], sentence_stops=sentence_stops) + run[cut:]
             following = re.match(r"\s+([\w'’]+)", rest)
             if run.endswith(" I") and (
@@ -714,8 +717,10 @@ def apply_replacements(text: str, replacements: list[tuple[str, str]]) -> str:
 
     for heard, written in replacements:
         pattern = re.escape(heard)
-        joined = join_spelled_acronyms(heard, sentence_stops=False)
-        if joined != heard:
+        # one-letter words capitalised, so "a b testing" is heard as "AB testing" too
+        letters = re.sub(r"(?<![\w'’])[a-z](?![\w'’])", lambda m: m.group().upper(), heard)
+        joined = join_spelled_acronyms(letters, sentence_stops=False)
+        if joined != letters:
             pattern = f"(?:{re.escape(joined)}|{pattern})"
         text = re.sub(
             rf"(?<!\w){pattern}(?!\w)",
