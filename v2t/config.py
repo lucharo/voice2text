@@ -24,12 +24,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .nemotron import LANGUAGES
+
 
 @dataclass
 class Config:
     backend: str = "parakeet-coreml"  # parakeet-coreml | parakeet | whisper | qwen3-asr
     stt_model: str = ""  # blank = the backend's own default
     live_transcript: bool = False  # experimental: streamed words in the pill while speaking
+    preview: str = "backend"  # backend | nemotron: where the words while speaking come from
+    preview_language: str = "auto"  # nemotron's language prompt (nemotron.LANGUAGES)
     cleanup_enabled: bool = True
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
     cleanup_model: str = ""  # blank = the engine's own default
@@ -208,6 +212,8 @@ _SECTIONS = {
         "backend": "backend",
         "model": "stt_model",
         "live_transcript": "live_transcript",
+        "preview": "preview",
+        "preview_language": "preview_language",
     },
     "cleanup": {
         "enabled": "cleanup_enabled",
@@ -249,6 +255,8 @@ def _validate(cfg: Config) -> None:
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
         "hotkey": {"fn", "cmd_r", "cmd_l", "alt_r", "alt_l", "ctrl_r", "ctrl_l"},
+        "preview": {"backend", "nemotron"},
+        "preview_language": set(LANGUAGES),
     }
     for field, allowed in choices.items():
         value = getattr(cfg, field)
@@ -285,6 +293,9 @@ model = ""             # blank = backend default (Parakeet v3 Core ML files / pa
                        # ConwayResearch/Underdog-Bark-3.0-Pro with parakeet-coreml is English-only,
                        # better on noisy speech (1.23 GB, compiled once into ~/.v2t/models)
 live_transcript = false   # experimental: show the words in the pill while you speak
+preview = "backend"    # backend (default): those words come from the backend | nemotron: from
+                       # Nemotron Unified ASR streaming, every 0.56 s (the pasted text is unchanged)
+preview_language = "auto"  # nemotron's language: auto | en | es | fr | de | ...
 
 [cleanup]
 enabled = true

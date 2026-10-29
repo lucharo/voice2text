@@ -291,6 +291,7 @@ class VoiceToText:
         self.cfg = cfg
         self.stt_model = cfg.stt_model or backends.STT[cfg.backend].default_model
         self.stt = None  # loaded in run()
+        self.preview = None  # nemotron.NemotronStream with preview = "nemotron", loaded in run()
         self.cleaner = None  # loaded in run() if cleanup is enabled
         self.recording = False
         self.processing = False
@@ -817,7 +818,9 @@ class VoiceToText:
         a whole-file backend is one decode then). The partial text is the pieces so
         far plus a preview of the audio after the last one, display only: every
         PREVIEW_STEP_S with the live transcript on (to the pill), else every
-        PARTIAL_STEP_S (to the log and the menu bar).
+        PARTIAL_STEP_S (to the log and the menu bar). With `preview = "nemotron"` the
+        partial text is Nemotron's stream of the whole recording instead, a step every
+        0.56 s of audio; it never reaches the pieces or the pasted text.
         """
         next_state, error_message, pieces = "idle", "", None
         handed_back = False  # decoding broke while held: release decodes whole-file
@@ -834,6 +837,11 @@ class VoiceToText:
             # whose decode is too slow to preview with (`previews = False`, Qwen3-ASR)
             tail_previews = getattr(self.stt, "previews", True) is not False
             previewed = 0  # undecoded samples at the last preview
+            stream = self.preview  # Nemotron: off for the recording once a step fails
+            if stream is not None:
+                stream.start()
+                tail_previews = False
+            logged = 0  # samples heard when the log last said so (Nemotron)
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
@@ -841,9 +849,11 @@ class VoiceToText:
                 for frame in live.frames[live.fed :]:
                     live.fed += 1
                     pieces.add(frame)
+                    if stream is not None:
+                        stream.add(frame)
                 if pieces.step():
                     previewed = 0
-                    if not live.done.is_set():
+                    if not live.done.is_set() and stream is None:
                         self._show_partial(pieces.text, pieces.decoded_samples)
                 elif (
                     tail_previews
@@ -866,9 +876,29 @@ class VoiceToText:
                             self._show_partial(
                                 partial, pieces.decoded_samples + pieces.pending_samples
                             )
+                if stream is not None and not live.done.is_set():
+                    try:
+                        grew = stream.step()
+                    except Exception as error:  # display only: never the recording
+                        logger.warning(f"Live preview off for this recording: {error}")
+                        stream = None
+                    else:
+                        heard = stream.windower.consumed
+                        if grew and self.cfg.live_transcript:
+                            self._set_state("recording", partial=stream.text)
+                        elif grew and heard - logged >= tail_step:
+                            logged = heard
+                            self._show_partial(stream.text, heard)
                 if live.done.is_set() and live.fed == len(live.frames):
                     break
                 live.done.wait(0.1)
+            if stream is not None and stream.step_s:
+                steps = sorted(stream.step_s)
+                logger.info(
+                    f"Nemotron preview: {len(steps)} steps, median "
+                    f"{steps[len(steps) // 2] * 1000:.0f} ms, max {steps[-1] * 1000:.0f} ms"
+                    + (f", {stream.retries} encoder reloads so far" if stream.retries else "")
+                )
             if live.cancelled:
                 return
             if not live.frames:  # the microphone delivered nothing: back to idle
@@ -1303,6 +1333,24 @@ class VoiceToText:
             f"Dictionary: {len(self.vocabulary)} terms, {len(self.replacements)} replacements"
         )
 
+    def _load_preview(self):
+        """Nemotron's streaming models for the live preview, warmed up; None (the
+        backend previews instead) when they cannot load, since it is display only."""
+        from . import nemotron
+
+        t0 = time.perf_counter()
+        try:
+            stream = nemotron.NemotronStream(language=self.cfg.preview_language)
+            stream.transcribe(np.zeros(2 * self.cfg.sample_rate, dtype=np.float32))
+        except Exception as error:
+            logger.warning(f"Nemotron preview off, the backend previews instead: {error}")
+            return None
+        logger.success(
+            f"Nemotron preview ready ({time.perf_counter() - t0:.1f}s, "
+            f"language {self.cfg.preview_language})"
+        )
+        return stream
+
     def warmup(self):
         self.refresh_dictionary()
         logger.info("Loading transcription model...")
@@ -1312,6 +1360,8 @@ class VoiceToText:
         # one second of silence through the path dictations take
         self._transcribe_whole(np.zeros(self.cfg.sample_rate, dtype=np.float32))
         logger.success(f"{self.cfg.backend} ready ({time.perf_counter() - t0:.1f}s)")
+        if self.cfg.preview == "nemotron" and self.can_stream():
+            self.preview = self._load_preview()
         if self.can_stream():
             logger.info("Transcribing while the hotkey is held, in pieces")
         else:
