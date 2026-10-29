@@ -279,13 +279,13 @@ the Neural Engine through its default `parakeet-coreml` backend, with the same l
 you hold the key. Pick it under Transcription Model in the menu, or:
 
 ```bash
-v2t config set transcription.model ConwayResearch/Underdog-Bark-3.0-Pro
+v2t config set transcription.backend parakeet-coreml transcription.model ConwayResearch/Underdog-Bark-3.0-Pro
 ```
 
 The first run downloads its Core ML files (1.23 GB), compiles them once (about 10 s) into
 `~/.v2t/models/underdog-bark-3.0-pro-coreml`, deletes the download, and loads them on the Neural
-Engine, which takes about a minute the first time and a few seconds after that. Set
-`transcription.model` back to blank to return to Parakeet v3.
+Engine, which takes about a minute the first time and a few seconds after that. Run
+`v2t config set transcription.model ""` to return to Parakeet v3.
 
 Measured on the maintainers' grid on an M4 Pro (October 2026, [#79](https://github.com/lucharo/voice2text/issues/79),
 [#80](https://github.com/lucharo/voice2text/issues/80)), errors counted the Open ASR Leaderboard's

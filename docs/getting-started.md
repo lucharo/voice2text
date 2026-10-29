@@ -31,7 +31,7 @@ Fewer mistakes for a slightly longer wait: install `'voice2text[qwen]'` the same
 `backend = "qwen3-asr"`. See [Should I switch to Qwen3-ASR?](faq.md#should-i-switch-to-qwen3-asr)
 
 English only and often far from the microphone? Bark 3.0 Pro runs on the default backend: set
-`model = "ConwayResearch/Underdog-Bark-3.0-Pro"`. See [Should I switch to Bark 3.0 Pro?](faq.md#should-i-switch-to-bark-30-pro)
+`backend = "parakeet-coreml"` and `model = "ConwayResearch/Underdog-Bark-3.0-Pro"`. See [Should I switch to Bark 3.0 Pro?](faq.md#should-i-switch-to-bark-30-pro)
 
 ## Free the Fn key
 

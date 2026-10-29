@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -1584,9 +1585,10 @@ class V2TSmokeTests(unittest.TestCase):
                 ("JointDecisionv3.mlpackage", "JointDecisionv3.mlmodelc"),
             ],
         )
-        # the compiled copy alone is left: no download, no partial folder
+        # the compiled copy and its lock file are left: no download, no partial folder
         self.assertEqual(
-            sorted(p.name for p in (home / "models").iterdir()), ["underdog-bark-3.0-pro-coreml"]
+            sorted(p.name for p in (home / "models").iterdir()),
+            ["underdog-bark-3.0-pro-coreml", "underdog-bark-3.0-pro-coreml.lock"],
         )
         self.assertEqual(
             sorted(p.name for p in first.iterdir()),
@@ -1636,9 +1638,33 @@ class V2TSmokeTests(unittest.TestCase):
         # the download stays for the next try (Hugging Face resumes it); nothing half-compiled
         self.assertEqual(
             sorted(p.name for p in (home / "models").iterdir()),
-            ["underdog-bark-3.0-pro-coreml-download"],
+            ["underdog-bark-3.0-pro-coreml-download", "underdog-bark-3.0-pro-coreml.lock"],
         )
         self.assertFalse(coreml.bark_pro_ready())
+
+    def test_bark_pro_compiled_by_another_process_while_waiting_is_not_compiled_again(self):
+        compiled: list[tuple[str, str]] = []
+        download, ct = self._bark_pro_hub(compiled)
+        locks: list[int] = []
+
+        def other_process_finishes(handle, operation):  # the lock is granted once it is done
+            locks.append(operation)
+            folder = coreml.bark_pro_folder()
+            for name in coreml.FILES:
+                (folder / name).mkdir(parents=True)
+            (folder / "revision").write_text(coreml.BARK_PRO_REVISION + "\n")
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": mock.Mock(snapshot_download=download)}),
+            mock.patch.object(coreml, "_import_coremltools", return_value=ct),
+            mock.patch("fcntl.flock", side_effect=other_process_finishes),
+        ):
+            folder = coreml.model_folder(repo=coreml.BARK_PRO_REPO)
+
+        self.assertEqual(folder, coreml.bark_pro_folder())
+        self.assertEqual(locks, [fcntl.LOCK_EX])
+        download.assert_not_called()
+        self.assertEqual(compiled, [])
 
     def test_config_accepts_the_parakeet_coreml_backend(self):
         config._validate(config.Config(backend="parakeet-coreml"))  # no SystemExit

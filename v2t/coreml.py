@@ -168,11 +168,25 @@ def _bark_pro_compiled() -> Path:
 
     The packages go to a folder beside the compiled copy (a resumable Hugging Face
     download), each is compiled by Core ML into a folder of this process's own, which
-    then replaces the compiled copy in one rename, and the download is deleted.
+    then replaces the compiled copy in one rename, and the download is deleted. A
+    lock file keeps a second process (the menu app's engine and a CLI run) waiting
+    until the first is done, then it finds the compiled copy ready.
     """
+    import fcntl
+
     target = bark_pro_folder()
     if bark_pro_ready(target):
         return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target.with_name(target.name + ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if bark_pro_ready(target):  # compiled while this process waited
+            return target
+        return _bark_pro_compile(target)
+
+
+def _bark_pro_compile(target: Path) -> Path:
+    """Download and compile Bark 3.0 Pro into `target`; the caller holds the lock."""
     from huggingface_hub import snapshot_download
 
     from loguru import logger
@@ -193,9 +207,8 @@ def _bark_pro_compiled() -> Path:
             ct.utils.compile_model(str(source / package), str(partial / name))
         shutil.copyfile(source / BARK_PRO_VOCAB, partial / FILES[-1])
         (partial / "revision").write_text(BARK_PRO_REVISION + "\n")
-        if not bark_pro_ready(target):  # another process may have finished first
-            shutil.rmtree(target, ignore_errors=True)
-            partial.rename(target)
+        shutil.rmtree(target, ignore_errors=True)  # an incomplete or older copy
+        partial.rename(target)
     finally:
         shutil.rmtree(partial, ignore_errors=True)
     shutil.rmtree(download, ignore_errors=True)
