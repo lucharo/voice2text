@@ -44,6 +44,8 @@ hf download FluidInference/nemotron-labs-unified-asr-0.6b-coreml --local-dir /tm
 mv /tmp/nemotron-unified/coreml ~/.v2t/eval/phone-models/FluidInference__nemotron-labs-unified-asr-0.6b-coreml
 ```
 
+Stream with the int8 encoder (`nemotron_unified_encoder_streaming_70_7_7_int8.mlmodelc`, `"precision": "int8"`): on the iPhone it took 31 ms per 0.56 s step against 347 ms for fp16, with the same text (`jobs/nemotron-stream-int8.json`, #85).
+
 ## Run a job
 
 ```sh
