@@ -859,7 +859,8 @@ class FluidAudio:
         return {
             "stream": r["text"],
             "stream_wait_s": r["wait_s"],
-            "stream_busy_s": r["feed_s"] + r["wait_s"],
+            # compute only: a backlog at release is in wait_s but already in feed_s
+            "stream_busy_s": r["feed_s"] + r["wait_s"] - r.get("backlog_s", 0.0),
             "stream_steps": len(steps),
             "step_p50_s": q(steps, 0.5) if steps else None,
             "step_p90_s": q(steps, 0.9) if steps else None,
