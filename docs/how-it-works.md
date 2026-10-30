@@ -22,6 +22,10 @@ Both models stay loaded between dictations, so each one starts at once.
   running count of words. The live transcript on the pill is experimental and off: with
   `live_transcript = true` under `[transcription]` that preview runs every second, so words appear
   about 1 s after you say them. The preview is for display only and never changes the pasted text.
+- Experimental: with `preview = "nemotron"` the live words come from a second model made to
+  stream, NVIDIA's Nemotron Unified ASR 0.6B, instead: a new stretch every 0.56 s, about 1.1 s
+  behind you, at about 50 ms of work each on an M4 Pro. The pasted text still comes from the
+  pieces above.
 
 ![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to about 20 s; in pieces it stays between 0.05 and 0.6 s from 60 s up](images/wait-vs-length.svg)
 

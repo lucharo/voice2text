@@ -102,3 +102,50 @@ stream for some lengths, or once an official MLX release appears.
 - [ASR grid README](../utils/asr_grid/README.md) — `grid.py chunk` and the `ls-long` set.
 
 _Created: 2026-10-06 · Verified: 2026-10-06._
+
+## Can a streaming model replace the backend's previews without touching the text?
+
+**Short answer (measured 2026-10-29, #19):** yes. `transcription.preview = "nemotron"` runs NVIDIA's
+Nemotron-Labs Unified ASR 0.6B as a stream beside the backend, for the live words only; the pasted
+text still comes from the backend's pieces. In the app the live text changed every 0.63 s against
+1.13 s for Parakeet's own previews, and the pasted text was the same as one direct decode on every
+replay.
+
+**Why a Python port, not a Swift helper.** FluidAudio's `StreamingUnifiedAsrManager` (55f65d9) is
+only a mel front end, an 87-line windower and a greedy RNNT loop around three Core ML models.
+`v2t/nemotron.py` ports those onto coremltools, as `v2t/coreml.py` already does for Parakeet, so the
+preview runs in the engine's own processing thread with no second process to build, ship, start,
+feed and restart. The port is checked against FluidAudio itself: on 52 clips (10 each of
+LibriSpeech clean and other, FLEURS Spanish, Earnings22 and AMI far-field, plus two LibriSpeech
+recordings of 186 and 207 s) its final text and its sampled partial texts were identical to
+`fa-helper`'s, token for token (`utils/nemotron_preview/parity.py`). Accuracy is therefore #85's:
+WER 1.71 / 4.06 / 5.21 / 9.08 / 32.18% on ls-clean, ls-other, fleurs-es, earnings22 and ami-sdm
+against 1.71 / 3.95 / 5.45 / 10.75 / 32.94% for the removed Parakeet stream.
+
+**In the app** (`utils/nemotron_preview/replay.py`): five recordings of 20 to 69 s replayed in real
+time through `process_live` with Parakeet v3 on Core ML, the live transcript on, the two preview
+arms interleaved clip by clip with the order rotated; two of the five are the maintainer's own
+dictations (69 s crosses the 60 s mark). M4 Pro, every run under `taskpolicy -b nice -n 19`, 5-minute
+load 14.6 to 17.1, 50 to 55% memory free, 12 GB of disk free (one round).
+
+| | live text changed every (median) | first words after | wait after release (median) | pasted text = direct decode |
+|---|--:|--:|--:|--:|
+| backend previews | 1.13 s | 1.3 s | 0.27 s | 5 of 5 |
+| Nemotron | 0.63 s | 1.9 to 3.2 s | 0.23 s | 5 of 5 |
+
+Nemotron's 360 steps took 52 ms at the median, 142 ms at p90 and 856 ms at worst (background QoS
+on a loaded Mac; #85 measured 35 to 47 ms at normal priority), so each 0.56 s chunk is decoded
+before the next arrives. Its first words come later because its first window needs 1.12 s of audio
+and only words that are final are shown. No step timed out in this run; when the Neural Engine
+does time out a prediction (seen in #85's grid), the encoder is loaded again and the step retried
+once, and a second failure turns the preview off for that recording only. The wait after release
+is one round and not a claim: the preview runs only while the key is held.
+
+### Sources
+
+- [`v2t/nemotron.py`](../v2t/nemotron.py), [`app.process_live`](../v2t/app.py).
+- [Issue #85](https://github.com/lucharo/voice2text/issues/85) — the model's grid results; PR #86
+  for `fa-helper`.
+- `~/.v2t/eval/nemotron-preview/` — `parity-sets.log`, `replay-1.jsonl`.
+
+_Created: 2026-10-29 · Verified: 2026-10-29._

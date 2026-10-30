@@ -26,7 +26,9 @@ from unittest import mock
 import numpy as np
 from scipy.io import wavfile
 
-from v2t import app, backends, bench, cli, config, coreml, menubar, models, permissions, service, update
+from v2t import (
+    app, backends, bench, cli, config, coreml, menubar, models, nemotron, permissions, service, update,
+)
 
 
 class V2TSmokeTests(unittest.TestCase):
@@ -1821,6 +1823,206 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses, ["heard 80000", "heard 400000", "heard 720000"])
         paste.assert_called_once_with("heard 720000")
 
+    def _fake_preview(self, texts: list[str], fail: bool = False):
+        """A NemotronStream stand-in: each step() that finds a new 0.56 s chunk added
+        takes the next of `texts` (or raises with `fail`)."""
+        stream = types.SimpleNamespace(
+            text="", added=0, step_s=[], retries=0, started=0,
+            windower=types.SimpleNamespace(consumed=0),
+        )
+        chunk = nemotron.CHUNK * nemotron.FRAME
+        answers = iter(texts)
+
+        def add(audio):
+            stream.added += np.asarray(audio).size
+
+        def step(stop=None):
+            if stream.added - stream.windower.consumed < chunk:
+                return False
+            if fail:
+                raise RuntimeError("ANE op async execution has timed out")
+            stream.windower.consumed = stream.added
+            stream.step_s.append(0.04)
+            stream.text = next(answers, stream.text)
+            return True
+
+        def start():
+            stream.started += 1
+            stream.added = stream.windower.consumed = 0
+            stream.text, stream.step_s = "", []
+
+        stream.add, stream.step, stream.start = add, step, start
+        return stream
+
+    def test_the_nemotron_preview_replaces_the_backend_previews_but_not_the_text(self):
+        voice = app.VoiceToText(
+            config.Config(cleanup_enabled=False, live_transcript=True, preview="nemotron")
+        )
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = self._held_stt()
+        voice.preview = self._fake_preview(["one", "one two", "one two three", "one two three four"])
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        statuses, paste = self._hold_and_feed(voice, [1.0, 1.0, 1.0])
+
+        self.assertEqual(voice.preview.started, 1)
+        self.assertEqual(voice.stt.decoded, [128000], "no backend preview: only the final decode")
+        self.assertEqual(statuses, ["one", "one two", "one two three", "one two three four"])
+        paste.assert_called_once_with("heard 128000")
+        self.assertIn("Nemotron preview: 4 steps, median 40 ms, max 40 ms\n", lines)
+
+    def test_with_the_live_transcript_off_nemotron_feeds_the_menu_bar_every_five_seconds(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, preview="nemotron"))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = self._held_stt()
+        voice.preview = self._fake_preview(["one", "one two", "one two three"])
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        statuses, _paste = self._hold_and_feed(voice, [1.0, 4.0])
+
+        self.assertEqual(statuses, ["one", "one", "one two three"])
+        self.assertEqual(
+            [line.strip() for line in lines if line.startswith("Heard so far")],
+            ["Heard so far: 1 words in 5s", "Heard so far: 3 words in 10s"],
+        )
+
+    def test_a_failing_nemotron_step_turns_the_preview_off_but_not_the_recording(self):
+        voice = app.VoiceToText(
+            config.Config(cleanup_enabled=False, live_transcript=True, preview="nemotron")
+        )
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = self._held_stt()
+        voice.preview = self._fake_preview([], fail=True)
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        statuses, paste = self._hold_and_feed(voice, [1.0])
+
+        self.assertIn(
+            "Live preview off for this recording: ANE op async execution has timed out\n", lines
+        )
+        self.assertEqual(statuses, [None, None])
+        self.assertEqual(voice.stt.decoded, [96000], "the backend previews stay off too")
+        paste.assert_called_once_with("heard 96000")
+
+    def test_a_nemotron_preview_that_cannot_load_leaves_the_backend_previews(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False, preview="nemotron"))
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        with mock.patch.object(
+            nemotron, "NemotronStream", side_effect=FileNotFoundError("no model files")
+        ):
+            self.assertIsNone(voice._load_preview())
+
+        self.assertIn("Nemotron preview off, the backend previews instead: no model files\n", lines)
+
+    def test_preview_and_its_language_are_read_from_config_and_validated(self):
+        self.assertEqual((config.Config().preview, config.Config().preview_language), ("backend", "auto"))
+        config.write_config('[transcription]\npreview = "nemotron"\npreview_language = "es"\n')
+        self.assertEqual((config.load().preview, config.load().preview_language), ("nemotron", "es"))
+        for bad in ('preview = "parakeet"', 'preview_language = "xx"'):
+            config.write_config(f"[transcription]\n{bad}\n")
+            with self.subTest(bad=bad), self.assertRaises(SystemExit):
+                config.load()
+
+    def test_nemotron_windows_wait_for_chunk_and_right_then_a_chunk_each(self):
+        w = nemotron.Windower()
+        chunk, right, window = 7 * 1280, 7 * 1280, 84 * 1280
+
+        self.assertIsNone(w.next(chunk + right - 1))
+        first = w.next(chunk + right)
+        self.assertEqual(first, (0, chunk + right, 7))
+        self.assertEqual(w.frames(14, 0, 7), range(0, 7), "the right context waits")
+        self.assertIsNone(w.next(chunk + right + chunk - 1))
+        self.assertEqual(w.next(2 * chunk + right), (0, 2 * chunk + right, 7))
+        self.assertEqual(w.frames(21, 0, 7), range(7, 14))
+        # far into a recording the window slides, frame-aligned, and the frames follow it
+        w.consumed, w.decoded = 20 * chunk + right, 140
+        start, end, hold = w.next(21 * chunk + right)
+        self.assertEqual((end - start, start % 1280, hold), (window, 0, 7))
+        self.assertEqual(w.frames(84, start, 7), range(140 - start // 1280, 77))
+        # release mid-chunk: one last window to the end, nothing held back, then none
+        self.assertEqual(w.next(21 * chunk + right + 100, final=True)[2], 0)
+        self.assertIsNone(w.next(10**9, final=True))
+
+    def test_nemotron_release_on_a_chunk_boundary_still_flushes_the_right_context(self):
+        w = nemotron.Windower()
+        self.assertIsNotNone(w.next(14 * 1280))
+        self.assertEqual(w.next(14 * 1280, final=True), (0, 14 * 1280, 0))
+
+    def test_nemotron_rnnt_carries_the_last_token_and_the_state_before_it(self):
+        calls = []
+
+        def predict(token, state):
+            calls.append((token, state))
+            return f"out{token}", state + 1
+
+        script = {(0, "out-1"): 5, (0, "out5"): 4095, (1, "out5"): 6, (1, "out6"): 4095}
+        tokens, last, state = nemotron.rnnt_greedy(
+            range(2), lambda t, out: script[(t, out)], predict, token=-1, state=0
+        )
+
+        self.assertEqual((tokens, last, state), ([5, 6], 6, 2))
+        self.assertEqual(calls, [(-1, 0), (5, 1), (6, 2)], "each token fed once, on the state after the last")
+
+    def test_a_timed_out_nemotron_encoder_is_loaded_again_and_retried_once(self):
+        stream = object.__new__(nemotron.NemotronStream)  # no model files
+        stream.prompt, stream.retries = np.array([0], np.int32), 0
+        calls = []
+
+        def predict(model, inputs):
+            calls.append(model)
+            if model == "timed out":
+                raise RuntimeError("ANE op async execution has timed out")
+            return {"encoder": model}
+
+        stream._predict, stream.enc = predict, "timed out"
+        stream._load_encoder = lambda: "fresh"
+
+        out = stream._encode(np.zeros(1), np.zeros(1))
+
+        self.assertEqual((out, calls, stream.retries, stream.enc), ({"encoder": "fresh"}, ["timed out", "fresh"], 1, "fresh"))
+        stream._load_encoder = lambda: "timed out"
+        stream.enc = "timed out"
+        with self.assertRaises(RuntimeError):  # twice in a row: the app turns the preview off
+            stream._encode(np.zeros(1), np.zeros(1))
+
+    def test_a_nemotron_step_stops_running_windows_once_the_recording_ends(self):
+        stream = object.__new__(nemotron.NemotronStream)  # no model files
+        stream.windower, stream._samples = nemotron.Windower(), 60 * 16000  # a backlog
+        stream.tokens, stream.step_s = [], []
+        windows = []
+        stream._window = lambda *plan: windows.append(plan)
+        stream._trim = lambda: None
+
+        stream.step(stop=lambda: len(windows) >= 2)
+
+        self.assertEqual(len(windows), 2, "released mid-backlog: no more preview windows")
+        stream.step()
+        self.assertGreater(len(windows), 100, "without a stop it drains the backlog")
+
+    def test_nemotron_log_mel_matches_the_encoder_contract(self):
+        rng = np.random.default_rng(0)
+        window = np.zeros(84 * 1280, np.float32)
+        window[:16000] = rng.standard_normal(16000).astype(np.float32) * 0.1
+
+        mel, length = nemotron.log_mel(window, 16000)
+
+        self.assertEqual((mel.shape, mel.dtype, length.tolist()), ((1, 128, 673), np.float32, [100]))
+        self.assertTrue(np.allclose(mel[0, :, :100].mean(axis=1), 0, atol=1e-4), "per-feature normalised")
+        self.assertFalse(mel[0, :, 100:].any(), "frames past the audio are zero")
+        self.assertEqual(nemotron.detokenize([2, 4], {2: "\u2581s", 4: "er"}), " ser")
+
     def test_live_transcript_is_read_from_config_and_validated(self):
         self.assertFalse(config.Config().live_transcript)
         config.write_config("[transcription]\nlive_transcript = true\n")
@@ -2966,6 +3168,7 @@ class V2TSmokeTests(unittest.TestCase):
             "settings": {
                 "transcription.backend": "parakeet-coreml", "transcription.model": "",
                 "transcription.live_transcript": False,
+                "transcription.preview": "backend", "transcription.preview_language": "auto",
                 "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
                 "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
                 "behavior.pause_music": False, "behavior.save_history": True,
