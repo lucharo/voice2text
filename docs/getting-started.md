@@ -30,6 +30,9 @@ Then set `backend = "whisper"` in the [config](reference/config.md).
 Fewer mistakes for a slightly longer wait: install `'voice2text[qwen]'` the same way and set
 `backend = "qwen3-asr"`. See [Should I switch to Qwen3-ASR?](faq.md#should-i-switch-to-qwen3-asr)
 
+English only and often far from the microphone? Bark 3.0 Pro runs on the default backend: set
+`backend = "parakeet-coreml"` and `model = "ConwayResearch/Underdog-Bark-3.0-Pro"`. See [Should I switch to Bark 3.0 Pro?](faq.md#should-i-switch-to-bark-30-pro)
+
 ## Free the Fn key
 
 v2t listens for **Fn** (the 🌐 key, bottom left). macOS uses it for the emoji picker unless you

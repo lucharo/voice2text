@@ -284,7 +284,9 @@ backend = "parakeet-coreml"  # parakeet-coreml (default: Parakeet v3 on the Neur
                        # | qwen3-asr (Qwen3-ASR 1.7B: more accurate, slower; needs voice2text[qwen])
 model = ""             # blank = backend default (Parakeet v3 Core ML files / parakeet-tdt-0.6b-v3
                        # / whisper-large-v3-turbo / Qwen3-ASR-1.7B-8bit); littlebearlabs/parakeet-unified-en-0.6b-mlx
-                       # with backend = "parakeet" is English-only and more accurate
+                       # with backend = "parakeet" is English-only and more accurate;
+                       # ConwayResearch/Underdog-Bark-3.0-Pro with parakeet-coreml is English-only,
+                       # better on noisy speech (1.23 GB, compiled once into ~/.v2t/models)
 streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
 live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)
 

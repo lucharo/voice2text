@@ -467,6 +467,10 @@ class ParakeetCoreMLSTT:
     pieces of at most one window as their cuts become known (`pieces()`), and
     previews the audio after the last piece. The text on release is the same as
     decoding the whole recording at once, since the cuts are the same.
+
+    `model`: blank (or COREML_REPO) for Parakeet v3; coreml.BARK_PRO_REPO for Bark
+    3.0 Pro, English only, compiled on first use, with its 0.25 s of lead silence;
+    any other value is a folder of compiled files in FluidAudio's layout.
     """
 
     default_model = "FluidInference/parakeet-tdt-0.6b-v3-coreml"
@@ -474,11 +478,13 @@ class ParakeetCoreMLSTT:
     pieces_only = True  # ...from the start, with no streaming recogniser
 
     def __init__(self, model: str = ""):
-        from .coreml import CoreMLParakeet, model_folder
+        from .coreml import BARK_PRO_REPO, COREML_REPO, LEAD_SILENCE_S, CoreMLParakeet, model_folder
 
-        # `model` is a folder of the Core ML files; blank means FluidAudio's folder,
-        # else the Hugging Face cache, downloading the files the first time
-        self.coreml = CoreMLParakeet(model_folder(Path(model).expanduser() if model else None))
+        if model == BARK_PRO_REPO:
+            folder = model_folder(repo=BARK_PRO_REPO)
+        else:  # blank: FluidAudio's folder, else the Hugging Face cache, downloading once
+            folder = model_folder(Path(model).expanduser() if model and model != COREML_REPO else None)
+        self.coreml = CoreMLParakeet(folder, LEAD_SILENCE_S.get(model, 0.0))
 
     @property
     def sample_rate(self) -> int:
@@ -488,9 +494,7 @@ class ParakeetCoreMLSTT:
 
     def pieces(self) -> PieceDecoder:
         """A PieceDecoder whose every piece fits one window, for a held recording."""
-        from .coreml import PIECE_S, PIECE_SEARCH_S
-
-        return PieceDecoder(self.coreml.window, self.sample_rate, PIECE_S, PIECE_SEARCH_S)
+        return self.coreml.pieces()
 
     def transcribe(self, wav_path: str) -> str:
         return self.decode(read_audio(wav_path, self.sample_rate))
@@ -646,9 +650,8 @@ STT_CHOICES = (
     ModelChoice("parakeet", PARAKEET_UNIFIED_EN, "Parakeet Unified · English only", 2.5),
     ModelChoice("qwen3-asr", "", "Qwen3-ASR 1.7B · 8-bit", 2.5, extra="qwen"),
     ModelChoice("whisper", "", "Whisper large-v3 turbo", 1.6, extra="whisper"),
-    # Bark 3.0 Pro (#80) goes here once parakeet-coreml can load it as a
-    # transcription.model: ModelChoice("parakeet-coreml", <its model value>,
-    # "Bark 3.0 Pro · Core ML", 1.23).
+    # coreml.BARK_PRO_REPO (not imported: coreml imports this module)
+    ModelChoice("parakeet-coreml", "ConwayResearch/Underdog-Bark-3.0-Pro", "Bark 3.0 Pro · English only", 1.23),
 )
 
 def make_stt(backend: str, model: str = ""):
@@ -1312,6 +1315,7 @@ def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:1143
 _LABELS = {
     "parakeet-tdt-0.6b-v3": "parakeet-v3",
     "parakeet-tdt-0.6b-v3-coreml": "parakeet-v3-coreml",
+    "Underdog-Bark-3.0-Pro": "bark-3.0-pro",
     "parakeet-tdt-0.6b-v2": "parakeet-v2",
     "whisper-large-v3-turbo": "whisper-turbo",
     "Qwen3-ASR-1.7B-8bit": "qwen3-asr",
@@ -1349,6 +1353,7 @@ if __name__ == "__main__":
     assert short_model("mlx-community/parakeet-tdt-0.6b-v3") == "parakeet-v3"
     assert short_model("mlx-community/Qwen2.5-1.5B-Instruct-4bit") == "Qwen2.5-1.5B"
     assert short_model("custom/unknown") == "unknown"
+    assert short_model("ConwayResearch/Underdog-Bark-3.0-Pro") == "bark-3.0-pro"
     assert (
         "filler" in PROMPTS["strict"]
         and "Keep the original phrasing" in PROMPTS["casual"]

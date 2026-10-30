@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -42,6 +44,27 @@ FILES = (
     "JointDecisionv3.mlmodelc",
     "parakeet_v3_vocab.json",
 )
+# Bark 3.0 Pro (ConwayResearch, CC-BY-4.0), English only, opt-in as
+# transcription.model = BARK_PRO_REPO. A fine-tune of Parakeet v3 shipping Core ML
+# files in FluidAudio's layout, with the same inputs and outputs, so CoreMLParakeet
+# runs it unchanged. On the 2026-10 grid (#79, #80) it was more accurate than
+# Parakeet v3 on noisy speech (mean -1.2 WER points over five sets), tied on clean
+# read speech and dictations, at 1.1 to 1.2 times its wait.
+#
+# The repository ships .mlpackage files (1.23 GB), which v2t downloads from the
+# evaluated revision, compiles once with Core ML (coremltools, no Xcode) under the
+# names in FILES, and keeps in bark_pro_folder(); the download is deleted after.
+BARK_PRO_REPO = "ConwayResearch/Underdog-Bark-3.0-Pro"
+BARK_PRO_REVISION = "4b5c51e04aa8d16dda9ecdff71bc29f7360149e4"
+BARK_PRO_PACKAGES = {  # compiled name (FILES) -> package in the repository
+    "Preprocessor.mlmodelc": "coreml/Preprocessor.mlpackage",
+    "Encoder_v2.mlmodelc": "coreml/Encoder.mlpackage",  # default function full15, 15 s
+    "Decoder.mlmodelc": "coreml/Decoder.mlpackage",
+    "JointDecisionv3.mlmodelc": "coreml/JointDecisionv3.mlpackage",
+}
+BARK_PRO_VOCAB = "coreml/parakeet_v3_vocab.json"
+# Silence put before each recording, the model card's evaluated setting (and the grid's)
+LEAD_SILENCE_S = {BARK_PRO_REPO: 0.25}
 SAMPLE_RATE = 16000
 WINDOW = 240000  # the Preprocessor's input is fixed at 1 x 240000 samples, 15 s
 BLANK = 8192  # the TDT blank, which also starts the decoder off
@@ -112,7 +135,9 @@ def downloaded(model: str = "") -> bool:
     """Whether `model` (a `transcription.model` for parakeet-coreml; blank for the
     default) loads without a download, by the rules model_folder() loads by. The
     menu app's Transcription Model picker reads this."""
-    if model:
+    if model == BARK_PRO_REPO:
+        return bark_pro_ready()
+    if model and model != COREML_REPO:
         return not missing_files(Path(model).expanduser())
     if not missing_files(COREML_DIR):
         return True
@@ -121,11 +146,83 @@ def downloaded(model: str = "") -> bool:
     return any(not incomplete_files(snapshot) for snapshot in hf_snapshots(COREML_REPO))
 
 
-def model_folder(folder: Path | None = None) -> Path:
-    """Where the Core ML files are: `folder` when given, else FluidAudio's folder when
-    complete, else the Hugging Face cache, downloading just FILES the first time."""
+def bark_pro_folder() -> Path:
+    """Where v2t keeps Bark 3.0 Pro's compiled models, under the v2t home."""
+    from .config import home
+
+    return home() / "models" / "underdog-bark-3.0-pro-coreml"
+
+
+def bark_pro_ready(folder: Path | None = None) -> bool:
+    """True when Bark 3.0 Pro is compiled, from BARK_PRO_REVISION: its `revision`
+    file is written last, so a folder that has it is whole."""
+    folder = folder or bark_pro_folder()
+    try:
+        return not missing_files(folder) and (folder / "revision").read_text().strip() == BARK_PRO_REVISION
+    except OSError:
+        return False
+
+
+def _bark_pro_compiled() -> Path:
+    """Bark 3.0 Pro's compiled models, downloading and compiling them the first time.
+
+    The packages go to a folder beside the compiled copy (a resumable Hugging Face
+    download), each is compiled by Core ML into a folder of this process's own, which
+    then replaces the compiled copy in one rename, and the download is deleted. A
+    lock file keeps a second process (the menu app's engine and a CLI run) waiting
+    until the first is done, then it finds the compiled copy ready.
+    """
+    import fcntl
+
+    target = bark_pro_folder()
+    if bark_pro_ready(target):
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target.with_name(target.name + ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if bark_pro_ready(target):  # compiled while this process waited
+            return target
+        return _bark_pro_compile(target)
+
+
+def _bark_pro_compile(target: Path) -> Path:
+    """Download and compile Bark 3.0 Pro into `target`; the caller holds the lock."""
+    from huggingface_hub import snapshot_download
+
+    from loguru import logger
+
+    logger.info("Bark 3.0 Pro: downloading its Core ML files (1.23 GB), then compiling them once")
+    download = target.with_name(target.name + "-download")
+    patterns = [f"{package}/*" for package in BARK_PRO_PACKAGES.values()] + [BARK_PRO_VOCAB]
+    source = Path(
+        snapshot_download(BARK_PRO_REPO, revision=BARK_PRO_REVISION, allow_patterns=patterns, local_dir=download)
+    )
+    logger.info(f"Bark 3.0 Pro: compiling into {target}; the first load after takes about a minute")
+    ct = _import_coremltools()
+    partial = target.with_name(f"{target.name}-partial-{os.getpid()}")
+    shutil.rmtree(partial, ignore_errors=True)
+    partial.mkdir(parents=True)
+    try:
+        for name, package in BARK_PRO_PACKAGES.items():
+            ct.utils.compile_model(str(source / package), str(partial / name))
+        shutil.copyfile(source / BARK_PRO_VOCAB, partial / FILES[-1])
+        (partial / "revision").write_text(BARK_PRO_REVISION + "\n")
+        shutil.rmtree(target, ignore_errors=True)  # an incomplete or older copy
+        partial.rename(target)
+    finally:
+        shutil.rmtree(partial, ignore_errors=True)
+    shutil.rmtree(download, ignore_errors=True)
+    return target
+
+
+def model_folder(folder: Path | None = None, repo: str = COREML_REPO) -> Path:
+    """Where the Core ML files are: `folder` when given; for Bark 3.0 Pro its compiled
+    copy (compiled the first time); else FluidAudio's folder when complete, else the
+    Hugging Face cache, downloading just FILES the first time."""
     if folder is not None:
         return folder
+    if repo == BARK_PRO_REPO:
+        return _bark_pro_compiled()
     if not missing_files(COREML_DIR):
         return COREML_DIR
     from huggingface_hub import snapshot_download
@@ -172,10 +269,13 @@ class CoreMLParakeet:
     """Parakeet v3's four Core ML models; `decode(audio)` for 16 kHz float32 audio.
 
     The Preprocessor (log-mel) runs on the CPU, the encoder, decoder and joint on
-    the CPU and Neural Engine.
+    the CPU and Neural Engine. `lead_silence_s` of silence goes before each
+    recording (Bark 3.0 Pro's evaluated 0.25 s; none for Parakeet v3).
     """
 
-    def __init__(self, folder: Path = COREML_DIR):
+    lead = 0  # samples of silence before each recording
+
+    def __init__(self, folder: Path = COREML_DIR, lead_silence_s: float = 0.0):
         missing = missing_files(folder)
         if missing:
             raise SystemExit(
@@ -198,10 +298,18 @@ class CoreMLParakeet:
         self.joint = model(str(folder / FILES[3]), compute_units=units.CPU_AND_NE)
         vocab = json.loads((folder / FILES[4]).read_text())
         self.vocab = {int(k): v for k, v in vocab.items()}
+        self.lead = int(lead_silence_s * SAMPLE_RATE)
+
+    def pieces(self) -> PieceDecoder:
+        """A PieceDecoder for one recording, every piece within one window, already
+        holding the lead silence: the cuts fall where a whole-file decode puts them."""
+        pieces = PieceDecoder(self.window, SAMPLE_RATE, PIECE_S, PIECE_SEARCH_S)
+        pieces.add(np.zeros(self.lead, np.float32))
+        return pieces
 
     def decode(self, audio: np.ndarray) -> str:
         """Text for 16 kHz float32 audio of any length, one window per piece."""
-        pieces = PieceDecoder(self.window, SAMPLE_RATE, PIECE_S, PIECE_SEARCH_S)
+        pieces = self.pieces()
         pieces.add(audio)
         return pieces.finish()
 
