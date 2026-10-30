@@ -25,7 +25,7 @@ dictation on this Mac?**
 | `parakeet-unified-en` | parakeet-mlx | NVIDIA's English Parakeet Unified, offline mode only: `littlebearlabs/parakeet-unified-en-0.6b-mlx` (fp32, NeMo layout) mapped onto stock parakeet-mlx by `grid.load_nemo_layout` and cast to bf16 like every parakeet-mlx row. Its streaming mode is not run |
 | `nemotron-unified` (and `-int8`, `-auto`) | fluidaudio | NVIDIA's Nemotron-Labs Unified ASR 0.6B, the multilingual (25 European languages) Parakeet Unified, offline on Core ML through FluidAudio's Swift `UnifiedAsrManager`: `FluidInference/nemotron-labs-unified-asr-0.6b-coreml`. Told each clip's language as its prompt (`en`, `es`); `-int8` is the half-size encoder, `-auto` lets the model pick the language. No MLX conversion exists (2026-10-29) |
 | `nemotron-unified-stream-1.12` (and `-0.56`) | fluidaudio | the same model streaming through `StreamingUnifiedAsrManager` at 1.12 s and 0.56 s latency (encoders `[70, 7, 7]` and `[70, 2, 5]`). Streaming is buffered: every chunk re-encodes 5.6 s of left context, so each row also records the cost per step |
-| `parakeet-v3-fluidaudio` | fluidaudio | the `parakeet-v3-coreml` files through FluidAudio's Swift decode, as the iPhone runs them: the like-for-like runtime for the rows above |
+| `parakeet-v3-fluidaudio` | fluidaudio | the `parakeet-v3-coreml` files through FluidAudio's Swift decode, as the iPhone runs them: the like-for-like runtime for the rows above. It scores about 0.5 points worse pooled than `parakeet-v3-coreml` on the same files (2026-10-29) |
 
 Each cell from 2026-10-14 also records MLX's peak memory per clip (weights included), the
 report's `peak` column.
@@ -155,12 +155,16 @@ model facts from [`models.toml`](../model_intake/models.toml), where a new model
 - **`race`** times systems against each other in one process, clip by clip, rotating their order
   each clip, and prints each one's per-clip wait ratio to the first system, per third of the run
   and overall, with the load, free memory and free disk before and after. Use it for any speed
-  claim: the waits in a `run` cell move with whatever else the Mac is doing. **`agree`** scores one
+  claim: the waits in a `run` cell move with whatever else the Mac is doing. It decodes whole
+  files, so from 60 s up the app's waits are shorter than a race shows (its pieces leave only the
+  last one after release); time that path with `grid.py chunk`. **`agree`** scores one
   system's text against another's, such as a stream against its own whole-file decode.
 - **Streaming rows from FluidAudio** are fed one encoder chunk at a time (0.56 s or 0.16 s) and
   decoded as each chunk arrives, rather than in 0.5 s pushes; `step_p50_s` and `step_p90_s` are
   the cost of one chunk's step. Their `peak` is the helper's physical footprint, which leaves out
-  weights the Neural Engine holds, so it is not comparable with MLX's.
+  weights the Neural Engine holds, so it is not comparable with MLX's. A long stream can fail
+  with Core ML's "ANE op async execution has timed out"; the grid then restarts the helper,
+  retries the clip once and marks the row `retried`.
 - **RTF** is compute over audio. A streaming system needs it well under 1 to keep up live.
 - Streaming sessions are fed 0.5 s at a time and drained between feeds; the drain for mlx-audio
   sessions reads their queue state, which is pinned to mlx-audio 0.5.7.

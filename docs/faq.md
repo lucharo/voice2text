@@ -311,6 +311,36 @@ clips (short, noisy, five-minute and real dictations), v2t's decode gives the gr
 word, whole or in the pieces it decodes while you hold the key. Choosing between languages
 automatically is tracked in [#94](https://github.com/lucharo/voice2text/issues/94).
 
+## Should I switch to Nemotron-Labs Unified ASR 0.6B?
+
+Not for the final text on a Mac, but its stream can drive the live words in the bubble. NVIDIA's
+[Nemotron-Labs Unified ASR 0.6B](https://huggingface.co/nvidia/nemotron-labs-unified-asr-0.6b)
+decodes whole files and also streams. Offline it is a little more accurate than Parakeet v3 but
+waits 1.5 to 1.6 times as long after you let go, and in English Qwen3-ASR 8-bit beats it. Its
+1.12 s stream updates the bubble every 0.56 s where Parakeet's preview updated every 5 s, so v2t
+offers it as the live words only (From Nemotron under Live Words in Bubble, or
+`transcription.preview = "nemotron"`); the pasted text still comes from the transcription model.
+
+Measured on the maintainers' grid on an M4 Pro through FluidAudio's Core ML build (October 2026,
+[#85](https://github.com/lucharo/voice2text/issues/85)), 150 clips per set, errors counted the
+Open ASR Leaderboard's way:
+
+| | Parakeet v3, Core ML | Nemotron Unified, offline | Nemotron Unified, 1.12 s stream |
+|---|--:|--:|--:|
+| LibriSpeech clean / other | 1.7% / 4.1% | 1.7% / 3.4% | 1.7% / 4.1% |
+| FLEURS Spanish | 3.4% | 3.4% | 5.2% |
+| Earnings22 phone calls | 9.9% | 9.6% | 9.1% |
+| AMI meetings, room microphone | 29.2% | 28.4% | 32.2% |
+| Disagreement on 208 real dictations | 5.3% | 5.4% | 7.1% |
+| Wait after release, against the default's | 1 | 1.5 to 1.6 | |
+| Download | 0.63 GB | 0.63 GB (int8) | another 0.6 GB |
+
+Pooled over the five labelled sets it makes 0.3 points fewer mistakes (95% interval 0.8 fewer to
+0.2 more), which is not clear of chance. The int8 build is as accurate as fp16. On the same
+dictations Qwen3-ASR 8-bit disagrees with the others on 3.8% of words. The 0.56 s stream setting is
+0.7 points worse than 1.12 s for three times the compute. On an iPhone it is the better model; see
+[What would v2t on an iPhone use?](#what-would-v2t-on-an-iphone-use).
+
 ## Why do v2t's error rates differ from model cards and the Open ASR Leaderboard?
 
 Since late October 2026 they mostly do not: the maintainers' grid counts errors with the
