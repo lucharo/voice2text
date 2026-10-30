@@ -821,11 +821,14 @@ class FluidAudio:
         import subprocess
 
         sys.path.insert(0, str(REPO))
-        from v2t.coreml import COREML_DIR
+        from v2t.coreml import COREML_DIR, model_folder
 
+        # Parakeet v3's files where v2t finds them: FluidAudio's folder, else the
+        # Hugging Face cache (offline here, see HF_HUB_OFFLINE above)
+        parakeet = model_folder() if self.arm == "parakeet-v3" else COREML_DIR
         self.proc = subprocess.Popen(
             [str(FA_HELPER), "--nemotron-dir", str(NEMOTRON_UNIFIED_DIR),
-             "--parakeet-dir", str(COREML_DIR)],
+             "--parakeet-dir", str(parakeet)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
         )
 
@@ -1132,14 +1135,15 @@ def agree(system: str, against: str) -> None:
         a = {r["id"]: r for r in read_jsonl(a_path)}
         b = {r["id"]: r for r in read_jsonl(b_path)}
         errors = words = 0
-        for cid in sorted(set(a) & set(b) & set(clips)):
+        shared = set(a) & set(b) & set(clips)
+        for cid in sorted(shared):
             lang = clips[cid]["lang"]
             ref = normalise(final_text(against, b[cid]), lang)
             errors += edits(ref, normalise(final_text(system, a[cid]), lang), lang)
             words += len(ref)
         if words:
             print(f"{set_path.stem}: {system} against {against}: {errors / words:.2%} "
-                  f"({len(set(a) & set(b))} clips)")
+                  f"({len(shared)} clips)")
 
 
 # --- chunked: the batch models' version of v2t's 60 s rule ---------------------
