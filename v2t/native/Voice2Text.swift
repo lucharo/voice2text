@@ -1075,6 +1075,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row(title, key, on ? "false" : "true", on: on, enabled: enabled)
         }
         toggle("Live Words in Bubble (Experimental)", "transcription.live_transcript")
+        // The words from Nemotron's stream instead of the backend's own previews; the
+        // pasted text is unchanged. Display only, so it greys out with the live words off.
+        let nemotron = settings["transcription.preview"] as? String == "nemotron"
+        row("From Nemotron (Experimental)", "transcription.preview", nemotron ? "backend" : "nemotron",
+            on: nemotron, enabled: settings["transcription.live_transcript"] as? Bool ?? false, indent: 1)
         submenu.addItem(.separator())
         let cleanup = settings["cleanup.enabled"] as? Bool ?? false
         toggle("Clean Up Text", "cleanup.enabled")
