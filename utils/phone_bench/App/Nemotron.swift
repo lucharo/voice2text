@@ -79,6 +79,9 @@ final class NemotronUnified: Arm, @unchecked Sendable {
     let full = samples.count / chunk * chunk
     var steps: [Double] = []
     var feed = 0.0, fed = 0
+    // as fa-helper: each chunk is decoded once it has arrived, so work still pending
+    // at release (a backlog, or the last chunk's step) counts in the wait
+    var busyUntil = 0.0
     while fed < full {
       try await m.appendAudio(pcm(samples[fed..<(fed + chunk)]))
       fed += chunk
@@ -86,15 +89,17 @@ final class NemotronUnified: Arm, @unchecked Sendable {
       try await m.processBufferedAudio()
       let dt = (ContinuousClock.now - t).seconds
       feed += dt
+      busyUntil = max(busyUntil, Double(fed) / 16000) + dt
       if fed >= first { steps.append(dt) }
     }
     let t = ContinuousClock.now
     if fed < samples.count { try await m.appendAudio(pcm(samples[fed..<samples.count])) }
     let text = try await m.finish()
-    let wait = (ContinuousClock.now - t).seconds
+    let backlog = max(0, busyUntil - Double(samples.count) / 16000)
+    let wait = backlog + (ContinuousClock.now - t).seconds
     let sorted = steps.sorted()
     func q(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int((p * Double(sorted.count - 1)).rounded()))] }
-    return ["text": text, "s": wait, "feed_s": feed, "steps": steps.count, "step_p50": q(0.5), "step_p90": q(0.9)]
+    return ["text": text, "s": wait, "backlog_s": backlog, "feed_s": feed, "steps": steps.count, "step_p50": q(0.5), "step_p90": q(0.9)]
   }
 
   func process(_ item: Item) async throws -> [String: Any] {
