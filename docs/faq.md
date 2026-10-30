@@ -60,7 +60,9 @@ Open the menu-bar icon and choose **Pill**:
 
 The choice persists across launches. The live transcript is experimental and off; **Settings →
 Live Words in Bubble** turns it on, as does `live_transcript = true` under `[transcription]` in the
-[config](reference/config.md).
+[config](reference/config.md). **From Nemotron**, under it, takes those words from a second model
+made to stream (`preview = "nemotron"`): they change about every 0.6 s instead of every 1.1 s, and
+the pasted text is the same.
 
 ## Why is the pill at the bottom of the screen instead of at my cursor?
 
