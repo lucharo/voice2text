@@ -7,7 +7,8 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    revision: 1b0ed50d686873128a4129b3510ce3914c849bab
+    # 55f65d9: Nemotron Unified on the Unified managers (FluidInference/FluidAudio#1071)
+    revision: 55f65d9c887244a93c45f18225a35b3533516446
   MLXSwiftLM:
     url: https://github.com/ml-explore/mlx-swift-lm
     revision: efcedcd4cd245eb03b65050a6bd2c103d7252d42

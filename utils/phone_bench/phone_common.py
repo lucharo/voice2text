@@ -10,8 +10,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BUNDLE = "es.luischav.v2t.phonebench"
 APP = HERE / "build/Build/Products/Release-iphoneos/BenchApp.app"
-RUNTIMES = {"mlx": True, "anemll": True, "afm": False, "parakeet-coreml": False, "mlx-stt": True, "bark": False}  # needs a model folder
-SETS = {"mlx": "cleanup", "anemll": "cleanup", "afm": "cleanup", "parakeet-coreml": "speech", "mlx-stt": "speech", "bark": "speech"}
+RUNTIMES = {"mlx": True, "anemll": True, "afm": False, "parakeet-coreml": False, "mlx-stt": True, "bark": False, "nemotron-unified": True}  # needs a model folder
+SETS = {"mlx": "cleanup", "anemll": "cleanup", "afm": "cleanup", "parakeet-coreml": "speech", "mlx-stt": "speech", "bark": "speech", "nemotron-unified": "speech"}
 ORDERS = ("abba", "alternate", "sequential")
 
 

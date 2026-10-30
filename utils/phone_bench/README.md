@@ -14,6 +14,7 @@ Runtimes ("arms") one app can alternate:
 | `parakeet-coreml` | speech | Parakeet TDT v3 through FluidAudio on Core ML | bundled in Res/models |
 | `mlx-stt` | speech | a speech model through mlx-audio-swift (`options.model_type`, default parakeet) | folder in Documents/models |
 | `bark` | speech | Bark 3.0's Core ML encoder plus a Swift decoder (`options.units`: ane, gpu, cpu, all) | bundled in Res/bark |
+| `nemotron-unified` | speech | Nemotron-Labs Unified ASR through FluidAudio on Core ML (`options`: `mode` offline or stream, `precision` int8 or fp16, `context` 70,7,7, `lang` clip, auto or a code) | folder in Documents/models holding the repo's `coreml/` files |
 
 ## Set up
 
@@ -32,6 +33,20 @@ for example:
 ```sh
 hf download mlx-community/Qwen2.5-0.5B-Instruct-4bit --local-dir ~/.v2t/eval/phone-models/mlx-community__Qwen2.5-0.5B-Instruct-4bit
 ```
+
+The `nemotron-unified` arm reads the `coreml/` files of FluidInference/nemotron-labs-unified-asr-0.6b-coreml,
+flattened into one folder (`jobs/nemotron-unified.json` uses the int8 offline encoder and the fp16 1.12 s
+stream; `jobs/nemotron-stream-int8.json` compares the fp16 and int8 1.12 s streams):
+
+```sh
+hf download FluidInference/nemotron-labs-unified-asr-0.6b-coreml --local-dir /tmp/nemotron-unified \
+  --include 'coreml/*.json' 'coreml/nemotron_unified_decoder.mlmodelc/*' 'coreml/nemotron_unified_joint_decision_single_step.mlmodelc/*' \
+  'coreml/nemotron_unified_encoder_int8.mlmodelc/*' 'coreml/nemotron_unified_encoder_streaming_70_7_7.mlmodelc/*' \
+  'coreml/nemotron_unified_encoder_streaming_70_7_7_int8.mlmodelc/*'
+mv /tmp/nemotron-unified/coreml ~/.v2t/eval/phone-models/FluidInference__nemotron-labs-unified-asr-0.6b-coreml
+```
+
+Stream with the int8 encoder (`"precision": "int8"`): on the iPhone it took 31 ms per 0.56 s step against 347 ms for fp16, with the same text (`jobs/nemotron-stream-int8.json`, #85). Leave out whichever encoders a job does not use to keep the push small.
 
 ## Run a job
 
@@ -130,6 +145,18 @@ Every row carries `t` (Unix time on the phone), `thermal` (0 nominal to 3 critic
 (0 to 1), `charging`, `avail_mb` and, on most rows, `mb` (the app's footprint). A gap in the heartbeats means
 the app was suspended or dead. The existing scorers read `clean` rows by `id`, so these files drop into
 them unchanged.
+
+## Adding a runtime
+
+A new arm runtime needs all of these, or a job using it is refused or never runs:
+
+- an `Arm` class and a case for it in `makeArm` (`App/Arms.swift`);
+- an entry in `runtimeSet` beside it, or `JobSpec.validate` refuses the job as an unknown runtime;
+- its entries in `RUNTIMES` and `SETS` in `phone_common.py`;
+- the package pin in `project.yml` moved when it needs a newer version (then rerun `setup.sh`, which regenerates the Xcode project);
+- job and arm ids that are plain file names, since results are written under them.
+
+Read a clip's language from its set prefix (`fleurs-es/…`), never from the shape of its id.
 
 ## One app for MLX and ANEMLL
 

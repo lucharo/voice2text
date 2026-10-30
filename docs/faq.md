@@ -422,12 +422,19 @@ depend on the Mac, so compare models on the same machine.
 
 ## What would v2t on an iPhone use?
 
-This is a proposal; nothing has been measured on an iPhone yet.
-[#52](https://github.com/lucharo/voice2text/issues/52) tracks a real test on an iPhone 16 Pro.
+This is a proposal; there is no iPhone app yet.
+[#52](https://github.com/lucharo/voice2text/issues/52) tracks it.
 
-- **Speech:** FluidAudio running Parakeet v3 through Core ML on the Neural Engine, about 600 MB of
-  model files. Smaller candidates are Parakeet Redux (178 MB; 2.2 / 5.0 / 3.7%) and Phonon-2
-  (164 MB, English only; 1.9 / 4.4%).
+- **Speech:** NVIDIA's Nemotron-Labs Unified ASR 0.6B, int8, through FluidAudio on Core ML. On an
+  iPhone 16 Pro (October 2026, [#85](https://github.com/lucharo/voice2text/issues/85), 150 clips
+  per set) it got 1.7 / 3.4 / 3.4% wrong on LibriSpeech clean, other and FLEURS Spanish, against
+  1.9 / 3.9 / 4.1% for Parakeet v3, with the same wait after release (105 against 103 ms) and
+  0.63 GB of model files. Its error rates match the Mac's exactly; its speed does not, so time
+  models on the phone itself. For live words it streams at 1.12 s for 31 ms per 0.56 s step with
+  the int8 encoder (fp16 took 347 ms a step and 7 minutes to load the first time). Smaller
+  candidates are Parakeet Redux (178 MB; 2.2 / 5.0 / 3.7%) and Phonon-2 (164 MB, English only;
+  1.9 / 4.4%). Qwen3-ASR has not been tried on the phone: it is 2.5 GB and runs on the GPU, which
+  iOS stops in the background.
 - **Cleanup:** Apple's Foundation Models.
 - **Where it runs:** in the main app. An iOS custom keyboard cannot use the microphone and is
   stopped above about 60 to 70 MB of memory.

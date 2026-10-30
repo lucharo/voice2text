@@ -77,7 +77,8 @@ protocol Arm: AnyObject {
 
 /// Which item set each runtime processes; JobSpec.validate refuses a mismatch.
 let runtimeSet: [String: ItemSet] = ["mlx": .cleanup, "anemll": .cleanup, "afm": .cleanup,
-                                     "parakeet-coreml": .speech, "mlx-stt": .speech, "bark": .speech]
+                                     "parakeet-coreml": .speech, "mlx-stt": .speech, "bark": .speech,
+                                     "nemotron-unified": .speech]
 
 func makeArm(_ s: ArmSpec) throws -> Arm {
   let modelDir = s.model.map { documents.appendingPathComponent("models/\($0)") }
@@ -94,6 +95,7 @@ func makeArm(_ s: ArmSpec) throws -> Arm {
   case "parakeet-coreml": return ParakeetCoreML()
   case "mlx-stt": return MLXSpeech(dir: try need(), type: opt["model_type"] ?? "parakeet")
   case "bark": return BarkSpeech(units: computeUnits(opt["units"]))
+  case "nemotron-unified": return NemotronUnified(dir: try need(), options: opt)
   default: throw BenchError("arm \(s.id): unknown runtime \(s.runtime)")
   }
 }
