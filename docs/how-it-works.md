@@ -3,7 +3,7 @@
 ## One dictation, start to finish
 
 1. **Record.** The microphone opens when you press the key.
-2. **Transcribe.** Parakeet turns the audio into text, on the GPU, while you are still talking.
+2. **Transcribe.** Parakeet turns the audio into text, on the Neural Engine, while you are still talking.
 3. **Clean up.** A small local LLM (`Qwen3.5-2B` by default) adds punctuation and drops the
    "um"s. It may not add or remove content: a chunk whose length drifts too far is pasted raw.
 4. **Paste.** The text goes in at your cursor, and your previous clipboard is put back.
@@ -12,16 +12,16 @@ Both models stay loaded between dictations, so each one starts at once.
 
 ## What happens while you hold the key
 
-- **Under 60 seconds:** every 5 seconds the new audio goes to Parakeet, which keeps a running
-  draft for the menu bar. When you let go, the whole recording is transcribed in one pass: about
-  a third of a second, and the most accurate text.
-- **From 60 seconds:** the draft stops, and the recording is transcribed whole in pieces of about
-  30 seconds while you keep talking. Each piece ends at the quietest moment near its mark, so no
-  word is cut in half. When you let go only the last piece is left: about 0.2 s, however long you
-  spoke.
-- The live transcript on the pill is experimental and off. With `live_transcript = true` under
-  `[transcription]`, v2t also previews the newest audio every second, so words appear about 1 s
-  after you say them. The preview is for display only and never changes the pasted text.
+- The recording is transcribed in pieces while you keep talking. Each piece ends at the quietest
+  moment near its mark, so no word is cut in half. When you let go only the last piece is left:
+  a fraction of a second, however long you spoke. On the Neural Engine (the default) a piece is
+  12 to 15 seconds, the longest its encoder takes; Qwen3-ASR's are about 30 seconds.
+- Parakeet on MLX (`backend = "parakeet"`) transcribes a recording under 60 seconds whole when you
+  let go, the most accurate text, and cuts 30-second pieces only from 60 seconds up.
+- Every 5 seconds the audio after the last piece is transcribed on its own for the menu bar's
+  running count of words. The live transcript on the pill is experimental and off: with
+  `live_transcript = true` under `[transcription]` that preview runs every second, so words appear
+  about 1 s after you say them. The preview is for display only and never changes the pasted text.
 
 ![Wait after letting go of the key, by dictation length: reading the whole file grows from 0.1 s to about 20 s; in pieces it stays between 0.05 and 0.6 s from 60 s up](images/wait-vs-length.svg)
 
@@ -29,13 +29,13 @@ Both models stay loaded between dictations, so each one starts at once.
 
 Transcribing the whole recording on release would take longer the longer you spoke: 1.3 s at the
 median for dictations over a minute, and 9 to 19 s for ones of ten minutes or more. Until 0.5.8
-v2t kept the running draft instead. That was quick, but each stretch of audio was transcribed using
-only the ~20 seconds before it. On 40 recordings of one to five minutes with known text, pieces got
-2.3% of words wrong against 5.3% for the draft.
+v2t kept a running draft from a Parakeet stream instead. That was quick, but each stretch of audio
+was transcribed using only the ~20 seconds before it. On 40 recordings of one to five minutes with
+known text, pieces got 2.3% of words wrong against 5.3% for the draft. The stream itself, which
+fed the menu bar under 60 seconds, was removed after 0.5.16.
 
-`v2t --streaming-mode off` (or `streaming_mode = "off"`) turns this off: nothing is transcribed
-until you let go, and every recording is transcribed whole. Whisper cannot stream, so it always
-works that way.
+Whisper cannot transcribe in pieces while you talk, so it transcribes the whole recording when you
+let go.
 
 ## The pill
 

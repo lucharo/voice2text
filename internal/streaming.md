@@ -6,7 +6,12 @@ The user-facing explanation is `docs/how-it-works.md`. These are the measurement
 
 ## How do I turn streaming transcription on or off, and what does it actually change?
 
-**Short answer:** It is on by default with the Parakeet backend: `streaming_mode = "hacky"` under
+**Update (after 0.5.16, #19):** the stream and `streaming_mode` are gone. Every backend but Whisper
+decodes the held recording in pieces (`PieceDecoder`); Parakeet on MLX keeps a recording under
+`WHOLE_FILE_S` (60 s) whole for release and previews it for the menu bar, as the stream used to.
+The answer below is the record of 0.3 to 0.5.16.
+
+**Short answer:** It was on by default with the Parakeet backend: `streaming_mode = "hacky"` under
 `[transcription]`, or `v2t --streaming-mode hacky`; `off` restores decoding after release. While the
 hotkey is held the recogniser is fed every 5 s and the menu bar shows *Recording… N words*. Under
 60 s the recording is still decoded whole-file on release, so the text and timing are what `off`

@@ -121,7 +121,7 @@ counter. Placement persists across launches. See the
   anchors, rendering.
 - [Ghostty 1.3.1 surface view](https://github.com/ghostty-org/ghostty/blob/v1.3.1/macos/Sources/Ghostty/Surface%20View/SurfaceView_AppKit.swift)
   — accessibility overrides, none for caret bounds.
-- [Streaming constants](../v2t/backends.py) — `STREAM_CHUNK_S`, `PREVIEW_STEP_S` and the
+- [Preview constants](../v2t/backends.py) — `PREVIEW_STEP_S`, `PARTIAL_STEP_S` and the
   2026-10-06 preview measurements.
 - [Engine status](../v2t/app.py) and [smoke tests](../tests/test_smoke.py) — streaming capability.
 

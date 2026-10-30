@@ -29,7 +29,6 @@ from pathlib import Path
 class Config:
     backend: str = "parakeet-coreml"  # parakeet-coreml | parakeet | whisper | qwen3-asr
     stt_model: str = ""  # blank = the backend's own default
-    streaming_mode: str = "hacky"  # off | hacky (parakeet only; see backends.STREAM_*)
     live_transcript: bool = False  # experimental: streamed words in the pill while speaking
     cleanup_enabled: bool = True
     cleanup_engine: str = "mlx"  # mlx (in-process via mlx-lm) | ollama
@@ -208,7 +207,6 @@ _SECTIONS = {
     "transcription": {
         "backend": "backend",
         "model": "stt_model",
-        "streaming_mode": "streaming_mode",
         "live_transcript": "live_transcript",
     },
     "cleanup": {
@@ -250,7 +248,6 @@ def _validate(cfg: Config) -> None:
         "backend": {"parakeet", "parakeet-coreml", "whisper", "qwen3-asr"},
         "cleanup_engine": {"mlx", "ollama"},
         "mode": {"strict", "casual"},
-        "streaming_mode": {"off", "hacky"},
         "hotkey": {"fn", "cmd_r", "cmd_l", "alt_r", "alt_l", "ctrl_r", "ctrl_l"},
     }
     for field, allowed in choices.items():
@@ -287,8 +284,7 @@ model = ""             # blank = backend default (Parakeet v3 Core ML files / pa
                        # with backend = "parakeet" is English-only and more accurate;
                        # ConwayResearch/Underdog-Bark-3.0-Pro with parakeet-coreml is English-only,
                        # better on noisy speech (1.23 GB, compiled once into ~/.v2t/models)
-streaming_mode = "hacky"  # hacky (default): transcribe while the hotkey is held, parakeet only | off
-live_transcript = false   # experimental: show the words in the pill while you speak (streaming only)
+live_transcript = false   # experimental: show the words in the pill while you speak
 
 [cleanup]
 enabled = true

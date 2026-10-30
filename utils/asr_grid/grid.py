@@ -59,7 +59,7 @@ SAMPLE = 150
 SEED = 20260929
 SAMPLE_RATE = 16000
 STREAM_FEED_S = 0.5  # audio handed to a streaming session between drains
-TAKEOVER_S = 60  # v2t keeps the streamed text from here up (backends.STREAM_TAKEOVER_S)
+TAKEOVER_S = 60  # v2t took the streamed text from here up (now backends.WHOLE_FILE_S)
 CHUNK_S = 30  # the `chunked` pass: decode each ~30 s piece while recording
 CHUNK_SEARCH_S = 5  # cut at the quietest 100 ms within this many seconds of the mark
 # Whole-file Parakeet attention grows with the square of the length: measured
@@ -474,6 +474,11 @@ class ParakeetMLX:
         return model.generate(mel)[0].text.strip()
 
     def _stream(self, audio: np.ndarray) -> dict:
+        if not hasattr(self.stt, "stream"):
+            raise SystemExit(
+                "v2t removed the hacky stream after 0.5.16 (#19): its rows are historical; "
+                "check out v0.5.16 to run `hacky` again"
+            )
         stream = self.stt.stream()
         busy = [0.0]
 

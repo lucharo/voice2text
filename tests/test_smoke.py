@@ -1011,90 +1011,6 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(config.last_audio_path().exists())
         self.assertEqual(config.read_status()["state"], "idle")
 
-    def test_chunk_feeder_sends_whole_chunks_and_flushes_the_rest(self):
-        sent = []
-        feeder = backends.ChunkFeeder(
-            lambda chunk: sent.append(chunk), sample_rate=100, chunk_s=0.5
-        )
-
-        first = feeder.push(np.ones((30, 1), dtype=np.float32))
-        second = feeder.push(np.full(30, 2.0, dtype=np.float32))
-        third = feeder.push(np.zeros(10, dtype=np.float32))
-        flushed = feeder.flush()
-        again = feeder.flush()
-
-        self.assertEqual(
-            (first, second, third, flushed, again), (False, True, False, True, False)
-        )
-        feeder.push(np.ones(7, dtype=np.float32))
-        remainder = feeder.take()
-        self.assertEqual((remainder.shape, feeder.take().shape), ((7,), (0,)))
-        self.assertEqual(
-            len(sent), 2, "take() hands the remainder back, never sends it"
-        )
-        self.assertEqual([chunk.shape for chunk in sent], [(60,), (10,)])
-        self.assertEqual(sent[0].tolist(), [1.0] * 30 + [2.0] * 30)
-        self.assertEqual((feeder.sent_samples, feeder.chunks), (70, 2))
-
-    def test_parakeet_stream_pads_a_push_shorter_than_one_hop(self):
-        pushed: list[int] = []
-        stream = mock.MagicMock()
-        stream.add_audio.side_effect = lambda audio: pushed.append(len(audio))
-        stream.result.text = " heard "
-        model = mock.Mock()
-        model.preprocessor_config.hop_length = 160
-        model.encoder_config.subsampling_factor = 8
-        model.transcribe_stream.return_value = stream
-        fake_mx = types.SimpleNamespace(array=np.asarray)
-
-        with mock.patch.dict(
-            sys.modules, {"mlx": mock.Mock(core=fake_mx), "mlx.core": fake_mx}
-        ):
-            live = backends.ParakeetStream(model)
-        text = live.feed(np.ones(100, dtype=np.float32))
-        live.feed(np.ones(300, dtype=np.float32))
-        final = live.finish(np.ones(50, dtype=np.float32))
-        live.close()
-
-        self.assertEqual(
-            pushed,
-            [160, 300, 50 + 1280],
-            "sub-hop push padded to one hop; finish adds one subsampling block of silence",
-        )
-        self.assertEqual((text, final), ("heard", "heard"))
-        stream.__enter__.assert_called_once()
-        stream.__exit__.assert_called_once()
-
-    def test_parakeet_preview_decodes_the_tail_alone_and_leaves_the_stream(self):
-        stream = mock.MagicMock()
-        model = mock.Mock()
-        model.preprocessor_config.hop_length = 160
-        model.encoder_config.subsampling_factor = 8
-        model.transcribe_stream.return_value = stream
-        model.generate.return_value = [mock.Mock(text=" tail words ")]
-        fake_mx = types.SimpleNamespace(array=np.asarray)
-        audio_module = types.SimpleNamespace(
-            get_logmel=mock.Mock(side_effect=lambda pcm, cfg: ("mel", pcm.size))
-        )
-
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "mlx": mock.Mock(core=fake_mx),
-                "mlx.core": fake_mx,
-                "parakeet_mlx": mock.Mock(audio=audio_module),
-                "parakeet_mlx.audio": audio_module,
-            },
-        ):
-            live = backends.ParakeetStream(model)
-            text = live.preview(np.ones(16000, dtype=np.float32))
-            short = live.preview(np.ones(100, dtype=np.float32))
-
-        self.assertEqual((text, short), ("tail words", ""))
-        model.generate.assert_called_once_with(("mel", 16000))
-        stream.add_audio.assert_not_called()
-        self.assertEqual(live.text, "", "the streamed text is not the preview's")
-
     def test_parakeet_decode_runs_the_model_frees_its_buffers_and_skips_a_sub_hop_piece(self):
         model = mock.Mock()
         model.preprocessor_config.hop_length = 160
@@ -1401,7 +1317,7 @@ class V2TSmokeTests(unittest.TestCase):
             windows, [((16000,), np.float32), ((16000 * 9 + 800,), np.float32)]
         )
         self.assertEqual(
-            (stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000)
+            (stt.streaming, stt.sample_rate), (True, 16000)
         )
         self.assertFalse(hasattr(stt, "stream"))
 
@@ -1707,7 +1623,7 @@ class V2TSmokeTests(unittest.TestCase):
         # a piece is cut once PIECE_S + PIECE_SEARCH_S are in, within 5 s of the 30 s mark
         self.assertEqual((early, on_time), (False, True))
         self.assertTrue(16000 * 25 <= heard[1].size <= 16000 * 35, heard[1].size)
-        self.assertEqual((stt.streaming, stt.pieces_only, stt.sample_rate), (True, True, 16000))
+        self.assertEqual((stt.streaming, stt.sample_rate), (True, 16000))
         self.assertFalse(hasattr(stt, "stream"))
         self.assertEqual(modules["mlx.core"].clear_cache.call_count, 2, "MLX cache handed back per decode")
 
@@ -1764,48 +1680,33 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIn("qwen3-asr", config.DEFAULT_TOML)
         self.assertIn("voice2text[qwen]", config.DEFAULT_TOML)
 
-    def _streaming_stt(
-        self, feeds: list, partial: str = "so far", final: str = "final words"
-    ):
-        """An STT with Parakeet's streaming surface: stream() -> feed()/text/close(),
-        and decode(audio), which long recordings use piece by piece; it returns
-        `final`, and the sizes it was given are on `stt.decoded`."""
-        stream = mock.Mock()
-        stream.text = ""
-
-        def feed(chunk):
-            feeds.append(chunk.size)
-            stream.text = partial
-            return partial
-
-        def close():
-            stream.closed = True
-            return final
-
-        def finish(audio=None):
-            if audio is not None and np.asarray(audio).size:
-                stream.feed(np.asarray(audio))  # via the mock, so overrides apply
-            return stream.close()
-
-        stream.feed.side_effect = feed
-        stream.close.side_effect = close
-        stream.finish.side_effect = finish
-        stream.preview.return_value = ""
-        stream.closed = False
+    def _held_stt(self, decode=None):
+        """An STT shaped like Parakeet on MLX: pieces() whole-file under
+        WHOLE_FILE_S, cut from there up, through decode(audio); decode answers
+        'heard <samples>' unless `decode` is given, and the sizes it was given are
+        on `stt.decoded`."""
         stt = mock.Mock(
-            streaming=True, sample_rate=16000, stream=mock.Mock(return_value=stream)
+            spec=["streaming", "sample_rate", "pieces", "decode", "transcribe"],
+            streaming=True, sample_rate=16000,
         )
         stt.decoded = []
-        stt.decode.side_effect = lambda audio: stt.decoded.append(audio.size) or final
-        return stt, stream
 
-    def test_streaming_feeds_the_recording_while_held_and_a_long_one_ends_in_pieces(self):
+        def run(audio):
+            stt.decoded.append(audio.size)
+            return decode(audio) if decode else f"heard {audio.size}"
+
+        stt.decode.side_effect = run
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(
+            stt.decode, 16000, whole_s=backends.WHOLE_FILE_S
+        )
+        return stt
+
+    def test_a_held_recording_is_previewed_and_decoded_whole_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        voice.stt = self._held_stt()
+        step = int(16000 * backends.PARTIAL_STEP_S)
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
@@ -1816,17 +1717,16 @@ class V2TSmokeTests(unittest.TestCase):
         self.addCleanup(worker.join)
         try:
             voice.audio_callback(
-                np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+                np.full((step, 1), 0.5, dtype=np.float32), step, None, None
             )
             for _ in range(50):
                 partial_status = config.read_status() or {}
-                if "words" in partial_status:  # written after the first feed
+                if "words" in partial_status:  # written after the first preview
                     break
                 app.time.sleep(0.05)
             voice.audio_callback(
                 np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
             )
-            voice.record_start -= backends.STREAM_TAKEOVER_S  # a long dictation
             with mock.patch.object(voice, "paste_to_cursor") as paste:
                 voice.stop_recording()
                 worker.join(timeout=5)
@@ -1834,35 +1734,32 @@ class V2TSmokeTests(unittest.TestCase):
             voice.live = None
 
         self.assertFalse(worker.is_alive(), "processing thread finished after release")
-        self.assertEqual(feeds, [chunk], "one chunk while held, no flush on release")
-        stream.finish.assert_not_called()
         self.assertEqual(
-            voice.stt.decoded, [chunk + 8000], "under one piece: one decode of it all"
+            voice.stt.decoded, [step, step + 8000], "one preview, then one decode of it all"
         )
         self.assertEqual(
             {k: partial_status[k] for k in ("state", "words", "partial")},
-            {"state": "recording", "words": 2, "partial": "so far"},
+            {"state": "recording", "words": 2, "partial": f"heard {step}"},
         )
-        self.assertTrue(stream.closed)
-        paste.assert_called_once_with("final words")
+        paste.assert_called_once_with(f"heard {step + 8000}")
         self.assertFalse(voice.processing)
         self.assertEqual(config.read_status()["state"], "idle")
         record = config.read_history()[-1]
-        self.assertEqual((record["raw"], record["streamed"]), ("final words", True))
+        self.assertEqual((record["raw"], record["streamed"]), (f"heard {step + 8000}", False))
         self.assertLess(record["stt_s"], 1.0)
         self.assertEqual(
-            wavfile.read(config.last_audio_path())[1].shape, (chunk + 8000,)
-        )  # the streamed recording's audio is kept too
+            wavfile.read(config.last_audio_path())[1].shape, (step + 8000,)
+        )  # the held recording's audio is kept too
 
     def _hold_and_feed(self, voice, seconds_after_chunk: list[float]):
-        """Start a held recording on a worker thread, feed one stream chunk, then
-        each extra stretch of audio, waiting for the worker to drain each."""
+        """Start a held recording on a worker thread, feed PARTIAL_STEP_S of audio,
+        then each extra stretch, waiting for the worker to drain each."""
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
         worker = app.threading.Thread(target=voice.process_next)
         worker.start()
         self.addCleanup(worker.join)
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        chunk = int(16000 * backends.PARTIAL_STEP_S)
         statuses = []
         for samples in [chunk] + [int(16000 * s) for s in seconds_after_chunk]:
             voice.audio_callback(
@@ -1874,7 +1771,6 @@ class V2TSmokeTests(unittest.TestCase):
                 app.time.sleep(0.02)
             app.time.sleep(0.25)  # one more pass of the worker's 0.1 s loop
             statuses.append(config.read_status().get("partial"))
-        voice.record_start -= backends.STREAM_TAKEOVER_S
         with mock.patch.object(voice, "paste_to_cursor") as paste:
             voice.stop_recording()
             worker.join(timeout=5)
@@ -1882,36 +1778,48 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         return statuses, paste
 
-    def test_a_preview_shows_the_unpushed_audio_every_second_between_pushes(self):
+    def test_with_the_live_transcript_on_a_preview_runs_every_second(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
-        previews: list[int] = []
-        stream.preview.side_effect = lambda audio: previews.append(audio.size) or "tail"
+        voice.stt = self._held_stt()
 
         statuses, paste = self._hold_and_feed(voice, [1.0, 0.5, 0.5])
 
         self.assertEqual(
-            previews, [16000, 32000], "after 1 s unpushed, then 1 s more, never sooner"
+            voice.stt.decoded,
+            [80000, 96000, 112000, 112000],
+            "a preview after each second of new audio, never sooner; then the decode",
         )
-        self.assertEqual(statuses, ["so far", "so far tail", "so far tail", "so far tail"])
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
-        self.assertEqual(feeds, [chunk], "previews never reach the stream")
-        paste.assert_called_once_with("final words")
+        self.assertEqual(
+            statuses, ["heard 80000", "heard 96000", "heard 96000", "heard 112000"]
+        )
+        paste.assert_called_once_with("heard 112000")
 
-    def test_no_preview_runs_while_the_live_transcript_is_off(self):
+    def test_with_the_live_transcript_off_the_partial_is_refreshed_every_five_seconds(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
 
         statuses, paste = self._hold_and_feed(voice, [1.0, 1.0])
 
-        stream.preview.assert_not_called()
-        self.assertEqual(statuses, ["so far", "so far", "so far"])
-        paste.assert_called_once_with("final words")
+        self.assertEqual(voice.stt.decoded, [80000, 112000])
+        self.assertEqual(statuses, ["heard 80000"] * 3)
+        paste.assert_called_once_with("heard 112000")
+
+    def test_before_the_first_cut_a_preview_decodes_all_the_audio_so_far(self):
+        # MLX under WHOLE_FILE_S: no cut yet, so the menu's word count must see it all
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = self._held_stt()
+
+        statuses, paste = self._hold_and_feed(voice, [20.0, 20.0])
+
+        self.assertEqual(voice.stt.decoded, [80000, 400000, 720000, 720000])
+        self.assertEqual(statuses, ["heard 80000", "heard 400000", "heard 720000"])
+        paste.assert_called_once_with("heard 720000")
 
     def test_live_transcript_is_read_from_config_and_validated(self):
         self.assertFalse(config.Config().live_transcript)
@@ -1925,9 +1833,15 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
-        stream.preview.side_effect = RuntimeError("metal out of memory")
+        answers = iter([RuntimeError("metal out of memory"), "final words"])
+
+        def decode(audio):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        voice.stt = self._held_stt(decode)
 
         lines: list[str] = []
         sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
@@ -1935,13 +1849,12 @@ class V2TSmokeTests(unittest.TestCase):
 
         statuses, paste = self._hold_and_feed(voice, [1.0, 1.0])
 
-        self.assertEqual(stream.preview.call_count, 1, "off for the rest of the recording")
+        self.assertEqual(len(voice.stt.decoded), 2, "one preview, off for the rest; the decode")
         self.assertIn(
             "Live preview off for this recording: metal out of memory\n", lines
         )
-        self.assertEqual(statuses, ["so far", "so far", "so far"])
+        self.assertEqual(statuses, [None, None, None])
         paste.assert_called_once_with("final words")
-        self.assertEqual(config.read_history()[-1]["streamed"], True)
 
     # 70 s with pauses at 27 s and 58 s: pieces end at 27.05 s and 58.05 s
     _PIECE_SIZES = (432800, 496000, 1120000 - 928800)
@@ -1979,27 +1892,21 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         return statuses, paste, lines
 
-    def test_past_the_takeover_the_stream_closes_and_pieces_decode_while_held(self):
+    def test_a_whole_file_backend_cuts_pieces_once_the_recording_reaches_the_mark(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
+        voice.stt = self._held_stt()
         order: list = []
-        stream.close.side_effect = lambda: order.append("close") or "streamed"
         self._pieces_or_tail(voice, lambda audio: "tail", pieces=order)
 
         statuses, paste, lines = self._hold_long(voice, [None, None, None])
 
-        self.assertEqual(feeds, [80000, 880000], "the stream stops at the takeover")
-        self.assertEqual(order, ["close", *self._PIECE_SIZES], "closed, then each piece once")
-        self.assertTrue(statuses[1].startswith("piece"), "partial from the pieces")
+        self.assertEqual(order, list(self._PIECE_SIZES), "each piece once, the first at 60 s")
+        self.assertEqual(statuses[1], "piece tail", "the first piece plus a preview of the rest")
         self.assertTrue(
             any(line.startswith("Heard so far") and "70s" in line for line in lines),
             "with the live transcript off, a preview of the tail is logged as heard",
-        )
-        self.assertIn(
-            "Past the takeover: decoding the rest in pieces\n", lines
         )
         self.assertTrue(
             any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
@@ -2009,14 +1916,14 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual((record["raw"], record["streamed"]), ("piece piece piece", True))
 
     def _pieces_only_stt(self, voice, decoded: list, previews: list | None = None):
-        """A Core ML-shaped STT: no stream(), pieces() of the default 30 s rule whose
+        """A Core ML-shaped STT: pieces() of the default 30 s rule whose
         decode answers 'p' for a piece (its size lands on `decoded`) and 'tail' for a
         preview of the audio after the last piece (its size lands on `previews`).
         The last preview while held sees exactly the audio the last piece will, so
         that size is a piece only after release."""
         stt = mock.Mock(
-            spec=["streaming", "pieces_only", "sample_rate", "pieces", "decode"],
-            streaming=True, pieces_only=True, sample_rate=16000,
+            spec=["streaming", "sample_rate", "pieces", "decode"],
+            streaming=True, sample_rate=16000,
         )
         first, second, _last = self._PIECE_SIZES
         held = {}  # the recording, kept: release detaches it from voice.live
@@ -2034,7 +1941,7 @@ class V2TSmokeTests(unittest.TestCase):
         voice.stt = stt
         return stt
 
-    def test_a_pieces_only_backend_decodes_in_pieces_from_the_start_with_no_stream(self):
+    def test_a_pieces_backend_decodes_in_pieces_from_the_start(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -2054,19 +1961,18 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(
             any("after release, 3 pieces, 2 decoded while recording)" in line for line in lines)
         )
-        self.assertNotIn("Past the takeover: decoding the rest in pieces\n", lines)
         paste.assert_called_once_with("p p p")
         record = config.read_history()[-1]
         self.assertEqual((record["raw"], record["streamed"]), ("p p p", True))
 
-    def test_a_pieces_only_backend_without_previews_shows_only_its_pieces(self):
+    def test_a_backend_without_previews_shows_only_its_pieces(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
         decoded: list[int] = []
         stt = mock.Mock(
-            spec=["streaming", "pieces_only", "previews", "sample_rate", "pieces", "decode"],
-            streaming=True, pieces_only=True, previews=False, sample_rate=16000,
+            spec=["streaming", "previews", "sample_rate", "pieces", "decode"],
+            streaming=True, previews=False, sample_rate=16000,
         )
         stt.pieces.side_effect = lambda: backends.PieceDecoder(
             lambda piece: decoded.append(piece.size) or "p", 16000
@@ -2080,7 +1986,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses[1], "p", "the partial grows a piece at a time")
         paste.assert_called_once_with("p p p")
 
-    def test_a_short_pieces_only_recording_is_one_decode_on_release(self):
+    def test_a_short_recording_is_one_decode_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
@@ -2103,9 +2009,9 @@ class V2TSmokeTests(unittest.TestCase):
             worker.join(timeout=5)
         voice.live = None
 
-        self.assertEqual((decoded, previews), ([16000 * 3], []))  # no preview: under one push
+        self.assertEqual((decoded, previews), ([16000 * 3], []))  # no preview: under PARTIAL_STEP_S
         stt.decode.assert_not_called()
-        self.assertTrue(any("whole-file: one window)" in line for line in lines))
+        self.assertTrue(any("whole-file: one piece)" in line for line in lines))
         paste.assert_called_once_with("p")
         self.assertFalse(config.read_history()[-1]["streamed"])
 
@@ -2128,11 +2034,11 @@ class V2TSmokeTests(unittest.TestCase):
 
         voice.stt.decode.side_effect = decode
 
-    def test_past_the_takeover_the_live_transcript_previews_the_audio_after_the_pieces(self):
+    def test_past_the_mark_the_live_transcript_previews_the_audio_after_the_pieces(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, live_transcript=True))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, _stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
         self._pieces_or_tail(voice, lambda audio: "tail")
 
         statuses, paste, lines = self._hold_long(
@@ -2146,11 +2052,11 @@ class V2TSmokeTests(unittest.TestCase):
         )
         paste.assert_called_once_with("piece piece piece")
 
-    def test_a_failing_preview_past_the_takeover_stops_previews_but_not_the_pieces(self):
+    def test_a_failing_preview_past_the_mark_stops_previews_but_not_the_pieces(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, _stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
         previews: list[int] = []
 
         def tail(audio):
@@ -2166,44 +2072,36 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses[1:], ["piece", "piece piece"])
         paste.assert_called_once_with("piece piece piece")
 
-    def test_a_short_streamed_recording_is_decoded_whole_file_on_release(self):
+    def test_a_short_held_recording_is_decoded_whole_file_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
-        order: list[str] = []
-        stream.close.side_effect = lambda: order.append("close") or "streamed words"
-        voice.stt.decode = mock.Mock(
-            side_effect=lambda audio: order.append("whole") or "whole-file words"
-        )
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        voice.stt = self._held_stt(lambda audio: "whole-file words")
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
         voice.audio_callback(
-            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+            np.full((80000, 1), 0.5, dtype=np.float32), 80000, None, None
         )
         voice.audio_callback(
             np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
         )
         with mock.patch.object(voice, "paste_to_cursor") as paste:
-            voice.stop_recording()  # a few milliseconds long: under the takeover
+            voice.stop_recording()  # released before the worker took any of it
             self.assertTrue(voice.process_next(timeout=0))
 
-        self.assertEqual(feeds, [chunk], "the 8000-sample remainder was never flushed")
-        self.assertEqual(order, ["close", "whole"], "stream released before decoding")
+        self.assertEqual(voice.stt.decoded, [88000], "no preview after release")
         paste.assert_called_once_with("whole-file words")
         record = config.read_history()[-1]
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
 
-    def test_a_cancelled_streaming_recording_never_opens_the_recogniser(self):
+    def test_a_cancelled_held_recording_never_opens_a_piece_decoder(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
@@ -2212,7 +2110,7 @@ class V2TSmokeTests(unittest.TestCase):
             self.assertTrue(voice.process_next(timeout=0))
 
         self.assertIsNone(voice.live)
-        voice.stt.stream.assert_not_called()
+        voice.stt.pieces.assert_not_called()
         paste.assert_not_called()
         self.assertFalse(voice.processing)
         self.assertEqual(config.read_status()["state"], "idle")
@@ -2224,12 +2122,12 @@ class V2TSmokeTests(unittest.TestCase):
         voice.stt = mock.Mock(
             streaming=True,
             sample_rate=16000,
-            stream=mock.Mock(side_effect=RuntimeError("metal out of memory")),
+            pieces=mock.Mock(side_effect=RuntimeError("metal out of memory")),
         )
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
-            self.assertTrue(voice.process_next(timeout=0))  # the stream fails to open
+            self.assertTrue(voice.process_next(timeout=0))  # the decoder fails to open
             self.assertIsNone(voice.live, "dead job detached from the recording")
             self.assertTrue(voice.recording)
             self.assertEqual(config.read_status()["state"], "recording")
@@ -2246,34 +2144,33 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        feeds: list[int] = []
-        voice.stt, stream = self._streaming_stt(feeds)
-        voice.stt.decode.side_effect = [  # the last piece fails, then the whole file
-            RuntimeError("metal out of memory"),
-            "whole-file words",
-        ]
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
+        answers = iter([RuntimeError("metal out of memory"), "whole-file words"])
+
+        def decode(audio):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        voice.stt = self._held_stt(decode)
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
         voice.audio_callback(
-            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
+            np.full((80000, 1), 0.5, dtype=np.float32), 80000, None, None
         )
         voice.audio_callback(
             np.full((8000, 1), 0.5, dtype=np.float32), 8000, None, None
         )
-        voice.record_start -= backends.STREAM_TAKEOVER_S  # long: streamed text wanted
         with mock.patch.object(voice, "paste_to_cursor") as paste:
             voice.stop_recording()
             self.assertTrue(voice.process_next(timeout=0))
 
-        self.assertEqual(feeds, [chunk], "nothing pushed after release")
         self.assertEqual(
             [c.args[0].shape for c in voice.stt.decode.call_args_list],
-            [(chunk + 8000,), (chunk + 8000, 1)],
-            "the piece, then the whole recording",
+            [(88000,), (88000, 1)],
+            "the last piece, then the whole recording",
         )
-        self.assertTrue(stream.closed, "stream released before the fallback decode")
         paste.assert_called_once_with("whole-file words")
         self.assertEqual(config.read_status()["state"], "idle")
         self.assertFalse(voice.processing)
@@ -2281,30 +2178,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(
             (record["raw"], record["streamed"]), ("whole-file words", False)
         )
-
-    def test_the_whole_file_fallback_after_a_failed_push_keeps_the_audio_too(self):
-        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
-        lock = config.acquire_instance_lock()
-        self.addCleanup(lock.close)
-        voice.stt, stream = self._streaming_stt([])
-        stream.feed.side_effect = RuntimeError("metal out of memory")
-        voice.stt.decode = mock.Mock(return_value="whole-file words")
-        chunk = int(16000 * backends.STREAM_CHUNK_S)
-
-        with mock.patch.object(app.sd, "InputStream"):
-            voice.start_recording()
-        voice.audio_callback(
-            np.full((chunk, 1), 0.5, dtype=np.float32), chunk, None, None
-        )
-        voice.record_start -= backends.STREAM_TAKEOVER_S
-        with mock.patch.object(voice, "paste_to_cursor") as paste:
-            voice.stop_recording()  # released before the worker fed anything
-            self.assertTrue(
-                voice.process_next(timeout=0)
-            )  # the push fails after release
-
-        paste.assert_called_once_with("whole-file words")
-        self.assertEqual(wavfile.read(config.last_audio_path())[1].shape, (chunk,))
+        self.assertEqual(wavfile.read(config.last_audio_path())[1].shape, (88000,))
 
     def test_partials_reach_the_status_file_but_never_the_log(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -2393,18 +2267,14 @@ class V2TSmokeTests(unittest.TestCase):
     def test_status_advertises_live_transcript_only_when_enabled_and_capture_can_stream(self):
         voice = app.VoiceToText(config.Config(backend="parakeet", cleanup_enabled=False, mode="casual"))
         listener = self._pill_listener()
-        voice.stt, _stream = self._streaming_stt([])
-        for mode, rate, backend_streams, live, available in (
-            ("hacky", 16000, True, True, True),
-            ("hacky", 16000, True, False, True),  # streams, but the transcript is off
-            ("off", 16000, True, True, False),
-            ("hacky", 48000, True, True, False),
-            ("hacky", 16000, False, True, False),
+        voice.stt = self._held_stt()
+        for rate, backend_streams, live, available in (
+            (16000, True, True, True),
+            (16000, True, False, True),  # decodes while held, but the transcript is off
+            (48000, True, True, False),
+            (16000, False, True, False),
         ):
-            with self.subTest(
-                mode=mode, rate=rate, backend_streams=backend_streams, live=live
-            ):
-                voice.cfg.streaming_mode = mode
+            with self.subTest(rate=rate, backend_streams=backend_streams, live=live):
                 voice.cfg.sample_rate = rate
                 voice.stt.streaming = backend_streams
                 voice.cfg.live_transcript = live
@@ -2467,8 +2337,7 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, stream = self._streaming_stt([])
-        voice.stt.transcribe = mock.Mock()
+        voice.stt = self._held_stt()
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
@@ -2479,7 +2348,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(config.read_status()["state"], "idle")
         self.assertFalse(voice.processing)
-        self.assertTrue(stream.closed)
+        self.assertEqual(voice.stt.decoded, [])
         voice.stt.transcribe.assert_not_called()
         paste.assert_not_called()
 
@@ -2487,7 +2356,7 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        voice.stt, _stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
 
         with mock.patch.object(app.sd, "InputStream"):
             voice.start_recording()
@@ -2527,41 +2396,19 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_streaming_is_off_when_the_capture_rate_is_not_the_models(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False, sample_rate=48000))
-        voice.stt, _stream = self._streaming_stt([])
+        voice.stt = self._held_stt()
 
         self.assertFalse(voice.can_stream())
 
-    def test_streaming_mode_is_read_from_config_and_validated(self):
-        config.write_config('[transcription]\nstreaming_mode = "off"\n')
+    def test_a_config_from_before_the_stream_was_removed_still_loads(self):
+        config.write_config('[transcription]\nstreaming_mode = "hacky"\n')
 
-        self.assertEqual(config.load().streaming_mode, "off")
-        self.assertEqual(config.Config().streaming_mode, "hacky")
-        config.write_config('[transcription]\nstreaming_mode = "clean"\n')
+        cfg = config.load()
+
+        self.assertFalse(hasattr(cfg, "streaming_mode"))
+        self.assertNotIn("transcription.streaming_mode", config.settings())
         with self.assertRaises(SystemExit):
-            config.load()
-
-    def test_streaming_mode_flag_overrides_the_config(self):
-        config.write_config('[transcription]\nstreaming_mode = "off"\n')
-        seen: list[str] = []
-
-        def voice(cfg):
-            seen.append(cfg.streaming_mode)
-            return types.SimpleNamespace(run=lambda: None)
-
-        with (
-            mock.patch.object(app, "check_and_request_permissions", return_value=False),
-            mock.patch.object(app, "VoiceToText", side_effect=voice),
-        ):
-            cli.cmd_run(["--streaming-mode", "hacky"])
-            cli.cmd_run([])
-            cli.cmd_run(["--streaming-mode=off"])
-
-        self.assertEqual(seen, ["hacky", "off", "off"])
-        with (
-            contextlib.redirect_stderr(io.StringIO()),
-            self.assertRaises(SystemExit),
-        ):
-            cli.cmd_run(["--streaming-mode", "clean"])
+            config.set_value("transcription.streaming_mode", "off")
 
     def test_clipboard_is_restored_when_paste_fails(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -3118,7 +2965,7 @@ class V2TSmokeTests(unittest.TestCase):
             "models": {"transcription": [], "cleanup": []},
             "settings": {
                 "transcription.backend": "parakeet-coreml", "transcription.model": "",
-                "transcription.streaming_mode": "hacky", "transcription.live_transcript": False,
+                "transcription.live_transcript": False,
                 "cleanup.enabled": True, "cleanup.engine": "mlx", "cleanup.model": "",
                 "cleanup.mode": "casual", "hotkey.key": "alt_r", "audio.sample_rate": 16000,
                 "behavior.pause_music": False, "behavior.save_history": True,
@@ -4523,13 +4370,13 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_escape_during_streaming_drains_the_cancelled_job_before_undo(self):
         voice, _tap = self._tapper()
-        voice.stt, stream = self._streaming_stt([])
-        def feed(_samples):
+        def decode(_audio):  # the preview's model call
             voice.on_press(types.SimpleNamespace(name="esc"))
             voice.request_undo()
-        stream.feed = feed
+            return ""
+        voice.stt = self._held_stt(decode)
         voice.start_recording()
-        samples = int(voice.cfg.sample_rate * backends.STREAM_CHUNK_S)
+        samples = int(voice.cfg.sample_rate * backends.PARTIAL_STEP_S)
         voice.audio_callback(np.ones((samples, 1), dtype=np.float32), samples, None, None)
         with mock.patch.object(voice, "paste_to_cursor") as paste:
             voice.process_next(timeout=0)

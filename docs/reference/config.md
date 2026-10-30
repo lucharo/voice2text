@@ -15,7 +15,7 @@ Everything is in `~/.v2t/`, or `$V2T_HOME`, or `$XDG_CONFIG_HOME/v2t`, in that o
 ## Keys
 
 Every key is optional; these are the defaults. The menu app's **Settings** submenu switches
-streaming, live words, cleanup, its mode, the hotkey, history and the kept recording, and its
+live words, cleanup, its mode, the hotkey, history and the kept recording, and its
 **Transcription Model** and **Cleanup Model** submenus pick the models: each choice rewrites only
 its own lines here and restarts the engine after the dictation in progress. Edit the rest by hand,
 or with `v2t config set section.key value`.
@@ -24,7 +24,6 @@ or with `v2t config set section.key value`.
 [transcription]
 backend = "parakeet-coreml"
 model = ""
-streaming_mode = "hacky"
 live_transcript = false
 
 [cleanup]
@@ -52,8 +51,7 @@ url = "http://localhost:11434"
 |---|---|---|
 | `transcription.backend` | `parakeet-coreml`, `parakeet`, `whisper`, `qwen3-asr` | Transcription engine. `parakeet-coreml` (default) runs Parakeet v3 on the Neural Engine through Core ML, with no MLX: the live text while you hold the key and the final text both come from it. The first run downloads its Core ML files (about 0.63 GB) from `FluidInference/parakeet-tdt-0.6b-v3-coreml`, or reads FluidAudio's copy in `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3` when there is one. `parakeet` runs Parakeet on the GPU through MLX; `whisper` needs `voice2text[whisper]`. `qwen3-asr` runs Qwen3-ASR 1.7B (8-bit) through mlx-audio and needs `voice2text[qwen]`: it makes about half the mistakes on long and noisy dictations and waits longer, see [Should I switch to Qwen3-ASR?](../faq.md#should-i-switch-to-qwen3-asr). The first run downloads its 2.5 GB of weights |
 | `transcription.model` | repo id, or a folder for `parakeet-coreml` | Blank means the Core ML files above, `parakeet-tdt-0.6b-v3`, `whisper-large-v3-turbo` or `Qwen3-ASR-1.7B-8bit`. If you speak English, `littlebearlabs/parakeet-unified-en-0.6b-mlx` with `backend = "parakeet"` (Parakeet Unified, English only) makes fewer mistakes, and so does `ConwayResearch/Underdog-Bark-3.0-Pro` with `backend = "parakeet-coreml"` (Bark 3.0 Pro on the Neural Engine, English only, a 1.23 GB download compiled once into `~/.v2t/models`), mostly on noisy recordings: see [Should I switch to Bark 3.0 Pro?](../faq.md#should-i-switch-to-bark-30-pro) |
-| `transcription.streaming_mode` | `hacky`, `off` | Transcribe while the key is held; see [How it works](../how-it-works.md#what-happens-while-you-hold-the-key) |
-| `transcription.live_transcript` | `true`, `false` | Experimental: show the words on the pill while you speak (streaming only) |
+| `transcription.live_transcript` | `true`, `false` | Experimental: show the words on the pill while you speak; see [How it works](../how-it-works.md#what-happens-while-you-hold-the-key) |
 | `cleanup.enabled` | `true`, `false` | Run the cleanup model at all |
 | `cleanup.engine` | `mlx`, `ollama` | In-process MLX, or a running Ollama |
 | `cleanup.model` | repo id or Ollama tag | Blank means `Qwen3.5-2B-4bit` or `qwen3:4b-instruct-2507` |
