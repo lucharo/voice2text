@@ -814,6 +814,7 @@ class FluidAudio:
         self.opts = dict(kv.split("=", 1) for kv in opts.split("&") if kv)
         self.arm = "parakeet-v3" if "parakeet" in repo else "nemotron"
         self.mode = mode
+        self.uses_mlx = False  # the helper reports its own peak; `chunk` rows go without
         self.retries = 0
         self._start()
 

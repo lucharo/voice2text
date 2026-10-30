@@ -334,7 +334,7 @@ Open ASR Leaderboard's way:
 | AMI meetings, room microphone | 29.2% | 28.4% | 32.2% |
 | Disagreement on 208 real dictations | 5.3% | 5.4% | 7.1% |
 | Wait after release, against the default's | 1 | 1.5 to 1.6 | |
-| Download | 0.63 GB | 0.63 GB (int8) | another 0.6 GB |
+| Download | 0.63 GB | 0.63 GB (int8) | about 1.2 GB more (fp16, as v2t ships it) |
 
 Pooled over the five labelled sets it makes 0.3 points fewer mistakes (95% interval 0.8 fewer to
 0.2 more), which is not clear of chance. The int8 build is as accurate as fp16. On the same
