@@ -317,9 +317,10 @@ Not for the final text on a Mac, but its stream can drive the live words in the 
 [Nemotron-Labs Unified ASR 0.6B](https://huggingface.co/nvidia/nemotron-labs-unified-asr-0.6b)
 decodes whole files and also streams. Offline it is a little more accurate than Parakeet v3 but
 waits 1.5 to 1.6 times as long after you let go, and in English Qwen3-ASR 8-bit beats it. Its
-1.12 s stream updates the bubble every 0.56 s where Parakeet's preview updated every 5 s, so v2t
-offers it as the live words only (From Nemotron under Live Words in Bubble, or
-`transcription.preview = "nemotron"`); the pasted text still comes from the transcription model.
+1.12 s stream is made for live words, so v2t offers it for those only: with the live words on,
+**From Nemotron** under Live Words in Bubble (`preview = "nemotron"` under `[transcription]`) takes
+them from this model, and the pasted text still comes from the transcription model (see
+[How do I move the pill or hide it?](#how-do-i-move-the-pill-or-hide-it)).
 
 Measured on the maintainers' grid on an M4 Pro through FluidAudio's Core ML build (October 2026,
 [#85](https://github.com/lucharo/voice2text/issues/85)), 150 clips per set, errors counted the
