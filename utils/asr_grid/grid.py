@@ -140,6 +140,44 @@ SYSTEMS = {
         "littlebearlabs/parakeet-unified-en-0.6b-mlx",
         "offline",
     ),
+    # NVIDIA's Nemotron-Labs Unified ASR 0.6B (25 European languages, the multilingual
+    # Parakeet Unified) on Core ML through FluidAudio's Swift managers (fa_helper):
+    # no MLX conversion exists. Told each clip's language as its prompt (en, es), the
+    # offline encoder in fp16 (FluidAudio's CLI default for it) and int8 (half the
+    # download), with the model's own language ID (`auto`), and streaming at 1.12 s
+    # and 0.56 s latency (chunk + right context; the left context is 5.6 s)
+    "nemotron-unified": (
+        "fluidaudio",
+        "FluidInference/nemotron-labs-unified-asr-0.6b-coreml#precision=fp16",
+        "offline",
+    ),
+    "nemotron-unified-int8": (
+        "fluidaudio",
+        "FluidInference/nemotron-labs-unified-asr-0.6b-coreml#precision=int8",
+        "offline",
+    ),
+    "nemotron-unified-auto": (
+        "fluidaudio",
+        "FluidInference/nemotron-labs-unified-asr-0.6b-coreml#precision=fp16&lang=auto",
+        "offline",
+    ),
+    "nemotron-unified-stream-1.12": (
+        "fluidaudio",
+        "FluidInference/nemotron-labs-unified-asr-0.6b-coreml#precision=fp16&context=70,7,7",
+        "stream",
+    ),
+    "nemotron-unified-stream-0.56": (
+        "fluidaudio",
+        "FluidInference/nemotron-labs-unified-asr-0.6b-coreml#precision=fp16&context=70,2,5",
+        "stream",
+    ),
+    # the same Parakeet v3 files as parakeet-v3-coreml through FluidAudio's own Swift
+    # decode, as the iPhone runs them: Nemotron Unified's like-for-like runtime
+    "parakeet-v3-fluidaudio": (
+        "fluidaudio",
+        "FluidInference/parakeet-tdt-0.6b-v3-coreml",
+        "offline",
+    ),
     # Fermion's Parakeet v3 retrained at ~2.1 bits (164 MB), English only, through
     # its own MLX runtime (fermion-research, on mlx-audio's Parakeet graph) at its
     # defaults, which dequantise the encoder to fp16 after load...
@@ -424,7 +462,8 @@ def measured(work) -> dict:
 
     mx.reset_peak_memory()
     result = work()
-    return {**result, "peak_mem_gb": round(mx.get_peak_memory() / 1e9, 3)}
+    # a runtime outside this process (fluidaudio) reports its own peak
+    return {"peak_mem_gb": round(mx.get_peak_memory() / 1e9, 3), **result}
 
 
 # --- runtimes -----------------------------------------------------------------
@@ -442,13 +481,19 @@ class ParakeetMLX:
         repo, _, flag = repo.partition("#")
         # v2t quantizes Parakeet to PARAKEET_BITS at load since 0.5.15; the grid's
         # parakeet-mlx rows are bf16 unless the repo ends in `#8bit`
+        # (scoped to this constructor, so a race loading `parakeet-v3` before
+        # `parakeet-v3-8bit` still quantizes the second)
+        quantized = backends._quantized
         if flag != "8bit":
             backends._quantized = lambda model: model
-        if (Path(_snapshot(repo)) / "config.json").exists():
-            self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
-        else:
-            self.stt = backends.ParakeetSTT.__new__(backends.ParakeetSTT)
-            self.stt.model = load_nemo_layout(_snapshot(repo))
+        try:
+            if (Path(_snapshot(repo)) / "config.json").exists():
+                self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
+            else:
+                self.stt = backends.ParakeetSTT.__new__(backends.ParakeetSTT)
+                self.stt.model = load_nemo_layout(_snapshot(repo))
+        finally:
+            backends._quantized = quantized
         self.mode = mode
 
     def run(self, clip: dict) -> dict:
@@ -743,6 +788,99 @@ class Fermion:
         return self.model.transcribe_array(audio)[0].strip()
 
 
+FA_HELPER = Path(__file__).resolve().parent / "fa_helper/.build/release/fa-helper"
+NEMOTRON_UNIFIED_DIR = EVAL / "grid-models/nemotron-unified-coreml/coreml"
+
+
+class FluidAudio:
+    """FluidAudio's Swift Core ML managers, through fa_helper (a long-lived process
+    fed one clip per JSON line), for models with no Python or MLX route.
+
+    `repo#key=value&...` sets the request: `precision` (fp16, int8), `lang` (a
+    Nemotron Unified language prompt; unset = the clip's own language, `auto` =
+    the model's language ID), `context` (a streaming encoder's left,chunk,right in
+    80 ms frames). A Parakeet repo runs FluidAudio's Parakeet v3 (Encoder_v2, int8)
+    from FluidAudio's own folder, the files v2t's `parakeet-coreml` reads. Timings
+    are the helper's: the decode with the audio already in memory, as
+    ParakeetCoreML times it; memory is the helper's peak physical footprint.
+    """
+
+    def __init__(self, repo: str, mode: str):
+        if not FA_HELPER.exists():
+            raise SystemExit(
+                f"build the helper first: swift build -c release --package-path {FA_HELPER.parents[2]}"
+            )
+        repo, _, opts = repo.partition("#")
+        self.opts = dict(kv.split("=", 1) for kv in opts.split("&") if kv)
+        self.arm = "parakeet-v3" if "parakeet" in repo else "nemotron"
+        self.mode = mode
+        self.uses_mlx = False  # the helper reports its own peak; `chunk` rows go without
+        self.retries = 0
+        self._start()
+
+    def _start(self) -> None:
+        import subprocess
+
+        sys.path.insert(0, str(REPO))
+        from v2t.coreml import COREML_DIR, model_folder
+
+        # Parakeet v3's files where v2t finds them: FluidAudio's folder, else the
+        # Hugging Face cache (offline here, see HF_HUB_OFFLINE above)
+        parakeet = model_folder() if self.arm == "parakeet-v3" else COREML_DIR
+        self.proc = subprocess.Popen(
+            [str(FA_HELPER), "--nemotron-dir", str(NEMOTRON_UNIFIED_DIR),
+             "--parakeet-dir", str(parakeet)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+        )
+
+    def _ask(self, path: str, lang: str, retry: bool = True) -> dict:
+        request = {"arm": self.arm, "path": path, "mode": self.mode, "lang": lang, **self.opts}
+        self.proc.stdin.write(json.dumps(request) + "\n")
+        self.proc.stdin.flush()
+        for line in self.proc.stdout:
+            if line.startswith("@@ "):
+                reply = json.loads(line[3:])
+                if "error" not in reply:
+                    return reply
+                # the Neural Engine sometimes times out a prediction ("ANE op async
+                # execution has timed out", seen on the 1.12 s stream, 2026-10-29):
+                # restart the helper and decode the clip once more; the row says so
+                if retry and "timed out" in reply["error"]:
+                    self.proc.kill()
+                    self._start()
+                    self.retries += 1
+                    return {**self._ask(path, lang, retry=False), "retried": True}
+                raise RuntimeError(f"fa-helper: {reply['error']}")
+        raise RuntimeError(f"fa-helper exited ({self.proc.wait()})")
+
+    def run(self, clip: dict) -> dict:
+        r = self._ask(clip["path"], clip["lang"])
+        retried = {"retried": True} if r.get("retried") else {}
+        if self.mode == "offline":
+            return {"offline": r["text"], "offline_s": r["decode_s"],
+                    "peak_mem_gb": round(r["peak_mem_gb"], 3), **retried}
+        steps = r["step_s"]
+        return {
+            "stream": r["text"],
+            "stream_wait_s": r["wait_s"],
+            # compute only: a backlog at release is in wait_s but already in feed_s
+            "stream_busy_s": r["feed_s"] + r["wait_s"] - r.get("backlog_s", 0.0),
+            "stream_steps": len(steps),
+            "step_p50_s": q(steps, 0.5) if steps else None,
+            "step_p90_s": q(steps, 0.9) if steps else None,
+            "partials": r["partial_texts"],
+            "peak_mem_gb": round(r["peak_mem_gb"], 3),
+            **retried,
+        }
+
+    def decode(self, audio: np.ndarray) -> str:
+        import soundfile as sf
+
+        tmp = private_dir(GRID / "tmp") / f"fa-{os.getpid()}.wav"
+        sf.write(tmp, audio, SAMPLE_RATE)
+        return self._ask(str(tmp), "en")["text"]  # `chunk` sets are English
+
+
 class Bark:
     """Underdog Bark 3.0 as its own scripts run it, 0.25 s of silence in front (none
     for Clean, its evaluated setting).
@@ -867,6 +1005,7 @@ class Bark:
 RUNTIMES = {
     "bark": Bark,
     "fermion": Fermion,
+    "fluidaudio": FluidAudio,
     "parakeet-mlx": ParakeetMLX,
     "mlx-whisper": MLXWhisper,
     "mlx-audio": MLXAudio,
@@ -913,6 +1052,99 @@ def run(system: str, set_name: str, limit: int | None, tag: str | None = None) -
             release_cache()
             if n % 10 == 0 or n == len(todo):
                 print(f"  {n}/{len(todo)}", flush=True)
+
+
+def machine_state() -> dict:
+    """Load, free memory and free disk, recorded beside every race."""
+    import shutil
+    import subprocess
+
+    pressure = subprocess.run(
+        ["memory_pressure"], capture_output=True, text=True, check=False
+    ).stdout
+    free = re.search(r"free percentage: (\d+)%", pressure)
+    return {
+        "load5": round(os.getloadavg()[1], 1),
+        "mem_free_pct": int(free.group(1)) if free else None,
+        "disk_free_gb": round(shutil.disk_usage("/").free / 1e9, 1),
+    }
+
+
+def race(systems: list[str], set_name: str, limit: int | None, tag: str) -> None:
+    """Time systems against each other fairly on a loaded Mac: every system loaded
+    in this one process (and its helpers), clip by clip, the order rotated each
+    clip. Rows go to `<system>.jsonl.<tag>`, which the report ignores; prints each
+    system's per-clip wait ratio to the first system and the share of clips it is
+    faster on, overall and per third of the run (a ratio that holds in every third
+    is the finding; the seconds move with the load)."""
+    clips = read_jsonl(SETS / f"{set_name}.jsonl")[:limit]
+    english_only = [s for s in systems if s in ENGLISH_ONLY]
+    if english_only and any(c["lang"] != "en" for c in clips):
+        raise SystemExit(f"{', '.join(english_only)}: English only, and {set_name} is not")
+    start = machine_state()
+    print(f"race on {set_name}, {len(clips)} clips, {start}")
+    engines = {}
+    for system in systems:
+        runtime, repo, mode = SYSTEMS[system]
+        t0 = time.perf_counter()
+        engines[system] = RUNTIMES[runtime](repo, mode)
+        print(f"  {system} loaded in {time.perf_counter() - t0:.1f}s")
+    warm = min(clips, key=lambda c: c["duration_s"])
+    for engine in engines.values():
+        engine.run(warm)
+        release_cache()
+    waits: dict[str, list[float]] = {s: [] for s in systems}
+    outs = {s: (private_dir(RESULTS / set_name) / f"{s}.jsonl.{tag}").open("a") for s in systems}
+    for k, clip in enumerate(clips):
+        order = systems[k % len(systems):] + systems[: k % len(systems)]
+        for system in order:
+            row = {"id": clip["id"], "duration_s": clip["duration_s"],
+                   **measured(lambda e=engines[system], c=clip: e.run(c))}
+            release_cache()
+            waits[system].append(wait_s(system, row))
+            outs[system].write(json.dumps(row) + "\n")
+            outs[system].flush()
+    end = machine_state()
+    for out in outs.values():
+        out.close()
+    base = np.array(waits[systems[0]])
+    thirds = np.array_split(np.arange(len(clips)), 3)
+    print(f"end state {end}")
+    for system in systems:
+        ratio = np.array(waits[system]) / base
+        per = " ".join(f"{np.median(ratio[t]):.2f}" for t in thirds if len(t))
+        print(
+            f"  {system}: wait p50 {np.median(waits[system]):.3f}s, ratio to "
+            f"{systems[0]} {np.median(ratio):.2f} (thirds {per}), faster on "
+            f"{np.mean(ratio < 1):.0%} of clips"
+        )
+    log = private_dir(GRID / "races") / f"{tag}-{set_name}.json"
+    log.write_text(json.dumps({"systems": systems, "set": set_name, "start": start,
+                               "end": end, "waits": waits}))
+    log.chmod(0o600)
+
+
+def agree(system: str, against: str) -> None:
+    """WER of one system's final text against another's, per set, on the clips both
+    finished: how far a stream drifts from the same model's whole-file text."""
+    for set_path in sorted(SETS.glob("*.jsonl")):
+        a_path = RESULTS / set_path.stem / f"{system}.jsonl"
+        b_path = RESULTS / set_path.stem / f"{against}.jsonl"
+        if not (a_path.exists() and b_path.exists()):
+            continue
+        clips = {c["id"]: c for c in read_jsonl(set_path)}
+        a = {r["id"]: r for r in read_jsonl(a_path)}
+        b = {r["id"]: r for r in read_jsonl(b_path)}
+        errors = words = 0
+        shared = set(a) & set(b) & set(clips)
+        for cid in sorted(shared):
+            lang = clips[cid]["lang"]
+            ref = normalise(final_text(against, b[cid]), lang)
+            errors += edits(ref, normalise(final_text(system, a[cid]), lang), lang)
+            words += len(ref)
+        if words:
+            print(f"{set_path.stem}: {system} against {against}: {errors / words:.2%} "
+                  f"({len(shared)} clips)")
 
 
 # --- chunked: the batch models' version of v2t's 60 s rule ---------------------
@@ -1308,6 +1540,14 @@ def main(argv: list[str]) -> int:
     c.add_argument("--set", dest="set_name", required=True)
     c.add_argument("--limit", type=int)
     sub.add_parser("report")
+    rc = sub.add_parser("race", help="time systems clip by clip in one process, order rotated")
+    rc.add_argument("--systems", required=True, help="comma-separated; ratios are to the first")
+    rc.add_argument("--set", dest="set_name", required=True)
+    rc.add_argument("--limit", type=int)
+    rc.add_argument("--tag", required=True, help="rows go to <system>.jsonl.<tag>")
+    ag = sub.add_parser("agree", help="one system's text scored against another's")
+    ag.add_argument("--system", choices=sorted(SYSTEMS), required=True)
+    ag.add_argument("--against", choices=sorted(SYSTEMS), required=True)
     a = p.parse_args(argv)
     private_dir(GRID)
     if a.command == "prepare":
@@ -1316,6 +1556,10 @@ def main(argv: list[str]) -> int:
         run(a.system, a.set_name, a.limit, a.tag)
     elif a.command == "chunk":
         run_chunked(a.system, a.set_name, a.limit)
+    elif a.command == "race":
+        race(a.systems.split(","), a.set_name, a.limit, a.tag)
+    elif a.command == "agree":
+        agree(a.system, a.against)
     else:
         report()
     return 0

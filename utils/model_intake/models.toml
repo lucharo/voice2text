@@ -229,6 +229,17 @@ reported = [
   { source = "oasr_es", metric = "fleurs-es", value = 4.23 },
 ]
 
+[models.nemotron-labs-unified-asr]
+label = "Nemotron-Labs Unified ASR"
+short = "Nemotron Unified"
+creator = "NVIDIA"
+params_b = 0.6
+licence = "OpenMDW-1.1"
+languages = 25
+card = "https://huggingface.co/nvidia/nemotron-labs-unified-asr-0.6b"
+note = "One checkpoint for offline and buffered streaming (multilingual Parakeet Unified; encoder initialised from Parakeet TDT v3). Its card reports 4.68% offline on 7 cleaned Open ASR English sets and 3.61% on a FLEURS/MCV/MLS Spanish average, neither one of this file's metrics."
+reported = []
+
 [models.voxtral-mini-4b-realtime]
 label = "Voxtral Mini 4B Realtime"
 short = "Voxtral 4B RT"
@@ -485,3 +496,45 @@ engine = "mlx-audio"
 precision = "16-bit, speech only"
 disk_gb = 4.132
 note = "Decodes only the speech segments of each clip (grid.speech_segments): Cohere loops on silence otherwise."
+
+[systems.nemotron-unified]
+model = "nemotron-labs-unified-asr"
+engine = "fluidaudio"
+precision = "fp16"
+disk_gb = 1.223
+note = "FluidAudio's offline encoder (15 s windows, 2 s overlap), decoder and joint from FluidInference/nemotron-labs-unified-asr-0.6b-coreml, told each clip's language (en, es)."
+
+[systems.nemotron-unified-int8]
+model = "nemotron-labs-unified-asr"
+engine = "fluidaudio"
+precision = "int8"
+disk_gb = 0.627
+note = "As nemotron-unified with the int8 offline encoder."
+
+[systems.nemotron-unified-auto]
+model = "nemotron-labs-unified-asr"
+engine = "fluidaudio"
+precision = "fp16, language ID"
+disk_gb = 1.223
+note = "As nemotron-unified with the auto prompt: the model picks the language."
+
+[systems."nemotron-unified-stream-1.12"]
+model = "nemotron-labs-unified-asr"
+engine = "fluidaudio"
+precision = "fp16, stream 1.12 s"
+disk_gb = 1.212
+note = "Buffered streaming encoder [70, 7, 7]: 5.6 s left, 0.56 s chunk, 0.56 s right context; the whole window is re-encoded every chunk."
+
+[systems."nemotron-unified-stream-0.56"]
+model = "nemotron-labs-unified-asr"
+engine = "fluidaudio"
+precision = "fp16, stream 0.56 s"
+disk_gb = 1.211
+note = "Buffered streaming encoder [70, 2, 5]: 5.6 s left, 0.16 s chunk, 0.4 s right context."
+
+[systems.parakeet-v3-fluidaudio]
+model = "parakeet-tdt-0.6b-v3"
+engine = "fluidaudio"
+precision = "int8"
+disk_gb = 0.633
+note = "The parakeet-v3-coreml files through FluidAudio's Swift decode, as the iPhone runs them."
