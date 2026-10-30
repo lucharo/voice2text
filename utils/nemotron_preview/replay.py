@@ -20,7 +20,9 @@ import time
 from pathlib import Path
 from unittest import mock
 
-HOME = Path(tempfile.mkdtemp(prefix="v2t-nemotron-replay-", dir=Path.home() / ".v2t/eval/nemotron-preview"))
+EVAL = Path.home() / ".v2t/eval/nemotron-preview"
+EVAL.mkdir(parents=True, exist_ok=True)
+HOME = Path(tempfile.mkdtemp(prefix="v2t-nemotron-replay-", dir=EVAL))
 os.environ["V2T_HOME"] = str(HOME)
 sys.path.insert(0, os.getcwd())
 import numpy as np  # noqa: E402
@@ -63,8 +65,10 @@ def replay(voice, audio, block=512):
         return real(state, error, partial)
 
     pasted = {}
-    with mock.patch.object(voice, "_set_state", spy), mock.patch.object(app.sd, "InputStream"), \
-            mock.patch.object(voice, "paste_to_cursor", side_effect=lambda t: pasted.setdefault("at", time.perf_counter()) and pasted.setdefault("text", t)):
+    # Never the real paste, not even after this returns: a late worker must not type
+    # benchmark text into whatever app has focus.
+    voice.paste_to_cursor = lambda t: pasted.setdefault("at", time.perf_counter()) and pasted.setdefault("text", t)
+    with mock.patch.object(voice, "_set_state", spy), mock.patch.object(app.sd, "InputStream"):
         voice.start_recording()
         worker = threading.Thread(target=voice.process_next)
         worker.start()
@@ -78,6 +82,8 @@ def replay(voice, audio, block=512):
         released = time.perf_counter()
         voice.stop_recording()
         worker.join(timeout=60)
+        if worker.is_alive():
+            raise SystemExit("the processing thread did not finish within 60 s of release; stopping")
     stream = voice.preview
     times = [t for t, _ in updates]
     return {

@@ -878,7 +878,7 @@ class VoiceToText:
                             )
                 if stream is not None and not live.done.is_set():
                     try:
-                        grew = stream.step()
+                        grew = stream.step(stop=live.done.is_set)
                     except Exception as error:  # display only: never the recording
                         logger.warning(f"Live preview off for this recording: {error}")
                         stream = None

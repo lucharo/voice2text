@@ -24,6 +24,8 @@ def ask(req):
     helper.stdin.flush()
     while True:
         line = helper.stdout.readline()
+        if not line:  # EOF: the helper exited
+            raise SystemExit(f"fa-helper exited (code {helper.wait()}) while answering {req['path']}")
         if line.startswith("@@ "):
             return json.loads(line[3:])
 s = nemotron.NemotronStream(language=clips[0]["lang"])

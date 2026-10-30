@@ -1836,7 +1836,7 @@ class V2TSmokeTests(unittest.TestCase):
         def add(audio):
             stream.added += np.asarray(audio).size
 
-        def step():
+        def step(stop=None):
             if stream.added - stream.windower.consumed < chunk:
                 return False
             if fail:
@@ -1996,6 +1996,20 @@ class V2TSmokeTests(unittest.TestCase):
         stream.enc = "timed out"
         with self.assertRaises(RuntimeError):  # twice in a row: the app turns the preview off
             stream._encode(np.zeros(1), np.zeros(1))
+
+    def test_a_nemotron_step_stops_running_windows_once_the_recording_ends(self):
+        stream = object.__new__(nemotron.NemotronStream)  # no model files
+        stream.windower, stream._samples = nemotron.Windower(), 60 * 16000  # a backlog
+        stream.tokens, stream.step_s = [], []
+        windows = []
+        stream._window = lambda *plan: windows.append(plan)
+        stream._trim = lambda: None
+
+        stream.step(stop=lambda: len(windows) >= 2)
+
+        self.assertEqual(len(windows), 2, "released mid-backlog: no more preview windows")
+        stream.step()
+        self.assertGreater(len(windows), 100, "without a stop it drains the backlog")
 
     def test_nemotron_log_mel_matches_the_encoder_contract(self):
         rng = np.random.default_rng(0)

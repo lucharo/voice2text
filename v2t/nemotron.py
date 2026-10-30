@@ -295,10 +295,12 @@ class NemotronStream:
             self._audio.append(flat)
             self._samples += flat.size
 
-    def step(self, final: bool = False) -> bool:
-        """Run every window the audio added so far allows; True when the text grew."""
+    def step(self, final: bool = False, stop: Callable[[], bool] | None = None) -> bool:
+        """Run every window the audio added so far allows, or until `stop()` says the
+        recording ended (the rest is display-only work nobody will see); True when the
+        text grew."""
         before = len(self.tokens)
-        while plan := self.windower.next(self._samples, final):
+        while not (stop and stop()) and (plan := self.windower.next(self._samples, final)):
             t0 = time.perf_counter()
             self._window(*plan)
             self.step_s.append(time.perf_counter() - t0)
