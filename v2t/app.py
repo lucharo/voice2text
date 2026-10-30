@@ -830,7 +830,6 @@ class VoiceToText:
             pieces = self.stt.pieces()
             step = backends.PREVIEW_STEP_S if self.cfg.live_transcript else backends.PARTIAL_STEP_S
             tail_step = int(self.cfg.sample_rate * step)
-            preview_max = int(self.cfg.sample_rate * backends.PREVIEW_MAX_S)
             # off for the recording once one fails, and from the start for a backend
             # whose decode is too slow to preview with (`previews = False`, Qwen3-ASR)
             tail_previews = getattr(self.stt, "previews", True) is not False
@@ -855,7 +854,7 @@ class VoiceToText:
                     try:
                         # as its piece will be decoded: Core ML's one window, with
                         # the lead silence (Bark) already in the first piece's audio
-                        tail = pieces.decode(pieces.peek()[-preview_max:])
+                        tail = pieces.decode(pieces.peek())
                     except Exception as error:  # display only: never the recording
                         logger.warning(f"Live preview off for this recording: {error}")
                         tail_previews = False

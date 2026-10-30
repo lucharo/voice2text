@@ -1808,6 +1808,19 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses, ["heard 80000"] * 3)
         paste.assert_called_once_with("heard 112000")
 
+    def test_before_the_first_cut_a_preview_decodes_all_the_audio_so_far(self):
+        # MLX under WHOLE_FILE_S: no cut yet, so the menu's word count must see it all
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = self._held_stt()
+
+        statuses, paste = self._hold_and_feed(voice, [20.0, 20.0])
+
+        self.assertEqual(voice.stt.decoded, [80000, 400000, 720000, 720000])
+        self.assertEqual(statuses, ["heard 80000", "heard 400000", "heard 720000"])
+        paste.assert_called_once_with("heard 720000")
+
     def test_live_transcript_is_read_from_config_and_validated(self):
         self.assertFalse(config.Config().live_transcript)
         config.write_config("[transcription]\nlive_transcript = true\n")

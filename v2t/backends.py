@@ -113,11 +113,11 @@ PIECE_QUIET_S = 0.1
 # piece is decoded on its own and shown after the pieces' text, display only, so a word
 # shows ~1 s after it is said. Measured 2026-10-06 on 21 dictations (M4 Pro): ~120 ms
 # per preview of a few seconds of audio; 84% of a preview's words survive into the
-# final text. A preview decodes at most PREVIEW_MAX_S of the newest audio (a recording
-# under WHOLE_FILE_S on MLX has no cut yet). With the live transcript off, the partial
-# text for the log and the menu-bar tooltip is refreshed every PARTIAL_STEP_S instead.
+# final text. On MLX a recording under WHOLE_FILE_S has no cut yet, so its preview
+# decodes everything so far (~11 ms per second of audio): the menu's word count needs
+# all of it. With the live transcript off, the partial text for the log and the
+# menu-bar tooltip is refreshed every PARTIAL_STEP_S instead.
 PREVIEW_STEP_S = 1.0
-PREVIEW_MAX_S = PIECE_S + PIECE_SEARCH_S
 PARTIAL_STEP_S = 5.0
 
 
