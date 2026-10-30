@@ -23,6 +23,9 @@ dictation on this Mac?**
 | `bark-3.0-plus` (and `-plus-coreml`), `bark-3.0-clean` | bark | Bark 3.0 Plus (180 MB) and Clean, Plus trained to drop fillers and false starts (verbatim references count each drop) |
 | `bark-3.0-pro` (and `-pro-4bit`, `-pro-coreml`) | bark, coremltools | Bark 3.0 Pro, bf16 (1.25 GB). Its Core ML files have FluidAudio's Parakeet v3 layout, so `-pro-coreml` runs them through v2t's own `parakeet-coreml` decode, compiled once with `xcrun coremlcompiler compile` into `~/.v2t/eval/grid-models/underdog-bark-3.0-pro-coreml` (encoder renamed `Encoder_v2.mlmodelc`) |
 | `parakeet-unified-en` | parakeet-mlx | NVIDIA's English Parakeet Unified, offline mode only: `littlebearlabs/parakeet-unified-en-0.6b-mlx` (fp32, NeMo layout) mapped onto stock parakeet-mlx by `grid.load_nemo_layout` and cast to bf16 like every parakeet-mlx row. Its streaming mode is not run |
+| `nemotron-unified` (and `-int8`, `-auto`) | fluidaudio | NVIDIA's Nemotron-Labs Unified ASR 0.6B, the multilingual (25 European languages) Parakeet Unified, offline on Core ML through FluidAudio's Swift `UnifiedAsrManager`: `FluidInference/nemotron-labs-unified-asr-0.6b-coreml`. Told each clip's language as its prompt (`en`, `es`); `-int8` is the half-size encoder, `-auto` lets the model pick the language. No MLX conversion exists (2026-10-29) |
+| `nemotron-unified-stream-1.12` (and `-0.56`) | fluidaudio | the same model streaming through `StreamingUnifiedAsrManager` at 1.12 s and 0.56 s latency (encoders `[70, 7, 7]` and `[70, 2, 5]`). Streaming is buffered: every chunk re-encodes 5.6 s of left context, so each row also records the cost per step |
+| `parakeet-v3-fluidaudio` | fluidaudio | the `parakeet-v3-coreml` files through FluidAudio's Swift decode, as the iPhone runs them: the like-for-like runtime for the rows above |
 
 Each cell from 2026-10-14 also records MLX's peak memory per clip (weights included), the
 report's `peak` column.
@@ -76,6 +79,20 @@ cleaned text on the labelled sets, plus formatted WER on Earnings22.
 
 Each runtime lives in its own environment so their pins never meet v2t's lock:
 
+The `fluidaudio` rows run a small Swift program, [`fa_helper`](fa_helper/Sources/main.swift), that
+keeps FluidAudio's models loaded and takes one clip per line; build it once, and put the Core ML
+files where `grid.NEMOTRON_UNIFIED_DIR` points (FluidAudio's Parakeet v3 files are read from its own
+folder, as v2t does):
+
+```bash
+swift build -c release --package-path utils/asr_grid/fa_helper
+hf download FluidInference/nemotron-labs-unified-asr-0.6b-coreml --local-dir ~/.v2t/eval/grid-models/nemotron-unified-coreml \
+  --include 'coreml/*.json' 'coreml/nemotron_unified_decoder.mlmodelc/*' 'coreml/nemotron_unified_joint_decision_single_step.mlmodelc/*' \
+  'coreml/nemotron_unified_encoder.mlmodelc/*' 'coreml/nemotron_unified_encoder_int8.mlmodelc/*' \
+  'coreml/nemotron_unified_encoder_streaming_70_7_7.mlmodelc/*' 'coreml/nemotron_unified_encoder_streaming_70_2_5.mlmodelc/*'
+.venv/bin/python utils/asr_grid/grid.py run --system nemotron-unified --set fleurs-es
+```
+
 ```bash
 SCORE="kaldialign>=0.12 num2words regex"  # the leaderboard scorer in oasr/
 uv venv ~/.v2t/eval/grid-envs/mlxaudio && VIRTUAL_ENV=~/.v2t/eval/grid-envs/mlxaudio \
@@ -95,6 +112,8 @@ uv venv ~/.v2t/eval/grid-envs/bark && VIRTUAL_ENV=~/.v2t/eval/grid-envs/bark \
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py chunk --system qwen3-asr-1.7b-8bit --set wispr
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/grid.py report
 ~/.v2t/eval/grid-envs/mlxaudio/bin/python utils/asr_grid/report_html.py --headline "..."
+.venv/bin/python utils/asr_grid/grid.py race --systems parakeet-v3-coreml,nemotron-unified --set ls-clean --limit 60 --tag race-1029
+.venv/bin/python utils/asr_grid/grid.py agree --system nemotron-unified-stream-1.12 --against nemotron-unified
 .venv/bin/python utils/asr_grid/plot_wait.py               # the README's wait-vs-length chart
 uv run --script utils/asr_grid/plot_pareto.py              # WER vs size and vs wait, short sets
 ```
@@ -133,6 +152,15 @@ model facts from [`models.toml`](../model_intake/models.toml), where a new model
   the whole-file results; a chunked row is scored but never votes in the dictation consensus, so
   adding one moves no other number. `parakeet-v3+chunked` is what v2t ships since 0.5.8: the app's
   `PieceDecoder` cuts the same way, and gave the same text on the clips checked.
+- **`race`** times systems against each other in one process, clip by clip, rotating their order
+  each clip, and prints each one's per-clip wait ratio to the first system, per third of the run
+  and overall, with the load, free memory and free disk before and after. Use it for any speed
+  claim: the waits in a `run` cell move with whatever else the Mac is doing. **`agree`** scores one
+  system's text against another's, such as a stream against its own whole-file decode.
+- **Streaming rows from FluidAudio** are fed one encoder chunk at a time (0.56 s or 0.16 s) and
+  decoded as each chunk arrives, rather than in 0.5 s pushes; `step_p50_s` and `step_p90_s` are
+  the cost of one chunk's step. Their `peak` is the helper's physical footprint, which leaves out
+  weights the Neural Engine holds, so it is not comparable with MLX's.
 - **RTF** is compute over audio. A streaming system needs it well under 1 to keep up live.
 - Streaming sessions are fed 0.5 s at a time and drained between feeds; the drain for mlx-audio
   sessions reads their queue state, which is pinned to mlx-audio 0.5.7.

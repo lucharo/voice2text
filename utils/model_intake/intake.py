@@ -189,6 +189,7 @@ def _(mo, sys, tomllib):
         "mlx-audio": "mlx-audio",
         "mlx-whisper": "mlx-whisper",
         "coreml": "Core ML",
+        "fluidaudio": "FluidAudio (Core ML)",
         "fermion": "Fermion",
         "cloud": "Cloud",
     }

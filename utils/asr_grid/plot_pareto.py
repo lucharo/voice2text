@@ -36,7 +36,7 @@ SYSTEMS = {
     "parakeet-v3": ("Parakeet v3 (bf16 reference)", 2.508),
     "parakeet-ultra": ("Parakeet Ultra", 1.254),
     "whisper-turbo": ("Whisper large-v3 turbo", 1.614),
-    "nemotron-3.5-stream": ("Nemotron 3.5 streaming", 1.276),
+    "nemotron-3.5-stream": ("Nemotron 3.5 ASR streaming 0.6B", 1.276),
     "voxtral-rt-4bit": ("Voxtral Mini 4B RT (4-bit)", 3.134),
     "qwen3-asr-1.7b": ("Qwen3-ASR 1.7B (bf16)", 4.076),
     "qwen3-asr-1.7b-8bit": ("Qwen3-ASR 1.7B (8-bit)", 2.463),
@@ -44,9 +44,15 @@ SYSTEMS = {
     "parakeet-redux": ("Parakeet Redux", 0.178),
     "parakeet-unified-en": ("Parakeet Unified EN", 2.474),
     "phonon-2": ("Phonon-2", 0.164),
+    # v2t's default since the Core ML backend: the same v3 weights, int8 encoder
+    "parakeet-v3-coreml": ("Parakeet v3 Core ML (v2t default)", 0.633),
+    # Nemotron-Labs Unified ASR through FluidAudio (the files models.toml lists)
+    "nemotron-unified": ("Nemotron-Labs Unified ASR 0.6B (fp16)", 1.223),
+    "nemotron-unified-int8": ("Nemotron-Labs Unified ASR 0.6B (int8)", 0.627),
+    "nemotron-unified-stream-1.12": ("Nemotron-Labs Unified ASR 0.6B, 1.12 s stream", 1.212),
 }
 PHONE = {"parakeet-redux", "phonon-2"}  # the small on-device candidates
-NEW = {"cohere-transcribe", "parakeet-redux", "parakeet-unified-en", "phonon-2"}
+NEW = {"nemotron-unified", "nemotron-unified-int8", "nemotron-unified-stream-1.12"}
 # label offsets in points, per panel; tuned by eye on the rendered PNG
 OFF = {
     ("gb", "parakeet-ultra"): (-20, -16),
@@ -54,10 +60,18 @@ OFF = {
     ("gb", "qwen3-asr-1.7b-8bit"): (-70, -18),
     ("gb", "qwen3-asr-1.7b"): (-20, 9),
     ("wait", "parakeet-ultra"): (8, -14),
-    ("wait", "qwen3-asr-1.7b-8bit"): (-60, -18),
+    ("wait", "qwen3-asr-1.7b-8bit"): (8, -14),
     ("wait", "qwen3-asr-1.7b"): (2, -18),
-    ("wait", "phonon-2"): (-10, -48),
-    ("wait", "cohere-transcribe"): (8, -14),
+    ("wait", "phonon-2"): (8, 5),
+    ("wait", "cohere-transcribe"): (8, 0),
+    ("wait", "parakeet-unified-en"): (8, -14),
+    ("gb", "nemotron-unified-int8"): (-120, -18),
+    ("gb", "nemotron-unified"): (-20, 42),
+    ("gb", "nemotron-unified-stream-1.12"): (8, -18),
+    ("wait", "nemotron-unified-int8"): (-10, 20),
+    ("wait", "nemotron-unified"): (8, 4),
+    ("wait", "parakeet-v3"): (-165, 6),
+    ("wait", "nemotron-unified-stream-1.12"): (8, -18),
 }
 YMAX = 5.6
 
@@ -212,7 +226,7 @@ def main() -> None:
             marker="D",
             ms=8,
             color="#9aa5b1",
-            label="added 2026-10-14 (short-set waits rerun 10-15, load 9-23)",
+            label="Nemotron-Labs Unified ASR 0.6B, FluidAudio (added 2026-10-29)",
         ),
         plt.Line2D(
             [],
