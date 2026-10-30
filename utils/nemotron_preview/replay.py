@@ -70,7 +70,7 @@ def replay(voice, audio, block=512):
     voice.paste_to_cursor = lambda t: pasted.setdefault("at", time.perf_counter()) and pasted.setdefault("text", t)
     with mock.patch.object(voice, "_set_state", spy), mock.patch.object(app.sd, "InputStream"):
         voice.start_recording()
-        worker = threading.Thread(target=voice.process_next)
+        worker = threading.Thread(target=voice.process_next, daemon=True)  # a stuck one must not keep the run alive
         worker.start()
         t0 = time.perf_counter()
         for i in range(0, audio.size, block):
