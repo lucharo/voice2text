@@ -132,6 +132,10 @@ struct Helper {
                     var partials: [String] = []
                     var feed = 0.0
                     var fed = 0
+                    // A live stream decodes each chunk once it has arrived; when a step takes
+                    // longer than its audio, the next one waits. busyUntil follows that on the
+                    // audio clock, so a backlog at release counts in the wait.
+                    var busyUntil = 0.0
                     let full = samples.count / chunk * chunk  // what arrived before release
                     while fed < full {
                         try await manager.appendAudio(pcmBuffer(samples[fed..<(fed + chunk)]))
@@ -140,6 +144,7 @@ struct Helper {
                         try await manager.processBufferedAudio()
                         let dt = now() - t0
                         feed += dt
+                        busyUntil = max(busyUntil, Double(fed) / 16000) + dt
                         if fed >= firstWindow {
                             steps.append(dt)
                             partials.append(await manager.getPartialTranscript())
@@ -150,7 +155,9 @@ struct Helper {
                         try await manager.appendAudio(pcmBuffer(samples[fed..<samples.count]))
                     }
                     out["text"] = try await manager.finish()
-                    out["wait_s"] = now() - tRelease
+                    let backlog = max(0, busyUntil - Double(samples.count) / 16000)
+                    out["wait_s"] = backlog + (now() - tRelease)
+                    out["backlog_s"] = backlog
                     out["feed_s"] = feed
                     out["step_s"] = steps
                     // every 4th partial and the last, enough to see the preview settle

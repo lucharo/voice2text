@@ -481,13 +481,19 @@ class ParakeetMLX:
         repo, _, flag = repo.partition("#")
         # v2t quantizes Parakeet to PARAKEET_BITS at load since 0.5.15; the grid's
         # parakeet-mlx rows are bf16 unless the repo ends in `#8bit`
+        # (scoped to this constructor, so a race loading `parakeet-v3` before
+        # `parakeet-v3-8bit` still quantizes the second)
+        quantized = backends._quantized
         if flag != "8bit":
             backends._quantized = lambda model: model
-        if (Path(_snapshot(repo)) / "config.json").exists():
-            self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
-        else:
-            self.stt = backends.ParakeetSTT.__new__(backends.ParakeetSTT)
-            self.stt.model = load_nemo_layout(_snapshot(repo))
+        try:
+            if (Path(_snapshot(repo)) / "config.json").exists():
+                self.stt = backends.ParakeetSTT(repo)  # bf16, as parakeet-mlx loads it
+            else:
+                self.stt = backends.ParakeetSTT.__new__(backends.ParakeetSTT)
+                self.stt.model = load_nemo_layout(_snapshot(repo))
+        finally:
+            backends._quantized = quantized
         self.mode = mode
 
     def run(self, clip: dict) -> dict:
@@ -1067,6 +1073,9 @@ def race(systems: list[str], set_name: str, limit: int | None, tag: str) -> None
     faster on, overall and per third of the run (a ratio that holds in every third
     is the finding; the seconds move with the load)."""
     clips = read_jsonl(SETS / f"{set_name}.jsonl")[:limit]
+    english_only = [s for s in systems if s in ENGLISH_ONLY]
+    if english_only and any(c["lang"] != "en" for c in clips):
+        raise SystemExit(f"{', '.join(english_only)}: English only, and {set_name} is not")
     start = machine_state()
     print(f"race on {set_name}, {len(clips)} clips, {start}")
     engines = {}
