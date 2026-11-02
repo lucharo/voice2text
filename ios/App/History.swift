@@ -4,6 +4,8 @@ import Foundation
 struct Dictation: Codable, Equatable, Identifiable, Sendable {
   var id = UUID()
   var text: String
+  /// What the recogniser heard, kept when cleanup or the dictionary changed it.
+  var heard: String? = nil
   var date: Date
   var language: String
 }

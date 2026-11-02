@@ -43,6 +43,15 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue, forKey: "speechLanguage") }
   }
 
+  /// When the keyboard last opened with Full Access. iOS gives an app no public way to ask whether its
+  /// keyboard is added or has Full Access, and a keyboard without Full Access cannot write to the App
+  /// Group, so this is the only signal: set means both setup steps were done at least once.
+  var keyboardFullAccessSeen: Date? {
+    get { (defaults.object(forKey: "keyboardFullAccessSeen") as? Double).map(Date.init(timeIntervalSince1970:)) }
+    set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardFullAccessSeen") }
+  }
+
+  /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }
     set { defaults.set(newValue, forKey: "cleanupEnabled") }

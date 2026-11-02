@@ -3,6 +3,9 @@ import Foundation
 import FoundationModels
 #endif
 import V2TCleanup
+import os
+
+private let log = Logger(subsystem: "es.luischav.v2t", category: "cleanup")
 
 /// Tidies a transcript on the device with Apple Intelligence, set up as measured on an iPhone 16 Pro (#67):
 /// the Mac app's casual prompt with the dictionary as instructions, each chunk framed as "Dictation: …
@@ -14,10 +17,10 @@ struct Cleaner: Sendable {
   let kind: Recommendation.Cleanup
 
   func clean(_ text: String, terms: [String]) async -> String {
-    guard kind == .appleIntelligence else { return text }
+    guard kind == .appleIntelligence else { log.info("cleanup skipped: not recommended on this iPhone"); return text }
     #if canImport(FoundationModels)
     let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
-    guard case .available = model.availability else { return text }
+    guard case .available = model.availability else { log.info("cleanup skipped: Apple Intelligence unavailable"); return text }
     var parts: [String] = []
     for chunk in chunkText(text) {
       let instructions = CleanupPrompt.messages(for: chunk, mode: .casual, vocabulary: terms)[0].content
@@ -46,7 +49,9 @@ struct Cleaner: Sendable {
         parts.append(keepSpokenWords(raw: chunk, clean: c, vocabulary: terms).text)
       }
     }
-    return parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    let out = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    log.info("cleanup ran: \(parts.count, privacy: .public) chunks, \(terms.count, privacy: .public) terms, changed \(out != text, privacy: .public)")
+    return out
     #else
     return text
     #endif

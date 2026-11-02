@@ -23,10 +23,11 @@ actor SpeechEngine {
     ModelRegistry.revisionOverrides = Self.pins
   }
 
-  /// Downloads (first launch only) and loads the model; `progress` reports 0...1 while downloading.
-  func prepare(language: String, progress: @escaping @Sendable (Double) -> Void) async throws {
-    state = .downloading(0)
-    let handler: ProgressHandler = { p in progress(p.fractionCompleted) }
+  /// Downloads (first launch only) and loads the model. `progress` reports `.downloading` only while files
+  /// actually download; a model already on the phone goes straight to `.loading`.
+  func prepare(language: String, progress: @escaping @Sendable (State) -> Void) async throws {
+    state = .loading
+    let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
       switch speech {
       case .nemotron:
@@ -66,6 +67,18 @@ actor SpeechEngine {
       guard let m = parakeet else { throw EngineError.notReady }
       var st = TdtDecoderState.make()
       return try await m.transcribe(samples, decoderState: &st).text
+    }
+  }
+
+  /// FluidAudio's repo loads give the download the first half of `fractionCompleted` and compiling the
+  /// rest (ProgressReporter, `downloadPhaseWeight: 0.5` at the pinned 55f65d9), so the bar shows the
+  /// download alone. A cached model reports a download of zero files: nothing to download.
+  static func state(for p: DownloadProgress) -> State {
+    switch p.phase {
+    case .listing: .downloading(0)
+    case .downloading(_, let total) where total == 0: .loading
+    case .downloading: .downloading(min(1, p.fractionCompleted / 0.5))
+    case .compiling: .loading
     }
   }
 

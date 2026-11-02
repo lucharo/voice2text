@@ -66,6 +66,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.resync()
     refresh()
     dictation.attach()
+    // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
+    if hasFullAccess { Settings.shared.keyboardFullAccessSeen = Date() }
   }
 
   override func viewDidDisappear(_ animated: Bool) {

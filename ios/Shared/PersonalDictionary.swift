@@ -31,20 +31,77 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     try newText.write(to: file, atomically: true, encoding: .utf8)
   }
 
+  /// One usable line of the file: a term, or a replacement. Comments, blanks and a replacement missing a side
+  /// are not items, as in the Mac app.
+  struct Item: Identifiable, Equatable {
+    enum Kind: Equatable { case term(String), replacement(heard: String, written: String) }
+    /// The line as stored, which identifies it for removal.
+    let line: String
+    let kind: Kind
+    var id: String { line }
+  }
+
+  var items: [Item] {
+    text.split(whereSeparator: \.isNewline).compactMap { raw in
+      let line = raw.trimmingCharacters(in: .whitespaces)
+      if line.isEmpty || line.hasPrefix("#") { return nil }
+      guard let r = line.range(of: "=>") else { return Item(line: line, kind: .term(line)) }
+      let heard = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
+      let written = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+      return heard.isEmpty || written.isEmpty ? nil : Item(line: line, kind: .replacement(heard: heard, written: written))
+    }
+  }
+
   var entries: (terms: [String], replacements: [(heard: String, written: String)]) {
     var terms: [String] = [], reps: [(String, String)] = []
-    for raw in text.split(whereSeparator: \.isNewline) {
-      let line = raw.trimmingCharacters(in: .whitespaces)
-      if line.isEmpty || line.hasPrefix("#") { continue }
-      if let r = line.range(of: "=>") {
-        let heard = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
-        let written = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
-        if !heard.isEmpty, !written.isEmpty { reps.append((heard, written)) }
-      } else {
-        terms.append(line)
+    for item in items {
+      switch item.kind {
+      case .term(let t): terms.append(t)
+      case .replacement(let h, let w): reps.append((h, w))
       }
     }
     return (terms, reps)
+  }
+
+  enum EntryError: LocalizedError, Equatable {
+    case empty, arrow, duplicate
+    var errorDescription: String? {
+      switch self {
+      case .empty: "Fill in the empty box first."
+      case .arrow: "An entry can't contain =>."
+      case .duplicate: "That's already in your dictionary."
+      }
+    }
+  }
+
+  func addTerm(_ term: String) throws {
+    let t = term.trimmingCharacters(in: .whitespaces)
+    guard !t.isEmpty else { throw EntryError.empty }
+    guard !t.contains("=>"), !t.hasPrefix("#") else { throw EntryError.arrow }
+    guard !terms.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) else { throw EntryError.duplicate }
+    try append(t)
+  }
+
+  func addReplacement(heard: String, written: String) throws {
+    let h = heard.trimmingCharacters(in: .whitespaces), w = written.trimmingCharacters(in: .whitespaces)
+    guard !h.isEmpty, !w.isEmpty else { throw EntryError.empty }
+    guard !h.contains("=>"), !w.contains("=>"), !h.hasPrefix("#") else { throw EntryError.arrow }
+    guard !entries.replacements.contains(where: { $0.heard.caseInsensitiveCompare(h) == .orderedSame }) else { throw EntryError.duplicate }
+    try append("\(h) => \(w)")
+  }
+
+  /// Removes the first line stored exactly as `line` (an `Item.line`), keeping every other line and comment.
+  func remove(_ line: String) throws {
+    var lines = text.components(separatedBy: "\n")
+    guard let i = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == line }) else { return }
+    lines.remove(at: i)
+    try save(lines.joined(separator: "\n"))
+  }
+
+  private func append(_ line: String) throws {
+    var t = text
+    if !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
+    try save(t + line + "\n")
   }
 
   var terms: [String] { entries.terms }

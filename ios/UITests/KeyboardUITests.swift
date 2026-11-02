@@ -9,18 +9,14 @@ import XCTest
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = layout
     app.launch()
+    // the setup list changes height as the model row goes from Preparing to Ready; tapping Try it before then
+    // can land on the row that moved under it
+    _ = app.staticTexts["Ready. Transcription runs on this iPhone, offline."].waitForExistence(timeout: 120)
   }
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
   var field: XCUIElement { app.textFields["v2t.try"] }
   var text: String { field.value as? String ?? "" }
-
-  func shot(_ name: String) {
-    let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    a.name = name
-    a.lifetime = .keepAlways
-    add(a)
-  }
 
   func showKeyboard() {
     XCTAssertTrue(field.waitForExistence(timeout: 10))
@@ -74,6 +70,9 @@ import XCTest
     XCTAssertTrue(suggestion("“Teh”").waitForExistence(timeout: 3))
     shot("04-revert-offer")
     suggestion("“Teh”").tap()
+    // the host applies the keyboard's edit asynchronously: read the field until it settles
+    let settled = Date().addingTimeInterval(3)
+    while text != "Teh ", Date() < settled { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     XCTAssertEqual(text, "Teh ")
   }
 

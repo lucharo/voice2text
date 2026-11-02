@@ -32,8 +32,8 @@ struct Recommendation: Equatable {
 
   var cleanupName: String {
     switch cleanup {
-    case .appleIntelligence: "Apple Intelligence (on this iPhone)"
-    case .dictionaryOnly: "Your dictionary's replacements only"
+    case .appleIntelligence: "Cleanup: Apple Intelligence, on this iPhone"
+    case .dictionaryOnly: "Cleanup: none, your dictionary's replacements only"
     }
   }
 
@@ -52,19 +52,22 @@ struct Recommendation: Equatable {
     var isMeasuredModel: Bool { model == "iPhone17,1" }
   }
 
+  // Words wrong on the iPhone 16 Pro bench (#85, 150 clips per set): LibriSpeech clean ("clear English"),
+  // LibriSpeech other ("harder English") and FLEURS Spanish.
   static func choose(for d: Device) -> Recommendation {
     if d.appleIntelligenceCompatible {
+      let measured = "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words wrong on clear English, 3.4% on harder English, 3.4% on Spanish), text ready 0.1 s after you stop."
       return Recommendation(
         speech: .nemotron,
         cleanup: d.appleIntelligence ? .appleIntelligence : .dictionaryOnly,
-        reason: d.appleIntelligence
-          ? "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words in English, 3.4% in Spanish), text ready 0.1 s after you stop. Apple Intelligence tidies punctuation without a download."
-          : "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested. Turn on Apple Intelligence in Settings to add cleanup.",
+        reason: measured + (d.appleIntelligence
+          ? " Apple Intelligence is on, so it tidies punctuation on the iPhone without a download."
+          : " Apple Intelligence is off or not ready, so there is no cleanup: turn it on in Settings › Apple Intelligence & Siri."),
         measured: d.isMeasuredModel)
     }
     return Recommendation(
       speech: .parakeet, cleanup: .dictionaryOnly,
-      reason: "Nemotron's compact build fails to load on some earlier iPhone chips (A16 confirmed, FluidAudio #828), so this iPhone gets Parakeet, which got 1.9% of English words wrong on an iPhone 16 Pro. Neither model has been tested on this iPhone.",
+      reason: "Nemotron's compact build fails to load on some earlier iPhone chips (A16 confirmed, FluidAudio #828), so this iPhone gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this iPhone.",
       measured: false)
   }
 

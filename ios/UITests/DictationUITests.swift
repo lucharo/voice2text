@@ -7,22 +7,26 @@ import XCTest
   static let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appending(path: "../build/fixtures/dictation-en.wav").standardized.path()
 
-  func shot(_ name: String) {
-    let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    a.name = name
-    a.lifetime = .keepAlways
-    add(a)
-  }
-
-  /// Settings › General › Keyboard › Keyboards › v2t › Allow Full Access, as a user would.
+  /// The app's "Allow Full Access" setup row opens Settings, then Keyboards › v2t › Allow Full Access, as a
+  /// user would. On the iOS 27.1 Simulator the link opens Settings' top level rather than v2t's own page, so
+  /// both routes are handled.
   func allowFullAccess() {
+    let app = XCUIApplication()
+    app.launch()
+    app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Allow Full Access'")).firstMatch.tap()
     let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
-    settings.launch()
-    for label in ["General", "Keyboard", "Keyboards", "v2t"] {
+    XCTAssertTrue(settings.wait(for: .runningForeground, timeout: 10))
+    let route = settings.staticTexts["Keyboards"].firstMatch.waitForExistence(timeout: 3) ? ["Keyboards"] : ["General", "Keyboard", "Keyboards", "v2t"]
+    for label in route {
       let row = settings.staticTexts[label].firstMatch
+      for _ in 0..<6 where !row.waitForExistence(timeout: 1) { settings.swipeUp(velocity: .slow) }  // rows load as they scroll in
       XCTAssertTrue(row.waitForExistence(timeout: 10), "no \(label) in Settings")
-      row.tap()
+      let cell = settings.cells.containing(.staticText, identifier: label).firstMatch
+      (cell.exists ? cell : row).tap()
+      sleep(1)
     }
+    let added = settings.switches["v2t"].firstMatch
+    if added.waitForExistence(timeout: 5), (added.value as? String) != "1" { added.switches.firstMatch.exists ? added.switches.firstMatch.tap() : added.tap() }
     let toggle = settings.switches["Allow Full Access"].firstMatch
     XCTAssertTrue(toggle.waitForExistence(timeout: 10))
     if (toggle.value as? String) != "1" {
@@ -48,10 +52,29 @@ import XCTest
     XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
     shot("11-model-ready")
 
+    // a replacement the dictation must pass through: "simulator" is in the fixture clip
+    let dictionary = app.buttons["Dictionary"]
+    reveal(dictionary, in: app)
+    dictionary.tap()
+    if !app.staticTexts["iPhone Simulator"].waitForExistence(timeout: 2) {
+      typeWithAppleKeyboard("simulator", into: app.textFields["v2t.dict.heard"], app: app)
+      app.textFields["v2t.dict.written"].tap()
+      app.textFields["v2t.dict.written"].typeText("iPhone Simulator")
+      app.buttons["v2t.dict.addReplacement"].tap()
+    }
+    XCTAssertTrue(app.staticTexts["iPhone Simulator"].waitForExistence(timeout: 5))
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(ready.waitForExistence(timeout: 120))
+
     let warm = app.switches["v2t.warm"].firstMatch
+    reveal(warm, in: app)
     XCTAssertTrue(warm.waitForExistence(timeout: 5))
     if (warm.value as? String) != "1" { warm.switches.firstMatch.exists ? warm.switches.firstMatch.tap() : warm.tap() }
-    XCTAssertTrue(app.buttons["v2t.stopMic"].waitForExistence(timeout: 5))
+    sleep(1)  // the stop row is added once the session state publishes; revealing before that scrolls past it
+    let stopMic = app.buttons["v2t.stopMic"]
+    reveal(stopMic, in: app)
+    XCTAssertTrue(stopMic.waitForExistence(timeout: 5), app.debugDescription)
     shot("12-mic-session-on")
 
     let field = app.textFields["v2t.try"]
@@ -61,6 +84,7 @@ import XCTest
       if app.buttons["Next keyboard"].exists { app.buttons["Next keyboard"].tap() }
     }
     XCTAssertTrue(key("mic").waitForExistence(timeout: 10))
+    shot("12b-keyboard-v2t-mic")
     key("mic").tap()
     sleep(1)
     shot("13-listening")
@@ -71,5 +95,19 @@ import XCTest
     }
     shot("14-dictated-text")
     XCTAssertTrue(((field.value as? String) ?? "").lowercased().contains("keyboard"), "field: \(field.value ?? "nil")")
+    XCTAssertTrue(((field.value as? String) ?? "").contains("iPhone Simulator"), "replacement not applied: \(field.value ?? "nil")")
+
+    // the keyboard has now opened with Full Access, so both setup steps read done after a relaunch
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(app.staticTexts["Done: the v2t keyboard is on."].waitForExistence(timeout: 10))
+    shot("15-setup-done")
+
+    // History keeps what was heard beside the text the dictionary changed
+    let history = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'History'")).firstMatch
+    reveal(history, in: app)
+    history.tap()
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Heard: '")).firstMatch.waitForExistence(timeout: 5))
+    shot("16-history-heard")
   }
 }

@@ -7,13 +7,13 @@ import SwiftUI
 @MainActor final class DictationService: ObservableObject {
   @Published private(set) var state: DictationState = .needsApp
   @Published private(set) var engineState: SpeechEngine.State = .notDownloaded
-  @Published private(set) var downloadProgress: Double = 0
   @Published private(set) var lastText = ""
   @Published private(set) var warmUntil: Date?
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
 
-  let recommendation: Recommendation
+  /// Re-read whenever the app comes forward, so turning Apple Intelligence on or off in Settings shows here.
+  @Published private(set) var recommendation: Recommendation
   let history: History
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
@@ -21,7 +21,6 @@ import SwiftUI
     if let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"], let f = FixtureAudio(path: path) { return f }
     return Recorder()
   }()
-  private let cleaner: Cleaner
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
   private var heartbeat: Timer?
@@ -31,11 +30,15 @@ import SwiftUI
     self.history = history
     self.dictionary = dictionary
     self.engine = SpeechEngine(speech: recommendation.speech)
-    self.cleaner = Cleaner(kind: recommendation.cleanup)
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
     ]
+  }
+
+  func refreshRecommendation() {
+    let r = Recommendation.current
+    if r != recommendation { recommendation = r }
   }
 
   // MARK: model
@@ -43,12 +46,11 @@ import SwiftUI
   func prepareModel() async {
     guard engineState != .ready, engineState != .loading else { return }
     if case .downloading = engineState { return }
-    engineState = .downloading(0)
+    engineState = .loading  // a cached model only loads; the first download's progress replaces this
     do {
-      try await engine.prepare(language: Settings.shared.speechLanguage) { p in
+      try await engine.prepare(language: Settings.shared.speechLanguage) { s in
         Task { @MainActor in
-          self.downloadProgress = p
-          self.engineState = p >= 1 ? .loading : .downloading(p)
+          if self.engineState != .ready { self.engineState = s }  // a late report never undoes ready
         }
       }
       engineState = .ready
@@ -127,10 +129,11 @@ import SwiftUI
       let raw = try await engine.transcribe(samples, language: language)
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
-      if Settings.shared.cleanupEnabled { text = await cleaner.clean(text, terms: dictionary.terms) }
+      let heard = text
+      if Settings.shared.cleanupEnabled { text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms) }
       text = dictionary.applyReplacements(text)
       lastText = text
-      try? history.add(Dictation(text: text, date: Date(), language: language))
+      try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language))
       defaults.set(text, forKey: DictationChannel.resultKey)
       defaults.set(UUID().uuidString, forKey: DictationChannel.resultIdKey)
       DictationChannel.post(DictationChannel.changed)

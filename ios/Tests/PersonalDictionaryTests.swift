@@ -26,6 +26,31 @@ struct PersonalDictionaryTests {
     #expect(d.keyboardWords == ["Claude", "Code", "Fluide"])
   }
 
+  @Test func addingWritesTheMacFormatAndKeepsComments() throws {
+    let d = try dictionary("# mine\nClaude\n")
+    try d.addTerm("  Fluide ")
+    try d.addReplacement(heard: "v two t", written: "v2t")
+    #expect(d.text == "# mine\nClaude\nFluide\nv two t => v2t\n")
+    #expect(PersonalDictionary(file: d.file).items.map(\.line) == ["Claude", "Fluide", "v two t => v2t"])
+  }
+
+  @Test func addingRefusesEmptyArrowsAndDuplicates() throws {
+    let d = try dictionary("Claude\nai => AI\n")
+    #expect(throws: PersonalDictionary.EntryError.empty) { try d.addTerm("  ") }
+    #expect(throws: PersonalDictionary.EntryError.arrow) { try d.addTerm("a => b") }
+    #expect(throws: PersonalDictionary.EntryError.duplicate) { try d.addTerm("claude") }
+    #expect(throws: PersonalDictionary.EntryError.duplicate) { try d.addReplacement(heard: "AI", written: "A.I.") }
+    #expect(throws: PersonalDictionary.EntryError.empty) { try d.addReplacement(heard: "x", written: "") }
+    #expect(d.text == "Claude\nai => AI\n")
+  }
+
+  @Test func removingDropsOnlyThatLine() throws {
+    let d = try dictionary("# keep\nClaude\nai=>AI\nFluide\n")
+    try d.remove("ai=>AI")
+    #expect(d.text == "# keep\nClaude\nFluide\n")
+    #expect(PersonalDictionary(file: d.file).terms == ["Claude", "Fluide"])
+  }
+
   @Test func survivesARelaunch() throws {
     let d = try dictionary("Claude\n")
     #expect(PersonalDictionary(file: d.file).terms == ["Claude"])
