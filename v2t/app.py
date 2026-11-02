@@ -1433,8 +1433,41 @@ class VoiceToText:
         )
         return stream
 
+    def _load_cleanup_in_background(self) -> dict:
+        """Start loading the cleanup model beside the transcription model.
+
+        Loading is mostly waiting (imports, file reads: 2.5 s of CPU in a 7-11 s
+        Qwen3-ASR load, 2026-11-02), so the two overlap; the cleanup model's 1.5-2.6 s
+        load used to start only after the transcription model was ready. Only the loading overlaps; each model's first inference still runs on
+        its own (warmup). Returns a dict that gets `cleaner` or `error`, and `thread`.
+        """
+        box: dict = {}
+        # Both loaders import transformers. A package being imported by one thread is
+        # half-built for the other ("cannot import name 'AutoTokenizer'", seen when both
+        # started at once), so it is imported whole here first, before the thread starts.
+        try:
+            from transformers import AutoTokenizer  # noqa: F401
+        except ImportError:  # an engine that needs no transformers (Ollama, Core ML)
+            pass
+
+        def load() -> None:
+            t0 = time.perf_counter()
+            try:
+                box["cleaner"] = backends.make_cleanup(
+                    self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+                )
+            except BaseException as error:  # SystemExit for a missing extra, too
+                box["error"] = error
+            box["load_s"] = time.perf_counter() - t0
+
+        box["thread"] = threading.Thread(target=load, name="v2t-load-cleanup", daemon=True)
+        box["thread"].start()
+        return box
+
     def warmup(self):
         self.refresh_dictionary()
+        started = time.perf_counter()
+        cleanup = self._load_cleanup_in_background() if self.cfg.cleanup_enabled else None
         logger.info("Loading transcription model...")
         self._set_state("loading-stt")
         t0 = time.perf_counter()
@@ -1453,22 +1486,25 @@ class VoiceToText:
                 else f"Transcribing after release: audio.sample_rate must be {self.stt.sample_rate}"
             )
 
-        if self.cfg.cleanup_enabled:
+        if cleanup is not None:
             self._set_state("loading-cleanup")
             t0 = time.perf_counter()
-            self.cleaner = backends.make_cleanup(
-                self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
-            )
+            cleanup["thread"].join()
+            if "error" in cleanup:
+                raise cleanup["error"]
+            self.cleaner = cleanup["cleaner"]
             self.cleaner.vocabulary = tuple(self.vocabulary)
             try:
                 self.cleaner.cleanup("hi", self.cfg.mode)
                 logger.success(
-                    f"cleanup ({self.cfg.cleanup_engine}) ready ({time.perf_counter() - t0:.1f}s)"
+                    f"cleanup ({self.cfg.cleanup_engine}) ready ({cleanup['load_s']:.1f}s loading, "
+                    f"alongside; +{time.perf_counter() - t0:.1f}s after transcription)"
                 )
             except Exception as e:
                 logger.warning(
                     f"cleanup warmup failed ({e}); will retry per transcription"
                 )
+        logger.info(f"Models ready in {time.perf_counter() - started:.1f}s")
 
     def run(self):
         # Before the lock: the menu signals whichever process holds it, and an

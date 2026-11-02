@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -76,20 +77,36 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     (measured 2026-09-03 on hotel Wi-Fi). Offline loading of a partial cache
     fails, so that case falls back to the normal online path.
     """
+    global _offline_loads
     if not cached_locally(repo_id):
         return loader()
     from huggingface_hub import constants
 
-    if constants.HF_HUB_OFFLINE:
+    # The flag is process-wide and the engine loads the transcription and cleanup
+    # models at once (app.warmup): it stays on until the last of those loads ends.
+    with _offline_lock:
+        if constants.HF_HUB_OFFLINE and not _offline_loads:
+            set_by_user = True
+        else:
+            set_by_user = False
+            _offline_loads += 1
+            constants.HF_HUB_OFFLINE = True
+    if set_by_user:
         return loader()
-    constants.HF_HUB_OFFLINE = True
     try:
         return loader()
     except OSError:  # hub cache errors subclass OSError: let it finish online
         constants.HF_HUB_OFFLINE = False
         return loader()
     finally:
-        constants.HF_HUB_OFFLINE = False
+        with _offline_lock:
+            _offline_loads -= 1
+            if not _offline_loads:
+                constants.HF_HUB_OFFLINE = False
+
+
+_offline_lock = threading.Lock()
+_offline_loads = 0  # load_cache_first calls running with HF_HUB_OFFLINE turned on
 
 
 # While the hotkey is held the recording is decoded in pieces (PieceDecoder) as their

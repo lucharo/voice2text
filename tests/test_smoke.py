@@ -5603,6 +5603,74 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(attempts, [True, False])
         self.assertFalse(constants.HF_HUB_OFFLINE)
 
+    def _warm(self, make_stt, make_cleanup):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config())
+        voice.cfg.preview = ""
+        with (
+            mock.patch.object(backends, "make_stt", side_effect=make_stt),
+            mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
+        ):
+            voice.warmup()
+        return voice
+
+    def test_the_cleanup_model_loads_while_the_transcription_model_does(self):
+        cleanup_started = threading.Event()
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+
+        def make_stt(*_args):
+            # sequential loading never starts the cleanup model while this waits
+            self.assertTrue(cleanup_started.wait(5), "cleanup was not loading meanwhile")
+            return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
+
+        def make_cleanup(*_args):
+            cleanup_started.set()
+            return cleaner
+
+        voice = self._warm(make_stt, make_cleanup)
+
+        self.assertIs(voice.cleaner, cleaner)
+        cleaner.cleanup.assert_called_once_with("hi", voice.cfg.mode)
+
+    def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
+        def make_stt(*_args):
+            return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
+
+        with self.assertRaises(SystemExit):
+            self._warm(make_stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
+
+    def test_offline_loading_stays_on_until_the_last_overlapping_load_ends(self):
+        # the transcription and cleanup models load at once (app.warmup)
+        constants = types.SimpleNamespace(HF_HUB_OFFLINE=False)
+        first_inside, second_inside, first_done = threading.Event(), threading.Event(), threading.Event()
+        seen = {}
+
+        def first():
+            first_inside.set()
+            second_inside.wait(5)
+
+        def second():
+            second_inside.set()
+            first_done.wait(5)
+            seen["second, after the first ended"] = constants.HF_HUB_OFFLINE
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}),
+            mock.patch.object(backends, "cached_locally", return_value=True),
+        ):
+            thread = threading.Thread(target=backends.load_cache_first, args=("org/b", second))
+            first_thread = threading.Thread(
+                target=lambda: (backends.load_cache_first("org/a", first), first_done.set())
+            )
+            first_thread.start()
+            first_inside.wait(5)
+            thread.start()
+            first_thread.join(5)
+            thread.join(5)
+
+        self.assertEqual(seen, {"second, after the first ended": True})
+        self.assertFalse(constants.HF_HUB_OFFLINE)
+
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (
             mock.patch.object(
