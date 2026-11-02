@@ -4982,6 +4982,30 @@ class V2TSmokeTests(unittest.TestCase):
         self._drain(voice)
         self.assertFalse(voice.recording)
 
+    def test_a_hold_released_before_its_timer_ran_is_still_a_dictation(self):
+        voice, _tap = self._tapper()
+        voice.cancelled_audio = ([np.ones((8, 1), dtype=np.float32)], 1.0)  # an old Undo offer
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.8
+        voice.key_up("HOTKEY")  # held 0.8 s
+        app.time.perf_counter.return_value = 102.0  # the microphone took 2 s to open
+        voice._handle_key_event(*voice.key_events.get_nowait())
+        voice.frames = [np.ones((8, 1), dtype=np.float32)]
+        self._drain(voice)
+
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.jobs.empty(), "transcribed")
+        self.assertIsNone(voice.cancelled_audio, "the old Undo is withdrawn")
+
+    def test_no_reload_while_a_hotkey_event_is_being_handled(self):
+        voice, _tap = self._tapper()
+        voice.reload_requested.set()
+        voice.hotkey_pending = 1  # taken off the queue, start_recording not reached yet
+        self.assertFalse(voice._begin_reload())
+        voice.hotkey_pending = 0
+        self.assertTrue(voice._begin_reload())
+
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()
         set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)

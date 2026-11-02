@@ -548,6 +548,7 @@ class VoiceToText:
                 or self.cancelled_audio is not None
                 or not self.jobs.empty()
                 or not self.key_events.empty()
+                or self.hotkey_pending  # one taken off the queue, not yet handled
                 or time.perf_counter() - self.last_tap_at < self.DOUBLE_TAP_S
             ):
                 return False
@@ -1359,6 +1360,9 @@ class VoiceToText:
             self.chorded = False
             return
         if now - self.press_at >= self.HOLD_S:
+            # a hold whose timer had not run yet (the microphone opened slowly) is a
+            # dictation all the same: shown first, which also withdraws an old Undo
+            self._show_recording()
             self.stop_recording()
             return
         self.cancel_recording()
