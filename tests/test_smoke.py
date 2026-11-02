@@ -4927,12 +4927,12 @@ class V2TSmokeTests(unittest.TestCase):
     def test_a_paste_waits_for_a_queued_escape(self):
         voice, _tap = self._tapper()
         voice.processing = True
-        voice.esc_queued.set()  # an Esc waits behind the release that queued this
+        voice.esc_waiting = 1  # an Esc waits behind the release that queued this
 
         def hotkey_thread():
             app.time.sleep(0.05)
             voice.cancel_requested = True  # what its cancel_dictation does
-            voice.esc_queued.clear()
+            voice.esc_waiting = 0
 
         thread = threading.Thread(target=hotkey_thread)
         with mock.patch.object(voice, "paste_to_cursor") as paste:
@@ -5005,6 +5005,29 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice._begin_reload())
         voice.hotkey_pending = 0
         self.assertTrue(voice._begin_reload())
+
+    def test_each_queued_escape_keeps_its_own_hold_on_the_paste(self):
+        voice, _tap = self._tapper()
+        voice.presses_pending = 1  # Esc counts as a new press is coming
+        escape = types.SimpleNamespace(name="esc")
+        voice.hotkey_pending = 1
+        voice.key_down(escape)
+        voice.consume_escape(True)
+        voice.key_down(escape)
+        self.assertEqual(voice.esc_waiting, 2)
+        voice._handle_key_event(*voice.key_events.get_nowait())
+        self.assertEqual(voice.esc_waiting, 1, "the second still holds the paste back")
+
+    def test_escape_after_a_paste_is_decided_goes_to_the_app(self):
+        voice, _tap = self._tapper()
+        voice.processing = True
+        voice.delivered = True  # _deliver decided under the gate
+        voice.hotkey_pending = 1  # a release still queued (not a press)
+
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertFalse(voice.escape_consumed)
+        self.assertEqual(voice.esc_waiting, 0)
 
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()
@@ -5873,6 +5896,20 @@ class V2TSmokeTests(unittest.TestCase):
     def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
         with self.assertRaises(SystemExit):
             self._warm(self._stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
+
+    def test_the_cached_snapshot_is_the_one_refs_main_names(self):
+        root = Path(self.tempdir.name) / "hub" / "models--org--model"
+        for rev in ("aaa", "bbb"):
+            (root / "snapshots" / rev).mkdir(parents=True)
+            (root / "snapshots" / rev / "config.json").write_text("{}")
+        (root / "refs").mkdir()
+        (root / "refs" / "main").write_text("aaa\n")
+        os.utime(root / "snapshots" / "bbb", (2e9, 2e9))  # newer, but not main
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(root.parent))
+        with mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}):
+            self.assertEqual(backends.local_snapshot("org/model"), root / "snapshots" / "aaa")
+            (root / "refs" / "main").unlink()
+            self.assertIsNone(backends.local_snapshot("org/model"), "no main: load it the normal way")
 
     def test_an_mlx_cleanup_model_given_its_folder_never_touches_the_hub(self):
         folder = Path("/cache/snapshots/abc")

@@ -69,9 +69,16 @@ def cached_locally(repo_id: str) -> bool:
 
 
 def local_snapshot(repo_id: str) -> Path | None:
-    """The newest non-empty snapshot folder of this model in the Hugging Face cache."""
-    found = [p for p in hf_snapshots(repo_id) if any(p.iterdir())]
-    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+    """The cached snapshot the hub's loaders would use (refs/main), if it is on disk."""
+    snapshots = hf_snapshots(repo_id)
+    if not snapshots:
+        return None
+    ref = snapshots[0].parent.parent / "refs" / "main"
+    try:
+        folder = snapshots[0].parent / ref.read_text().strip()
+    except OSError:
+        return None
+    return folder if folder.is_dir() and any(folder.iterdir()) else None
 
 
 def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:

@@ -397,8 +397,12 @@ class VoiceToText:
         self.press_seq = 0  # numbers hotkey presses, so a hold timer knows its own
         self.hotkey_pending = 0  # hotkey events queued or being handled (an Esc counts them)
         self.starting = False  # start_recording is opening the microphone (Undo's too)
-        self.esc_queued = threading.Event()  # an Esc's cancel waits in key_events
+        self.presses_pending = 0  # of those, hotkey presses (each may open the microphone)
         self.pending_lock = threading.Lock()
+        # Esc's choice on the tap and the paste decision, each a few instructions long
+        # under this lock, so one always sees the other (never held while waiting)
+        self.paste_gate = threading.Lock()
+        self.esc_waiting = 0  # Esc cancels queued in key_events, not yet handled
         self.hotkey_thread: threading.Thread | None = None
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
         self.replacements: list[tuple[str, str]] = []
@@ -1122,15 +1126,15 @@ class VoiceToText:
                     return
                 # Serialize the final paste decision with Esc. Once pasted, Esc
                 # belongs to the target app; never claim that a paste was cancelled.
-                # delivered goes up before esc_queued is read, and key_down sets
-                # esc_queued before it reads delivered: one of the two sees the other.
-                self.delivered = True
-                if not self.esc_queued.is_set() or time.perf_counter() >= deadline:
+                with self.paste_gate:
+                    go = not self.esc_waiting or time.perf_counter() >= deadline
+                    if go:
+                        self.delivered = True
+                if go:
                     # The pill fades out as the paste lands, before the caret moves.
                     self._set_state("delivering")
                     self.paste_to_cursor(cleaned_text)
                     break
-                self.delivered = False
             time.sleep(0.01)  # outside the lock: the queued cancel needs it
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
@@ -1261,14 +1265,16 @@ class VoiceToText:
                     self.lifecycle_lock.release()
                 return
             if not self.escape_consumed:  # a repeat of a consumed press stays consumed
-                # a queued or running hotkey event may be starting a recording (a press,
-                # or the release that latches hands-free), whatever the last one left
-                starting = self.hotkey_pending > 0 or self.starting
-                if starting or ((self.recording or self.processing) and not self.delivered):
-                    self.esc_queued.set()
-                    if self.delivered and not starting:  # pasted meanwhile (_deliver)
-                        self.esc_queued.clear()
-                    else:
+                with self.paste_gate:
+                    # a queued press, or a start under way, opens a new recording whatever
+                    # the last dictation left; a queued release (which may latch hands-free)
+                    # counts only until a paste is decided
+                    starting = self.presses_pending > 0 or self.starting
+                    if starting or (
+                        (self.recording or self.processing or self.hotkey_pending > 0)
+                        and not self.delivered
+                    ):
+                        self.esc_waiting += 1
                         self.escape_consumed = True
                         self.key_events.put(("esc", key, now))
             return
@@ -1281,6 +1287,7 @@ class VoiceToText:
         if key == self.hotkey:
             with self.pending_lock:
                 self.hotkey_pending += 1  # until the hotkey thread has handled it
+                self.presses_pending += kind == "down"
         self.key_events.put((kind, key, at))
 
     def _handle_key_event(self, kind: str, key, at) -> None:
@@ -1289,7 +1296,8 @@ class VoiceToText:
                 try:
                     self.cancel_dictation()
                 finally:
-                    self.esc_queued.clear()
+                    with self.paste_gate:
+                        self.esc_waiting -= 1
             elif kind == "undo":
                 self.request_undo()
             elif kind == "hold":
@@ -1305,6 +1313,7 @@ class VoiceToText:
             if kind in ("down", "up") and key == self.hotkey:
                 with self.pending_lock:
                     self.hotkey_pending -= 1
+                    self.presses_pending -= kind == "down"
 
     def _hotkey_loop(self) -> None:
         while True:
