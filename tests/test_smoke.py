@@ -4815,6 +4815,82 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.latched)
         self.assertTrue(voice.recording)
 
+    def test_keys_are_handled_off_the_event_tap_at_the_time_they_happened(self):
+        # 2026-11-02: opening the microphone ran inside the tap's callback, macOS turned
+        # the tap off, and Fn could no longer stop a hands-free dictation
+        voice, _tap = self._tapper()
+        opened = []
+        start = voice.start_recording
+        voice.start_recording = lambda **kw: (opened.append(kw), start(**kw))
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("HOTKEY")
+
+        self.assertEqual(opened, [], "the tap only queues the key")
+        self.assertEqual(
+            [voice.key_events.get_nowait() for _ in range(2)],
+            [("down", "HOTKEY", 100.0), ("up", "HOTKEY", 100.2)],
+        )
+
+        app.time.perf_counter.return_value = 102.0  # the microphone took 1.8 s to open
+        voice.on_press("HOTKEY", at=100.0)
+        voice.on_release("HOTKEY", at=100.2)
+
+        self.assertEqual(len(opened), 1)
+        self.assertFalse(voice.recording, "a 0.2 s tap, not a 2 s hold")
+        self.assertTrue(voice.jobs.empty())
+        self.assertEqual(voice.last_tap_at, 100.2, "a second tap within 0.5 s of it latches")
+
+    def test_escape_is_still_decided_on_the_tap(self):
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertTrue(voice.key_events.empty())
+        self.assertEqual(config.read_status()["state"], "cancelled")
+
+    def test_a_tap_macos_turned_off_is_turned_back_on(self):
+        calls = []
+
+        class Listener:
+            _MODIFIER_FLAGS = {}
+
+            def __init__(self, **_options):
+                pass
+
+            def _create_event_tap(self):
+                return "TAP"
+
+            def _handle_message(self, *args):
+                calls.append(("handled", args[1]))
+
+        keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value)
+        )
+        enabled = [True]
+        quartz = types.SimpleNamespace(
+            kCGEventFlagMaskSecondaryFn=1 << 23,
+            CGEventTapEnable=lambda tap, on: calls.append(("enable", tap, on)),
+            CGEventTapIsEnabled=lambda _tap: enabled[0],
+        )
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
+            listener = app._listener("press", "release")
+        listener._create_event_tap()
+
+        listener._handle_message(None, 0xFFFFFFFE, None, None, False)  # kCGEventTapDisabledByTimeout
+        listener._handle_message(None, 12, "event", None, False)  # flags changed: Fn
+        self.assertEqual(calls, [("enable", "TAP", True), ("handled", 12)])
+
+        calls.clear()
+        self.assertTrue(listener.ensure_enabled())
+        enabled[0] = False
+        self.assertFalse(listener.ensure_enabled())
+        self.assertEqual(calls, [("enable", "TAP", True)])
+
     def test_the_fn_key_is_a_modifier_for_the_listener(self):
         class KeyCode:
             def __init__(self, vk):
