@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.17
 
 - **Fn always stops a dictation.** Opening the microphone ran inside the keyboard listener, and a Bluetooth headset can take seconds to start. macOS switches off a listener that takes that long and never switches it back on, so from then on every key was missed: a hands-free dictation could not be stopped with Fn, and v2t had to be stopped from the menu. Keys are now handled on a thread of their own with the time they were pressed, so a slow microphone no longer makes a tap count as a hold. If macOS does switch the listener off, v2t switches it straight back on and says so in the log.
 - **The cleanup model loads alongside the transcription model.** It used to start loading only once the transcription model was ready. Both loads mostly wait on imports and disk, so they now overlap, saving up to the cleanup model's own load time (1.5 to 2.6 s here). The log ends startup with "Models ready in", the time for both together.
