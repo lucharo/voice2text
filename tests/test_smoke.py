@@ -5822,6 +5822,30 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(calls, [Path("/cache/snapshots/abc"), None])
         self.assertIs(voice.cleaner, cleaner)
 
+    def test_ollama_cleanup_loads_alongside_without_importing_transformers(self):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config(cleanup_engine="ollama"))
+        voice.cfg.preview = ""
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        asked = []
+
+        class Transformers(types.ModuleType):
+            def __getattr__(self, name):
+                asked.append(name)
+                return object
+
+        transformers = Transformers("transformers")
+        with (
+            mock.patch.object(backends, "make_stt", side_effect=self._stt),
+            mock.patch.object(backends, "make_cleanup", return_value=cleaner) as make_cleanup,
+            mock.patch.dict(sys.modules, {"transformers": transformers}),
+        ):
+            voice.warmup()
+
+        self.assertEqual(asked, [], "transformers is a 5-10 s import Ollama does not need")
+        self.assertIs(voice.cleaner, cleaner)
+        self.assertIsNone(make_cleanup.call_args.kwargs["folder"])
+
     def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
         with self.assertRaises(SystemExit):
             self._warm(self._stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))

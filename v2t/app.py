@@ -1115,17 +1115,22 @@ class VoiceToText:
         # gets its turn before the paste decision; it is handled within milliseconds
         # unless a microphone is opening, so the wait is bounded.
         deadline = time.perf_counter() + 2.0
-        while self.esc_queued.is_set() and time.perf_counter() < deadline:
-            time.sleep(0.01)
-        with self.lifecycle_lock:
-            if self.cancel_requested:
-                return
-            # Serialize the final paste decision with Esc. Once pasted, Esc
-            # belongs to the target app; never claim that a paste was cancelled.
-            self.delivered = True
-            # The pill fades out as the paste lands, before the caret moves.
-            self._set_state("delivering")
-            self.paste_to_cursor(cleaned_text)
+        while True:
+            with self.lifecycle_lock:
+                if self.cancel_requested:
+                    return
+                # Serialize the final paste decision with Esc. Once pasted, Esc
+                # belongs to the target app; never claim that a paste was cancelled.
+                # delivered goes up before esc_queued is read, and key_down sets
+                # esc_queued before it reads delivered: one of the two sees the other.
+                self.delivered = True
+                if not self.esc_queued.is_set() or time.perf_counter() >= deadline:
+                    # The pill fades out as the paste lands, before the caret moves.
+                    self._set_state("delivering")
+                    self.paste_to_cursor(cleaned_text)
+                    break
+                self.delivered = False
+            time.sleep(0.01)  # outside the lock: the queued cancel needs it
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
@@ -1257,12 +1262,14 @@ class VoiceToText:
             if not self.escape_consumed:  # a repeat of a consumed press stays consumed
                 # a queued or running hotkey event may be starting a recording (a press,
                 # or the release that latches hands-free), whatever the last one left
-                self.escape_consumed = self.hotkey_pending > 0 or self.starting or (
-                    (self.recording or self.processing) and not self.delivered
-                )
-                if self.escape_consumed:
+                starting = self.hotkey_pending > 0 or self.starting
+                if starting or ((self.recording or self.processing) and not self.delivered):
                     self.esc_queued.set()
-                    self.key_events.put(("esc", key, now))
+                    if self.delivered and not starting:  # pasted meanwhile (_deliver)
+                        self.esc_queued.clear()
+                    else:
+                        self.escape_consumed = True
+                        self.key_events.put(("esc", key, now))
             return
         self._queue_key("down", key, now)
 
@@ -1529,13 +1536,12 @@ class VoiceToText:
             if folder is None:
                 return None
         box: dict = {}
-        # Both loaders import transformers. A package being imported by one thread is
-        # half-built for the other ("cannot import name 'AutoTokenizer'", seen when both
-        # started at once), so it is imported whole here first, before the thread starts.
-        try:
+        if engine == "mlx":
+            # mlx-lm and an MLX transcription model both import transformers. A package
+            # being imported by one thread is half-built for the other ("cannot import
+            # name 'AutoTokenizer'", seen when both started at once), so it is imported
+            # whole here first, before the thread starts. Ollama needs none of it.
             from transformers import AutoTokenizer  # noqa: F401
-        except ImportError:  # an engine that needs no transformers (Ollama, Core ML)
-            pass
 
         def load() -> None:
             t0 = time.perf_counter()
