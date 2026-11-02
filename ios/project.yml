@@ -1,4 +1,4 @@
-# xcodegen spec for the voice2text iPhone app (#75). Generate and test with ./setup.sh.
+# xcodegen spec for the voice2text iPhone app and keyboard (#75). Generate, build and test with ./setup.sh.
 name: V2T
 options:
   bundleIdPrefix: es.luischav.v2t
@@ -9,17 +9,73 @@ settings:
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: ${V2T_TEAM}
     CODE_SIGN_STYLE: Automatic
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    # 55f65d9: the revision the phone bench measured Nemotron Unified with (utils/phone_bench/project.yml)
+    revision: 55f65d9c887244a93c45f18225a35b3533516446
+  V2TKeyboardCore:
+    path: Packages/V2TKeyboardCore
 targets:
   V2T:
     type: application
     platform: iOS
-    sources: [App]
+    sources: [App, Shared]
+    entitlements:
+      path: App/V2T.entitlements
+      properties:
+        com.apple.security.application-groups: [group.es.luischav.v2t]
+    dependencies:
+      - target: V2TKeyboard
+      - package: FluidAudio
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
+      - package: V2TKeyboardCore
+        product: V2TCleanup
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: v2t
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        NSMicrophoneUsageDescription: "v2t turns your speech into text on this iPhone. Audio never leaves the device."
+        CFBundleURLTypes:
+          - CFBundleURLName: es.luischav.v2t
+            CFBundleURLSchemes: [v2t]
+        UIApplicationSupportsIndirectInputEvents: true
     settings:
-      GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t
-      INFOPLIST_KEY_CFBundleDisplayName: v2t
-      INFOPLIST_KEY_UILaunchScreen_Generation: YES
-      INFOPLIST_KEY_NSMicrophoneUsageDescription: "v2t turns your speech into text on this iPhone. Audio never leaves the device."
+  V2TKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Keyboard
+      - Shared
+      - path: build/lexicons
+        type: folder
+        buildPhase: resources
+        includes: ["*.v2tlex"]
+    entitlements:
+      path: Keyboard/Keyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [group.es.luischav.v2t]
+    dependencies:
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        CFBundleDisplayName: v2t
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.keyboard
   V2TTests:
     type: bundle.unit-test
     platform: iOS
@@ -29,9 +85,19 @@ targets:
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.tests
+  V2TUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: V2T
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.uitests
+      TEST_TARGET_NAME: V2T
 schemes:
   V2T:
     build:
-      targets: {V2T: all, V2TTests: [test]}
+      targets: {V2T: all, V2TTests: [test], V2TUITests: [test]}
     test:
-      targets: [V2TTests]
+      targets: [V2TTests, V2TUITests]

@@ -1,0 +1,58 @@
+import Foundation
+
+public enum DictationState: String, Sendable {
+  /// The app's mic session is warm: the mic key records without leaving the host app.
+  case idle
+  /// No warm session: the mic key opens v2t once to start one.
+  case needsApp
+  case listening
+  case transcribing
+  /// The keyboard has no Full Access, so it cannot talk to the app.
+  case unavailable
+}
+
+/// The wire between keyboard and app: Darwin notifications (no payload) plus App Group defaults for the
+/// state, a heartbeat and the finished text. Each request and result carries an id so a late or repeated
+/// notification is ignored.
+enum DictationChannel {
+  static let start = "es.luischav.v2t.dictation.start"
+  static let stop = "es.luischav.v2t.dictation.stop"
+  static let changed = "es.luischav.v2t.dictation.changed"
+  static let stateKey = "dictation.state"
+  static let heartbeatKey = "dictation.heartbeat"
+  static let resultKey = "dictation.result"
+  static let resultIdKey = "dictation.resultId"
+  static let requestIdKey = "dictation.requestId"
+  /// The app refreshes the heartbeat every second while warm; older than this means no session.
+  static let heartbeatTimeout: TimeInterval = 3
+  static let url = URL(string: "v2t://dictate")!
+
+  static func post(_ name: String) {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName(name as CFString), nil, nil, true)
+  }
+
+  /// Observes a Darwin notification on the main queue until the returned token is released.
+  static func observe(_ name: String, _ handler: @escaping @MainActor () -> Void) -> DarwinObserver {
+    DarwinObserver(name: name, handler: handler)
+  }
+}
+
+final class DarwinObserver: @unchecked Sendable {
+  let name: String
+  let handler: @MainActor () -> Void
+
+  init(name: String, handler: @escaping @MainActor () -> Void) {
+    self.name = name
+    self.handler = handler
+    let me = Unmanaged.passUnretained(self).toOpaque()
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), me, { _, observer, _, _, _ in
+      guard let observer else { return }
+      let o = Unmanaged<DarwinObserver>.fromOpaque(observer).takeUnretainedValue()
+      DispatchQueue.main.async { MainActor.assumeIsolated { o.handler() } }
+    }, name as CFString, nil, .deliverImmediately)
+  }
+
+  deinit {
+    CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(), CFNotificationName(name as CFString), nil)
+  }
+}

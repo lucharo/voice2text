@@ -2,3 +2,7 @@
 *.xcodeproj/
 build/
 .build/
+App/Info.plist
+Keyboard/Info.plist
+App/V2T.entitlements
+Keyboard/Keyboard.entitlements
