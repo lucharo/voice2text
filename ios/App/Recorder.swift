@@ -3,7 +3,15 @@
 /// Microphone capture as 16 kHz mono floats. The engine keeps running between dictations while the session
 /// is warm, so a dictation the keyboard starts from the background begins instantly: iOS lets a background
 /// app keep an audio session it started in the foreground, never start a new one.
-final class Recorder: @unchecked Sendable {
+protocol AudioSource: AnyObject, Sendable {
+  var running: Bool { get }
+  func warmUp() throws
+  func coolDown()
+  func begin()
+  func end() -> [Float]
+}
+
+final class Recorder: AudioSource, @unchecked Sendable {
   private let engine = AVAudioEngine()
   private let lock = NSLock()
   private var samples: [Float] = []
@@ -66,4 +74,22 @@ final class Recorder: @unchecked Sendable {
     let chunk = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
     lock.lock(); if capturing { samples += chunk }; lock.unlock()
   }
+}
+
+/// UI tests only (V2T_FIXTURE_AUDIO): "records" a synthetic clip instead of the microphone, so a Simulator
+/// run never captures the room around the Mac. The clip is 16 kHz mono 32-bit float WAV made by setup.sh
+/// with macOS `say`.
+final class FixtureAudio: AudioSource, @unchecked Sendable {
+  private let samples: [Float]
+  private(set) var running = false
+  init?(path: String) {
+    guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)),
+          let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+          (try? file.read(into: buf)) != nil, let ch = buf.floatChannelData else { return nil }
+    samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(buf.frameLength)))
+  }
+  func warmUp() throws { running = true }
+  func coolDown() { running = false }
+  func begin() {}
+  func end() -> [Float] { samples }
 }

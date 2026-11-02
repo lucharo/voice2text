@@ -17,7 +17,10 @@ import SwiftUI
   let history: History
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
-  private let recorder = Recorder()
+  private let recorder: AudioSource = {
+    if let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"], let f = FixtureAudio(path: path) { return f }
+    return Recorder()
+  }()
   private let cleaner: Cleaner
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []

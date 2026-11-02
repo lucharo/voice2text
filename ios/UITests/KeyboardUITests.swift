@@ -26,7 +26,7 @@ import XCTest
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     field.tap()
     // the simulator may start on Apple's keyboard: switch to v2t with the globe key, as a user would
-    for _ in 0..<3 where !key("letters-q").waitForExistence(timeout: 3) {
+    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
       let globe = app.buttons["Next keyboard"]
       if globe.exists { globe.tap() }
     }

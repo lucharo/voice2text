@@ -8,6 +8,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export V2T_TEAM=${V2T_TEAM:-7V3HZUL435}
 python3 tools/build_lexicons.py build/lexicons   # pinned AOSP word lists -> keyboard lexicons
+# a synthetic dictation for the Simulator UI tests (V2T_FIXTURE_AUDIO), so no test records the room
+if [ ! -f build/fixtures/dictation-en.wav ]; then
+  mkdir -p build/fixtures
+  say -o build/fixtures/dictation-en.aiff "Testing the v two t keyboard on the simulator."
+  afconvert -f WAVE -d LEF32@16000 -c 1 build/fixtures/dictation-en.aiff build/fixtures/dictation-en.wav
+fi
 xcodegen generate --quiet
 
 if [ "${1:-}" = test ]; then
