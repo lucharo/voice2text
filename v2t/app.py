@@ -396,6 +396,8 @@ class VoiceToText:
         self.key_events: queue.Queue = queue.Queue()
         self.press_seq = 0  # numbers hotkey presses, so a hold timer knows its own
         self.hotkey_pending = 0  # hotkey events queued or being handled (an Esc counts them)
+        self.starting = False  # start_recording is opening the microphone (Undo's too)
+        self.esc_queued = threading.Event()  # an Esc's cancel waits in key_events
         self.pending_lock = threading.Lock()
         self.hotkey_thread: threading.Thread | None = None
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
@@ -625,6 +627,14 @@ class VoiceToText:
         with self.lifecycle_lock:
             if self.stopping or self.reloading or self.recording or self.processing:
                 return
+            self.starting = True  # an Esc meanwhile is kept and queued (key_down)
+            try:
+                self._open_microphone(show, resume)
+            finally:
+                self.starting = False
+
+    def _open_microphone(self, show: bool, resume) -> None:
+        with self.lifecycle_lock:
             # Re-initialising PortAudio while the last stop still runs would hang too.
             if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
                 logger.warning("Microphone still stopping; not recording")
@@ -1101,6 +1111,12 @@ class VoiceToText:
         cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
         t0 = time.perf_counter()
+        # An Esc queued behind a hotkey event (the release that queued this dictation)
+        # gets its turn before the paste decision; it is handled within milliseconds
+        # unless a microphone is opening, so the wait is bounded.
+        deadline = time.perf_counter() + 2.0
+        while self.esc_queued.is_set() and time.perf_counter() < deadline:
+            time.sleep(0.01)
         with self.lifecycle_lock:
             if self.cancel_requested:
                 return
@@ -1241,10 +1257,11 @@ class VoiceToText:
             if not self.escape_consumed:  # a repeat of a consumed press stays consumed
                 # a queued or running hotkey event may be starting a recording (a press,
                 # or the release that latches hands-free), whatever the last one left
-                self.escape_consumed = self.hotkey_pending > 0 or (
+                self.escape_consumed = self.hotkey_pending > 0 or self.starting or (
                     (self.recording or self.processing) and not self.delivered
                 )
                 if self.escape_consumed:
+                    self.esc_queued.set()
                     self.key_events.put(("esc", key, now))
             return
         self._queue_key("down", key, now)
@@ -1261,7 +1278,10 @@ class VoiceToText:
     def _handle_key_event(self, kind: str, key, at) -> None:
         try:
             if kind == "esc":
-                self.cancel_dictation()
+                try:
+                    self.cancel_dictation()
+                finally:
+                    self.esc_queued.clear()
             elif kind == "undo":
                 self.request_undo()
             elif kind == "hold":
@@ -1292,8 +1312,13 @@ class VoiceToText:
             return
         if key != self.hotkey:
             if self.recording and not self.shown and not self.latched:
-                self.chorded = True
-                self.cancel_recording()
+                if at is not None and at - self.press_at >= self.HOLD_S:
+                    # pressed after the hold showed, by its time, though the hold timer
+                    # has not run yet (the microphone opened slowly): typing while holding
+                    self._show_recording()
+                else:
+                    self.chorded = True
+                    self.cancel_recording()
             return
         if self.latched:
             return

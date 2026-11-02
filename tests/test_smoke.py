@@ -4924,6 +4924,64 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.recording, "the chord cancelled the candidate first")
         self.assertTrue(voice.undo_requested.is_set())
 
+    def test_a_paste_waits_for_a_queued_escape(self):
+        voice, _tap = self._tapper()
+        voice.processing = True
+        voice.esc_queued.set()  # an Esc waits behind the release that queued this
+
+        def hotkey_thread():
+            app.time.sleep(0.05)
+            voice.cancel_requested = True  # what its cancel_dictation does
+            voice.esc_queued.clear()
+
+        thread = threading.Thread(target=hotkey_thread)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            thread.start()
+            voice._deliver("hello", 1.0, 0.1, streamed=False, levels=None)
+            thread.join(5)
+
+        paste.assert_not_called()
+
+    def test_escape_during_a_slow_undo_start_is_kept_and_queued(self):
+        voice, _tap = self._tapper()
+        voice.starting = True
+        held, release = threading.Event(), threading.Event()
+
+        def opening():  # Undo opens the microphone under the lock, off the hotkey thread
+            with voice.lifecycle_lock:
+                held.set()
+                release.wait(5)
+
+        thread = threading.Thread(target=opening)
+        thread.start()
+        held.wait(5)
+        voice.key_down(types.SimpleNamespace(name="esc"))
+        release.set()
+        thread.join(5)
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["esc"])
+
+    def test_a_key_pressed_after_the_hold_threshold_is_typing_not_a_chord(self):
+        voice, _tap = self._tapper()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.7
+        voice.key_down("A")  # held past HOLD_S, then typed
+        app.time.perf_counter.return_value = 102.0  # the microphone took 2 s to open
+        self._drain(voice)
+
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.shown)
+
+        voice.cancel_recording()
+        app.time.perf_counter.return_value = 103.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 103.2
+        voice.key_down("A")  # before HOLD_S: a shortcut
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()
         set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
