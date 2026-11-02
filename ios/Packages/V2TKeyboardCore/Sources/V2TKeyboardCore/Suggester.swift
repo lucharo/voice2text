@@ -109,16 +109,9 @@ public final class Suggester: @unchecked Sendable {
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
     guard typed.count >= 2 else { return nil }
     let key = Lexicon.fold(literal)
-    var accentVariant: (String, Int)?
-    for lex in lexicons {
-      for i in lex.exactRange(key) {
-        let w = lex.word(i)
-        if w.lowercased() == lower { return nil }  // a real word, as typed
-        if lex.frequency(i) > (accentVariant?.1 ?? 0) { accentVariant = (w, lex.frequency(i)) }
-      }
+    for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower }) {
+      return nil  // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
     }
-    // same letters, missing accent or apostrophe ("cancion" -> "canción", "dont" -> "don't")
-    if let (w, _) = accentVariant { return Self.applyCase(of: literal, to: w) }
     let all = suggestions(for: typed, limit: 3)
     guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
