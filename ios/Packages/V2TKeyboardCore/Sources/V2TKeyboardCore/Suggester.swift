@@ -34,7 +34,7 @@ public final class Suggester: @unchecked Sendable {
   public var editPenalty: Double = 5.0
   public var frequencyWeight: Double = 8.0
   /// Per letter a completion adds beyond what was typed.
-  public var completionPenalty: Double = 0.9
+  public var completionPenalty: Double = 0.4
   public var beamWidth = 48
   public var maxEdits = 2
   /// Typed in lowercase, a capitalised entry (a name: "Ford" for "doed") is less likely meant.
@@ -89,7 +89,7 @@ public final class Suggester: @unchecked Sendable {
       if s.prefix.count >= 2 {
         for (j, f) in topFrequencies(lex, i..<s.range.upperBound, 3) {
           let extra = lex.keyLength(j) - s.prefix.count
-          offer(lex.word(j), .completion, -s.cost + prior(f) - completionPenalty * Double(extra) - 1)
+          offer(lex.word(j), .completion, -s.cost + prior(f) - completionPenalty * Double(extra) - 0.5)
         }
       }
     }
@@ -112,7 +112,8 @@ public final class Suggester: @unchecked Sendable {
     for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower }) {
       return nil  // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
     }
-    let all = suggestions(for: typed, limit: 3)
+    // look past the bar's three slots: completions may fill them, but only a correction autocorrects
+    let all = suggestions(for: typed, limit: 10)
     guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil

@@ -105,6 +105,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
+    latencyLog.debug("host textDidChange engineEditing=\(self.engineEditing, privacy: .public)")
     guard !engineEditing else { return }
     applyTraits()
     engine.resync()
@@ -113,6 +114,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   override func selectionDidChange(_ textInput: UITextInput?) {
     super.selectionDidChange(textInput)
+    latencyLog.debug("host selectionDidChange engineEditing=\(self.engineEditing, privacy: .public)")
     guard !engineEditing else { return }
     engine.resync()
     refresh()

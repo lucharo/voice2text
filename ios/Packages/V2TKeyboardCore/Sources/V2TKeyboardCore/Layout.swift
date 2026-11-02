@@ -96,16 +96,17 @@ public struct KeyboardLayout: Sendable {
     }
     keys.append(Key(id: "delete", action: .delete, label: "delete", frame: CGRect(x: width - sideInset - side, y: y(2), width: side, height: keyHeight), alternatives: [], row: 2))
 
-    // bottom row: page switch, emoji, mic, space, return
-    let small = 1.2 * u, ret = 2.5 * u + gap
+    // bottom row as Apple's iOS 27 keyboard: page switch, next keyboard, space, mic, return
+    let small = 1.2 * u, ret = 1.6 * u
     var x = sideInset
     let pageKey: (KeyAction, String) = page == .letters ? (.page(.numbers), "123") : (.page(.letters), "ABC")
-    for (id, action, label, w) in [("page", pageKey.0, pageKey.1, small), ("emoji", KeyAction.emoji, "emoji", small), ("mic", KeyAction.mic, "mic", small)] {
+    for (id, action, label, w) in [("page", pageKey.0, pageKey.1, small), ("emoji", KeyAction.emoji, "next keyboard", small)] {
       keys.append(Key(id: id, action: action, label: label, frame: CGRect(x: x, y: y(3), width: w, height: keyHeight), alternatives: [], row: 3))
       x += w + gap
     }
-    let spaceW = width - sideInset - ret - gap - x
-    keys.append(Key(id: "space", action: .space, label: language == .spanish ? "espacio" : "space", frame: CGRect(x: x, y: y(3), width: spaceW, height: keyHeight), alternatives: [], row: 3))
+    let micX = width - sideInset - ret - gap - small
+    keys.append(Key(id: "space", action: .space, label: language == .spanish ? "espacio" : "space", frame: CGRect(x: x, y: y(3), width: micX - gap - x, height: keyHeight), alternatives: [], row: 3))
+    keys.append(Key(id: "mic", action: .mic, label: "mic", frame: CGRect(x: micX, y: y(3), width: small, height: keyHeight), alternatives: [], row: 3))
     keys.append(Key(id: "return", action: .returnKey, label: language == .spanish ? "intro" : "return", frame: CGRect(x: width - sideInset - ret, y: y(3), width: ret, height: keyHeight), alternatives: [], row: 3))
     return keys
   }

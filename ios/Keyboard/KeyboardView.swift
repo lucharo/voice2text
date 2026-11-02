@@ -93,7 +93,7 @@ final class KeyboardView: UIView {
       l.cornerRadius = 8.5
       l.backgroundColor = (isSpecial(k) ? Palette.specialKey : Palette.key).resolvedColor(with: traitCollection).cgColor
       l.shadowColor = UIColor.black.cgColor
-      l.shadowOpacity = 0.3
+      l.shadowOpacity = 0.12
       l.shadowRadius = 0
       l.shadowOffset = CGSize(width: 0, height: 1)
       let t = CATextLayer()
@@ -179,6 +179,7 @@ final class KeyboardView: UIView {
     switch k.action {
     case .shift: shift == .locked ? "capslock.fill" : (shift == .on ? "shift.fill" : "shift")
     case .delete: "delete.left"
+    case .returnKey where returnLabel == "return" || returnLabel == "intro": "return.left"
     case .mic: "mic"
     case .emoji: "globe"
     default: nil
@@ -197,7 +198,7 @@ final class KeyboardView: UIView {
     case .character(let c): return (shift == .off ? c : c.uppercased(), layout.page == .letters ? 25 : 22)
     case .shift: return (shift == .locked ? "⇪" : "⇧", 22)
     case .delete: return ("⌫", 22)
-    case .space: return (k.label, 16)
+    case .space: return ("", 16)  // Apple's space bar carries no label
     case .returnKey: return (returnLabel, 16)
     case .mic: return ("🎙", 19)
     case .emoji: return ("🌐", 19)  // next keyboard, until v2t has its own emoji page
@@ -209,8 +210,7 @@ final class KeyboardView: UIView {
     guard let l = keyLayers[k.id] else { return }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    let pressed = isSpecial(k) ? Palette.key : Palette.specialKey
-    l.backgroundColor = (on ? pressed : (isSpecial(k) ? Palette.specialKey : Palette.key)).resolvedColor(with: traitCollection).cgColor
+    l.backgroundColor = (on ? Palette.pressed : (isSpecial(k) ? Palette.specialKey : Palette.key)).resolvedColor(with: traitCollection).cgColor
     CATransaction.commit()
   }
 
@@ -399,9 +399,12 @@ final class KeyboardView: UIView {
 }
 
 enum Palette {
+  // Apple's iOS 27 keyboard, sampled from a Simulator screenshot (light): every key white on rgb(224, 226, 232),
+  // pressed keys rgb(197, 198, 204). Dark values are not yet sampled.
   static let key = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
-  static let specialKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.27, alpha: 1) : UIColor(red: 0.67, green: 0.69, blue: 0.73, alpha: 1) }
-  static let background = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.17, alpha: 1) : UIColor(red: 0.82, green: 0.83, blue: 0.85, alpha: 1) }
+  static let specialKey = key
+  static let pressed = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.30, alpha: 1) : UIColor(red: 197 / 255, green: 198 / 255, blue: 204 / 255, alpha: 1) }
+  static let background = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.17, alpha: 1) : UIColor(red: 224 / 255, green: 226 / 255, blue: 232 / 255, alpha: 1) }
 }
 
 /// The balloon above a pressed key, and the row of long-press alternatives.
