@@ -9,6 +9,7 @@ mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import re
@@ -76,37 +77,63 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     turned a 0.5s Parakeet load into 45s and a 1.2s Qwen load into 19s
     (measured 2026-09-03 on hotel Wi-Fi). Offline loading of a partial cache
     fails, so that case falls back to the normal online path.
+
+    HF_HUB_OFFLINE is process-wide and the engine loads the transcription and
+    cleanup models at once (app.warmup): cached loads share the flag, and a load
+    that needs the network waits until none of them runs, and holds them off
+    while it downloads.
     """
-    global _offline_loads
     if not cached_locally(repo_id):
-        return loader()
+        with _online():
+            return loader()
     from huggingface_hub import constants
 
-    # The flag is process-wide and the engine loads the transcription and cleanup
-    # models at once (app.warmup): it stays on until the last of those loads ends.
-    with _offline_lock:
-        if constants.HF_HUB_OFFLINE and not _offline_loads:
-            set_by_user = True
-        else:
-            set_by_user = False
-            _offline_loads += 1
-            constants.HF_HUB_OFFLINE = True
+    with _hub_turn:
+        set_by_user = constants.HF_HUB_OFFLINE and not _hub_users["offline"]
     if set_by_user:
         return loader()
     try:
-        return loader()
+        with _offline():
+            return loader()
     except OSError:  # hub cache errors subclass OSError: let it finish online
-        constants.HF_HUB_OFFLINE = False
-        return loader()
+        with _online():
+            return loader()
+
+
+_hub_turn = threading.Condition()
+_hub_users = {"offline": 0, "online": 0}  # load_cache_first calls running in each mode
+
+
+@contextlib.contextmanager
+def _offline():
+    from huggingface_hub import constants
+
+    with _hub_turn:
+        _hub_turn.wait_for(lambda: not _hub_users["online"])
+        _hub_users["offline"] += 1
+        constants.HF_HUB_OFFLINE = True
+    try:
+        yield
     finally:
-        with _offline_lock:
-            _offline_loads -= 1
-            if not _offline_loads:
+        with _hub_turn:
+            _hub_users["offline"] -= 1
+            if not _hub_users["offline"]:
                 constants.HF_HUB_OFFLINE = False
+            _hub_turn.notify_all()
 
 
-_offline_lock = threading.Lock()
-_offline_loads = 0  # load_cache_first calls running with HF_HUB_OFFLINE turned on
+@contextlib.contextmanager
+def _online():
+    """One load that may download: alone, with the flag as the user left it."""
+    with _hub_turn:
+        _hub_turn.wait_for(lambda: not _hub_users["offline"] and not _hub_users["online"])
+        _hub_users["online"] += 1
+    try:
+        yield
+    finally:
+        with _hub_turn:
+            _hub_users["online"] -= 1
+            _hub_turn.notify_all()
 
 
 # While the hotkey is held the recording is decoded in pieces (PieceDecoder) as their

@@ -4842,16 +4842,48 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.jobs.empty())
         self.assertEqual(voice.last_tap_at, 100.2, "a second tap within 0.5 s of it latches")
 
-    def test_escape_is_still_decided_on_the_tap(self):
+    def _drain(self, voice):
+        while not voice.key_events.empty():
+            voice._handle_key_event(*voice.key_events.get_nowait())
+
+    def test_escape_is_decided_on_the_tap_and_cancels_in_order(self):
         voice, _tap = self._tapper()
-        voice.start_recording()
-        voice.frames = [np.ones((16, 1), dtype=np.float32)]
-
-        voice.key_down(types.SimpleNamespace(name="esc"))
-
-        self.assertTrue(voice.escape_consumed)
+        escape = types.SimpleNamespace(name="esc")
+        voice.key_down(escape)
+        self.assertFalse(voice.escape_consumed, "idle: Esc goes to the app")
         self.assertTrue(voice.key_events.empty())
+        voice.consume_escape(True)
+
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")  # its recording does not exist yet
+        voice.key_down(escape)
+
+        self.assertTrue(voice.escape_consumed, "kept from the app without waiting")
+        self.assertFalse(voice.recording)
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording, "the press opened the mic, then Esc cancelled it")
         self.assertEqual(config.read_status()["state"], "cancelled")
+        self.assertEqual(voice.hotkey_pending, 0)
+
+    def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
+        voice, _tap = self._tapper()
+        set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
+        self.addCleanup(set_state.stop)
+        states = set_state.start()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("HOTKEY")
+        app.time.perf_counter.return_value = 102.0  # the microphone took 1.8 s to open
+
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the press
+        voice.hold_timer.fire()  # due at once: its hold is queued behind the release
+        self._drain(voice)
+
+        self.assertFalse(voice.recording)
+        self.assertNotIn("recording", [c.args[0] for c in states.call_args_list])
+        self.assertEqual(voice.last_tap_at, 100.2)
 
     def test_a_tap_macos_turned_off_is_turned_back_on(self):
         calls = []
@@ -5670,6 +5702,37 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(seen, {"second, after the first ended": True})
         self.assertFalse(constants.HF_HUB_OFFLINE)
+
+    def test_a_download_waits_for_a_cached_load_to_end(self):
+        # the cached model loads offline; the other, not cached, must reach the network
+        constants = types.SimpleNamespace(HF_HUB_OFFLINE=False)
+        cached_inside, release_cached = threading.Event(), threading.Event()
+        seen = []
+
+        def cached():
+            cached_inside.set()
+            release_cached.wait(5)
+            seen.append(("cached", constants.HF_HUB_OFFLINE))
+
+        def download():
+            seen.append(("download", constants.HF_HUB_OFFLINE))
+
+        with (
+            mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}),
+            mock.patch.object(backends, "cached_locally", side_effect=lambda repo: repo == "org/cached"),
+        ):
+            first = threading.Thread(target=backends.load_cache_first, args=("org/cached", cached))
+            first.start()
+            cached_inside.wait(5)
+            second = threading.Thread(target=backends.load_cache_first, args=("org/new", download))
+            second.start()
+            second.join(0.2)
+            self.assertTrue(second.is_alive(), "the download waits")
+            release_cached.set()
+            first.join(5)
+            second.join(5)
+
+        self.assertEqual(seen, [("cached", True), ("download", False)])
 
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (

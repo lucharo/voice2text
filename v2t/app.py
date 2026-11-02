@@ -55,7 +55,8 @@ MIC_REOPEN_WAIT_S = 0.3
 # and never turns it back on by itself; pynput 1.8.1 does not either, so every key after
 # that, Fn included, was lost until v2t restarted: a hands-free dictation could not be
 # stopped (2026-11-02). Opening the microphone ran inside the callback (a Bluetooth input
-# can take seconds to start). Keys now go to the hotkey thread, and a turned-off tap is
+# can take seconds to start). Keys (Esc's cancel and the hold timer too) now go to the
+# hotkey thread in order, and a turned-off tap is
 # turned back on (proved with a 2.5 s callback on macOS 26: off for good without the
 # re-enable, keys back at once with it). A handler slower than this is logged.
 SLOW_KEY_S = 0.25
@@ -390,6 +391,9 @@ class VoiceToText:
         # (kind, key, when): key events from the event tap, handled in order on the
         # hotkey thread, so opening the microphone never blocks the tap (SLOW_KEY_S)
         self.key_events: queue.Queue = queue.Queue()
+        self.press_seq = 0  # numbers hotkey presses, so a hold timer knows its own
+        self.hotkey_pending = 0  # hotkey presses queued or being handled (an Esc counts them)
+        self.pending_lock = threading.Lock()
         self.hotkey_thread: threading.Thread | None = None
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
         self.replacements: list[tuple[str, str]] = []
@@ -1217,22 +1221,47 @@ class VoiceToText:
     DOUBLE_TAP_S = 0.5
 
     def key_down(self, key):
-        """The event tap's press: Esc is decided here (whether to swallow it),
-        everything else goes to the hotkey thread with the time it happened."""
+        """The event tap's press. Everything goes to the hotkey thread in order, with
+        the time it happened; the tap only decides, without waiting, whether to keep
+        an Esc from the app (consume_escape needs that answer now)."""
+        now = time.perf_counter()
         if getattr(key, "name", None) == "esc":
-            return self.on_press(key)
-        self.key_events.put(("down", key, time.perf_counter()))
+            if not self.escape_consumed:  # a repeat of a consumed press stays consumed
+                self.escape_consumed = (
+                    self.recording or self.processing or self.hotkey_pending > 0
+                ) and not self.delivered
+                if self.escape_consumed:
+                    self.key_events.put(("esc", key, now))
+            return
+        if key == self.hotkey:
+            with self.pending_lock:
+                self.hotkey_pending += 1  # a press whose recording may not exist yet
+        self.key_events.put(("down", key, now))
 
     def key_up(self, key):
         self.key_events.put(("up", key, time.perf_counter()))
 
+    def _handle_key_event(self, kind: str, key, at) -> None:
+        try:
+            if kind == "esc":
+                self.cancel_dictation()
+            elif kind == "hold":
+                if key == self.press_seq:  # still the press that started this timer
+                    self._show_recording()
+            elif kind == "down":
+                self.on_press(key, at=at)
+            else:
+                self.on_release(key, at=at)
+        except Exception:
+            logger.exception("Hotkey handling failed")
+        finally:
+            if kind == "down" and key == self.hotkey:
+                with self.pending_lock:
+                    self.hotkey_pending -= 1
+
     def _hotkey_loop(self) -> None:
         while True:
-            kind, key, at = self.key_events.get()
-            try:
-                (self.on_press if kind == "down" else self.on_release)(key, at=at)
-            except Exception:
-                logger.exception("Hotkey handling failed")
+            self._handle_key_event(*self.key_events.get())
 
     def _start_hotkey_thread(self) -> None:
         self.hotkey_thread = threading.Thread(target=self._hotkey_loop, name="v2t-hotkey", daemon=True)
@@ -1250,13 +1279,20 @@ class VoiceToText:
         if self.latched:
             return
         self.press_at = time.perf_counter() if at is None else at
+        self.press_seq += 1
         self.chorded = False
         self.trigger = "hold"
         self.start_recording(show=False)
         if self.recording:
             # from the press, not from when the microphone finished opening
-            hold = self.HOLD_S if at is None else max(0.0, self.HOLD_S - (time.perf_counter() - at))
-            self.hold_timer = threading.Timer(hold, self._show_recording)
+            if at is None:
+                self.hold_timer = threading.Timer(self.HOLD_S, self._show_recording)
+            else:
+                # from the press, not from when the microphone finished opening; and
+                # through the queue, so a release or chord already waiting there wins
+                hold = max(0.0, self.HOLD_S - (time.perf_counter() - at))
+                seq = self.press_seq
+                self.hold_timer = threading.Timer(hold, lambda: self.key_events.put(("hold", seq, None)))
             self.hold_timer.daemon = True
             self.hold_timer.start()
 
