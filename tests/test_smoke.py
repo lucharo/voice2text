@@ -4866,6 +4866,32 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(config.read_status()["state"], "cancelled")
         self.assertEqual(voice.hotkey_pending, 0)
 
+    def test_escape_counts_a_starting_recording_whatever_the_last_one_left(self):
+        voice, _tap = self._tapper()
+        escape = types.SimpleNamespace(name="esc")
+        voice.delivered = True  # the last dictation was pasted
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        voice.key_down(escape)
+        self.assertTrue(voice.escape_consumed, "a queued press is starting a new one")
+        self._drain(voice)
+        voice.consume_escape(True)
+
+        # the second tap of a double-tap latches on its release
+        voice.last_tap_at = 100.0
+        app.time.perf_counter.return_value = 100.3
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.4
+        voice.key_up("HOTKEY")
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the press only
+        voice.key_down(escape)
+        self.assertTrue(voice.escape_consumed, "the queued release is latching")
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+        self.assertEqual(voice.hotkey_pending, 0)
+
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()
         set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
@@ -5635,104 +5661,78 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(attempts, [True, False])
         self.assertFalse(constants.HF_HUB_OFFLINE)
 
-    def _warm(self, make_stt, make_cleanup):
+    def _warm(self, make_stt, make_cleanup, snapshot=Path("/cache/snapshots/abc")):
         config.ensure_dirs()
         voice = app.VoiceToText(config.Config())
         voice.cfg.preview = ""
         with (
             mock.patch.object(backends, "make_stt", side_effect=make_stt),
             mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
+            mock.patch.object(backends, "local_snapshot", return_value=snapshot),
+            # warmup imports transformers before the thread starts: a 5-10 s import
+            mock.patch.dict(sys.modules, {"transformers": types.SimpleNamespace(AutoTokenizer=object)}),
         ):
             voice.warmup()
         return voice
 
-    def test_the_cleanup_model_loads_while_the_transcription_model_does(self):
+    @staticmethod
+    def _stt(*_args):
+        return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
+
+    def test_a_cached_cleanup_model_loads_from_its_folder_while_the_transcription_model_does(self):
         cleanup_started = threading.Event()
         cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        folders = []
 
-        def make_stt(*_args):
+        def make_stt(*args):
             # sequential loading never starts the cleanup model while this waits
             self.assertTrue(cleanup_started.wait(5), "cleanup was not loading meanwhile")
-            return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
+            return self._stt(*args)
 
-        def make_cleanup(*_args):
+        def make_cleanup(*_args, folder=None):
+            folders.append(folder)
             cleanup_started.set()
             return cleaner
 
         voice = self._warm(make_stt, make_cleanup)
 
         self.assertIs(voice.cleaner, cleaner)
+        self.assertEqual(folders, [Path("/cache/snapshots/abc")], "no hub access, so no HF_HUB_OFFLINE")
         cleaner.cleanup.assert_called_once_with("hi", voice.cfg.mode)
 
+    def test_a_cleanup_model_to_download_loads_after_the_transcription_model(self):
+        order = []
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+
+        def make_stt(*args):
+            order.append("stt")
+            return self._stt(*args)
+
+        def make_cleanup(*_args, folder=None):
+            order.append(("cleanup", folder))
+            return cleaner
+
+        voice = self._warm(make_stt, make_cleanup, snapshot=None)
+
+        self.assertEqual(order, ["stt", ("cleanup", None)])
+        self.assertIs(voice.cleaner, cleaner)
+
     def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
-        def make_stt(*_args):
-            return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
-
         with self.assertRaises(SystemExit):
-            self._warm(make_stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
+            self._warm(self._stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
 
-    def test_offline_loading_stays_on_until_the_last_overlapping_load_ends(self):
-        # the transcription and cleanup models load at once (app.warmup)
-        constants = types.SimpleNamespace(HF_HUB_OFFLINE=False)
-        first_inside, second_inside, first_done = threading.Event(), threading.Event(), threading.Event()
-        seen = {}
-
-        def first():
-            first_inside.set()
-            second_inside.wait(5)
-
-        def second():
-            second_inside.set()
-            first_done.wait(5)
-            seen["second, after the first ended"] = constants.HF_HUB_OFFLINE
-
+    def test_an_mlx_cleanup_model_given_its_folder_never_touches_the_hub(self):
+        folder = Path("/cache/snapshots/abc")
+        load = mock.Mock(return_value=("model", "tokenizer"))
         with (
-            mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}),
-            mock.patch.object(backends, "cached_locally", return_value=True),
+            mock.patch.dict(sys.modules, {"mlx_lm": types.SimpleNamespace(load=load)}),
+            mock.patch.object(backends, "load_cache_first") as cache_first,
         ):
-            thread = threading.Thread(target=backends.load_cache_first, args=("org/b", second))
-            first_thread = threading.Thread(
-                target=lambda: (backends.load_cache_first("org/a", first), first_done.set())
-            )
-            first_thread.start()
-            first_inside.wait(5)
-            thread.start()
-            first_thread.join(5)
-            thread.join(5)
+            cleaner = backends.make_cleanup("mlx", "org/model", folder=folder)
 
-        self.assertEqual(seen, {"second, after the first ended": True})
-        self.assertFalse(constants.HF_HUB_OFFLINE)
-
-    def test_a_download_waits_for_a_cached_load_to_end(self):
-        # the cached model loads offline; the other, not cached, must reach the network
-        constants = types.SimpleNamespace(HF_HUB_OFFLINE=False)
-        cached_inside, release_cached = threading.Event(), threading.Event()
-        seen = []
-
-        def cached():
-            cached_inside.set()
-            release_cached.wait(5)
-            seen.append(("cached", constants.HF_HUB_OFFLINE))
-
-        def download():
-            seen.append(("download", constants.HF_HUB_OFFLINE))
-
-        with (
-            mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}),
-            mock.patch.object(backends, "cached_locally", side_effect=lambda repo: repo == "org/cached"),
-        ):
-            first = threading.Thread(target=backends.load_cache_first, args=("org/cached", cached))
-            first.start()
-            cached_inside.wait(5)
-            second = threading.Thread(target=backends.load_cache_first, args=("org/new", download))
-            second.start()
-            second.join(0.2)
-            self.assertTrue(second.is_alive(), "the download waits")
-            release_cached.set()
-            first.join(5)
-            second.join(5)
-
-        self.assertEqual(seen, [("cached", True), ("download", False)])
+        load.assert_called_once_with(str(folder))
+        cache_first.assert_not_called()
+        self.assertEqual(cleaner.model_id, "org/model")
 
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (

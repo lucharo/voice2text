@@ -392,7 +392,7 @@ class VoiceToText:
         # hotkey thread, so opening the microphone never blocks the tap (SLOW_KEY_S)
         self.key_events: queue.Queue = queue.Queue()
         self.press_seq = 0  # numbers hotkey presses, so a hold timer knows its own
-        self.hotkey_pending = 0  # hotkey presses queued or being handled (an Esc counts them)
+        self.hotkey_pending = 0  # hotkey events queued or being handled (an Esc counts them)
         self.pending_lock = threading.Lock()
         self.hotkey_thread: threading.Thread | None = None
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
@@ -1227,19 +1227,24 @@ class VoiceToText:
         now = time.perf_counter()
         if getattr(key, "name", None) == "esc":
             if not self.escape_consumed:  # a repeat of a consumed press stays consumed
-                self.escape_consumed = (
-                    self.recording or self.processing or self.hotkey_pending > 0
-                ) and not self.delivered
+                # a queued or running hotkey event may be starting a recording (a press,
+                # or the release that latches hands-free), whatever the last one left
+                self.escape_consumed = self.hotkey_pending > 0 or (
+                    (self.recording or self.processing) and not self.delivered
+                )
                 if self.escape_consumed:
                     self.key_events.put(("esc", key, now))
             return
-        if key == self.hotkey:
-            with self.pending_lock:
-                self.hotkey_pending += 1  # a press whose recording may not exist yet
-        self.key_events.put(("down", key, now))
+        self._queue_key("down", key, now)
 
     def key_up(self, key):
-        self.key_events.put(("up", key, time.perf_counter()))
+        self._queue_key("up", key, time.perf_counter())
+
+    def _queue_key(self, kind: str, key, at: float) -> None:
+        if key == self.hotkey:
+            with self.pending_lock:
+                self.hotkey_pending += 1  # until the hotkey thread has handled it
+        self.key_events.put((kind, key, at))
 
     def _handle_key_event(self, kind: str, key, at) -> None:
         try:
@@ -1255,7 +1260,7 @@ class VoiceToText:
         except Exception:
             logger.exception("Hotkey handling failed")
         finally:
-            if kind == "down" and key == self.hotkey:
+            if kind in ("down", "up") and key == self.hotkey:
                 with self.pending_lock:
                     self.hotkey_pending -= 1
 
@@ -1469,14 +1474,24 @@ class VoiceToText:
         )
         return stream
 
-    def _load_cleanup_in_background(self) -> dict:
-        """Start loading the cleanup model beside the transcription model.
+    def _load_cleanup_in_background(self) -> dict | None:
+        """Start loading the cleanup model beside the transcription model, when safe.
 
         Loading is mostly waiting (imports, file reads: 2.5 s of CPU in a 7-11 s
         Qwen3-ASR load, 2026-11-02), so the two overlap; the cleanup model's 1.5-2.6 s
-        load used to start only after the transcription model was ready. Only the loading overlaps; each model's first inference still runs on
-        its own (warmup). Returns a dict that gets `cleaner` or `error`, and `thread`.
+        load used to start only after the transcription model was ready. Only a model
+        that needs no download overlaps: an MLX model already in the Hugging Face cache,
+        read from its folder (the transcription model may hold HF_HUB_OFFLINE on, and may
+        be downloading), or Ollama. Anything else loads after, as before (None). Each
+        model's first inference still runs on its own (warmup). Returns a dict that gets
+        `cleaner` or `error`, `load_s`, and `thread`.
         """
+        engine, model = self.cfg.cleanup_engine, self.cfg.cleanup_model
+        folder = None
+        if engine == "mlx":
+            folder = backends.local_snapshot(model or backends.CLEANUP[engine].default_model)
+            if folder is None:
+                return None
         box: dict = {}
         # Both loaders import transformers. A package being imported by one thread is
         # half-built for the other ("cannot import name 'AutoTokenizer'", seen when both
@@ -1489,9 +1504,7 @@ class VoiceToText:
         def load() -> None:
             t0 = time.perf_counter()
             try:
-                box["cleaner"] = backends.make_cleanup(
-                    self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
-                )
+                box["cleaner"] = backends.make_cleanup(engine, model, self.cfg.ollama_url, folder=folder)
             except BaseException as error:  # SystemExit for a missing extra, too
                 box["error"] = error
             box["load_s"] = time.perf_counter() - t0
@@ -1522,19 +1535,26 @@ class VoiceToText:
                 else f"Transcribing after release: audio.sample_rate must be {self.stt.sample_rate}"
             )
 
-        if cleanup is not None:
+        if self.cfg.cleanup_enabled:
             self._set_state("loading-cleanup")
             t0 = time.perf_counter()
-            cleanup["thread"].join()
-            if "error" in cleanup:
-                raise cleanup["error"]
-            self.cleaner = cleanup["cleaner"]
+            if cleanup is None:  # not cached: downloads, alone, after the transcription model
+                self.cleaner = backends.make_cleanup(
+                    self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+                )
+                how = f"{time.perf_counter() - t0:.1f}s"
+            else:
+                cleanup["thread"].join()
+                if "error" in cleanup:
+                    raise cleanup["error"]
+                self.cleaner = cleanup["cleaner"]
+                how = f"{cleanup['load_s']:.1f}s loading alongside"
             self.cleaner.vocabulary = tuple(self.vocabulary)
             try:
                 self.cleaner.cleanup("hi", self.cfg.mode)
                 logger.success(
-                    f"cleanup ({self.cfg.cleanup_engine}) ready ({cleanup['load_s']:.1f}s loading, "
-                    f"alongside; +{time.perf_counter() - t0:.1f}s after transcription)"
+                    f"cleanup ({self.cfg.cleanup_engine}) ready ({how}; "
+                    f"+{time.perf_counter() - t0:.1f}s after transcription)"
                 )
             except Exception as e:
                 logger.warning(

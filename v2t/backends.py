@@ -9,11 +9,9 @@ mlx-lm, default — no daemon) or ollama. Heavy MLX imports are lazy so
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import json
 import re
-import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -70,6 +68,12 @@ def cached_locally(repo_id: str) -> bool:
     return any(any(p.iterdir()) for p in hf_snapshots(repo_id))
 
 
+def local_snapshot(repo_id: str) -> Path | None:
+    """The newest non-empty snapshot folder of this model in the Hugging Face cache."""
+    found = [p for p in hf_snapshots(repo_id) if any(p.iterdir())]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+
+
 def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     """Run `loader` without Hugging Face revision checks when the model is cached.
 
@@ -77,63 +81,21 @@ def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     turned a 0.5s Parakeet load into 45s and a 1.2s Qwen load into 19s
     (measured 2026-09-03 on hotel Wi-Fi). Offline loading of a partial cache
     fails, so that case falls back to the normal online path.
-
-    HF_HUB_OFFLINE is process-wide and the engine loads the transcription and
-    cleanup models at once (app.warmup): cached loads share the flag, and a load
-    that needs the network waits until none of them runs, and holds them off
-    while it downloads.
     """
     if not cached_locally(repo_id):
-        with _online():
-            return loader()
-    from huggingface_hub import constants
-
-    with _hub_turn:
-        set_by_user = constants.HF_HUB_OFFLINE and not _hub_users["offline"]
-    if set_by_user:
         return loader()
-    try:
-        with _offline():
-            return loader()
-    except OSError:  # hub cache errors subclass OSError: let it finish online
-        with _online():
-            return loader()
-
-
-_hub_turn = threading.Condition()
-_hub_users = {"offline": 0, "online": 0}  # load_cache_first calls running in each mode
-
-
-@contextlib.contextmanager
-def _offline():
     from huggingface_hub import constants
 
-    with _hub_turn:
-        _hub_turn.wait_for(lambda: not _hub_users["online"])
-        _hub_users["offline"] += 1
-        constants.HF_HUB_OFFLINE = True
+    if constants.HF_HUB_OFFLINE:
+        return loader()
+    constants.HF_HUB_OFFLINE = True
     try:
-        yield
+        return loader()
+    except OSError:  # hub cache errors subclass OSError: let it finish online
+        constants.HF_HUB_OFFLINE = False
+        return loader()
     finally:
-        with _hub_turn:
-            _hub_users["offline"] -= 1
-            if not _hub_users["offline"]:
-                constants.HF_HUB_OFFLINE = False
-            _hub_turn.notify_all()
-
-
-@contextlib.contextmanager
-def _online():
-    """One load that may download: alone, with the flag as the user left it."""
-    with _hub_turn:
-        _hub_turn.wait_for(lambda: not _hub_users["offline"] and not _hub_users["online"])
-        _hub_users["online"] += 1
-    try:
-        yield
-    finally:
-        with _hub_turn:
-            _hub_users["online"] -= 1
-            _hub_turn.notify_all()
+        constants.HF_HUB_OFFLINE = False
 
 
 # While the hotkey is held the recording is decoded in pieces (PieceDecoder) as their
@@ -1087,7 +1049,7 @@ class MLXCleanup(_ChunkedCleanup):
     _prefix_tokens: list[int] = []
     _prefix_cache = None
 
-    def __init__(self, model: str = "", url: str = ""):
+    def __init__(self, model: str = "", url: str = "", folder: Path | None = None):
         try:
             from mlx_lm import load
         except ImportError as e:
@@ -1095,9 +1057,14 @@ class MLXCleanup(_ChunkedCleanup):
                 "mlx-lm missing — reinstall voice2text (Apple Silicon only)."
             ) from e
         self.model_id = model or self.default_model
-        self.model, self.tokenizer = load_cache_first(
-            self.model_id, lambda: load(self.model_id)
-        )
+        if folder is not None:
+            # a cached snapshot, read straight from disk: no hub call, and no
+            # HF_HUB_OFFLINE, which another model may be loading under (app.warmup)
+            self.model, self.tokenizer = load(str(folder))
+        else:
+            self.model, self.tokenizer = load_cache_first(
+                self.model_id, lambda: load(self.model_id)
+            )
         self.last_stats = {}
 
     def _prompt(self, chunk: str, mode: str) -> list[int]:
@@ -1216,11 +1183,14 @@ CLEANUP_CHOICES = (
 )
 
 
-def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434"):
+def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434", folder: Path | None = None):
+    """`folder`: an MLX model's cached snapshot (local_snapshot), loaded with no hub access."""
     if engine not in CLEANUP:
         raise SystemExit(
             f"unknown cleanup engine {engine!r}; choose: {', '.join(CLEANUP)}"
         )
+    if folder is not None:
+        return CLEANUP[engine](model, url, folder=folder)
     return CLEANUP[engine](model, url)
 
 
