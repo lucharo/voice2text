@@ -1,0 +1,37 @@
+# xcodegen spec for the voice2text iPhone app (#75). Generate and test with ./setup.sh.
+name: V2T
+options:
+  bundleIdPrefix: es.luischav.v2t
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ${V2T_TEAM}
+    CODE_SIGN_STYLE: Automatic
+targets:
+  V2T:
+    type: application
+    platform: iOS
+    sources: [App]
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t
+      INFOPLIST_KEY_CFBundleDisplayName: v2t
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      INFOPLIST_KEY_NSMicrophoneUsageDescription: "v2t turns your speech into text on this iPhone. Audio never leaves the device."
+  V2TTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: V2T
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.tests
+schemes:
+  V2T:
+    build:
+      targets: {V2T: all, V2TTests: [test]}
+    test:
+      targets: [V2TTests]
