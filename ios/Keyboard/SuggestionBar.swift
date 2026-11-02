@@ -63,14 +63,16 @@ final class SuggestionBar: UIView {
   }
 
   private func updateMic() {
-    let (symbol, tint): (String, UIColor) = switch dictationState {
-    case .idle: ("mic", .label)
-    case .needsApp: ("mic.badge.plus", .label)
-    case .listening: ("waveform", .systemRed)
+    // ready to dictate shows the v2t waveform; the other states keep a symbol that says what is happening
+    let (symbol, tint): (String?, UIColor) = switch dictationState {
+    case .idle, .needsApp: (nil, .label)
+    case .listening: ("stop.circle.fill", .systemRed)
     case .transcribing: ("ellipsis", .systemBlue)
     case .unavailable: ("mic.slash", .secondaryLabel)
     }
-    mic.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)), for: .normal)
+    let image = symbol.map { UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)) }
+      ?? V2TMark.glyph(height: 21)
+    mic.setImage(image, for: .normal)
     mic.tintColor = tint
     mic.accessibilityLabel = switch dictationState {
     case .idle: "Dictate"

@@ -138,7 +138,7 @@ final class KeyboardView: UIView {
       let (text, size) = label(for: k)
       if let symbol = symbol(for: k), let sym = symbolLayers[k.id] {
         t.string = nil
-        let img = Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
+        let img = k.action == .mic ? V2TMark.glyph(height: 20, color: UIColor.label.resolvedColor(with: traitCollection)) : Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
         sym.contents = img.cgImage
         sym.contentsScale = img.scale
         sym.frame = CGRect(origin: .zero, size: k.frame.size)
