@@ -4693,6 +4693,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(intercept(10, (app.Z_VK, 0)), (app.Z_VK, 0), "plain z passes")
         self.assertEqual(intercept(10, cmd_shift_z), cmd_shift_z, "redo passes")
         self.assertIsNone(intercept(10, cmd_z))
+        self._drain(voice)  # queued behind the Z's own key event
         self.assertTrue(voice.undo_requested.is_set())
         self.assertIsNone(intercept(10, cmd_z), "autorepeat swallowed")
         self.assertIsNone(intercept(11, (app.Z_VK, 0)), "key-up swallowed, Cmd already up")
@@ -4891,6 +4892,37 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.recording)
         self.assertFalse(voice.latched)
         self.assertEqual(voice.hotkey_pending, 0)
+
+    def test_escape_with_nothing_queued_cancels_at_once(self):
+        # a result about to be pasted must see it (the paste decision takes the same lock)
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertTrue(voice.cancel_requested)
+        self.assertTrue(voice.key_events.empty())
+
+    def test_cmd_z_undoes_while_command_as_the_hotkey_is_down(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))  # cancelled: Undo is offered
+        voice.consume_escape(True)
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        voice._handle_key_event(*voice.key_events.get_nowait())  # an invisible candidate
+        self.assertTrue(voice.recording)
+        voice.key_down("Z")
+
+        self.assertTrue(voice.take_undo_shortcut(False), "Cmd+Z is kept for the undo")
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["down", "undo"])
+        self._drain(voice)
+        self.assertFalse(voice.recording, "the chord cancelled the candidate first")
+        self.assertTrue(voice.undo_requested.is_set())
 
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()
@@ -5715,6 +5747,21 @@ class V2TSmokeTests(unittest.TestCase):
         voice = self._warm(make_stt, make_cleanup, snapshot=None)
 
         self.assertEqual(order, ["stt", ("cleanup", None)])
+        self.assertIs(voice.cleaner, cleaner)
+
+    def test_a_partial_cleanup_folder_is_loaded_again_the_normal_way(self):
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        calls = []
+
+        def make_cleanup(*_args, folder=None):
+            calls.append(folder)
+            if folder is not None:
+                raise FileNotFoundError("model.safetensors")  # an interrupted download
+            return cleaner
+
+        voice = self._warm(self._stt, make_cleanup)
+
+        self.assertEqual(calls, [Path("/cache/snapshots/abc"), None])
         self.assertIs(voice.cleaner, cleaner)
 
     def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):

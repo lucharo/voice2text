@@ -60,6 +60,9 @@ MIC_REOPEN_WAIT_S = 0.3
 # turned back on (proved with a 2.5 s callback on macOS 26: off for good without the
 # re-enable, keys back at once with it). A handler slower than this is logged.
 SLOW_KEY_S = 0.25
+# How long an Esc on the tap waits for the lifecycle lock before queueing its cancel:
+# more than a paste holds it (0.31 s including the clipboard restore in the log).
+ESC_LOCK_WAIT_S = 0.5
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -1226,6 +1229,15 @@ class VoiceToText:
         an Esc from the app (consume_escape needs that answer now)."""
         now = time.perf_counter()
         if getattr(key, "name", None) == "esc":
+            # Nothing queued ahead: cancel now, as before the queue, so a result about to
+            # be pasted sees it; the lock is held at most for a paste (0.31 s) then. A
+            # held lock or a queued hotkey event means a microphone may be opening.
+            if not self.hotkey_pending and self.lifecycle_lock.acquire(timeout=ESC_LOCK_WAIT_S):
+                try:
+                    self.escape_consumed = self.escape_consumed or self.cancel_dictation()
+                finally:
+                    self.lifecycle_lock.release()
+                return
             if not self.escape_consumed:  # a repeat of a consumed press stays consumed
                 # a queued or running hotkey event may be starting a recording (a press,
                 # or the release that latches hands-free), whatever the last one left
@@ -1250,6 +1262,8 @@ class VoiceToText:
         try:
             if kind == "esc":
                 self.cancel_dictation()
+            elif kind == "undo":
+                self.request_undo()
             elif kind == "hold":
                 if key == self.press_seq:  # still the press that started this timer
                     self._show_recording()
@@ -1418,16 +1432,13 @@ class VoiceToText:
             return taken
         if self.undo_key_down:
             return True
-        # on the event tap: never wait behind a microphone being opened (SLOW_KEY_S)
-        if not self.lifecycle_lock.acquire(timeout=0.05):
-            return False
-        try:
-            offered = self.undo_timer is not None and not self.recording
-        finally:
-            self.lifecycle_lock.release()
+        # On the event tap, so no lock (it can be held while a microphone opens). A
+        # recording not shown yet is a hotkey press that the Z chord cancels (Command as
+        # the hotkey), so it does not count, and the undo is queued behind that cancel.
+        offered = self.undo_timer is not None and not (self.recording and self.shown)
         if offered:
             self.undo_key_down = True
-            self.request_undo()
+            self.key_events.put(("undo", None, None))
         return offered
 
     def request_undo(self, _signum=None, _frame=None) -> None:
@@ -1545,10 +1556,20 @@ class VoiceToText:
                 how = f"{time.perf_counter() - t0:.1f}s"
             else:
                 cleanup["thread"].join()
-                if "error" in cleanup:
-                    raise cleanup["error"]
-                self.cleaner = cleanup["cleaner"]
-                how = f"{cleanup['load_s']:.1f}s loading alongside"
+                error = cleanup.get("error")
+                if isinstance(error, (SystemExit, KeyboardInterrupt)):
+                    raise error
+                if error is not None:
+                    # a partial snapshot (an interrupted download): the normal loader
+                    # finishes it online, now that the transcription model is loaded
+                    logger.warning(f"Cleanup model folder did not load ({error}); loading it again")
+                    self.cleaner = backends.make_cleanup(
+                        self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+                    )
+                    how = f"{time.perf_counter() - t0:.1f}s, again"
+                else:
+                    self.cleaner = cleanup["cleaner"]
+                    how = f"{cleanup['load_s']:.1f}s loading alongside"
             self.cleaner.vocabulary = tuple(self.vocabulary)
             try:
                 self.cleaner.cleanup("hi", self.cfg.mode)
