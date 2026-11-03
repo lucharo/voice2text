@@ -50,7 +50,7 @@ struct HomeView: View {
           }
           SetupRow(number: 2, title: "Allow Full Access",
                    detail: keyboardSeen == nil
-                     ? "Lets the keyboard ask v2t to dictate. Nothing you type leaves the iPhone. Then open the v2t keyboard once in Try it below: iOS only lets v2t see both steps through the keyboard."
+                     ? "Lets the keyboard ask v2t to dictate. Nothing you type leaves the \(dictation.recommendation.deviceName). Then open the v2t keyboard once in Try it below: iOS only lets v2t see both steps through the keyboard."
                      : "Done: the keyboard last opened with Full Access \(keyboardSeen!.formatted(date: .abbreviated, time: .shortened)).",
                    done: keyboardSeen != nil) {
             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -73,10 +73,14 @@ struct HomeView: View {
           NavigationLink("Dictionary") { DictionaryView() }
           NavigationLink("History (\(history.items.count))") { HistoryView() }
         }
-        Section("This iPhone") { RecommendationCard(rec: dictation.recommendation) }
+        Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
         Section("Keyboard") { NavigationLink("Languages and typing") { KeyboardSettingsView() } }
       }
       .navigationTitle("v2t")
+      // a readable column on an iPad, as Settings keeps its rows; no effect at iPhone widths
+      .frame(maxWidth: 720)
+      .frame(maxWidth: .infinity)
+      .background(Color(.systemGroupedBackground))
     }
     .onChange(of: scenePhase) { _, phase in
       guard phase == .active else { return }
@@ -121,7 +125,7 @@ struct ModelRow: View {
         case .failed(let e):
           Text(e).font(.footnote).foregroundStyle(.red)
           Button("Try again") { Task { await dictation.prepareModel() } }
-        case .ready: Text("Ready. Transcription runs on this iPhone, offline.").font(.footnote).foregroundStyle(.secondary)
+        case .ready: Text("Ready. Transcription runs on this \(dictation.recommendation.deviceName), offline.").font(.footnote).foregroundStyle(.secondary)
         case .notDownloaded: Button("Download") { Task { await dictation.prepareModel() } }
         }
       }
@@ -170,9 +174,9 @@ struct CleanupRow: View {
     .accessibilityIdentifier("v2t.cleanup")
   }
   var subtitle: String {
-    guard available else { return "Unavailable: Apple Intelligence is off or not ready on this iPhone, so you get the words as heard, plus your dictionary's replacements." }
+    guard available else { return "Unavailable: Apple Intelligence is off or not ready on this \(dictation.recommendation.deviceName), so you get the words as heard, plus your dictionary's replacements." }
     return cleanup
-      ? "On: fixes punctuation and drops fillers on the iPhone, keeping your words and dictionary spellings."
+      ? "On: fixes punctuation and drops fillers on the \(dictation.recommendation.deviceName), keeping your words and dictionary spellings."
       : "Off: you get the words as heard, plus your dictionary's replacements."
   }
 }
@@ -185,7 +189,7 @@ struct RecommendationCard: View {
       Label(rec.speechName, systemImage: "waveform").font(.subheadline.weight(.semibold))
       Label(rec.cleanup == .appleIntelligence && !cleanup ? "Cleanup: off (turned off above)" : rec.cleanupName, systemImage: "sparkles").font(.subheadline)
       Text(rec.reason).font(.footnote).foregroundStyle(.secondary)
-      if !rec.measured { Text("Untested on this iPhone model.").font(.footnote).foregroundStyle(.orange) }
+      if !rec.measured { Text("Untested on this \(rec.deviceName) model.").font(.footnote).foregroundStyle(.orange) }
     }
     .padding(.vertical, 4)
   }
@@ -200,7 +204,7 @@ struct KeyboardHandoffView: View {
       Image(systemName: dictation.state == .listening ? "waveform" : "mic.fill")
         .font(.system(size: 64)).foregroundStyle(.red).symbolEffect(.variableColor, isActive: dictation.state == .listening)
       Text(dictation.state == .listening ? "Listening" : "Mic is ready").font(.largeTitle.bold())
-      Text("Swipe right along the bottom edge to go back to your app and keep talking. Tap the mic on the v2t keyboard when you're done.")
+      Text("Go back to your app and keep talking: tap ◀ at the top left, or swipe right along the bottom edge. Tap the mic on the v2t keyboard when you're done.")
         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
       Image(systemName: "arrow.right").font(.title).foregroundStyle(.secondary)
       Spacer()

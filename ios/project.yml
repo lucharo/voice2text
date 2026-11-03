@@ -38,13 +38,17 @@ targets:
         CFBundleDisplayName: v2t
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
-        NSMicrophoneUsageDescription: "v2t turns your speech into text on this iPhone. Audio never leaves the device."
+        NSMicrophoneUsageDescription: "v2t turns your speech into text on this device. Audio never leaves it."
         CFBundleURLTypes:
           - CFBundleURLName: es.luischav.v2t
             CFBundleURLSchemes: [v2t]
         UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # iPad multitasking needs every orientation
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t
+      TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, each with its own keyboard layout
   V2TKeyboard:
     type: app-extension
     platform: iOS
@@ -76,12 +80,19 @@ targets:
             RequestsOpenAccess: true
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.keyboard
+      TARGETED_DEVICE_FAMILY: "1,2"
   V2TTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [Tests]
+    sources:
+      - Tests
+      # the keyboard's key area, compiled in so its iPad layouts can be rendered off-screen (no iPad Simulator)
+      - Keyboard/KeyboardView.swift
+      - Keyboard/V2TMark.swift
     dependencies:
       - target: V2T
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.tests

@@ -48,7 +48,7 @@ import XCTest
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = Self.fixture
     app.launch()
     // the speech model downloads once (627 MB) and loads; allow for a slow network
-    let ready = app.staticTexts["Ready. Transcription runs on this iPhone, offline."]
+    let ready = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch
     XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
     shot("11-model-ready")
 

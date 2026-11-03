@@ -11,7 +11,7 @@ import XCTest
     app.launch()
     // the setup list changes height as the model row goes from Preparing to Ready; tapping Try it before then
     // can land on the row that moved under it
-    _ = app.staticTexts["Ready. Transcription runs on this iPhone, offline."].waitForExistence(timeout: 120)
+    _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
   }
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }

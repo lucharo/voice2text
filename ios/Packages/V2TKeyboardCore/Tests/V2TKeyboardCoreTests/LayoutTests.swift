@@ -23,7 +23,7 @@ struct LayoutTests {
   @Test func everyKeyFitsInsideTheKeyboardWithoutOverlap() {
     for l in [en, es, KeyboardLayout(width: 402, page: .numbers), KeyboardLayout(width: 375, page: .symbols)] {
       for k in l.keys {
-        #expect(k.frame.minX >= 0 && k.frame.maxX <= l.width && k.frame.maxY <= KeyboardLayout.height, "\(k.id)")
+        #expect(k.frame.minX >= 0 && k.frame.maxX <= l.width && k.frame.maxY <= l.height, "\(k.id)")
         for o in l.keys where o.id != k.id { #expect(!k.frame.insetBy(dx: 0.5, dy: 0.5).intersects(o.frame), "\(k.id) overlaps \(o.id)") }
       }
     }

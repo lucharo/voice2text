@@ -13,6 +13,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
   private var heightConstraint: NSLayoutConstraint?
+  private var keysHeightConstraint: NSLayoutConstraint?
   private let haptics = UIImpactFeedbackGenerator(style: .light)
   private let decodeQueue = DispatchQueue(label: "v2t.swipe", qos: .userInteractive)
   /// True while the engine edits the document, so our own edits don't trigger a resync.
@@ -23,7 +24,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     super.viewDidLoad()
     language = Settings.shared.layoutLanguage
     let lexicons = Settings.shared.suggestionLanguages.compactMap { LexiconStore.load($0) }
-    let layout = KeyboardLayout(width: max(320, view.bounds.width), language: language)
+    let layout = makeLayout(width: max(320, view.bounds.width), page: .letters)
     let proxy = ProxyAdapter(self)
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
     engine.learned = Settings.shared.learnedWords.union(PersonalDictionary().autocorrectExclusions)
@@ -41,11 +42,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       view.addSubview(v)
     }
     view.bringSubviewToFront(keyboardView)
-    let h = view.heightAnchor.constraint(equalToConstant: SuggestionBar.height + KeyboardLayout.height)
+    let h = view.heightAnchor.constraint(equalToConstant: SuggestionBar.height + layout.height)
     h.priority = .defaultHigh
     heightConstraint = h
+    let kh = keyboardView.heightAnchor.constraint(equalToConstant: layout.height)
+    keysHeightConstraint = kh
     NSLayoutConstraint.activate([
-      h,
+      h, kh,
       bar.topAnchor.constraint(equalTo: view.topAnchor),
       bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -53,7 +56,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       keyboardView.topAnchor.constraint(equalTo: bar.bottomAnchor),
       keyboardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       keyboardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      keyboardView.heightAnchor.constraint(equalToConstant: KeyboardLayout.height),
     ])
     dictation.onText = { [weak self] text in self?.edit { $0.insertFinished(text) } }
     dictation.onState = { [weak self] state in self?.bar.dictationState = state }
@@ -77,9 +79,19 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
-    if abs(keyboardView.layout.width - view.bounds.width) > 0.5, view.bounds.width > 0 {
-      relayout(page: keyboardView.layout.page)
+    let current = keyboardView.layout, wanted = makeLayout(width: view.bounds.width, page: current.page)
+    if view.bounds.width > 0, abs(current.width - view.bounds.width) > 0.5 || current.form != wanted.form || current.metrics != wanted.metrics {
+      relayout(page: current.page)
     }
+  }
+
+  /// The iPad keyboard on an iPad wide enough for it (not its phone-sized floating keyboard), taller in
+  /// landscape; the iPhone keyboard everywhere else.
+  private func makeLayout(width: CGFloat, page: KeyboardPage) -> KeyboardLayout {
+    let pad = traitCollection.userInterfaceIdiom == .pad && width >= 600
+    var landscape = width > 1100
+    if let screen = view.window?.windowScene?.screen { landscape = screen.bounds.width > screen.bounds.height }
+    return KeyboardLayout(width: width, page: page, language: language, form: pad ? .pad : .phone, landscape: pad && landscape)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
@@ -96,8 +108,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   private func relayout(page: KeyboardPage) {
-    let layout = KeyboardLayout(width: view.bounds.width, page: page, language: language)
+    let layout = makeLayout(width: view.bounds.width, page: page)
     keyboardView.setLayout(layout)
+    heightConstraint?.constant = SuggestionBar.height + layout.height
+    keysHeightConstraint?.constant = layout.height
     if page == .letters {
       engine.suggester = Suggester(lexicons: engine.suggester.lexicons, layout: layout)
       decoders = engine.suggester.lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
@@ -193,6 +207,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     case .page(let p): relayout(page: p)
     case .mic: startDictation()
     case .emoji: advanceToNextInputMode()  // until the emoji page lands: hand over to the next keyboard
+    case .dismiss: dismissKeyboard()
     case .character, .delete: break
     }
   }

@@ -1,9 +1,10 @@
 import Foundation
+import UIKit
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
 
-/// The one speech model and cleanup this iPhone gets. There is no catalogue: each hardware class has a single
+/// The one speech model and cleanup this iPhone or iPad gets. There is no catalogue: each hardware class has a single
 /// choice, grounded in what was measured on an iPhone 16 Pro (#52, #85, #67) and on FluidAudio's known limits.
 struct Recommendation: Equatable {
   enum Speech: String { case nemotron, parakeet }
@@ -13,8 +14,10 @@ struct Recommendation: Equatable {
   let cleanup: Cleanup
   /// Why, in a sentence the user sees.
   let reason: String
-  /// Whether this iPhone model is the one the phone measurements ran on.
+  /// Whether this model of iPhone is the one the phone measurements ran on.
   let measured: Bool
+  /// "iPhone" or "iPad", for the words the user sees.
+  var deviceName = "iPhone"
 
   var speechName: String {
     switch speech {
@@ -32,7 +35,7 @@ struct Recommendation: Equatable {
 
   var cleanupName: String {
     switch cleanup {
-    case .appleIntelligence: "Cleanup: Apple Intelligence, on this iPhone"
+    case .appleIntelligence: "Cleanup: Apple Intelligence, on this \(deviceName)"
     case .dictionaryOnly: "Cleanup: none, your dictionary's replacements only"
     }
   }
@@ -47,6 +50,9 @@ struct Recommendation: Equatable {
     var appleIntelligenceCompatible: Bool
     /// The hardware identifier (utsname machine), e.g. "iPhone17,1".
     var model: String = ""
+    /// "iPhone" or "iPad". iPads take the same rule: Apple Intelligence-compatible iPads (M1 and later, A17 Pro)
+    /// get Nemotron, the rest Parakeet; no iPad has been measured.
+    var deviceName = "iPhone"
     /// Every phone measurement so far (#52, #67, #85) ran on one iPhone 16 Pro, which `xcrun devicectl list
     /// devices` on the bench Mac reports as iPhone17,1.
     var isMeasuredModel: Bool { model == "iPhone17,1" }
@@ -55,19 +61,26 @@ struct Recommendation: Equatable {
   // Words wrong on the iPhone 16 Pro bench (#85, 150 clips per set): LibriSpeech clean ("clear English"),
   // LibriSpeech other ("harder English") and FLEURS Spanish.
   static func choose(for d: Device) -> Recommendation {
+    var r = chooseModel(for: d)
+    r.deviceName = d.deviceName
+    return r
+  }
+
+  private static func chooseModel(for d: Device) -> Recommendation {
+    let device = d.deviceName
     if d.appleIntelligenceCompatible {
       let measured = "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words wrong on clear English, 3.4% on harder English, 3.4% on Spanish), text ready about 0.1 s after you stop, or about 1 to 1.5 s with Apple Intelligence cleanup."
       return Recommendation(
         speech: .nemotron,
         cleanup: d.appleIntelligence ? .appleIntelligence : .dictionaryOnly,
         reason: measured + (d.appleIntelligence
-          ? " Apple Intelligence is on, so it tidies punctuation on the iPhone without a download."
+          ? " Apple Intelligence is on, so it tidies punctuation on the \(device) without a download."
           : " Apple Intelligence is off or not ready, so there is no cleanup: turn it on in Settings › Apple Intelligence & Siri."),
         measured: d.isMeasuredModel)
     }
     return Recommendation(
       speech: .parakeet, cleanup: .dictionaryOnly,
-      reason: "FluidAudio reports its int8 Unified encoders failing to load on the A16 chip (FluidAudio #828, the Parakeet Unified sibling of Nemotron) and calls other earlier chips unverified, so this iPhone gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this iPhone.",
+      reason: "FluidAudio reports its int8 Unified encoders failing to load on the A16 chip (FluidAudio #828, the Parakeet Unified sibling of Nemotron) and calls other earlier chips unverified, so this \(device) gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this \(device).",
       measured: false)
   }
 
@@ -87,6 +100,7 @@ extension Recommendation.Device {
     var info = utsname()
     uname(&info)
     let model = withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-    return .init(appleIntelligence: available, appleIntelligenceCompatible: compatible, model: model)
+    return .init(appleIntelligence: available, appleIntelligenceCompatible: compatible, model: model,
+                 deviceName: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")
   }
 }

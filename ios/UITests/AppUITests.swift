@@ -49,7 +49,7 @@ import XCTest
       return
     }
     if (cleanup.value as? String) != "1" { cleanup.switches.firstMatch.tap() }
-    let card = app.staticTexts["Cleanup: Apple Intelligence, on this iPhone"]
+    let card = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Cleanup: Apple Intelligence, on this'")).firstMatch
     reveal(card, in: app)
     XCTAssertTrue(card.exists)
     shot("22-cleanup-on")
@@ -62,7 +62,7 @@ import XCTest
   }
 
   func testACachedModelNeverShowsAsDownloading() {
-    let ready = app.staticTexts["Ready. Transcription runs on this iPhone, offline."]
+    let ready = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch
     app.launch()  // the first launch on a fresh Simulator downloads the model; wait for that
     XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
     app.terminate()

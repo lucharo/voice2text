@@ -16,8 +16,9 @@ struct SwipeDecoderTests {
 
   struct Accuracy { var top1 = 0, top3 = 0, total = 0, misses: [String] = [], times: [Double] = [] }
 
-  static func measure(_ lex: Lexicon, _ language: KeyboardLanguage, words n: Int, jitter: Double, seed: UInt64) -> Accuracy {
-    let layout = KeyboardLayout(width: 402, language: language)
+  static func measure(_ lex: Lexicon, _ language: KeyboardLanguage, words n: Int, jitter: Double, seed: UInt64,
+                      layout: KeyboardLayout? = nil) -> Accuracy {
+    let layout = layout ?? KeyboardLayout(width: 402, language: language)
     let decoder = SwipeDecoder(lexicon: lex, layout: layout)
     var rng = SeededRandom(state: seed)
     var acc = Accuracy()
@@ -80,6 +81,20 @@ struct SwipeDecoderTests {
     print("swipe \(lang): top1 \(acc.top1)/\(acc.total) top3 \(acc.top3)/\(acc.total) p95 \(String(format: "%.1f", p95)) ms misses \(acc.misses)")
     #expect(Double(acc.top1) / Double(acc.total) >= 0.90)
     #expect(Double(acc.top3) / Double(acc.total) >= 0.97)
+  }
+
+  /// The same target on the iPad keyboard, 11-inch portrait and landscape. Its keys are wider than tall, and
+  /// the extra punctuation keys sit in the bottom letter row.
+  @Test(arguments: [("en", KeyboardLanguage.english), ("es", KeyboardLanguage.spanish)])
+  func noisyTracesMeetTheAccuracyTargetOnTheIPadKeyboard(lang: String, language: KeyboardLanguage) throws {
+    let lex = try Fixtures.lexicon(lang)
+    for (w, land) in [(CGFloat(834), false), (1194, true)] {
+      let layout = KeyboardLayout(width: w, language: language, form: .pad, landscape: land)
+      let acc = Self.measure(lex, language, words: 1000, jitter: 0.25, seed: 42, layout: layout)
+      print("swipe ipad \(lang) \(Int(w)): top1 \(acc.top1)/\(acc.total) top3 \(acc.top3)/\(acc.total)")
+      #expect(Double(acc.top1) / Double(acc.total) >= 0.90)
+      #expect(Double(acc.top3) / Double(acc.total) >= 0.97)
+    }
   }
 }
 

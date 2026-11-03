@@ -42,7 +42,7 @@ public final class SwipeDecoder: @unchecked Sendable {
       if case .character(let c) = k.action, c.count == 1, let ch = c.first, ch.isLetter { centers[ch] = k.center }
     }
     self.centers = centers
-    self.radius = Double(min(layout.unitWidth, KeyboardLayout.keyHeight))
+    self.radius = Double(min(layout.unitWidth, layout.metrics.keyHeight))
     var b = [[Int32]](repeating: [], count: 26 * 26)
     for i in 0..<lexicon.count where lexicon.frequency(i) > 0 {
       let (f, l, n) = lexicon.withKey(i) { k in (k.first ?? 0, k.last ?? 0, k.count) }

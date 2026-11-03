@@ -170,6 +170,7 @@ final class KeyboardView: UIView {
     case .returnKey: returnLabel
     case .mic: "dictate"
     case .emoji: "next keyboard"
+    case .dismiss: "hide keyboard"
     case .page(let p): p == .letters ? "letters" : (p == .numbers ? "numbers" : "symbols")
     }
   }
@@ -182,6 +183,7 @@ final class KeyboardView: UIView {
     case .returnKey where returnLabel == "return" || returnLabel == "intro": "return.left"
     case .mic: "mic"
     case .emoji: "globe"
+    case .dismiss: "keyboard.chevron.compact.down"
     default: nil
     }
   }
@@ -195,14 +197,15 @@ final class KeyboardView: UIView {
 
   private func label(for k: Key) -> (String, CGFloat) {
     switch k.action {
-    case .character(let c): return (shift == .off ? c : c.uppercased(), layout.page == .letters ? 25 : 22)
+    case .character(let c): return (shift == .off ? c : c.uppercased(), layout.form == .pad ? (layout.metrics.keyHeight > 60 ? 28 : 24) : (layout.page == .letters ? 25 : 22))
     case .shift: return (shift == .locked ? "⇪" : "⇧", 22)
     case .delete: return ("⌫", 22)
     case .space: return ("", 16)  // Apple's space bar carries no label
-    case .returnKey: return (returnLabel, 16)
+    case .returnKey: return (returnLabel, layout.form == .pad ? 20 : 16)
     case .mic: return ("🎙", 19)
     case .emoji: return ("🌐", 19)  // next keyboard, until v2t has its own emoji page
-    case .page: return (k.label, 16)
+    case .dismiss: return ("⌨", 19)
+    case .page: return (k.label, layout.form == .pad ? 18 : 16)
     }
   }
 
@@ -225,7 +228,8 @@ final class KeyboardView: UIView {
       delegate?.keyboardViewKeyDown(self)
       switch key.action {
       case .character:
-        showPreview(key, text: label(for: key).0)
+        // the iPhone shows a balloon above the key; Apple's iPad keyboard darkens the key instead
+        if layout.form == .pad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0) }
         if !key.alternatives.isEmpty {
           track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
             MainActor.assumeIsolated { if let self, let track, !track.swiping { self.showAlternatives(track) } }
