@@ -50,6 +50,26 @@ struct TypingEngineTests {
     #expect(p.text == "x OkOK")
   }
 
+  /// A rotation mid-word: the touches were on the old layout, so they must not be scored against the new
+  /// one. Typed on the iPad portrait layout, then the keyboard turns to landscape before the space.
+  @Test func aLayoutChangeMidWordDropsTheOldTouchesAndKeepsTheWord() throws {
+    let lex = try Fixtures.english.get()
+    let portrait = KeyboardLayout(width: 834, form: .pad), landscape = KeyboardLayout(width: 1194, form: .pad, landscape: true)
+    let p = FakeProxy()
+    p.text = "I said "
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [lex], layout: portrait))
+    e.resync()
+    for (i, ch) in "teh".enumerated() {
+      e.character(String(ch), at: portrait.keys.first { $0.label == String(ch) }?.center, now: Double(i + 1))
+    }
+    #expect(e.composing.allSatisfy { $0.point != nil })
+    e.replaceLayout(with: Suggester(lexicons: [lex], layout: landscape))
+    #expect(e.composing.map(\.character) == Array("teh") && e.composing.allSatisfy { $0.point == nil })
+    #expect(p.text == "I said teh")
+    e.space(now: 10)
+    #expect(p.text == "I said the ")  // still corrected, from the letters alone
+  }
+
   @Test func spaceAutocorrectsAndDeleteOffersTheOriginalBack() throws {
     let (e, p) = try engine("I said ")
     type("teh ", e)

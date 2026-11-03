@@ -26,6 +26,8 @@ public struct Key: Hashable, Sendable, Identifiable {
   public let row: Int
 
   public var isCharacter: Bool { if case .character = action { true } else { false } }
+  /// A letter key: only these start a swipe, so dragging off , . or ' still types the mark.
+  public var startsSwipe: Bool { if case .character(let c) = action { c.first?.isLetter == true } else { false } }
   public var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
 }
 

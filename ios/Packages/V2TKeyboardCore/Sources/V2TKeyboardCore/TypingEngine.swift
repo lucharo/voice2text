@@ -224,6 +224,14 @@ public final class TypingEngine {
     refreshShift()
   }
 
+  /// The keyboard's geometry changed (rotation, resize, layout language): score with `suggester` from now on,
+  /// and forget where the keys of the word in progress were touched, since those points belong to the old
+  /// layout. The word itself, shift and the pending autocorrect state stay.
+  public func replaceLayout(with suggester: Suggester) {
+    self.suggester = suggester
+    composing = composing.map { TypedKey($0.character) }
+  }
+
   /// The host moved the cursor or changed the text itself: forget our state and read the word at the cursor.
   public func resync() {
     composing = []

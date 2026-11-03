@@ -102,7 +102,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     if settings.layoutLanguage != language || engine.suggester.lexicons.map(\.language) != wanted {
       language = settings.layoutLanguage
       let lexicons = settings.suggestionLanguages.compactMap { LexiconStore.load($0) }
-      engine.suggester = Suggester(lexicons: lexicons, layout: keyboardView.layout)
+      engine.replaceLayout(with: Suggester(lexicons: lexicons, layout: keyboardView.layout))
       relayout(page: .letters)
     }
   }
@@ -113,7 +113,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     heightConstraint?.constant = SuggestionBar.height + layout.height
     keysHeightConstraint?.constant = layout.height
     if page == .letters {
-      engine.suggester = Suggester(lexicons: engine.suggester.lexicons, layout: layout)
+      engine.replaceLayout(with: Suggester(lexicons: engine.suggester.lexicons, layout: layout))
       decoders = engine.suggester.lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
     }
     refresh()

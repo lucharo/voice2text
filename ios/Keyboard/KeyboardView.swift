@@ -278,7 +278,7 @@ final class KeyboardView: UIView {
         continue
       }
       // a letter-key touch that travels most of a key's width becomes a swipe
-      if case .character = track.key.action, layout.page == .letters, !track.swiping,
+      if track.key.startsSwipe, layout.page == .letters, !track.swiping,
          hypot(p.x - track.start.x, p.y - track.start.y) > layout.unitWidth * 0.7 {
         track.swiping = true
         track.timer?.invalidate()

@@ -76,6 +76,13 @@ struct PadLayoutTests {
     #expect(l.key(at: CGPoint(x: q.frame.midX, y: q.frame.maxY + l.metrics.gap / 2 - 1))?.label == "q")
   }
 
+  @Test func onlyLetterKeysStartASwipe() {
+    let l = KeyboardLayout(width: 834, form: .pad)
+    for id in ["letters-,", "letters-.", "shift", "delete", "space"] { #expect(l.keys.first { $0.id == id }?.startsSwipe == false, "\(id)") }
+    #expect(l.keys.filter(\.startsSwipe).count == 26)
+    #expect(KeyboardLayout(width: 834, language: .spanish, form: .pad).keys.first { $0.id == "letters-ñ" }?.startsSwipe == true)
+  }
+
   @Test func punctuationKeysOfferTheirShiftedMarks() {
     let l = KeyboardLayout(width: 834, form: .pad)
     #expect(l.keys.first { $0.id == "letters-," }?.alternatives == ["!"])
