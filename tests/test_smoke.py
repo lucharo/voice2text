@@ -4919,7 +4919,7 @@ class V2TSmokeTests(unittest.TestCase):
         voice.key_down("Z")
 
         self.assertTrue(voice.take_undo_shortcut(False), "Cmd+Z is kept for the undo")
-        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["down", "undo"])
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["chord", "undo"])
         self._drain(voice)
         self.assertFalse(voice.recording, "the chord cancelled the candidate first")
         self.assertTrue(voice.undo_requested.is_set())
@@ -5028,6 +5028,49 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertFalse(voice.escape_consumed)
         self.assertEqual(voice.esc_waiting, 0)
+
+    def test_escape_then_cmd_z_during_a_slow_start_brings_the_dictation_back(self):
+        # #102: Esc was queued, no Undo existed yet, and Cmd+Z went to the app
+        voice, _tap = self._tapper()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")  # its microphone has not opened yet
+        voice.key_down(types.SimpleNamespace(name="esc"))
+        self.assertTrue(voice.escape_consumed)
+
+        self.assertTrue(voice.take_undo_shortcut(False), "Cmd+Z is kept for the undo")
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["down", "esc", "undo"])
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the press opens the mic
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertIsNotNone(voice.cancelled_audio, "Esc cancelled it, keeping the audio")
+        self.assertTrue(voice.undo_requested.is_set(), "and the undo follows")
+
+    def test_escape_after_a_shortcut_with_the_hotkey_goes_to_the_app(self):
+        # #102: with Command as the hotkey, Cmd+F then Esc during a slow start
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_down("F")  # will cancel the Cmd press as a shortcut
+        app.time.perf_counter.return_value = 100.2
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertFalse(voice.escape_consumed, "the app's search box gets its Esc")
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+        self.assertEqual(voice.chords_pending, 0)
+
+    def test_typing_after_the_hold_during_a_slow_start_keeps_escape_for_the_dictation(self):
+        voice, _tap = self._tapper()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.8  # held past HOLD_S: typing, not a shortcut
+        voice.key_down("A")
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertEqual(voice.chords_pending, 0)
+        self.assertTrue(voice.escape_consumed)
 
     def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
         voice, _tap = self._tapper()

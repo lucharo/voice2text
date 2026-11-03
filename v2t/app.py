@@ -398,6 +398,10 @@ class VoiceToText:
         self.hotkey_pending = 0  # hotkey events queued or being handled (an Esc counts them)
         self.starting = False  # start_recording is opening the microphone (Undo's too)
         self.presses_pending = 0  # of those, hotkey presses (each may open the microphone)
+        self.last_press_queued_at = 0.0  # when the last hotkey press was queued
+        # queued keys that will cancel the hotkey press before them as a shortcut (Cmd+F
+        # with Command as the hotkey): an Esc after them is the app's, not the dictation's
+        self.chords_pending = 0
         self.pending_lock = threading.Lock()
         # Esc's choice on the tap and the paste decision, each a few instructions long
         # under this lock, so one always sees the other (never held while waiting)
@@ -1269,16 +1273,31 @@ class VoiceToText:
                     # a queued press, or a start under way, opens a new recording whatever
                     # the last dictation left; a queued release (which may latch hands-free)
                     # counts only until a paste is decided
-                    starting = self.presses_pending > 0 or self.starting
+                    doomed = self.chords_pending > 0  # that press is a shortcut, not a dictation
+                    starting = (self.presses_pending > 0 or self.starting) and not doomed
                     if starting or (
-                        (self.recording or self.processing or self.hotkey_pending > 0)
+                        (self.processing or ((self.recording or self.hotkey_pending > 0) and not doomed))
                         and not self.delivered
                     ):
                         self.esc_waiting += 1
                         self.escape_consumed = True
                         self.key_events.put(("esc", key, now))
             return
+        if key != self.hotkey and self._will_chord(now):
+            with self.pending_lock:
+                self.chords_pending += 1
+            self.key_events.put(("chord", key, now))
+            return
         self._queue_key("down", key, now)
+
+    def _will_chord(self, now: float) -> bool:
+        """A key that will cancel the hotkey press before it as a shortcut (on_press):
+        one queued, or one recording unseen, pressed less than HOLD_S ago."""
+        if self.latched:  # a press then stops the hands-free recording; keys are typing
+            return False
+        if self.presses_pending > 0:
+            return now - self.last_press_queued_at < self.HOLD_S
+        return self.recording and not self.shown and now - self.press_at < self.HOLD_S
 
     def key_up(self, key):
         self._queue_key("up", key, time.perf_counter())
@@ -1288,6 +1307,8 @@ class VoiceToText:
             with self.pending_lock:
                 self.hotkey_pending += 1  # until the hotkey thread has handled it
                 self.presses_pending += kind == "down"
+                if kind == "down":
+                    self.last_press_queued_at = at
         self.key_events.put((kind, key, at))
 
     def _handle_key_event(self, kind: str, key, at) -> None:
@@ -1303,13 +1324,16 @@ class VoiceToText:
             elif kind == "hold":
                 if key == self.press_seq:  # still the press that started this timer
                     self._show_recording()
-            elif kind == "down":
+            elif kind in ("down", "chord"):
                 self.on_press(key, at=at)
             else:
                 self.on_release(key, at=at)
         except Exception:
             logger.exception("Hotkey handling failed")
         finally:
+            if kind == "chord":
+                with self.pending_lock:
+                    self.chords_pending -= 1
             if kind in ("down", "up") and key == self.hotkey:
                 with self.pending_lock:
                     self.hotkey_pending -= 1
@@ -1480,7 +1504,9 @@ class VoiceToText:
         # On the event tap, so no lock (it can be held while a microphone opens). A
         # recording not shown yet is a hotkey press that the Z chord cancels (Command as
         # the hotkey), so it does not count, and the undo is queued behind that cancel.
-        offered = self.undo_timer is not None and not (self.recording and self.shown)
+        # An Esc still queued (a slow microphone start) offers its Undo once handled, so
+        # it counts already, and the undo waits behind it in the queue.
+        offered = (self.undo_timer is not None or self.esc_waiting > 0) and not (self.recording and self.shown)
         if offered:
             self.undo_key_down = True
             self.key_events.put(("undo", None, None))
