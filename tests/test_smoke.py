@@ -4693,6 +4693,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(intercept(10, (app.Z_VK, 0)), (app.Z_VK, 0), "plain z passes")
         self.assertEqual(intercept(10, cmd_shift_z), cmd_shift_z, "redo passes")
         self.assertIsNone(intercept(10, cmd_z))
+        self._drain(voice)  # queued behind the Z's own key event
         self.assertTrue(voice.undo_requested.is_set())
         self.assertIsNone(intercept(10, cmd_z), "autorepeat swallowed")
         self.assertIsNone(intercept(11, (app.Z_VK, 0)), "key-up swallowed, Cmd already up")
@@ -4814,6 +4815,276 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertTrue(voice.latched)
         self.assertTrue(voice.recording)
+
+    def test_keys_are_handled_off_the_event_tap_at_the_time_they_happened(self):
+        # 2026-11-02: opening the microphone ran inside the tap's callback, macOS turned
+        # the tap off, and Fn could no longer stop a hands-free dictation
+        voice, _tap = self._tapper()
+        opened = []
+        start = voice.start_recording
+        voice.start_recording = lambda **kw: (opened.append(kw), start(**kw))
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("HOTKEY")
+
+        self.assertEqual(opened, [], "the tap only queues the key")
+        self.assertEqual(
+            [voice.key_events.get_nowait() for _ in range(2)],
+            [("down", "HOTKEY", 100.0), ("up", "HOTKEY", 100.2)],
+        )
+
+        app.time.perf_counter.return_value = 102.0  # the microphone took 1.8 s to open
+        voice.on_press("HOTKEY", at=100.0)
+        voice.on_release("HOTKEY", at=100.2)
+
+        self.assertEqual(len(opened), 1)
+        self.assertFalse(voice.recording, "a 0.2 s tap, not a 2 s hold")
+        self.assertTrue(voice.jobs.empty())
+        self.assertEqual(voice.last_tap_at, 100.2, "a second tap within 0.5 s of it latches")
+
+    def _drain(self, voice):
+        while not voice.key_events.empty():
+            voice._handle_key_event(*voice.key_events.get_nowait())
+
+    def test_escape_is_decided_on_the_tap_and_cancels_in_order(self):
+        voice, _tap = self._tapper()
+        escape = types.SimpleNamespace(name="esc")
+        voice.key_down(escape)
+        self.assertFalse(voice.escape_consumed, "idle: Esc goes to the app")
+        self.assertTrue(voice.key_events.empty())
+        voice.consume_escape(True)
+
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")  # its recording does not exist yet
+        voice.key_down(escape)
+
+        self.assertTrue(voice.escape_consumed, "kept from the app without waiting")
+        self.assertFalse(voice.recording)
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording, "the press opened the mic, then Esc cancelled it")
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        self.assertEqual(voice.hotkey_pending, 0)
+
+    def test_escape_counts_a_starting_recording_whatever_the_last_one_left(self):
+        voice, _tap = self._tapper()
+        escape = types.SimpleNamespace(name="esc")
+        voice.delivered = True  # the last dictation was pasted
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        voice.key_down(escape)
+        self.assertTrue(voice.escape_consumed, "a queued press is starting a new one")
+        self._drain(voice)
+        voice.consume_escape(True)
+
+        # the second tap of a double-tap latches on its release
+        voice.last_tap_at = 100.0
+        app.time.perf_counter.return_value = 100.3
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.4
+        voice.key_up("HOTKEY")
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the press only
+        voice.key_down(escape)
+        self.assertTrue(voice.escape_consumed, "the queued release is latching")
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+        self.assertEqual(voice.hotkey_pending, 0)
+
+    def test_escape_with_nothing_queued_cancels_at_once(self):
+        # a result about to be pasted must see it (the paste decision takes the same lock)
+        voice, _tap = self._tapper()
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertTrue(voice.cancel_requested)
+        self.assertTrue(voice.key_events.empty())
+
+    def test_cmd_z_undoes_while_command_as_the_hotkey_is_down(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        voice.start_recording()
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        voice.on_press(types.SimpleNamespace(name="esc"))  # cancelled: Undo is offered
+        voice.consume_escape(True)
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        voice._handle_key_event(*voice.key_events.get_nowait())  # an invisible candidate
+        self.assertTrue(voice.recording)
+        voice.key_down("Z")
+
+        self.assertTrue(voice.take_undo_shortcut(False), "Cmd+Z is kept for the undo")
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["down", "undo"])
+        self._drain(voice)
+        self.assertFalse(voice.recording, "the chord cancelled the candidate first")
+        self.assertTrue(voice.undo_requested.is_set())
+
+    def test_a_paste_waits_for_a_queued_escape(self):
+        voice, _tap = self._tapper()
+        voice.processing = True
+        voice.esc_waiting = 1  # an Esc waits behind the release that queued this
+
+        def hotkey_thread():
+            app.time.sleep(0.05)
+            voice.cancel_requested = True  # what its cancel_dictation does
+            voice.esc_waiting = 0
+
+        thread = threading.Thread(target=hotkey_thread)
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            thread.start()
+            voice._deliver("hello", 1.0, 0.1, streamed=False, levels=None)
+            thread.join(5)
+
+        paste.assert_not_called()
+
+    def test_escape_during_a_slow_undo_start_is_kept_and_queued(self):
+        voice, _tap = self._tapper()
+        voice.starting = True
+        held, release = threading.Event(), threading.Event()
+
+        def opening():  # Undo opens the microphone under the lock, off the hotkey thread
+            with voice.lifecycle_lock:
+                held.set()
+                release.wait(5)
+
+        thread = threading.Thread(target=opening)
+        thread.start()
+        held.wait(5)
+        voice.key_down(types.SimpleNamespace(name="esc"))
+        release.set()
+        thread.join(5)
+
+        self.assertTrue(voice.escape_consumed)
+        self.assertEqual([k for k, *_ in list(voice.key_events.queue)], ["esc"])
+
+    def test_a_key_pressed_after_the_hold_threshold_is_typing_not_a_chord(self):
+        voice, _tap = self._tapper()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.7
+        voice.key_down("A")  # held past HOLD_S, then typed
+        app.time.perf_counter.return_value = 102.0  # the microphone took 2 s to open
+        self._drain(voice)
+
+        self.assertTrue(voice.recording)
+        self.assertTrue(voice.shown)
+
+        voice.cancel_recording()
+        app.time.perf_counter.return_value = 103.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 103.2
+        voice.key_down("A")  # before HOLD_S: a shortcut
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+
+    def test_a_hold_released_before_its_timer_ran_is_still_a_dictation(self):
+        voice, _tap = self._tapper()
+        voice.cancelled_audio = ([np.ones((8, 1), dtype=np.float32)], 1.0)  # an old Undo offer
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.8
+        voice.key_up("HOTKEY")  # held 0.8 s
+        app.time.perf_counter.return_value = 102.0  # the microphone took 2 s to open
+        voice._handle_key_event(*voice.key_events.get_nowait())
+        voice.frames = [np.ones((8, 1), dtype=np.float32)]
+        self._drain(voice)
+
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.jobs.empty(), "transcribed")
+        self.assertIsNone(voice.cancelled_audio, "the old Undo is withdrawn")
+
+    def test_no_reload_while_a_hotkey_event_is_being_handled(self):
+        voice, _tap = self._tapper()
+        voice.reload_requested.set()
+        voice.hotkey_pending = 1  # taken off the queue, start_recording not reached yet
+        self.assertFalse(voice._begin_reload())
+        voice.hotkey_pending = 0
+        self.assertTrue(voice._begin_reload())
+
+    def test_each_queued_escape_keeps_its_own_hold_on_the_paste(self):
+        voice, _tap = self._tapper()
+        voice.presses_pending = 1  # Esc counts as a new press is coming
+        escape = types.SimpleNamespace(name="esc")
+        voice.hotkey_pending = 1
+        voice.key_down(escape)
+        voice.consume_escape(True)
+        voice.key_down(escape)
+        self.assertEqual(voice.esc_waiting, 2)
+        voice._handle_key_event(*voice.key_events.get_nowait())
+        self.assertEqual(voice.esc_waiting, 1, "the second still holds the paste back")
+
+    def test_escape_after_a_paste_is_decided_goes_to_the_app(self):
+        voice, _tap = self._tapper()
+        voice.processing = True
+        voice.delivered = True  # _deliver decided under the gate
+        voice.hotkey_pending = 1  # a release still queued (not a press)
+
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertFalse(voice.escape_consumed)
+        self.assertEqual(voice.esc_waiting, 0)
+
+    def test_a_release_waiting_in_the_queue_beats_the_hold_timer(self):
+        voice, _tap = self._tapper()
+        set_state = mock.patch.object(voice, "_set_state", wraps=voice._set_state)
+        self.addCleanup(set_state.stop)
+        states = set_state.start()
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("HOTKEY")
+        app.time.perf_counter.return_value = 102.0  # the microphone took 1.8 s to open
+
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the press
+        voice.hold_timer.fire()  # due at once: its hold is queued behind the release
+        self._drain(voice)
+
+        self.assertFalse(voice.recording)
+        self.assertNotIn("recording", [c.args[0] for c in states.call_args_list])
+        self.assertEqual(voice.last_tap_at, 100.2)
+
+    def test_a_tap_macos_turned_off_is_turned_back_on(self):
+        calls = []
+
+        class Listener:
+            _MODIFIER_FLAGS = {}
+
+            def __init__(self, **_options):
+                pass
+
+            def _create_event_tap(self):
+                return "TAP"
+
+            def _handle_message(self, *args):
+                calls.append(("handled", args[1]))
+
+        keyboard = types.SimpleNamespace(
+            Listener=Listener, KeyCode=types.SimpleNamespace(from_vk=lambda value: value)
+        )
+        enabled = [True]
+        quartz = types.SimpleNamespace(
+            kCGEventFlagMaskSecondaryFn=1 << 23,
+            CGEventTapEnable=lambda tap, on: calls.append(("enable", tap, on)),
+            CGEventTapIsEnabled=lambda _tap: enabled[0],
+        )
+        with mock.patch.dict(sys.modules, {"pynput": types.SimpleNamespace(keyboard=keyboard), "Quartz": quartz}):
+            listener = app._listener("press", "release")
+        listener._create_event_tap()
+
+        listener._handle_message(None, 0xFFFFFFFE, None, None, False)  # kCGEventTapDisabledByTimeout
+        listener._handle_message(None, 12, "event", None, False)  # flags changed: Fn
+        self.assertEqual(calls, [("enable", "TAP", True), ("handled", 12)])
+
+        calls.clear()
+        self.assertTrue(listener.ensure_enabled())
+        enabled[0] = False
+        self.assertFalse(listener.ensure_enabled())
+        self.assertEqual(calls, [("enable", "TAP", True)])
 
     def test_the_fn_key_is_a_modifier_for_the_listener(self):
         class KeyCode:
@@ -5526,6 +5797,132 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(attempts, [True, False])
         self.assertFalse(constants.HF_HUB_OFFLINE)
+
+    def _warm(self, make_stt, make_cleanup, snapshot=Path("/cache/snapshots/abc")):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config())
+        voice.cfg.preview = ""
+        with (
+            mock.patch.object(backends, "make_stt", side_effect=make_stt),
+            mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
+            mock.patch.object(backends, "local_snapshot", return_value=snapshot),
+            # warmup imports transformers before the thread starts: a 5-10 s import
+            mock.patch.dict(sys.modules, {"transformers": types.SimpleNamespace(AutoTokenizer=object)}),
+        ):
+            voice.warmup()
+        return voice
+
+    @staticmethod
+    def _stt(*_args):
+        return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
+
+    def test_a_cached_cleanup_model_loads_from_its_folder_while_the_transcription_model_does(self):
+        cleanup_started = threading.Event()
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        folders = []
+
+        def make_stt(*args):
+            # sequential loading never starts the cleanup model while this waits
+            self.assertTrue(cleanup_started.wait(5), "cleanup was not loading meanwhile")
+            return self._stt(*args)
+
+        def make_cleanup(*_args, folder=None):
+            folders.append(folder)
+            cleanup_started.set()
+            return cleaner
+
+        voice = self._warm(make_stt, make_cleanup)
+
+        self.assertIs(voice.cleaner, cleaner)
+        self.assertEqual(folders, [Path("/cache/snapshots/abc")], "no hub access, so no HF_HUB_OFFLINE")
+        cleaner.cleanup.assert_called_once_with("hi", voice.cfg.mode)
+
+    def test_a_cleanup_model_to_download_loads_after_the_transcription_model(self):
+        order = []
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+
+        def make_stt(*args):
+            order.append("stt")
+            return self._stt(*args)
+
+        def make_cleanup(*_args, folder=None):
+            order.append(("cleanup", folder))
+            return cleaner
+
+        voice = self._warm(make_stt, make_cleanup, snapshot=None)
+
+        self.assertEqual(order, ["stt", ("cleanup", None)])
+        self.assertIs(voice.cleaner, cleaner)
+
+    def test_a_partial_cleanup_folder_is_loaded_again_the_normal_way(self):
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        calls = []
+
+        def make_cleanup(*_args, folder=None):
+            calls.append(folder)
+            if folder is not None:
+                raise FileNotFoundError("model.safetensors")  # an interrupted download
+            return cleaner
+
+        voice = self._warm(self._stt, make_cleanup)
+
+        self.assertEqual(calls, [Path("/cache/snapshots/abc"), None])
+        self.assertIs(voice.cleaner, cleaner)
+
+    def test_ollama_cleanup_loads_alongside_without_importing_transformers(self):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config(cleanup_engine="ollama"))
+        voice.cfg.preview = ""
+        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
+        asked = []
+
+        class Transformers(types.ModuleType):
+            def __getattr__(self, name):
+                asked.append(name)
+                return object
+
+        transformers = Transformers("transformers")
+        with (
+            mock.patch.object(backends, "make_stt", side_effect=self._stt),
+            mock.patch.object(backends, "make_cleanup", return_value=cleaner) as make_cleanup,
+            mock.patch.dict(sys.modules, {"transformers": transformers}),
+        ):
+            voice.warmup()
+
+        self.assertEqual(asked, [], "transformers is a 5-10 s import Ollama does not need")
+        self.assertIs(voice.cleaner, cleaner)
+        self.assertIsNone(make_cleanup.call_args.kwargs["folder"])
+
+    def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
+        with self.assertRaises(SystemExit):
+            self._warm(self._stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
+
+    def test_the_cached_snapshot_is_the_one_refs_main_names(self):
+        root = Path(self.tempdir.name) / "hub" / "models--org--model"
+        for rev in ("aaa", "bbb"):
+            (root / "snapshots" / rev).mkdir(parents=True)
+            (root / "snapshots" / rev / "config.json").write_text("{}")
+        (root / "refs").mkdir()
+        (root / "refs" / "main").write_text("aaa\n")
+        os.utime(root / "snapshots" / "bbb", (2e9, 2e9))  # newer, but not main
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(root.parent))
+        with mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}):
+            self.assertEqual(backends.local_snapshot("org/model"), root / "snapshots" / "aaa")
+            (root / "refs" / "main").unlink()
+            self.assertIsNone(backends.local_snapshot("org/model"), "no main: load it the normal way")
+
+    def test_an_mlx_cleanup_model_given_its_folder_never_touches_the_hub(self):
+        folder = Path("/cache/snapshots/abc")
+        load = mock.Mock(return_value=("model", "tokenizer"))
+        with (
+            mock.patch.dict(sys.modules, {"mlx_lm": types.SimpleNamespace(load=load)}),
+            mock.patch.object(backends, "load_cache_first") as cache_first,
+        ):
+            cleaner = backends.make_cleanup("mlx", "org/model", folder=folder)
+
+        load.assert_called_once_with(str(folder))
+        cache_first.assert_not_called()
+        self.assertEqual(cleaner.model_id, "org/model")
 
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (

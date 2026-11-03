@@ -51,6 +51,18 @@ Z_VK = 6  # kVK_ANSI_Z
 MIC_STUCK_S = 3.0
 # How long a new press waits for the last stop before declining to open the mic.
 MIC_REOPEN_WAIT_S = 0.3
+# macOS turns off an event tap whose callback runs too long (kCGEventTapDisabledByTimeout)
+# and never turns it back on by itself; pynput 1.8.1 does not either, so every key after
+# that, Fn included, was lost until v2t restarted: a hands-free dictation could not be
+# stopped (2026-11-02). Opening the microphone ran inside the callback (a Bluetooth input
+# can take seconds to start). Keys (Esc's cancel and the hold timer too) now go to the
+# hotkey thread in order, and a turned-off tap is
+# turned back on (proved with a 2.5 s callback on macOS 26: off for good without the
+# re-enable, keys back at once with it). A handler slower than this is logged.
+SLOW_KEY_S = 0.25
+# How long an Esc on the tap waits for the lifecycle lock before queueing its cancel:
+# more than a paste holds it (0.31 s including the clipboard restore in the log).
+ESC_LOCK_WAIT_S = 0.5
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
 
 
@@ -81,11 +93,45 @@ def _listener(on_press, on_release, suppress_escape=None, undo_shortcut=None):
     from pynput import keyboard
     from Quartz import kCGEventFlagMaskSecondaryFn
 
+    import Quartz
+
+    # the event types macOS sends as it turns a tap off (CGEventTypes.h: 0xFFFFFFFE, 0xFFFFFFFF)
+    by_timeout = getattr(Quartz, "kCGEventTapDisabledByTimeout", 0xFFFFFFFE)
+    turned_off = (by_timeout, getattr(Quartz, "kCGEventTapDisabledByUserInput", 0xFFFFFFFF))
+
     class Listener(keyboard.Listener):
         _MODIFIER_FLAGS = {
             **keyboard.Listener._MODIFIER_FLAGS,
             keyboard.KeyCode.from_vk(FN_VK): kCGEventFlagMaskSecondaryFn,
         }
+        _v2t_tap = None
+
+        def _create_event_tap(self):
+            self._v2t_tap = super()._create_event_tap()
+            return self._v2t_tap
+
+        def _handle_message(self, proxy, event_type, event, refcon, *rest):
+            if event_type in turned_off:
+                # macOS sends this once, as it turns the tap off: turn it straight back on
+                if self._v2t_tap is not None:
+                    Quartz.CGEventTapEnable(self._v2t_tap, True)
+                reason = "a slow key handler" if event_type == by_timeout else "user input"
+                logger.warning(f"macOS turned the hotkey listener off ({reason}); turned it back on")
+                return
+            t0 = time.perf_counter()
+            super()._handle_message(proxy, event_type, event, refcon, *rest)
+            took = time.perf_counter() - t0
+            if took > SLOW_KEY_S:
+                logger.warning(f"A key event took {took:.2f}s to handle; macOS may turn the hotkey listener off")
+
+        def ensure_enabled(self) -> bool:
+            """Turn the tap back on if it is off; False when it was off."""
+            tap = self._v2t_tap
+            if tap is None or Quartz.CGEventTapIsEnabled(tap):
+                return True
+            Quartz.CGEventTapEnable(tap, True)
+            logger.warning("The hotkey listener was off; turned it back on")
+            return False
 
     options = {}
     if suppress_escape is not None:
@@ -103,6 +149,8 @@ def _listener(on_press, on_release, suppress_escape=None, undo_shortcut=None):
         others = kCGEventFlagMaskShift | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate
 
         def intercept(_event_type, event):
+            if _event_type in turned_off:
+                return event
             # pynput 1.8.1 calls on_press/on_release BEFORE darwin_intercept
             # (_util/darwin.py:290). Only swallow Esc handled by this dictation,
             # and Cmd+Z while a cancelled dictation can be recovered.
@@ -343,6 +391,19 @@ class VoiceToText:
         self.hold_timer: threading.Timer | None = None
         self.press_at = 0.0
         self.last_tap_at = 0.0
+        # (kind, key, when): key events from the event tap, handled in order on the
+        # hotkey thread, so opening the microphone never blocks the tap (SLOW_KEY_S)
+        self.key_events: queue.Queue = queue.Queue()
+        self.press_seq = 0  # numbers hotkey presses, so a hold timer knows its own
+        self.hotkey_pending = 0  # hotkey events queued or being handled (an Esc counts them)
+        self.starting = False  # start_recording is opening the microphone (Undo's too)
+        self.presses_pending = 0  # of those, hotkey presses (each may open the microphone)
+        self.pending_lock = threading.Lock()
+        # Esc's choice on the tap and the paste decision, each a few instructions long
+        # under this lock, so one always sees the other (never held while waiting)
+        self.paste_gate = threading.Lock()
+        self.esc_waiting = 0  # Esc cancels queued in key_events, not yet handled
+        self.hotkey_thread: threading.Thread | None = None
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
         self.replacements: list[tuple[str, str]] = []
         self.dictionary_mtime = -1.0
@@ -490,6 +551,8 @@ class VoiceToText:
                 or self.processing
                 or self.cancelled_audio is not None
                 or not self.jobs.empty()
+                or not self.key_events.empty()
+                or self.hotkey_pending  # one taken off the queue, not yet handled
                 or time.perf_counter() - self.last_tap_at < self.DOUBLE_TAP_S
             ):
                 return False
@@ -569,6 +632,14 @@ class VoiceToText:
         with self.lifecycle_lock:
             if self.stopping or self.reloading or self.recording or self.processing:
                 return
+            self.starting = True  # an Esc meanwhile is kept and queued (key_down)
+            try:
+                self._open_microphone(show, resume)
+            finally:
+                self.starting = False
+
+    def _open_microphone(self, show: bool, resume) -> None:
+        with self.lifecycle_lock:
             # Re-initialising PortAudio while the last stop still runs would hang too.
             if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
                 logger.warning("Microphone still stopping; not recording")
@@ -577,6 +648,7 @@ class VoiceToText:
             self.shown = False
             self.record_start = time.perf_counter() - (resume[1] if resume else 0)
             try:
+                opened_at = time.perf_counter()
                 self._refresh_audio_devices()
                 self.input_device = _default_input_name()
                 self.stream = sd.InputStream(
@@ -587,6 +659,9 @@ class VoiceToText:
                 )
                 self.recording = True
                 self.stream.start()
+                took = time.perf_counter() - opened_at
+                if took > SLOW_KEY_S:
+                    logger.info(f"Opening the microphone ({self.input_device}) took {took:.2f}s")
             except Exception as error:
                 self.recording = False
                 self._close_stream()
@@ -1041,15 +1116,26 @@ class VoiceToText:
         cleaned_text = config.apply_replacements(cleaned_text, self.replacements)
 
         t0 = time.perf_counter()
-        with self.lifecycle_lock:
-            if self.cancel_requested:
-                return
-            # Serialize the final paste decision with Esc. Once pasted, Esc
-            # belongs to the target app; never claim that a paste was cancelled.
-            self.delivered = True
-            # The pill fades out as the paste lands, before the caret moves.
-            self._set_state("delivering")
-            self.paste_to_cursor(cleaned_text)
+        # An Esc queued behind a hotkey event (the release that queued this dictation)
+        # gets its turn before the paste decision; it is handled within milliseconds
+        # unless a microphone is opening, so the wait is bounded.
+        deadline = time.perf_counter() + 2.0
+        while True:
+            with self.lifecycle_lock:
+                if self.cancel_requested:
+                    return
+                # Serialize the final paste decision with Esc. Once pasted, Esc
+                # belongs to the target app; never claim that a paste was cancelled.
+                with self.paste_gate:
+                    go = not self.esc_waiting or time.perf_counter() >= deadline
+                    if go:
+                        self.delivered = True
+                if go:
+                    # The pill fades out as the paste lands, before the caret moves.
+                    self._set_state("delivering")
+                    self.paste_to_cursor(cleaned_text)
+                    break
+            time.sleep(0.01)  # outside the lock: the queued cancel needs it
         paste_s = time.perf_counter() - t0
         logger.success(f"Pasted ({paste_s:.2f}s including clipboard restore)")
 
@@ -1163,30 +1249,118 @@ class VoiceToText:
     HOLD_S = 0.5
     DOUBLE_TAP_S = 0.5
 
-    def on_press(self, key):
+    def key_down(self, key):
+        """The event tap's press. Everything goes to the hotkey thread in order, with
+        the time it happened; the tap only decides, without waiting, whether to keep
+        an Esc from the app (consume_escape needs that answer now)."""
+        now = time.perf_counter()
+        if getattr(key, "name", None) == "esc":
+            # Nothing queued ahead: cancel now, as before the queue, so a result about to
+            # be pasted sees it; the lock is held at most for a paste (0.31 s) then. A
+            # held lock or a queued hotkey event means a microphone may be opening.
+            if not self.hotkey_pending and self.lifecycle_lock.acquire(timeout=ESC_LOCK_WAIT_S):
+                try:
+                    self.escape_consumed = self.escape_consumed or self.cancel_dictation()
+                finally:
+                    self.lifecycle_lock.release()
+                return
+            if not self.escape_consumed:  # a repeat of a consumed press stays consumed
+                with self.paste_gate:
+                    # a queued press, or a start under way, opens a new recording whatever
+                    # the last dictation left; a queued release (which may latch hands-free)
+                    # counts only until a paste is decided
+                    starting = self.presses_pending > 0 or self.starting
+                    if starting or (
+                        (self.recording or self.processing or self.hotkey_pending > 0)
+                        and not self.delivered
+                    ):
+                        self.esc_waiting += 1
+                        self.escape_consumed = True
+                        self.key_events.put(("esc", key, now))
+            return
+        self._queue_key("down", key, now)
+
+    def key_up(self, key):
+        self._queue_key("up", key, time.perf_counter())
+
+    def _queue_key(self, kind: str, key, at: float) -> None:
+        if key == self.hotkey:
+            with self.pending_lock:
+                self.hotkey_pending += 1  # until the hotkey thread has handled it
+                self.presses_pending += kind == "down"
+        self.key_events.put((kind, key, at))
+
+    def _handle_key_event(self, kind: str, key, at) -> None:
+        try:
+            if kind == "esc":
+                try:
+                    self.cancel_dictation()
+                finally:
+                    with self.paste_gate:
+                        self.esc_waiting -= 1
+            elif kind == "undo":
+                self.request_undo()
+            elif kind == "hold":
+                if key == self.press_seq:  # still the press that started this timer
+                    self._show_recording()
+            elif kind == "down":
+                self.on_press(key, at=at)
+            else:
+                self.on_release(key, at=at)
+        except Exception:
+            logger.exception("Hotkey handling failed")
+        finally:
+            if kind in ("down", "up") and key == self.hotkey:
+                with self.pending_lock:
+                    self.hotkey_pending -= 1
+                    self.presses_pending -= kind == "down"
+
+    def _hotkey_loop(self) -> None:
+        while True:
+            self._handle_key_event(*self.key_events.get())
+
+    def _start_hotkey_thread(self) -> None:
+        self.hotkey_thread = threading.Thread(target=self._hotkey_loop, name="v2t-hotkey", daemon=True)
+        self.hotkey_thread.start()
+
+    def on_press(self, key, at: float | None = None):
         if getattr(key, "name", None) == "esc":
             self.escape_consumed = self.escape_consumed or self.cancel_dictation()
             return
         if key != self.hotkey:
             if self.recording and not self.shown and not self.latched:
-                self.chorded = True
-                self.cancel_recording()
+                if at is not None and at - self.press_at >= self.HOLD_S:
+                    # pressed after the hold showed, by its time, though the hold timer
+                    # has not run yet (the microphone opened slowly): typing while holding
+                    self._show_recording()
+                else:
+                    self.chorded = True
+                    self.cancel_recording()
             return
         if self.latched:
             return
-        self.press_at = time.perf_counter()
+        self.press_at = time.perf_counter() if at is None else at
+        self.press_seq += 1
         self.chorded = False
         self.trigger = "hold"
         self.start_recording(show=False)
         if self.recording:
-            self.hold_timer = threading.Timer(self.HOLD_S, self._show_recording)
+            # from the press, not from when the microphone finished opening
+            if at is None:
+                self.hold_timer = threading.Timer(self.HOLD_S, self._show_recording)
+            else:
+                # from the press, not from when the microphone finished opening; and
+                # through the queue, so a release or chord already waiting there wins
+                hold = max(0.0, self.HOLD_S - (time.perf_counter() - at))
+                seq = self.press_seq
+                self.hold_timer = threading.Timer(hold, lambda: self.key_events.put(("hold", seq, None)))
             self.hold_timer.daemon = True
             self.hold_timer.start()
 
-    def on_release(self, key):
+    def on_release(self, key, at: float | None = None):
         if key != self.hotkey:
             return
-        now = time.perf_counter()
+        now = time.perf_counter() if at is None else at
         if self.latched:
             self.latched = False
             self.stop_recording()
@@ -1195,6 +1369,9 @@ class VoiceToText:
             self.chorded = False
             return
         if now - self.press_at >= self.HOLD_S:
+            # a hold whose timer had not run yet (the microphone opened slowly) is a
+            # dictation all the same: shown first, which also withdraws an old Undo
+            self._show_recording()
             self.stop_recording()
             return
         self.cancel_recording()
@@ -1300,11 +1477,13 @@ class VoiceToText:
             return taken
         if self.undo_key_down:
             return True
-        with self.lifecycle_lock:
-            offered = self.undo_timer is not None and not self.recording
+        # On the event tap, so no lock (it can be held while a microphone opens). A
+        # recording not shown yet is a hotkey press that the Z chord cancels (Command as
+        # the hotkey), so it does not count, and the undo is queued behind that cancel.
+        offered = self.undo_timer is not None and not (self.recording and self.shown)
         if offered:
             self.undo_key_down = True
-            self.request_undo()
+            self.key_events.put(("undo", None, None))
         return offered
 
     def request_undo(self, _signum=None, _frame=None) -> None:
@@ -1351,8 +1530,48 @@ class VoiceToText:
         )
         return stream
 
+    def _load_cleanup_in_background(self) -> dict | None:
+        """Start loading the cleanup model beside the transcription model, when safe.
+
+        Loading is mostly waiting (imports, file reads: 2.5 s of CPU in a 7-11 s
+        Qwen3-ASR load, 2026-11-02), so the two overlap; the cleanup model's 1.5-2.6 s
+        load used to start only after the transcription model was ready. Only a model
+        that needs no download overlaps: an MLX model already in the Hugging Face cache,
+        read from its folder (the transcription model may hold HF_HUB_OFFLINE on, and may
+        be downloading), or Ollama. Anything else loads after, as before (None). Each
+        model's first inference still runs on its own (warmup). Returns a dict that gets
+        `cleaner` or `error`, `load_s`, and `thread`.
+        """
+        engine, model = self.cfg.cleanup_engine, self.cfg.cleanup_model
+        folder = None
+        if engine == "mlx":
+            folder = backends.local_snapshot(model or backends.CLEANUP[engine].default_model)
+            if folder is None:
+                return None
+        box: dict = {}
+        if engine == "mlx":
+            # mlx-lm and an MLX transcription model both import transformers. A package
+            # being imported by one thread is half-built for the other ("cannot import
+            # name 'AutoTokenizer'", seen when both started at once), so it is imported
+            # whole here first, before the thread starts. Ollama needs none of it.
+            from transformers import AutoTokenizer  # noqa: F401
+
+        def load() -> None:
+            t0 = time.perf_counter()
+            try:
+                box["cleaner"] = backends.make_cleanup(engine, model, self.cfg.ollama_url, folder=folder)
+            except BaseException as error:  # SystemExit for a missing extra, too
+                box["error"] = error
+            box["load_s"] = time.perf_counter() - t0
+
+        box["thread"] = threading.Thread(target=load, name="v2t-load-cleanup", daemon=True)
+        box["thread"].start()
+        return box
+
     def warmup(self):
         self.refresh_dictionary()
+        started = time.perf_counter()
+        cleanup = self._load_cleanup_in_background() if self.cfg.cleanup_enabled else None
         logger.info("Loading transcription model...")
         self._set_state("loading-stt")
         t0 = time.perf_counter()
@@ -1374,19 +1593,39 @@ class VoiceToText:
         if self.cfg.cleanup_enabled:
             self._set_state("loading-cleanup")
             t0 = time.perf_counter()
-            self.cleaner = backends.make_cleanup(
-                self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
-            )
+            if cleanup is None:  # not cached: downloads, alone, after the transcription model
+                self.cleaner = backends.make_cleanup(
+                    self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+                )
+                how = f"{time.perf_counter() - t0:.1f}s"
+            else:
+                cleanup["thread"].join()
+                error = cleanup.get("error")
+                if isinstance(error, (SystemExit, KeyboardInterrupt)):
+                    raise error
+                if error is not None:
+                    # a partial snapshot (an interrupted download): the normal loader
+                    # finishes it online, now that the transcription model is loaded
+                    logger.warning(f"Cleanup model folder did not load ({error}); loading it again")
+                    self.cleaner = backends.make_cleanup(
+                        self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+                    )
+                    how = f"{time.perf_counter() - t0:.1f}s, again"
+                else:
+                    self.cleaner = cleanup["cleaner"]
+                    how = f"{cleanup['load_s']:.1f}s loading alongside"
             self.cleaner.vocabulary = tuple(self.vocabulary)
             try:
                 self.cleaner.cleanup("hi", self.cfg.mode)
                 logger.success(
-                    f"cleanup ({self.cfg.cleanup_engine}) ready ({time.perf_counter() - t0:.1f}s)"
+                    f"cleanup ({self.cfg.cleanup_engine}) ready ({how}; "
+                    f"+{time.perf_counter() - t0:.1f}s after transcription)"
                 )
             except Exception as e:
                 logger.warning(
                     f"cleanup warmup failed ({e}); will retry per transcription"
                 )
+        logger.info(f"Models ready in {time.perf_counter() - started:.1f}s")
 
     def run(self):
         # Before the lock: the menu signals whichever process holds it, and an
@@ -1417,12 +1656,14 @@ class VoiceToText:
             )
             if self.cfg.hotkey == "fn" and (warning := globe_key_warning()):
                 logger.warning(warning)
+            self._start_hotkey_thread()
             with _listener(
-                self.on_press, self.on_release, self.consume_escape, self.take_undo_shortcut
+                self.key_down, self.key_up, self.consume_escape, self.take_undo_shortcut
             ) as listener:
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break
+                    getattr(listener, "ensure_enabled", lambda: True)()
                     if self._should_restart_for_microphone():
                         self._restart_for_microphone()
                     if self._begin_reload():
