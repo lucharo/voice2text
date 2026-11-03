@@ -70,7 +70,14 @@ import XCTest
     let warm = app.switches["v2t.warm"].firstMatch
     reveal(warm, in: app)
     XCTAssertTrue(warm.waitForExistence(timeout: 5))
-    if (warm.value as? String) != "1" { warm.switches.firstMatch.exists ? warm.switches.firstMatch.tap() : warm.tap() }
+    // a tap on a row that is still settling can miss: tap until the switch reads on, then let the stop row appear
+    func isOn() -> Bool { "\(warm.value ?? "")" == "1" }
+    for _ in 0..<3 where !isOn() {
+      warm.switches.firstMatch.exists ? warm.switches.firstMatch.tap() : warm.tap()
+      let until = Date().addingTimeInterval(3)
+      while !isOn(), Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+    }
+    XCTAssertTrue(isOn(), "mic-ready switch never turned on")
     sleep(1)  // the stop row is added once the session state publishes; revealing before that scrolls past it
     let stopMic = app.buttons["v2t.stopMic"]
     reveal(stopMic, in: app)
@@ -80,11 +87,14 @@ import XCTest
     let field = app.textFields["v2t.try"]
     for _ in 0..<4 where !field.isHittable { app.swipeDown(velocity: .slow) }  // revealing the stop row scrolled it away
     sleep(1)  // let the list settle, or the tap lands on whatever scrolled under it
-    field.tap()
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
-    // an earlier test may have left Apple's keyboard up: step through the keyboards to v2t's, as a user would
-    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
-      if app.buttons["Next keyboard"].exists { app.buttons["Next keyboard"].tap() }
+    // an earlier test may have left Apple's keyboard up: step through the keyboards to v2t's, as a user would.
+    // On a full-suite run the first focus sometimes raises no keyboard at all, so focus again once.
+    for _ in 0..<2 where !key("letters-q").exists {
+      field.tap()
+      for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
+        if app.buttons["Next keyboard"].exists { app.buttons["Next keyboard"].tap() }
+      }
     }
     XCTAssertTrue(key("mic").waitForExistence(timeout: 10), app.debugDescription)
     shot("12b-keyboard-v2t-mic")

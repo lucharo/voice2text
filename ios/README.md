@@ -43,8 +43,8 @@ One choice per iPhone, decided by Apple's own Apple Intelligence eligibility che
 
 | iPhone | Speech | Cleanup | Evidence |
 | --- | --- | --- | --- |
-| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16, 17 and 18 families, 16e, 17e, Air, Duo) | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
-| Every other iPhone that runs iOS 26 | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | Nemotron's int8 encoder fails to load on some earlier chips (A16 confirmed, FluidAudio #828). Untested on these phones |
+| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air, Duo) | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
+| Every other iPhone that runs iOS 26 | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | FluidAudio's int8 Unified encoder failed to load on an A16 (#828, the Parakeet Unified sibling; Nemotron itself untried there) and is unverified on other earlier chips. Untested on these phones |
 
 Model files come from Hugging Face at pinned revisions (`App/SpeechEngine.swift`).
 

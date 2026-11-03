@@ -42,7 +42,7 @@ struct Recommendation: Equatable {
     /// Apple Intelligence's on-device model is available now.
     var appleIntelligence: Bool
     /// An Apple Intelligence-compatible iPhone (apple.com/apple-intelligence, 2026-11-02: iPhone 15 Pro and
-    /// Pro Max, the iPhone 16, 17 and 18 families, 16e, 17e, Air and Duo; A17 Pro chips and later), whether
+    /// Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air and Duo; A17 Pro chips and later), whether
     /// or not the user has turned it on. SystemLanguageModel reports `.deviceNotEligible` for every other one.
     var appleIntelligenceCompatible: Bool
     /// The hardware identifier (utsname machine), e.g. "iPhone17,1".
@@ -56,7 +56,7 @@ struct Recommendation: Equatable {
   // LibriSpeech other ("harder English") and FLEURS Spanish.
   static func choose(for d: Device) -> Recommendation {
     if d.appleIntelligenceCompatible {
-      let measured = "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words wrong on clear English, 3.4% on harder English, 3.4% on Spanish), text ready 0.1 s after you stop."
+      let measured = "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words wrong on clear English, 3.4% on harder English, 3.4% on Spanish), text ready about 0.1 s after you stop, or about 1 to 1.5 s with Apple Intelligence cleanup."
       return Recommendation(
         speech: .nemotron,
         cleanup: d.appleIntelligence ? .appleIntelligence : .dictionaryOnly,
@@ -67,7 +67,7 @@ struct Recommendation: Equatable {
     }
     return Recommendation(
       speech: .parakeet, cleanup: .dictionaryOnly,
-      reason: "Nemotron's compact build fails to load on some earlier iPhone chips (A16 confirmed, FluidAudio #828), so this iPhone gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this iPhone.",
+      reason: "FluidAudio reports its int8 Unified encoders failing to load on the A16 chip (FluidAudio #828, the Parakeet Unified sibling of Nemotron) and calls other earlier chips unverified, so this iPhone gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this iPhone.",
       measured: false)
   }
 
