@@ -70,6 +70,21 @@ struct TypingEngineTests {
     #expect(p.text == "I said the ")  // still corrected, from the letters alone
   }
 
+  /// Numbers page for an apostrophe, then back to letters at the same width: the letters did not move, so
+  /// the word keeps its touch points and off-centre taps are still corrected spatially.
+  @Test func aPageSwitchToTheSameLettersKeepsTheTouches() throws {
+    let lex = try Fixtures.english.get()
+    let e = TypingEngine(proxy: FakeProxy(), suggester: Suggester(lexicons: [lex], layout: layout))
+    e.resync()
+    for (i, ch) in "dont".enumerated() {
+      let c = layout.keys.first { $0.label == String(ch) }!.center
+      e.character(String(ch), at: CGPoint(x: c.x + 4, y: c.y - 3), now: Double(i + 1))  // a little off centre
+    }
+    let before = e.composing
+    e.replaceLayout(with: Suggester(lexicons: [lex], layout: KeyboardLayout(width: 402, language: .english)))
+    #expect(e.composing == before && e.composing.allSatisfy { $0.point != nil })
+  }
+
   @Test func spaceAutocorrectsAndDeleteOffersTheOriginalBack() throws {
     let (e, p) = try engine("I said ")
     type("teh ", e)

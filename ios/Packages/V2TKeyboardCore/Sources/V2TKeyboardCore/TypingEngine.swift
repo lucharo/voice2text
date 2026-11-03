@@ -226,10 +226,12 @@ public final class TypingEngine {
 
   /// The keyboard's geometry changed (rotation, resize, layout language): score with `suggester` from now on,
   /// and forget where the keys of the word in progress were touched, since those points belong to the old
-  /// layout. The word itself, shift and the pending autocorrect state stay.
+  /// layout. The word itself, shift and the pending autocorrect state stay. A page switch that comes back to
+  /// the same letter geometry (numbers for an apostrophe, then letters) keeps the points.
   public func replaceLayout(with suggester: Suggester) {
+    let moved = suggester.layout.letterCenters != self.suggester.layout.letterCenters || suggester.layout.unitWidth != self.suggester.layout.unitWidth
     self.suggester = suggester
-    composing = composing.map { TypedKey($0.character) }
+    if moved { composing = composing.map { TypedKey($0.character) } }
   }
 
   /// The host moved the cursor or changed the text itself: forget our state and read the word at the cursor.
