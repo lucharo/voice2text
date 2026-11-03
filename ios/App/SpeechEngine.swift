@@ -4,7 +4,15 @@ import Foundation
 /// On-device speech to text through FluidAudio on the Neural Engine. The model is fetched once from Hugging
 /// Face at a pinned revision, then loaded from the app's own storage; audio never leaves the phone.
 actor SpeechEngine {
-  enum State: Equatable { case notDownloaded, downloading(Double), loading, ready, failed(String) }
+  enum State: Equatable {
+    case notDownloaded, downloading(Double), loading, ready, failed(String)
+    var isPreparing: Bool {
+      switch self {
+      case .downloading, .loading: true
+      default: false
+      }
+    }
+  }
 
   /// Model repositories pinned to the revisions the phone benchmarks used (checked 2026-11-02).
   static let pins = [

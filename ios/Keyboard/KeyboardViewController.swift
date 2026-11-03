@@ -26,7 +26,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let layout = KeyboardLayout(width: max(320, view.bounds.width), language: language)
     let proxy = ProxyAdapter(self)
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
-    engine.learned = Settings.shared.learnedWords
+    engine.learned = Settings.shared.learnedWords.union(PersonalDictionary().autocorrectExclusions)
     engine.onLearn = { Settings.shared.learn($0) }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
@@ -85,7 +85,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
   private func reloadSettings() {
     let settings = Settings.shared
-    engine.learned = settings.learnedWords
+    engine.learned = settings.learnedWords.union(PersonalDictionary().autocorrectExclusions)  // the dictionary is never corrected away
     let wanted = settings.suggestionLanguages.map(\.rawValue)
     if settings.layoutLanguage != language || engine.suggester.lexicons.map(\.language) != wanted {
       language = settings.layoutLanguage

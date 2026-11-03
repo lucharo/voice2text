@@ -78,12 +78,15 @@ import XCTest
     shot("12-mic-session-on")
 
     let field = app.textFields["v2t.try"]
+    for _ in 0..<4 where !field.isHittable { app.swipeDown(velocity: .slow) }  // revealing the stop row scrolled it away
+    sleep(1)  // let the list settle, or the tap lands on whatever scrolled under it
     field.tap()
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
-    for _ in 0..<3 where !key("letters-q").waitForExistence(timeout: 3) {
+    // an earlier test may have left Apple's keyboard up: step through the keyboards to v2t's, as a user would
+    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
       if app.buttons["Next keyboard"].exists { app.buttons["Next keyboard"].tap() }
     }
-    XCTAssertTrue(key("mic").waitForExistence(timeout: 10))
+    XCTAssertTrue(key("mic").waitForExistence(timeout: 10), app.debugDescription)
     shot("12b-keyboard-v2t-mic")
     key("mic").tap()
     sleep(1)

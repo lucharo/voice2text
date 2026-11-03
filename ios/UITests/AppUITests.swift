@@ -62,9 +62,12 @@ import XCTest
   }
 
   func testACachedModelNeverShowsAsDownloading() {
+    let ready = app.staticTexts["Ready. Transcription runs on this iPhone, offline."]
+    app.launch()  // the first launch on a fresh Simulator downloads the model; wait for that
+    XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
+    app.terminate()
     app.launch()
     // sample the model row from launch until ready: it may say Preparing, never Downloading
-    let ready = app.staticTexts["Ready. Transcription runs on this iPhone, offline."]
     let deadline = Date().addingTimeInterval(300)
     var sawDownloading = false, first = true
     while !ready.exists, Date() < deadline {

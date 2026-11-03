@@ -18,12 +18,16 @@ import SwiftUI
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
   private let recorder: AudioSource = {
-    if let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"], let f = FixtureAudio(path: path) { return f }
-    return Recorder()
+    guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
+    // a test asked for the synthetic clip: never fall back to the real microphone
+    guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
+    return f
   }()
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
   private var heartbeat: Timer?
+  /// Counts model preparations, so a late progress report from an earlier one is dropped.
+  private var prepareAttempt = 0
 
   init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
     self.recommendation = recommendation
@@ -46,11 +50,15 @@ import SwiftUI
   func prepareModel() async {
     guard engineState != .ready, engineState != .loading else { return }
     if case .downloading = engineState { return }
+    prepareAttempt += 1
+    let attempt = prepareAttempt
     engineState = .loading  // a cached model only loads; the first download's progress replaces this
     do {
       try await engine.prepare(language: Settings.shared.speechLanguage) { s in
         Task { @MainActor in
-          if self.engineState != .ready { self.engineState = s }  // a late report never undoes ready
+          // a report that lands after ready or failed, or from an earlier attempt, never undoes it
+          guard self.prepareAttempt == attempt, self.engineState.isPreparing else { return }
+          self.engineState = s
         }
       }
       engineState = .ready

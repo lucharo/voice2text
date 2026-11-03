@@ -92,7 +92,7 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
 
   /// Removes the first line stored exactly as `line` (an `Item.line`), keeping every other line and comment.
   func remove(_ line: String) throws {
-    var lines = text.components(separatedBy: "\n")
+    var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
     guard let i = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == line }) else { return }
     lines.remove(at: i)
     try save(lines.joined(separator: "\n"))
@@ -111,6 +111,9 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     let e = entries
     return (e.terms + e.replacements.map(\.written)).flatMap { $0.split(separator: " ").map(String.init) }
   }
+
+  /// Lowercased dictionary words, for the keyboard to leave uncorrected as it does learned words.
+  var autocorrectExclusions: Set<String> { Set(keyboardWords.map { $0.lowercased() }) }
 
   func applyReplacements(_ input: String) -> String {
     var out = input

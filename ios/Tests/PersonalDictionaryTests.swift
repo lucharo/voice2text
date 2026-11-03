@@ -51,6 +51,18 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: d.file).terms == ["Claude", "Fluide"])
   }
 
+  @Test(arguments: ["\r\n", "\r"])
+  func removingWorksWhateverTheLineEndings(eol: String) throws {
+    let d = try dictionary(["# keep", "Claude", "ai => AI", "Fluide", ""].joined(separator: eol))
+    try d.remove("ai => AI")
+    #expect(d.items.map(\.line) == ["Claude", "Fluide"])
+  }
+
+  @Test func dictionaryWordsAreExcludedFromAutocorrectInLowercase() throws {
+    let d = try dictionary("Teh\nClaude Code\nfluid => Fluide\n")
+    #expect(d.autocorrectExclusions == ["teh", "claude", "code", "fluide"])
+  }
+
   @Test func survivesARelaunch() throws {
     let d = try dictionary("Claude\n")
     #expect(PersonalDictionary(file: d.file).terms == ["Claude"])
