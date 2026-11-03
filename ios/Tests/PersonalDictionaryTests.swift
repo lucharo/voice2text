@@ -61,6 +61,7 @@ struct PersonalDictionaryTests {
   @Test func dictionaryWordsAreExcludedFromAutocorrectInLowercase() throws {
     let d = try dictionary("Teh\nClaude Code\nfluid => Fluide\n")
     #expect(d.autocorrectExclusions == ["teh", "claude", "code", "fluide"])
+    #expect(try dictionary("Teh-Code\nO'Neil\n").autocorrectExclusions == ["teh", "code", "o'neil"])
   }
 
   @Test func survivesARelaunch() throws {

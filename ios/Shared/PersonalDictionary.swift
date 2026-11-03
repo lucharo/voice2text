@@ -112,8 +112,11 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     return (e.terms + e.replacements.map(\.written)).flatMap { $0.split(separator: " ").map(String.init) }
   }
 
-  /// Lowercased dictionary words, for the keyboard to leave uncorrected as it does learned words.
-  var autocorrectExclusions: Set<String> { Set(keyboardWords.map { $0.lowercased() }) }
+  /// Lowercased dictionary words, for the keyboard to leave uncorrected as it does learned words. Split at
+  /// anything but letters, digits and apostrophes, where the keyboard ends a word ("Teh-Code" is "teh", "code").
+  var autocorrectExclusions: Set<String> {
+    Set(keyboardWords.flatMap { $0.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init) })
+  }
 
   func applyReplacements(_ input: String) -> String {
     var out = input
