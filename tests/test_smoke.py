@@ -5061,6 +5061,57 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(voice.recording)
         self.assertEqual(voice.chords_pending, 0)
 
+    def test_escape_after_a_shortcut_goes_to_the_app_once_the_press_is_handled_too(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        voice._handle_key_event(*voice.key_events.get_nowait())  # the mic is open, unseen
+        self.assertTrue(voice.recording)
+        app.time.perf_counter.return_value = 100.1
+        voice.key_down("F")
+        voice.key_down(types.SimpleNamespace(name="esc"))  # before the worker handles F
+
+        self.assertFalse(voice.escape_consumed)
+        self.assertFalse(voice.cancel_requested, "Esc did not cancel; F will, as a shortcut")
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+
+    def test_typing_right_after_a_double_tap_is_not_a_shortcut(self):
+        voice, _tap = self._tapper()
+        voice.last_tap_at = 99.8  # the first tap
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("HOTKEY")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_up("HOTKEY")  # the second tap: it latches hands-free
+        app.time.perf_counter.return_value = 100.2
+        voice.key_down("A")
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertEqual(voice.chords_pending, 0)
+        self.assertTrue(voice.escape_consumed, "Esc stops the hands-free recording")
+
+    def test_a_new_hold_after_a_shortcut_keeps_escape_for_the_dictation(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_down("F")  # a shortcut, still queued
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("CMD")
+        app.time.perf_counter.return_value = 101.0
+        voice.key_down("CMD")  # a new hold
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertTrue(voice.escape_consumed, "the earlier shortcut does not doom the new press")
+
+    def test_cmd_z_after_a_queued_escape_is_kept_even_once_the_recording_shows(self):
+        voice, _tap = self._tapper()
+        voice.recording = voice.shown = True  # shown, Esc's cancel still queued behind it
+        voice.esc_waiting = 1
+        self.assertTrue(voice.take_undo_shortcut(False))
+
     def test_typing_after_the_hold_during_a_slow_start_keeps_escape_for_the_dictation(self):
         voice, _tap = self._tapper()
         app.time.perf_counter.return_value = 100.0
