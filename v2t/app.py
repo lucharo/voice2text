@@ -406,6 +406,11 @@ class VoiceToText:
         self.queued_presses = 0  # hotkey presses queued so far: numbers each one
         self.hotkey_held_queued = False  # the last hotkey event queued was a press
         self.chords_for: dict[int, int] = {}  # queued press number -> chords waiting to cancel it
+        # what the queued hotkey events will leave, worked out as they are queued (on_release's
+        # rules), so a key typed right after a queued double tap is not taken for a shortcut
+        self.pred_latched = False
+        self.pred_last_tap = 0.0
+        self.chorded_presses: set[int] = set()  # presses whose release is not a tap (shortcut, Esc)
         self.chord_presses: collections.deque = collections.deque()  # each queued chord's press
         self.pending_lock = threading.Lock()
         # Esc's choice on the tap and the paste decision, each a few instructions long
@@ -1286,12 +1291,16 @@ class VoiceToText:
                     ):
                         self.esc_waiting += 1
                         self.escape_consumed = True
+                        with self.pending_lock:  # cancel_dictation's effect, for the prediction
+                            self.pred_latched, self.pred_last_tap = False, 0.0
+                            self.chorded_presses.add(self.queued_presses)
                         self.key_events.put(("esc", key, now))
             return
         if key != self.hotkey and self._will_chord(now):
             with self.pending_lock:
                 self.chords_pending += 1
                 press = self.queued_presses
+                self.chorded_presses.add(press)
                 self.chords_for[press] = self.chords_for.get(press, 0) + 1
                 self.chord_presses.append(press)
             self.key_events.put(("chord", key, now))
@@ -1302,16 +1311,37 @@ class VoiceToText:
         """A key that will cancel the hotkey press before it as a shortcut (on_press):
         pressed while the hotkey is still held, less than HOLD_S after its press. Once the
         key is released (a tap, or the second tap that latches hands-free), keys are typing."""
-        if self.latched or not self.hotkey_held_queued:
+        latched = self.pred_latched if self.hotkey_pending else self.latched
+        if latched or not self.hotkey_held_queued:
             return False
         return now - self.last_press_queued_at < self.HOLD_S
 
     def key_up(self, key):
         self._queue_key("up", key, time.perf_counter())
 
+    def _predict_release(self, at: float) -> None:
+        """on_release's outcome for a release queued now (under pending_lock)."""
+        chorded = self.queued_presses in self.chorded_presses
+        self.chorded_presses.discard(self.queued_presses)
+        if self.pred_latched:  # the tap that stops hands-free
+            self.pred_latched = False
+        elif chorded:  # a shortcut, or cancelled by Esc: not a tap
+            pass
+        elif at - self.last_press_queued_at < self.HOLD_S:  # a tap
+            if at - self.pred_last_tap < self.DOUBLE_TAP_S:
+                self.pred_latched, self.pred_last_tap = True, 0.0
+            else:
+                self.pred_last_tap = at
+
     def _queue_key(self, kind: str, key, at: float) -> None:
         if key == self.hotkey:
             with self.pending_lock:
+                if not self.hotkey_pending and not self.esc_waiting:  # nothing queued: start from the real state
+                    self.pred_latched, self.pred_last_tap = self.latched, self.last_tap_at
+                    if self.chorded:
+                        self.chorded_presses.add(self.queued_presses)
+                if kind == "up":
+                    self._predict_release(at)
                 self.hotkey_pending += 1  # until the hotkey thread has handled it
                 self.presses_pending += kind == "down"
                 self.hotkey_held_queued = kind == "down"
@@ -1325,6 +1355,10 @@ class VoiceToText:
             if kind == "esc":
                 try:
                     self.cancel_dictation()
+                    # a swallowed Esc forgets the tap history even when nothing was left to
+                    # cancel, as the prediction did when it was queued (key_down)
+                    with self.lifecycle_lock:
+                        self.last_tap_at = 0.0
                 finally:
                     with self.paste_gate:
                         self.esc_waiting -= 1

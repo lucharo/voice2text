@@ -5091,6 +5091,85 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(voice.chords_pending, 0)
         self.assertTrue(voice.escape_consumed, "Esc stops the hands-free recording")
 
+    def test_command_shortcut_after_a_queued_double_tap_is_typing(self):
+        # #104: Command as the hotkey, double tap, then Cmd+F and Esc during a slow start
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        for t, kind in ((100.0, "down"), (100.1, "up"), (100.25, "down"), (100.35, "up"), (100.5, "down")):
+            app.time.perf_counter.return_value = t
+            (voice.key_down if kind == "down" else voice.key_up)("CMD")
+        app.time.perf_counter.return_value = 100.6
+        voice.key_down("F")
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertEqual(voice.chords_pending, 0, "F is typed into the hands-free dictation")
+        self.assertTrue(voice.escape_consumed, "Esc stops the dictation, not the app's search")
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+
+    def test_a_queued_escape_ends_the_predicted_hands_free(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        esc = types.SimpleNamespace(name="esc")
+        for t, kind in ((100.0, "down"), (100.1, "up"), (100.25, "down"), (100.35, "up")):
+            app.time.perf_counter.return_value = t
+            (voice.key_down if kind == "down" else voice.key_up)("CMD")
+        voice.key_down(esc)  # stops the hands-free dictation the double tap starts
+        voice.consume_escape(True)
+        app.time.perf_counter.return_value = 101.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 101.1
+        voice.key_down("F")  # a real shortcut now
+        voice.key_down(esc)
+
+        self.assertEqual(voice.chords_pending, 1)
+        self.assertFalse(voice.escape_consumed, "this Esc is the app's")
+
+    def test_a_queued_escape_forgets_the_first_tap_as_the_prediction_does(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_up("CMD")  # a tap
+        voice.key_down(types.SimpleNamespace(name="esc"))  # queued behind it, swallowed
+        voice.consume_escape(True)
+        app.time.perf_counter.return_value = 100.3
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.4
+        voice.key_up("CMD")  # within DOUBLE_TAP_S of the first, but after the Esc
+        self.assertFalse(voice.pred_latched)
+        self._drain(voice)
+        self.assertFalse(voice.latched, "handled the same way as predicted")
+
+    def test_the_prediction_waits_for_a_queued_escape_before_reading_the_real_state(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        voice.latched = True  # the double tap was handled; its Esc still waits
+        voice.esc_waiting = 1
+        voice.pred_latched = False  # what that Esc will leave
+        app.time.perf_counter.return_value = 101.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 101.1
+        voice.key_down("F")
+        self.assertEqual(voice.chords_pending, 1, "a shortcut: not typing into a latch the Esc ends")
+
+    def test_a_shortcut_handled_before_its_release_is_still_not_a_tap(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        voice.last_tap_at = 99.9  # a tap just before
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_down("F")
+        self._drain(voice)  # press and shortcut handled; the release is not queued yet
+        app.time.perf_counter.return_value = 100.2
+        voice.key_up("CMD")
+
+        self.assertFalse(voice.pred_latched, "a shortcut's release does not latch")
+
     def test_a_new_hold_after_a_shortcut_keeps_escape_for_the_dictation(self):
         voice, _tap = self._tapper()
         voice.hotkey = "CMD"
