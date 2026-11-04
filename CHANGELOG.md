@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Esc and Cmd+Z behave during a slow microphone start.** Pressing Esc and then Cmd+Z straight away, while a Bluetooth microphone was still opening, sent Cmd+Z to the app instead of bringing the dictation back; it now restores the dictation. With Command as the hotkey, a shortcut such as Cmd+F followed by Esc no longer swallows the Esc, so the app's search box closes as it should (#102).
+
 ## 0.5.17
 
 - **Fn always stops a dictation.** Opening the microphone ran inside the keyboard listener, and a Bluetooth headset can take seconds to start. macOS switches off a listener that takes that long and never switches it back on, so from then on every key was missed: a hands-free dictation could not be stopped with Fn, and v2t had to be stopped from the menu. Keys are now handled on a thread of their own with the time they were pressed, so a slow microphone no longer makes a tap count as a hold. If macOS does switch the listener off, v2t switches it straight back on and says so in the log.
