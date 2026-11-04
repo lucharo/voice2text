@@ -5091,6 +5091,24 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(voice.chords_pending, 0)
         self.assertTrue(voice.escape_consumed, "Esc stops the hands-free recording")
 
+    def test_command_shortcut_after_a_queued_double_tap_is_typing(self):
+        # #104: Command as the hotkey, double tap, then Cmd+F and Esc during a slow start
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        for t, kind in ((100.0, "down"), (100.1, "up"), (100.25, "down"), (100.35, "up"), (100.5, "down")):
+            app.time.perf_counter.return_value = t
+            (voice.key_down if kind == "down" else voice.key_up)("CMD")
+        app.time.perf_counter.return_value = 100.6
+        voice.key_down("F")
+        voice.key_down(types.SimpleNamespace(name="esc"))
+
+        self.assertEqual(voice.chords_pending, 0, "F is typed into the hands-free dictation")
+        self.assertTrue(voice.escape_consumed, "Esc stops the dictation, not the app's search")
+        voice.frames = [np.ones((16, 1), dtype=np.float32)]
+        self._drain(voice)
+        self.assertFalse(voice.recording)
+        self.assertFalse(voice.latched)
+
     def test_a_new_hold_after_a_shortcut_keeps_escape_for_the_dictation(self):
         voice, _tap = self._tapper()
         voice.hotkey = "CMD"
