@@ -201,6 +201,14 @@ struct TypingEngineTests {
     #expect(g.suggestions().map(\.word) == ["Jello"])
   }
 
+  /// Back at the end of "4teh", the word is read with its digit, so space does not turn it into "4the".
+  @Test func resyncKeepsDigitsSoSpaceLeavesTheWordAlone() throws {
+    let (e, p) = try engine("x 4teh")
+    #expect(e.composing.count == 4)
+    e.space(now: 50)
+    #expect(p.text == "x 4teh ")
+  }
+
   /// A curly apostrophe from the long press stays inside the word, as the straight one does.
   @Test func aCurlyApostropheDoesNotEndTheWord() throws {
     let (e, p) = try engine("x ")

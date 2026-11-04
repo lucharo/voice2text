@@ -255,7 +255,7 @@ public final class TypingEngine {
     revertOffer = nil
     var word: [TypedKey] = []
     for ch in before.reversed() {
-      guard ch.isLetter || Self.isApostrophe(ch) else { break }
+      guard ch.isLetter || ch.isNumber || Self.isApostrophe(ch) else { break }  // as character() composes
       word.insert(TypedKey(ch), at: 0)
     }
     composing = word

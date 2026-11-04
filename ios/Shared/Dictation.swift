@@ -26,6 +26,9 @@ enum DictationChannel {
   static let requestIdKey = "dictation.requestId"
   /// The last result id a keyboard typed, so a result is typed once, even by a keyboard attached later.
   static let deliveredIdKey = "dictation.deliveredId"
+  /// The field the result belongs in (UITextDocumentProxy.documentIdentifier), stamped when the keyboard asks
+  /// for a dictation and again when it stops one, so a keyboard opened in another field never types it.
+  static let requestDocumentKey = "dictation.requestDocument"
   /// The app refreshes the heartbeat every second while warm; older than this means no session.
   static let heartbeatTimeout: TimeInterval = 3
   static let url = URL(string: "v2t://dictate")!

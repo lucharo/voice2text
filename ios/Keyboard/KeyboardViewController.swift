@@ -180,7 +180,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// handling took (engine, proxy calls, suggestion refresh): `log stream --predicate 'category == "latency"'`.
   private func edit(_ name: String = "key", _ body: (TypingEngine) -> Void) {
     let t0 = CACurrentMediaTime()
-    inputEpoch += 1
+    if name != "swipe-apply" { inputEpoch += 1 }  // a swipe's own word leaves the next queued swipe valid
     engineEditing = true
     body(engine)
     engineEditing = false
@@ -240,7 +240,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
     let decoders = self.decoders
     let t0 = CACurrentMediaTime()
-    inputEpoch += 1
     let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }

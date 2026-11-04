@@ -7,9 +7,6 @@ import UIKit
   private weak var controller: UIInputViewController?
   private let defaults = Settings.shared.defaults
   private var observer: DarwinObserver?
-  /// The field this keyboard asked to dictate into; a result arriving after a switch to another field waits
-  /// (it is in History) rather than landing there.
-  private var requestDocument: UUID?
   var onText: ((String) -> Void)?
   var onState: ((DictationState) -> Void)?
 
@@ -35,6 +32,7 @@ import UIKit
       newRequest()
       DictationChannel.post(DictationChannel.start)
     case .listening:
+      stampDocument()  // the field the user is in when they stop is where the text goes
       DictationChannel.post(DictationChannel.stop)
     case .needsApp:
       newRequest()
@@ -47,8 +45,12 @@ import UIKit
 
   private func newRequest() {
     defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
-    requestDocument = controller?.textDocumentProxy.documentIdentifier
+    stampDocument()
   }
+
+  private var document: String { controller?.textDocumentProxy.documentIdentifier.uuidString ?? "" }
+
+  private func stampDocument() { defaults.set(document, forKey: DictationChannel.requestDocumentKey) }
 
   /// Types the result once, and only the answer to the latest request.
   private func changed() {
@@ -57,7 +59,8 @@ import UIKit
     guard !id.isEmpty, id == defaults.string(forKey: DictationChannel.requestIdKey),
           id != defaults.string(forKey: DictationChannel.deliveredIdKey),
           let text = defaults.string(forKey: DictationChannel.resultKey), !text.isEmpty else { return }
-    if let doc = requestDocument, doc != controller?.textDocumentProxy.documentIdentifier { return }
+    // another field (this or a later keyboard): leave it untyped; it is in History
+    guard document == defaults.string(forKey: DictationChannel.requestDocumentKey) else { return }
     defaults.set(id, forKey: DictationChannel.deliveredIdKey)
     onText?(text)
   }
