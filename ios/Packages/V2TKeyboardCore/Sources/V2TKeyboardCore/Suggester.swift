@@ -106,6 +106,8 @@ public final class Suggester: @unchecked Sendable {
     let literal = String(typed.map(\.character))
     let lower = literal.lowercased()
     guard Lexicon.fold(literal).count >= 1, !learned.contains(lower) else { return nil }
+    // the search sees letters only, so a correction would drop the digits ("hello1" -> "hello")
+    guard !literal.contains(where: \.isNumber) else { return nil }
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
     guard typed.count >= 2 else { return nil }
     let key = Lexicon.fold(literal)

@@ -16,6 +16,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var keysHeightConstraint: NSLayoutConstraint?
   private let haptics = UIImpactFeedbackGenerator(style: .light)
   private let decodeQueue = DispatchQueue(label: "v2t.swipe", qos: .userInteractive)
+  /// Bumped by every edit, cursor move or host change: a swipe still decoding when it moves is dropped, so its
+  /// word never lands in another place or after a later key.
+  private var inputEpoch = 0
   /// True while the engine edits the document, so our own edits don't trigger a resync.
   private var engineEditing = false
   private lazy var dictation = DictationClient(controller: self)
@@ -126,6 +129,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     super.textDidChange(textInput)
     latencyLog.debug("host textDidChange engineEditing=\(self.engineEditing, privacy: .public)")
     guard !engineEditing else { return }
+    inputEpoch += 1
     applyTraits()
     engine.resync()
     refresh()
@@ -135,6 +139,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     super.selectionDidChange(textInput)
     latencyLog.debug("host selectionDidChange engineEditing=\(self.engineEditing, privacy: .public)")
     guard !engineEditing else { return }
+    inputEpoch += 1
     engine.resync()
     refresh()
   }
@@ -175,6 +180,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// handling took (engine, proxy calls, suggestion refresh): `log stream --predicate 'category == "latency"'`.
   private func edit(_ name: String = "key", _ body: (TypingEngine) -> Void) {
     let t0 = CACurrentMediaTime()
+    inputEpoch += 1
     engineEditing = true
     body(engine)
     engineEditing = false
@@ -223,6 +229,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, moveCursor by: Int) {
+    inputEpoch += 1
     engineEditing = true
     textDocumentProxy.adjustTextPosition(byCharacterOffset: by)
     engineEditing = false
@@ -233,13 +240,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
     let decoders = self.decoders
     let t0 = CACurrentMediaTime()
+    inputEpoch += 1
+    let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
       let merged = decoders.flatMap { $0.decode(trace, limit: 4) }.sorted { $0.score > $1.score }
       var seen = Set<String>()
       let words = merged.map(\.word).filter { seen.insert($0.lowercased()).inserted }
       DispatchQueue.main.async { [weak self] in
-        guard let self, !words.isEmpty else { return }
+        guard let self, !words.isEmpty, self.inputEpoch == epoch,
+              self.textDocumentProxy.documentIdentifier == document else { return }
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }
     }

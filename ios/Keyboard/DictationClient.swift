@@ -7,7 +7,9 @@ import UIKit
   private weak var controller: UIInputViewController?
   private let defaults = Settings.shared.defaults
   private var observer: DarwinObserver?
-  private var lastResultId = ""
+  /// The field this keyboard asked to dictate into; a result arriving after a switch to another field waits
+  /// (it is in History) rather than landing there.
+  private var requestDocument: UUID?
   var onText: ((String) -> Void)?
   var onState: ((DictationState) -> Void)?
 
@@ -21,9 +23,8 @@ import UIKit
   }
 
   func attach() {
-    lastResultId = defaults.string(forKey: DictationChannel.resultIdKey) ?? ""
     observer = DictationChannel.observe(DictationChannel.changed) { [weak self] in self?.changed() }
-    onState?(state)
+    changed()  // a result that finished while the keyboard was away (the user was in the v2t app)
   }
 
   func detach() { observer = nil }
@@ -31,11 +32,12 @@ import UIKit
   func toggle() {
     switch state {
     case .idle:
-      defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
+      newRequest()
       DictationChannel.post(DictationChannel.start)
     case .listening:
       DictationChannel.post(DictationChannel.stop)
     case .needsApp:
+      newRequest()
       openApp()
     case .transcribing, .unavailable:
       break
@@ -43,11 +45,20 @@ import UIKit
     onState?(state)
   }
 
+  private func newRequest() {
+    defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
+    requestDocument = controller?.textDocumentProxy.documentIdentifier
+  }
+
+  /// Types the result once, and only the answer to the latest request.
   private func changed() {
     onState?(state)
     let id = defaults.string(forKey: DictationChannel.resultIdKey) ?? ""
-    guard id != lastResultId, let text = defaults.string(forKey: DictationChannel.resultKey), !text.isEmpty else { return }
-    lastResultId = id
+    guard !id.isEmpty, id == defaults.string(forKey: DictationChannel.requestIdKey),
+          id != defaults.string(forKey: DictationChannel.deliveredIdKey),
+          let text = defaults.string(forKey: DictationChannel.resultKey), !text.isEmpty else { return }
+    if let doc = requestDocument, doc != controller?.textDocumentProxy.documentIdentifier { return }
+    defaults.set(id, forKey: DictationChannel.deliveredIdKey)
     onText?(text)
   }
 

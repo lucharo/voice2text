@@ -42,6 +42,12 @@ struct SuggesterTests {
     #expect(try spanish().autocorrection(for: taps(typed, es)) == expected)
   }
 
+  /// The search sees letters only: a word with digits is never autocorrected, or the digits would vanish.
+  @Test(arguments: ["hello1", "teh2", "4helo"])
+  func wordsWithDigitsAreNotAutocorrected(typed: String) throws {
+    #expect(try english().autocorrection(for: taps(typed, en)) == nil)
+  }
+
   @Test func realWordsAreLeftAlone() throws {
     let s = try english()
     for w in ["the", "hello", "form", "from", "voice", "text", "iPhone"] { #expect(s.autocorrection(for: taps(w, en)) == nil, "\(w)") }

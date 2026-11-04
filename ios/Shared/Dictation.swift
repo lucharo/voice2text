@@ -21,8 +21,11 @@ enum DictationChannel {
   static let stateKey = "dictation.state"
   static let heartbeatKey = "dictation.heartbeat"
   static let resultKey = "dictation.result"
+  /// The id of the keyboard request the result answers (the request id the app saw when recording began).
   static let resultIdKey = "dictation.resultId"
   static let requestIdKey = "dictation.requestId"
+  /// The last result id a keyboard typed, so a result is typed once, even by a keyboard attached later.
+  static let deliveredIdKey = "dictation.deliveredId"
   /// The app refreshes the heartbeat every second while warm; older than this means no session.
   static let heartbeatTimeout: TimeInterval = 3
   static let url = URL(string: "v2t://dictate")!

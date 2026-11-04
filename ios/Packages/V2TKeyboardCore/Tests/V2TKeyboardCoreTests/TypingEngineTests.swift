@@ -170,4 +170,46 @@ struct TypingEngineTests {
     e.insertFinished("buy milk")
     #expect(p.text == "Note: buy milk")
   }
+
+  /// ß uppercases to two letters: with shift on it types "SS" and keeps both in the word (it used to crash).
+  @Test func shiftedEszettTypesTwoLetters() throws {
+    let (e, p) = try engine("x ")
+    e.shiftTap(now: 10)
+    e.character("ß", now: 10.5)
+    #expect(p.text == "x SS")
+    #expect(e.composing.count == 2)
+    e.delete()
+    #expect(p.text == "x S" && e.composing.count == 1)
+  }
+
+  @Test func capsLockAndAllCapitalFieldsSwipeWholeWordsInCapitals() throws {
+    let (e, p) = try engine("x ")
+    e.capsLockTap()
+    e.swipe(["hello", "jello"])
+    #expect(p.text == "x HELLO")
+    #expect(e.suggestions().map(\.word) == ["JELLO"])
+    let (f, q) = try engine()
+    f.traits = FieldTraits(capitalization: .all)
+    f.resync()
+    f.swipe(["hello"])
+    f.swipe(["there"])
+    #expect(q.text == "HELLO THERE")
+    let (g, r) = try engine("x ")
+    g.shiftTap(now: 10)
+    g.swipe(["hello", "jello"])
+    #expect(r.text == "x Hello")
+    #expect(g.suggestions().map(\.word) == ["Jello"])
+  }
+
+  /// A curly apostrophe from the long press stays inside the word, as the straight one does.
+  @Test func aCurlyApostropheDoesNotEndTheWord() throws {
+    let (e, p) = try engine("x ")
+    type("teh", e)
+    e.character("’", now: 100)
+    #expect(e.composing.count == 4)
+    #expect(p.text == "x teh’")
+    p.text = "x don’"
+    e.resync()
+    #expect(e.composing.count == 4)
+  }
 }

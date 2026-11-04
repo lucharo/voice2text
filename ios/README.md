@@ -17,7 +17,8 @@ cd ios
 ```
 
 Set `V2T_TEAM` to your Apple development team if it is not the default. `tools/ExportOptions.plist` exports an
-archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exportOptionsPlist tools/ExportOptions.plist`).
+archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exportOptionsPlist tools/ExportOptions.plist`);
+with another team, change its `teamID` too.
 
 ## How it fits together
 

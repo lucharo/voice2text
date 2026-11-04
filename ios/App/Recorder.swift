@@ -31,17 +31,28 @@ final class Recorder: AudioSource, @unchecked Sendable {
     converter = AVAudioConverter(from: format, to: target)
     input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in self?.append(buffer) }
     engine.prepare()
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      // roll back, so a retry does not install a second tap on the same bus (which crashes)
+      release()
+      throw error
+    }
     running = true
   }
 
-  /// Stops the tap and releases the microphone (the orange dot goes away).
+  /// Stops the tap and releases the microphone (the orange dot goes away). A dictation in progress is dropped.
   func coolDown() {
     guard running else { return }
+    release()
+    running = false
+  }
+
+  private func release() {
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    running = false
+    lock.lock(); capturing = false; samples = []; lock.unlock()
   }
 
   func begin() {

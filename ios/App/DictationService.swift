@@ -28,6 +28,13 @@ import SwiftUI
   private var heartbeat: Timer?
   /// Counts model preparations, so a late progress report from an earlier one is dropped.
   private var prepareAttempt = 0
+  /// The preparation under way, so a dictation that ends meanwhile waits for it instead of failing.
+  private var preparing: Task<Void, Never>?
+  /// Counts recordings; a transcription finishing after the session was reset and a new recording begun
+  /// must not change that recording's state or type into the keyboard.
+  private var recording = 0
+  /// The keyboard request that started the current recording; the result carries it back.
+  private var requestId = ""
 
   init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
     self.recommendation = recommendation
@@ -48,8 +55,15 @@ import SwiftUI
   // MARK: model
 
   func prepareModel() async {
-    guard engineState != .ready, engineState != .loading else { return }
-    if case .downloading = engineState { return }
+    guard engineState != .ready else { return }
+    if let preparing { await preparing.value; return }
+    let task = Task { await self.loadModel() }
+    preparing = task
+    await task.value
+    preparing = nil
+  }
+
+  private func loadModel() async {
     prepareAttempt += 1
     let attempt = prepareAttempt
     engineState = .loading  // a cached model only loads; the first download's progress replaces this
@@ -94,6 +108,11 @@ import SwiftUI
     publish(.needsApp)
   }
 
+  /// The "keep the mic ready" setting changed: a session already on runs for the new length from now.
+  func applyWarmSetting() {
+    if recorder.running { extendWarmth() }
+  }
+
   private func extendWarmth() {
     let minutes = Settings.shared.warmMinutes
     warmUntil = minutes == 0 ? nil : Date().addingTimeInterval(TimeInterval(minutes * 60))
@@ -116,6 +135,8 @@ import SwiftUI
     guard state == .idle || state == .needsApp else { return }
     if !recorder.running { warmUp() }
     guard recorder.running else { return }
+    recording += 1
+    requestId = defaults.string(forKey: DictationChannel.requestIdKey) ?? ""
     recorder.begin()
     publish(.listening)
   }
@@ -125,11 +146,13 @@ import SwiftUI
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()
-    Task { await finish(samples) }
+    let id = recording, request = requestId
+    Task { await finish(samples, id: id, request: request) }
   }
 
-  private func finish(_ samples: [Float]) async {
-    defer { publish(recorder.running ? .idle : .needsApp) }
+  private func finish(_ samples: [Float], id: Int, request: String) async {
+    // only the latest recording owns the state: a reset session may already be listening again
+    defer { if id == recording, state == .transcribing { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if engineState != .ready { await prepareModel() }
     let language = Settings.shared.speechLanguage
@@ -142,8 +165,9 @@ import SwiftUI
       text = dictionary.applyReplacements(text)
       lastText = text
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language))
+      guard id == recording else { return }  // kept in History, but not typed into whatever field is open now
       defaults.set(text, forKey: DictationChannel.resultKey)
-      defaults.set(UUID().uuidString, forKey: DictationChannel.resultIdKey)
+      defaults.set(request, forKey: DictationChannel.resultIdKey)
       DictationChannel.post(DictationChannel.changed)
     } catch {
       lastText = "Couldn't transcribe: \(error.localizedDescription)"

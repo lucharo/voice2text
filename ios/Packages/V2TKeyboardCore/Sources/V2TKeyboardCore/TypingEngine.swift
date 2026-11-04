@@ -62,15 +62,15 @@ public final class TypingEngine {
 
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
-    if ch.isLetter || ch.isNumber || ch == "'" && !composing.isEmpty {
+    if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
       lastCorrection = nil
       revertOffer = nil
-      let text = shift == .off ? s : s.uppercased()
+      let text = shift == .off ? s : s.uppercased()  // "ß" uppercases to two letters, "SS"
       proxy.insertText(text)
-      composing.append(TypedKey(Character(text), at: point))
+      composing += text.map { TypedKey($0, at: point) }
       if shift == .on { shift = .off }
       if traits.capitalization == .all { shift = .on }
     } else {
@@ -208,17 +208,20 @@ public final class TypingEngine {
   /// A swipe decoded to `candidates` (best first): the best is inserted as a word of its own, and the others
   /// wait in the bar.
   public func swipe(_ candidates: [String]) {
-    guard var word = candidates.first else { return }
+    guard !candidates.isEmpty else { return }
     commitWord()
     spaceIfNeeded()
-    if shift != .off { word = word.prefix(1).uppercased() + word.dropFirst() }
+    // caps lock and all-capitals fields write the whole word in capitals; a single shift only its first letter
+    let all = shift == .locked || traits.capitalization == .all, initial = shift != .off
+    let styled = candidates.map { all ? $0.uppercased() : initial ? $0.prefix(1).uppercased() + $0.dropFirst() : $0 }
+    let word = styled[0]
     if shift == .on { shift = .off }
+    if traits.capitalization == .all { shift = .on }
     proxy.insertText(word)
     autoSpace = false
     lastCorrection = nil
     revertOffer = nil
-    let alternatives = candidates.map { shift == .off && word.first?.isUppercase == true ? $0.prefix(1).uppercased() + $0.dropFirst() : $0 }
-    lastSwipe = (word, Array(alternatives.dropFirst()))
+    lastSwipe = (word, Array(styled.dropFirst()))
     composing = []
   }
 
@@ -252,7 +255,7 @@ public final class TypingEngine {
     revertOffer = nil
     var word: [TypedKey] = []
     for ch in before.reversed() {
-      guard ch.isLetter || ch == "'" else { break }
+      guard ch.isLetter || Self.isApostrophe(ch) else { break }
       word.insert(TypedKey(ch), at: 0)
     }
     composing = word
@@ -278,6 +281,9 @@ public final class TypingEngine {
 
   /// What separates words: space, newline, and the 13-inch iPad keyboard's tab.
   static func isGap(_ c: Character) -> Bool { c == " " || c == "\n" || c == "\t" }
+
+  /// Inside a word ("don't", "Teh’Code"): the straight apostrophe and the curly one from its long press.
+  static func isApostrophe(_ c: Character) -> Bool { c == "'" || c == "’" }
 
   func learn(_ word: String) {
     let w = word.lowercased()

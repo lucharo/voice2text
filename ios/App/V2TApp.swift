@@ -322,6 +322,7 @@ struct HistoryView: View {
 }
 
 struct KeyboardSettingsView: View {
+  @EnvironmentObject var dictation: DictationService
   @State private var layout = Settings.shared.layoutLanguage
   @State private var bilingual = Settings.shared.suggestionLanguages.count > 1
   @State private var warm = Settings.shared.warmMinutes
@@ -340,8 +341,15 @@ struct KeyboardSettingsView: View {
       }
     }
     .navigationTitle("Keyboard")
-    .onChange(of: layout) { Settings.shared.layoutLanguage = layout }
-    .onChange(of: bilingual) { Settings.shared.suggestionLanguages = bilingual ? [layout, layout == .english ? .spanish : .english] : [layout] }
-    .onChange(of: warm) { Settings.shared.warmMinutes = warm }
+    .onChange(of: layout) { Settings.shared.layoutLanguage = layout; saveLanguages() }
+    .onChange(of: bilingual) { saveLanguages() }
+    .onChange(of: warm) {
+      Settings.shared.warmMinutes = warm
+      dictation.applyWarmSetting()  // a session already on takes the new length from now
+    }
+  }
+
+  private func saveLanguages() {
+    Settings.shared.suggestionLanguages = bilingual ? [layout, layout == .english ? .spanish : .english] : [layout]
   }
 }
