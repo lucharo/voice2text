@@ -422,8 +422,10 @@ depend on the Mac, so compare models on the same machine.
 
 ## What would v2t on an iPhone use?
 
-This is a proposal; there is no iPhone app yet.
-[#52](https://github.com/lucharo/voice2text/issues/52) tracks it.
+The iPhone and iPad app lives in [`ios/`](https://github.com/lucharo/voice2text/tree/main/ios)
+([#75](https://github.com/lucharo/voice2text/issues/75)). It is in development and has run only in the
+Simulator so far. This answer covers phones with Apple Intelligence; the others get Parakeet v3 and no model
+cleanup (the [model table in ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md#which-model-this-iphone-gets)).
 
 - **Speech:** NVIDIA's Nemotron-Labs Unified ASR 0.6B, int8, through FluidAudio on Core ML. On an
   iPhone 16 Pro (October 2026, [#85](https://github.com/lucharo/voice2text/issues/85), 150 clips
@@ -444,3 +446,36 @@ uses the GPU. The iPhone 16 Pro's GPU does 2.3 TFLOPS against 8.1 for the M4 Pro
 60 GB/s of memory bandwidth against 273. Estimates from 14 October 2026, not measurements: about
 150 times real time on the iPhone's Neural Engine and about 35 times on its GPU, against 77 times
 for v2t on the Mac (108 times since 0.5.15).
+
+## Does the v2t iPhone keyboard do swipe typing?
+
+Yes: slide one finger across the letters, as on Apple's keyboard. Apple gives third-party keyboards
+none of its own swipe or autocorrect engines, so v2t decodes swipes itself
+(`ios/Packages/V2TKeyboardCore`). On 1,000 synthetic traces per language it puts the right word first
+96.8% of the time in English and 96.4% in Spanish (in the top three 99.7% and 100%). Those traces come
+from the test's own model of a finger. Accuracy with real fingers has not been measured, and the
+keyboard has run only in the Simulator (November 2026), so v2t does not claim to match Apple's swipe
+yet.
+
+## Which iPhones and iPads does v2t work on, and how fast is it?
+
+None is confirmed yet: as of November 2026 the app has not run on a real iPhone or iPad. The speech
+model and Apple Intelligence cleanup were measured on one iPhone 16 Pro, in a separate bench app
+([#85](https://github.com/lucharo/voice2text/issues/85),
+[#67](https://github.com/lucharo/voice2text/issues/67)).
+
+- **iPhone 16 Pro and 16 Pro Max:** expected to work well. On the 16 Pro the model took 18 s to load
+  the first time; text came back 81 to 143 ms (median) after you stop, and cleanup added about 1.0 to
+  1.3 s. The model is a 627 MB download.
+- **Other Apple Intelligence iPhones** (15 Pro and later, 16e, 17e, Air, Duo): the same features,
+  untested.
+- **iPhone 11 to 15 Plus and SE 2nd and 3rd generation** (A13 to A16): install, best effort. They get
+  Parakeet v3 and no model cleanup, because FluidAudio's int8 Unified encoder failed to load on an A16
+  ([FluidAudio #828](https://github.com/FluidInference/FluidAudio/issues/828)).
+- **iPhone XS, XR and older:** not supported (no iOS 26).
+- **iPad:** the app and its iPad keyboards are built but have not run on any iPad, nor in an iPad
+  Simulator. iPad support will not be advertised until an M-series iPad and the iPad mini (A17 Pro)
+  pass an end-to-end test.
+
+Each device's choice is made in `ios/App/Recommendation.swift`; see "Which model this iPhone gets" in
+[ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md).

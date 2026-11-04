@@ -1,0 +1,116 @@
+# xcodegen spec for the voice2text iPhone app and keyboard (#75). Generate, build and test with ./setup.sh.
+name: V2T
+options:
+  bundleIdPrefix: es.luischav.v2t
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ${V2T_TEAM}
+    CODE_SIGN_STYLE: Automatic
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    # 55f65d9: the revision the phone bench measured Nemotron Unified with (utils/phone_bench/project.yml)
+    revision: 55f65d9c887244a93c45f18225a35b3533516446
+  V2TKeyboardCore:
+    path: Packages/V2TKeyboardCore
+targets:
+  V2T:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    entitlements:
+      path: App/V2T.entitlements
+      properties:
+        com.apple.security.application-groups: [group.es.luischav.v2t]
+    dependencies:
+      - target: V2TKeyboard
+      - package: FluidAudio
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
+      - package: V2TKeyboardCore
+        product: V2TCleanup
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: v2t
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        NSMicrophoneUsageDescription: "v2t turns your speech into text on this device. Audio never leaves it."
+        CFBundleURLTypes:
+          - CFBundleURLName: es.luischav.v2t
+            CFBundleURLSchemes: [v2t]
+        UIApplicationSupportsIndirectInputEvents: true
+        ITSAppUsesNonExemptEncryption: false  # no encryption of its own; TestFlight skips the compliance question
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # iPad multitasking needs every orientation
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t
+      TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, each with its own keyboard layout
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # assets/logo/logo.svg at 1024 px
+  V2TKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Keyboard
+      - Shared
+      - path: build/lexicons
+        type: folder
+        buildPhase: resources
+        includes: ["*.v2tlex"]
+    entitlements:
+      path: Keyboard/Keyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [group.es.luischav.v2t]
+    dependencies:
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        CFBundleDisplayName: v2t
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.keyboard
+      TARGETED_DEVICE_FAMILY: "1,2"
+  V2TTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+      # the keyboard's key area, compiled in so its iPad layouts can be rendered off-screen (no iPad Simulator)
+      - Keyboard/KeyboardView.swift
+      - Keyboard/V2TMark.swift
+    dependencies:
+      - target: V2T
+      - package: V2TKeyboardCore
+        product: V2TKeyboardCore
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.tests
+  V2TUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: V2T
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t.uitests
+      TEST_TARGET_NAME: V2T
+schemes:
+  V2T:
+    build:
+      targets: {V2T: all, V2TTests: [test], V2TUITests: [test]}
+    test:
+      targets: [V2TTests, V2TUITests]

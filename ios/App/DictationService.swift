@@ -1,0 +1,182 @@
+import AVFoundation
+import Foundation
+import SwiftUI
+
+/// The app's side of dictation: a warm microphone session the keyboard drives over the App Group, on-device
+/// transcription, the dictionary and cleanup, and the result sent back to the keyboard.
+@MainActor final class DictationService: ObservableObject {
+  @Published private(set) var state: DictationState = .needsApp
+  @Published private(set) var engineState: SpeechEngine.State = .notDownloaded
+  @Published private(set) var lastText = ""
+  @Published private(set) var warmUntil: Date?
+  /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
+  @Published var cameFromKeyboard = false
+
+  /// Re-read whenever the app comes forward, so turning Apple Intelligence on or off in Settings shows here.
+  @Published private(set) var recommendation: Recommendation
+  let history: History
+  let dictionary: PersonalDictionary
+  private let engine: SpeechEngine
+  private let recorder: AudioSource = {
+    guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
+    // a test asked for the synthetic clip: never fall back to the real microphone
+    guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
+    return f
+  }()
+  private let defaults = Settings.shared.defaults
+  private var observers: [DarwinObserver] = []
+  private var heartbeat: Timer?
+  /// Counts model preparations, so a late progress report from an earlier one is dropped.
+  private var prepareAttempt = 0
+  /// The preparation under way, so a dictation that ends meanwhile waits for it instead of failing.
+  private var preparing: Task<Void, Never>?
+  /// Counts recordings; a transcription finishing after the session was reset and a new recording begun
+  /// must not change that recording's state or type into the keyboard.
+  private var recording = 0
+  /// The keyboard request that started the current recording; the result carries it back.
+  private var requestId = ""
+
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
+    self.recommendation = recommendation
+    self.history = history
+    self.dictionary = dictionary
+    self.engine = SpeechEngine(speech: recommendation.speech)
+    observers = [
+      DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
+      DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
+    ]
+  }
+
+  func refreshRecommendation() {
+    let r = Recommendation.current
+    if r != recommendation { recommendation = r }
+  }
+
+  // MARK: model
+
+  func prepareModel() async {
+    guard engineState != .ready else { return }
+    if let preparing { await preparing.value; return }
+    let task = Task { await self.loadModel() }
+    preparing = task
+    await task.value
+    preparing = nil
+  }
+
+  private func loadModel() async {
+    prepareAttempt += 1
+    let attempt = prepareAttempt
+    engineState = .loading  // a cached model only loads; the first download's progress replaces this
+    do {
+      try await engine.prepare(language: Settings.shared.speechLanguage) { s in
+        Task { @MainActor in
+          // a report that lands after ready or failed, or from an earlier attempt, never undoes it
+          guard self.prepareAttempt == attempt, self.engineState.isPreparing else { return }
+          self.engineState = s
+        }
+      }
+      engineState = .ready
+    } catch {
+      engineState = .failed(error.localizedDescription)
+    }
+  }
+
+  // MARK: session
+
+  /// Opens the microphone session and keeps it warm (call while the app is in front).
+  func warmUp() {
+    do {
+      try recorder.warmUp()
+      extendWarmth()
+      publish(.idle)
+      heartbeat?.invalidate()
+      heartbeat = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        MainActor.assumeIsolated { self?.beat() }
+      }
+      beat()
+    } catch {
+      publish(.needsApp)
+    }
+  }
+
+  func coolDown() {
+    recorder.coolDown()
+    heartbeat?.invalidate()
+    heartbeat = nil
+    warmUntil = nil
+    defaults.set(0, forKey: DictationChannel.heartbeatKey)
+    publish(.needsApp)
+  }
+
+  /// The "keep the mic ready" setting changed: a session already on runs for the new length from now.
+  func applyWarmSetting() {
+    if recorder.running { extendWarmth() }
+  }
+
+  private func extendWarmth() {
+    let minutes = Settings.shared.warmMinutes
+    warmUntil = minutes == 0 ? nil : Date().addingTimeInterval(TimeInterval(minutes * 60))
+  }
+
+  private func beat() {
+    if let until = warmUntil, Date() > until, state == .idle { coolDown(); return }
+    defaults.set(Date().timeIntervalSince1970, forKey: DictationChannel.heartbeatKey)
+  }
+
+  /// The keyboard opened the app (v2t://dictate): start the session and begin recording at once, so the
+  /// user can swipe back and keep talking.
+  func handleKeyboardLaunch() {
+    cameFromKeyboard = true
+    if !recorder.running { warmUp() }
+    start()
+  }
+
+  func start() {
+    guard state == .idle || state == .needsApp else { return }
+    if !recorder.running { warmUp() }
+    guard recorder.running else { return }
+    recording += 1
+    requestId = defaults.string(forKey: DictationChannel.requestIdKey) ?? ""
+    recorder.begin()
+    publish(.listening)
+  }
+
+  func stop() {
+    guard state == .listening else { return }
+    let samples = recorder.end()
+    publish(.transcribing)
+    extendWarmth()
+    let id = recording, request = requestId
+    Task { await finish(samples, id: id, request: request) }
+  }
+
+  private func finish(_ samples: [Float], id: Int, request: String) async {
+    // only the latest recording owns the state: a reset session may already be listening again
+    defer { if id == recording, state == .transcribing { publish(recorder.running ? .idle : .needsApp) } }
+    guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
+    if engineState != .ready { await prepareModel() }
+    let language = Settings.shared.speechLanguage
+    do {
+      let raw = try await engine.transcribe(samples, language: language)
+      var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { return }
+      let heard = text
+      if Settings.shared.cleanupEnabled { text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms) }
+      text = dictionary.applyReplacements(text)
+      lastText = text
+      try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language))
+      guard id == recording else { return }  // kept in History, but not typed into whatever field is open now
+      defaults.set(text, forKey: DictationChannel.resultKey)
+      defaults.set(request, forKey: DictationChannel.resultIdKey)
+      DictationChannel.post(DictationChannel.changed)
+    } catch {
+      lastText = "Couldn't transcribe: \(error.localizedDescription)"
+    }
+  }
+
+  private func publish(_ s: DictationState) {
+    state = s
+    defaults.set(s.rawValue, forKey: DictationChannel.stateKey)
+    DictationChannel.post(DictationChannel.changed)
+  }
+}
