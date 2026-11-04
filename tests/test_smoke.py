@@ -5144,6 +5144,18 @@ class V2TSmokeTests(unittest.TestCase):
         self._drain(voice)
         self.assertFalse(voice.latched, "handled the same way as predicted")
 
+    def test_the_prediction_waits_for_a_queued_escape_before_reading_the_real_state(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        voice.latched = True  # the double tap was handled; its Esc still waits
+        voice.esc_waiting = 1
+        voice.pred_latched = False  # what that Esc will leave
+        app.time.perf_counter.return_value = 101.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 101.1
+        voice.key_down("F")
+        self.assertEqual(voice.chords_pending, 1, "a shortcut: not typing into a latch the Esc ends")
+
     def test_a_shortcut_handled_before_its_release_is_still_not_a_tap(self):
         voice, _tap = self._tapper()
         voice.hotkey = "CMD"

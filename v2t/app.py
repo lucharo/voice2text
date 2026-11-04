@@ -1336,7 +1336,7 @@ class VoiceToText:
     def _queue_key(self, kind: str, key, at: float) -> None:
         if key == self.hotkey:
             with self.pending_lock:
-                if not self.hotkey_pending:  # nothing queued: start from the real state
+                if not self.hotkey_pending and not self.esc_waiting:  # nothing queued: start from the real state
                     self.pred_latched, self.pred_last_tap = self.latched, self.last_tap_at
                     if self.chorded:
                         self.chorded_presses.add(self.queued_presses)
