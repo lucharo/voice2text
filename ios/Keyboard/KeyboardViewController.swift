@@ -85,13 +85,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     }
   }
 
-  /// The iPad keyboard on an iPad wide enough for it (not its phone-sized floating keyboard), taller in
-  /// landscape; the iPhone keyboard everywhere else.
+  /// The full keyboard on a 13-inch iPad, the iPad keyboard on other iPads (not their phone-sized floating
+  /// keyboard), taller in landscape; the iPhone keyboard everywhere else.
   private func makeLayout(width: CGFloat, page: KeyboardPage) -> KeyboardLayout {
-    let pad = traitCollection.userInterfaceIdiom == .pad && width >= 600
-    var landscape = width > 1100
-    if let screen = view.window?.windowScene?.screen { landscape = screen.bounds.width > screen.bounds.height }
-    return KeyboardLayout(width: width, page: page, language: language, form: pad ? .pad : .phone, landscape: pad && landscape)
+    var landscape = width > 1100, shortSide = width
+    if let screen = view.window?.windowScene?.screen {
+      landscape = screen.bounds.width > screen.bounds.height
+      shortSide = min(screen.bounds.width, screen.bounds.height)
+    }
+    let form = KeyboardForm.choose(isPad: traitCollection.userInterfaceIdiom == .pad, width: width, screenShortSide: shortSide)
+    return KeyboardLayout(width: width, page: page, language: language, form: form, landscape: form.isPad && landscape)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
@@ -204,6 +207,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       if v.layout.page != .letters { relayout(page: .letters) }
     case .returnKey: edit { $0.returnKey() }
     case .shift: engine.shiftTap(now: CACurrentMediaTime()); refresh()
+    case .capsLock: engine.capsLockTap(); refresh()
+    case .tab: edit { $0.character("\t") }
     case .page(let p): relayout(page: p)
     case .mic: startDictation()
     case .emoji: advanceToNextInputMode()  // until the emoji page lands: hand over to the next keyboard

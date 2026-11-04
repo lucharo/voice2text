@@ -83,15 +83,15 @@ struct SwipeDecoderTests {
     #expect(Double(acc.top3) / Double(acc.total) >= 0.97)
   }
 
-  /// The same target on the iPad keyboard, 11-inch portrait and landscape. Its keys are wider than tall, and
+  /// The same target on the iPad keyboards: 11-inch portrait and landscape, and the 13-inch full keyboard. Its keys are wider than tall, and
   /// the extra punctuation keys sit in the bottom letter row.
   @Test(arguments: [("en", KeyboardLanguage.english), ("es", KeyboardLanguage.spanish)])
   func noisyTracesMeetTheAccuracyTargetOnTheIPadKeyboard(lang: String, language: KeyboardLanguage) throws {
     let lex = try Fixtures.lexicon(lang)
-    for (w, land) in [(CGFloat(834), false), (1194, true)] {
-      let layout = KeyboardLayout(width: w, language: language, form: .pad, landscape: land)
+    for (w, form, land) in [(CGFloat(834), KeyboardForm.pad, false), (1194, .pad, true), (1032, .padFull, false), (1376, .padFull, true)] {
+      let layout = KeyboardLayout(width: w, language: language, form: form, landscape: land)
       let acc = Self.measure(lex, language, words: 1000, jitter: 0.25, seed: 42, layout: layout)
-      print("swipe ipad \(lang) \(Int(w)): top1 \(acc.top1)/\(acc.total) top3 \(acc.top3)/\(acc.total)")
+      print("swipe ipad \(form) \(lang) \(Int(w)): top1 \(acc.top1)/\(acc.total) top3 \(acc.top3)/\(acc.total)")
       #expect(Double(acc.top1) / Double(acc.total) >= 0.90)
       #expect(Double(acc.top3) / Double(acc.total) >= 0.97)
     }

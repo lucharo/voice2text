@@ -62,6 +62,21 @@ import XCTest
     XCTAssertTrue(key("letters-q").waitForNonExistence(timeout: 5), "hide keyboard left the keyboard up")
   }
 
+  /// On a 13-inch iPad: the full keyboard, with shift typing a number key's second mark and tab a tab.
+  func testThirteenInchFullKeyboard() throws {
+    let screen = XCUIScreen.main.screenshot().image.size
+    try XCTSkipUnless(min(screen.width, screen.height) >= 1000, "13-inch iPad only")
+    launch()
+    showKeyboard()
+    for id in ["letters-1", "letters-`", "tab", "capslock", "letters-;", "letters-/"] { XCTAssertTrue(key(id).exists, "no key.\(id)") }
+    key("letters-h").tap(); key("letters-i").tap()
+    key("shift").tap(); key("letters-1").tap()
+    let settled = Date().addingTimeInterval(3)
+    while text != "Hi!", Date() < settled { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    XCTAssertEqual(text, "Hi!")
+    shot("48-ipad-13in-full-typed")
+  }
+
   func testLandscapeKeysAreTaller() {
     launch()
     showKeyboard()

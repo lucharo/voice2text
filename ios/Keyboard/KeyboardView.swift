@@ -126,7 +126,7 @@ final class KeyboardView: UIView {
   /// VoiceOver's double tap (and UI tests' accessibility activation) on a key.
   private func activate(_ k: Key) {
     switch k.action {
-    case .character(let c): delegate?.keyboardView(self, typed: shift == .off ? c : c.uppercased(), at: k.center)
+    case .character: delegate?.keyboardView(self, typed: k.output(shift: shift)!, at: k.center)
     case .delete: delegate?.keyboardViewDelete(self, wholeWord: false)
     default: delegate?.keyboardView(self, action: k.action)
     }
@@ -163,7 +163,7 @@ final class KeyboardView: UIView {
 
   private func spoken(_ k: Key) -> String {
     switch k.action {
-    case .character(let c): shift == .off ? c : c.uppercased()
+    case .character: k.output(shift: shift)!
     case .shift: shift == .locked ? "caps lock" : "shift"
     case .delete: "delete"
     case .space: "space"
@@ -171,6 +171,8 @@ final class KeyboardView: UIView {
     case .mic: "dictate"
     case .emoji: "next keyboard"
     case .dismiss: "hide keyboard"
+    case .tab: "tab"
+    case .capsLock: shift == .locked ? "caps lock on" : "caps lock"
     case .page(let p): p == .letters ? "letters" : (p == .numbers ? "numbers" : "symbols")
     }
   }
@@ -184,6 +186,8 @@ final class KeyboardView: UIView {
     case .mic: "mic"
     case .emoji: "globe"
     case .dismiss: "keyboard.chevron.compact.down"
+    case .tab: "arrow.right.to.line"
+    case .capsLock: shift == .locked ? "capslock.fill" : "capslock"
     default: nil
     }
   }
@@ -197,15 +201,17 @@ final class KeyboardView: UIView {
 
   private func label(for k: Key) -> (String, CGFloat) {
     switch k.action {
-    case .character(let c): return (shift == .off ? c : c.uppercased(), layout.form == .pad ? (layout.metrics.keyHeight > 60 ? 28 : 24) : (layout.page == .letters ? 25 : 22))
+    case .character: return (k.output(shift: shift)!, layout.form.isPad ? (layout.metrics.keyHeight > 60 ? 28 : 24) : (layout.page == .letters ? 25 : 22))
     case .shift: return (shift == .locked ? "⇪" : "⇧", 22)
     case .delete: return ("⌫", 22)
     case .space: return ("", 16)  // Apple's space bar carries no label
-    case .returnKey: return (returnLabel, layout.form == .pad ? 20 : 16)
+    case .returnKey: return (returnLabel, layout.form.isPad ? 20 : 16)
     case .mic: return ("🎙", 19)
     case .emoji: return ("🌐", 19)  // next keyboard, until v2t has its own emoji page
     case .dismiss: return ("⌨", 19)
-    case .page: return (k.label, layout.form == .pad ? 18 : 16)
+    case .tab: return ("⇥", 20)
+    case .capsLock: return ("⇪", 20)
+    case .page: return (k.label, layout.form.isPad ? 18 : 16)
     }
   }
 
@@ -229,7 +235,7 @@ final class KeyboardView: UIView {
       switch key.action {
       case .character:
         // the iPhone shows a balloon above the key; Apple's iPad keyboard darkens the key instead
-        if layout.form == .pad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0) }
+        if layout.form.isPad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0) }
         if !key.alternatives.isEmpty {
           track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
             MainActor.assumeIsolated { if let self, let track, !track.swiping { self.showAlternatives(track) } }
@@ -314,8 +320,8 @@ final class KeyboardView: UIView {
       return
     }
     switch track.key.action {
-    case .character(let c):
-      delegate?.keyboardView(self, typed: shift == .off ? c : c.uppercased(), at: touch.location(in: self))
+    case .character:
+      delegate?.keyboardView(self, typed: track.key.output(shift: shift)!, at: touch.location(in: self))
     case .delete:
       break
     default:

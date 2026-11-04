@@ -164,6 +164,11 @@ public final class TypingEngine {
     lastShiftAt = now
   }
 
+  /// The full iPad keyboard's caps lock key: locks in one tap, unlocks in the next.
+  public func capsLockTap() {
+    shift = shift == .locked ? .off : .locked
+  }
+
   // MARK: suggestions and swipes
 
   /// Three slots, as Apple's bar: the word as typed (or the original to revert to), the best suggestion,
