@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate the Xcode project, and optionally build or test.
 #   ./setup.sh          generate V2T.xcodeproj
-#   ./setup.sh test     generate + run the app's unit tests on an iPhone simulator
+#   ./setup.sh test     generate + run the app's unit and UI tests on an iPhone simulator
 # The keyboard engines have their own Mac-run tests: (cd Packages/V2TKeyboardCore && swift test).
 # Env: V2T_TEAM (Apple development team for signing), V2T_SIM (simulator name or UDID; default: first iPhone).
 set -euo pipefail

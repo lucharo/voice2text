@@ -422,8 +422,9 @@ depend on the Mac, so compare models on the same machine.
 
 ## What would v2t on an iPhone use?
 
-This is a proposal; there is no iPhone app yet.
-[#52](https://github.com/lucharo/voice2text/issues/52) tracks it.
+The iPhone and iPad app lives in [`ios/`](https://github.com/lucharo/voice2text/tree/main/ios)
+([#75](https://github.com/lucharo/voice2text/issues/75)). It is in development and has run only in the
+Simulator so far; this answer gives the models it uses.
 
 - **Speech:** NVIDIA's Nemotron-Labs Unified ASR 0.6B, int8, through FluidAudio on Core ML. On an
   iPhone 16 Pro (October 2026, [#85](https://github.com/lucharo/voice2text/issues/85), 150 clips

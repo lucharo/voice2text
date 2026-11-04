@@ -1,20 +1,23 @@
-# v2t for iPhone
+# v2t for iPhone and iPad
 
-An iPhone app and keyboard ([#75](https://github.com/lucharo/voice2text/issues/75)): a typing keyboard meant to be the
-only one you need, with v2t dictation built in. Speech is transcribed on the iPhone; audio never leaves it.
+An iPhone and iPad app and keyboard ([#75](https://github.com/lucharo/voice2text/issues/75)): a typing keyboard meant to be the
+only one you need, with v2t dictation built in. Speech is transcribed on the device; audio never leaves it.
+The iPad gets its own keyboard layouts, including the full keyboard with a number row on 13-inch iPads.
 
-Status: in development. Runs on the iOS Simulator; nothing has been installed on a phone yet.
+Status: in development. Runs on the iPhone Simulator; nothing has been installed on a phone or iPad yet, and the
+iPad layouts have only been rendered off-screen (the installed Simulator runtime offers no iPad).
 
 ## Build and test
 
 ```sh
 cd ios
 ./setup.sh                 # word lists (pinned AOSP commit), then generate V2T.xcodeproj with xcodegen
-./setup.sh test            # the app's unit tests on an iPhone simulator
+./setup.sh test            # the app's unit and UI tests on an iPhone simulator (iPad UI tests skip there)
 (cd Packages/V2TKeyboardCore && swift test)   # keyboard engines and cleanup guard, on the Mac
 ```
 
-Set `V2T_TEAM` to your Apple development team if it is not the default.
+Set `V2T_TEAM` to your Apple development team if it is not the default. `tools/ExportOptions.plist` exports an
+archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exportOptionsPlist tools/ExportOptions.plist`).
 
 ## How it fits together
 
