@@ -184,6 +184,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   private func refresh() {
     keyboardView.shift = engine.shift
+    keyboardView.shiftManual = engine.shiftManual
     bar.show(engine.suggestions())
   }
 

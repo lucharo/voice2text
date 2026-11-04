@@ -18,6 +18,8 @@ final class KeyboardView: UIView {
   weak var delegate: KeyboardViewDelegate?
   private(set) var layout: KeyboardLayout
   var shift: ShiftState = .off { didSet { if shift != oldValue { relabel() } } }
+  /// The user tapped shift (rather than a sentence start): number keys show and type their second marks.
+  var shiftManual = false { didSet { if shiftManual != oldValue { relabel() } } }
   var returnLabel = "return" { didSet { relabel() } }
 
   private var keyLayers: [String: CALayer] = [:]
@@ -126,7 +128,7 @@ final class KeyboardView: UIView {
   /// VoiceOver's double tap (and UI tests' accessibility activation) on a key.
   private func activate(_ k: Key) {
     switch k.action {
-    case .character: delegate?.keyboardView(self, typed: k.output(shift: shift)!, at: k.center)
+    case .character: delegate?.keyboardView(self, typed: k.output(shift: shift, manual: shiftManual)!, at: k.center)
     case .delete: delegate?.keyboardViewDelete(self, wholeWord: false)
     default: delegate?.keyboardView(self, action: k.action)
     }
@@ -163,7 +165,7 @@ final class KeyboardView: UIView {
 
   private func spoken(_ k: Key) -> String {
     switch k.action {
-    case .character: k.output(shift: shift)!
+    case .character: k.output(shift: shift, manual: shiftManual)!
     case .shift: shift == .locked ? "caps lock" : "shift"
     case .delete: "delete"
     case .space: "space"
@@ -201,7 +203,7 @@ final class KeyboardView: UIView {
 
   private func label(for k: Key) -> (String, CGFloat) {
     switch k.action {
-    case .character: return (k.output(shift: shift)!, layout.form.isPad ? (layout.metrics.keyHeight > 60 ? 28 : 24) : (layout.page == .letters ? 25 : 22))
+    case .character: return (k.output(shift: shift, manual: shiftManual)!, layout.form.isPad ? (layout.metrics.keyHeight > 60 ? 28 : 24) : (layout.page == .letters ? 25 : 22))
     case .shift: return (shift == .locked ? "⇪" : "⇧", 22)
     case .delete: return ("⌫", 22)
     case .space: return ("", 16)  // Apple's space bar carries no label
@@ -236,7 +238,7 @@ final class KeyboardView: UIView {
       case .character:
         // the iPhone shows a balloon above the key; Apple's iPad keyboard darkens the key instead
         if layout.form.isPad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0) }
-        if !key.alternatives.isEmpty {
+        if key.longPress(shift: shift, manual: shiftManual).count > 1 {
           track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
             MainActor.assumeIsolated { if let self, let track, !track.swiping { self.showAlternatives(track) } }
           }
@@ -321,7 +323,7 @@ final class KeyboardView: UIView {
     }
     switch track.key.action {
     case .character:
-      delegate?.keyboardView(self, typed: track.key.output(shift: shift)!, at: touch.location(in: self))
+      delegate?.keyboardView(self, typed: track.key.output(shift: shift, manual: shiftManual)!, at: touch.location(in: self))
     case .delete:
       break
     default:
@@ -363,8 +365,8 @@ final class KeyboardView: UIView {
   }
 
   private func showAlternatives(_ track: Track) {
-    guard case .character(let c) = track.key.action else { return }
-    let alts = [shift == .off ? c : c.uppercased()] + track.key.alternatives.map { shift == .off ? $0 : $0.uppercased() }
+    guard case .character = track.key.action else { return }
+    let alts = track.key.longPress(shift: shift, manual: shiftManual)
     track.alternatives = alts
     track.chosen = 0
     CATransaction.begin()

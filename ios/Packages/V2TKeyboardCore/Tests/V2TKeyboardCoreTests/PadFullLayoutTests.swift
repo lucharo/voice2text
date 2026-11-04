@@ -110,3 +110,52 @@ struct PadFullLayoutTests {
     #expect(e.shift == .off)
   }
 }
+
+/// Review fixes for the full keyboard (roborev 10992).
+struct PadFullTypingTests {
+  let layout = KeyboardLayout(width: 1032, form: .padFull)
+  func key(_ label: String, _ l: KeyboardLayout? = nil) -> Key { (l ?? layout).keys.first { $0.label == label }! }
+  func engine(_ start: String = "") throws -> (TypingEngine, FakeProxy) {
+    let p = FakeProxy()
+    p.text = start
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [try Fixtures.english.get()], layout: layout))
+    e.resync()
+    return (e, p)
+  }
+
+  @Test func automaticCapitalsLeaveNumberKeysAlone() throws {
+    let (e, _) = try engine()
+    #expect(e.shift == .on && !e.shiftManual)  // an empty field starts a sentence
+    #expect(key("1").output(shift: e.shift, manual: e.shiftManual) == "1")
+    #expect(key("a").output(shift: e.shift, manual: e.shiftManual) == "A")
+    e.shiftTap(now: 10)  // off
+    e.shiftTap(now: 20)  // on, by hand
+    #expect(e.shift == .on && e.shiftManual)
+    #expect(key("1").output(shift: e.shift, manual: e.shiftManual) == "!")
+    e.character("!")
+    #expect(!e.shiftManual)
+  }
+
+  @Test func longPressWithShiftOffersTheShiftedMark() {
+    #expect(key("'").longPress(shift: .on, manual: true).first == "\"")
+    #expect(key("'").longPress(shift: .on, manual: true).contains("“"))
+    #expect(key("/").longPress(shift: .on, manual: true) == ["?", "¿"])
+    #expect(key("'").longPress(shift: .off).first == "'")
+    #expect(key("e").longPress(shift: .on).first == "E")
+  }
+
+  @Test func spanishOrdinalKeyDoesNotStartASwipe() {
+    let es = KeyboardLayout(width: 1032, language: .spanish, form: .padFull)
+    #expect(key("º", es).startsSwipe == false)
+    #expect(key("ñ", es).startsSwipe && key("ç", es).startsSwipe)
+  }
+
+  @Test func deleteWordAndSwipesTreatATabAsAGap() throws {
+    let (e, p) = try engine("one\tuncharacteristically")
+    e.deleteWord()
+    #expect(p.text == "one\t")
+    let (e2, p2) = try engine("one\t")
+    e2.swipe(["two"])
+    #expect(p2.text == "one\ttwo")  // no space pushed in after the tab
+  }
+}

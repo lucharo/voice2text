@@ -28,7 +28,10 @@ public final class TypingEngine {
   public let proxy: TextProxy
   public var suggester: Suggester
   public var traits = FieldTraits()
-  public private(set) var shift: ShiftState = .off
+  public private(set) var shift: ShiftState = .off { didSet { shiftManual = false } }
+  /// Shift is on because the user tapped it, not because a sentence or field starts: only then do the full
+  /// iPad keyboard's number and punctuation keys type their second mark.
+  public private(set) var shiftManual = false
   /// Keys of the word under construction, since the last word boundary.
   public private(set) var composing: [TypedKey] = []
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
@@ -147,8 +150,8 @@ public final class TypingEngine {
     lastSwipe = nil
     var text = before
     var n = 0
-    while let last = text.last, last == " " || last == "\n" { text.removeLast(); n += 1 }
-    while let last = text.last, !(last == " " || last == "\n") { text.removeLast(); n += 1 }
+    while let last = text.last, Self.isGap(last) { text.removeLast(); n += 1 }
+    while let last = text.last, !Self.isGap(last) { text.removeLast(); n += 1 }
     if n == 0 { return }
     for _ in 0..<n { proxy.deleteBackward() }
     composing = []
@@ -161,6 +164,7 @@ public final class TypingEngine {
     case .on: shift = now - lastShiftAt < Self.doubleTap ? .locked : .off
     case .locked: shift = .off
     }
+    shiftManual = shift == .on
     lastShiftAt = now
   }
 
@@ -269,8 +273,11 @@ public final class TypingEngine {
 
   func spaceIfNeeded() {
     guard let last = before.last else { return }
-    if !(last == " " || last == "\n" || "([{¿¡“«\"'".contains(last)) { proxy.insertText(" ") }
+    if !(Self.isGap(last) || "([{¿¡“«\"'".contains(last)) { proxy.insertText(" ") }
   }
+
+  /// What separates words: space, newline, and the 13-inch iPad keyboard's tab.
+  static func isGap(_ c: Character) -> Bool { c == " " || c == "\n" || c == "\t" }
 
   func learn(_ word: String) {
     let w = word.lowercased()
@@ -285,7 +292,7 @@ public final class TypingEngine {
     case .none: shift = .off
     case .all: shift = .on
     case .words:
-      shift = before.isEmpty || before.last == " " || before.last == "\n" ? .on : .off
+      shift = before.last.map(Self.isGap) ?? true ? .on : .off
     case .sentences:
       let trimmed = before.reversed().drop { $0 == " " }
       let hadSpace = trimmed.count < before.count

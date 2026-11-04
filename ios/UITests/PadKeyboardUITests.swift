@@ -45,9 +45,10 @@ import XCTest
     for id in ["delete", "return", "shift", "shift-right", "letters-,", "letters-.", "page-right", "dismiss", "mic", "emoji"] {
       XCTAssertTrue(key(id).exists, "no key.\(id)")
     }
-    // delete sits at the end of the top row, return at the end of the middle row, as on Apple's iPad keyboard
-    XCTAssertEqual(key("delete").frame.midY, key("letters-p").frame.midY, accuracy: 1)
-    XCTAssertGreaterThan(key("delete").frame.minX, key("letters-p").frame.maxX)
+    // delete ends the top row (letters on most iPads, numbers on a 13-inch), return the home row
+    let top = key("letters-0").exists ? key("letters-0") : key("letters-p")
+    XCTAssertEqual(key("delete").frame.midY, top.frame.midY, accuracy: 1)
+    XCTAssertGreaterThan(key("delete").frame.minX, top.frame.maxX)
     XCTAssertEqual(key("return").frame.midY, key("letters-l").frame.midY, accuracy: 1)
     shot("40-ipad-keyboard-portrait")
 

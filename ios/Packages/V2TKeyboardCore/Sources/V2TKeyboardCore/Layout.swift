@@ -41,21 +41,36 @@ public struct Key: Hashable, Sendable, Identifiable {
   public let row: Int
   /// What the key types with shift on, when that is not its capital: "!" on the full keyboard's 1 key.
   public var shifted: String? = nil
+  /// Long-press alternatives of `shifted` (the curly quotes for ").
+  public var shiftedAlternatives: [String] = []
 
   public var isCharacter: Bool { if case .character = action { true } else { false } }
-  /// A letter key: only these start a swipe, so dragging off , . or ' still types the mark.
-  public var startsSwipe: Bool { if case .character(let c) = action { c.first?.isLetter == true } else { false } }
+  /// A letter key with a capital: only these start a swipe, so dragging off , . ' or Spanish º still types
+  /// the mark.
+  public var startsSwipe: Bool {
+    guard case .character(let c) = action, c.first?.isLetter == true else { return false }
+    return c.lowercased() != c.uppercased()
+  }
   public var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
 
-  /// What a character key types, and shows, in a shift state: shift gives its second mark when it has one
-  /// ("1" types "!"), otherwise its capital; caps lock capitalises letters only, as on a hardware keyboard.
-  public func output(shift: ShiftState) -> String? {
+  /// What a character key types, and shows, in a shift state: a shift the user tapped (`manual`) gives its
+  /// second mark when it has one ("1" types "!"), otherwise its capital; automatic capitals at the start of
+  /// a sentence and caps lock capitalise letters only, as on a hardware keyboard.
+  public func output(shift: ShiftState, manual: Bool = true) -> String? {
     guard case .character(let c) = action else { return nil }
     switch shift {
     case .off: return c
-    case .on: return shifted ?? c.uppercased()
+    case .on: return manual ? (shifted ?? c.uppercased()) : c.uppercased()
     case .locked: return c.uppercased()
     }
+  }
+
+  /// The long-press choices, first the one a plain release types: the shifted mark's own alternatives when
+  /// shift gives one, otherwise the key's, capitalised with shift.
+  public func longPress(shift: ShiftState, manual: Bool = true) -> [String] {
+    guard let first = output(shift: shift, manual: manual) else { return [] }
+    if let s = shifted, first == s { return [s] + shiftedAlternatives }
+    return [first] + alternatives.map { shift == .off ? $0 : $0.uppercased() }
   }
 }
 
@@ -262,7 +277,8 @@ public struct KeyboardLayout: Sendable {
         let w = it.w ?? flex
         let alts: [String] = if case .character(let c) = it.action { alternatives(c, language) } else { [] }
         keys.append(Key(id: it.id, action: it.action, label: it.label, frame: CGRect(x: x, y: y(r), width: w, height: h),
-                        alternatives: alts, row: r, shifted: it.shifted))
+                        alternatives: alts, row: r, shifted: it.shifted,
+                        shiftedAlternatives: it.shifted.map { alternatives($0, language) } ?? []))
         x += w + g
       }
     }
