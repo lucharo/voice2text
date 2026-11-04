@@ -5127,6 +5127,23 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(voice.chords_pending, 1)
         self.assertFalse(voice.escape_consumed, "this Esc is the app's")
 
+    def test_a_queued_escape_forgets_the_first_tap_as_the_prediction_does(self):
+        voice, _tap = self._tapper()
+        voice.hotkey = "CMD"
+        app.time.perf_counter.return_value = 100.0
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.1
+        voice.key_up("CMD")  # a tap
+        voice.key_down(types.SimpleNamespace(name="esc"))  # queued behind it, swallowed
+        voice.consume_escape(True)
+        app.time.perf_counter.return_value = 100.3
+        voice.key_down("CMD")
+        app.time.perf_counter.return_value = 100.4
+        voice.key_up("CMD")  # within DOUBLE_TAP_S of the first, but after the Esc
+        self.assertFalse(voice.pred_latched)
+        self._drain(voice)
+        self.assertFalse(voice.latched, "handled the same way as predicted")
+
     def test_a_shortcut_handled_before_its_release_is_still_not_a_tap(self):
         voice, _tap = self._tapper()
         voice.hotkey = "CMD"

@@ -1355,6 +1355,10 @@ class VoiceToText:
             if kind == "esc":
                 try:
                     self.cancel_dictation()
+                    # a swallowed Esc forgets the tap history even when nothing was left to
+                    # cancel, as the prediction did when it was queued (key_down)
+                    with self.lifecycle_lock:
+                        self.last_tap_at = 0.0
                 finally:
                     with self.paste_gate:
                         self.esc_waiting -= 1
