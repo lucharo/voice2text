@@ -43,12 +43,14 @@ targets:
           - CFBundleURLName: es.luischav.v2t
             CFBundleURLSchemes: [v2t]
         UIApplicationSupportsIndirectInputEvents: true
+        ITSAppUsesNonExemptEncryption: false  # no encryption of its own; TestFlight skips the compliance question
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         # iPad multitasking needs every orientation
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: es.luischav.v2t
       TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, each with its own keyboard layout
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # assets/logo/logo.svg at 1024 px
   V2TKeyboard:
     type: app-extension
     platform: iOS
