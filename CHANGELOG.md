@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.19
 
 - **With Command as the hotkey, a double tap then a shortcut is typing.** During a slow microphone start, double-tapping Command to dictate hands-free and then pressing Cmd+F and Esc let the Esc through to the app and the recording carried on. v2t now works out that the second tap starts hands-free, so the F is typed and Esc stops the dictation (#104).
 
