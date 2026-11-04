@@ -410,6 +410,7 @@ class VoiceToText:
         # rules), so a key typed right after a queued double tap is not taken for a shortcut
         self.pred_latched = False
         self.pred_last_tap = 0.0
+        self.chorded_presses: set[int] = set()  # presses whose release is not a tap (shortcut, Esc)
         self.chord_presses: collections.deque = collections.deque()  # each queued chord's press
         self.pending_lock = threading.Lock()
         # Esc's choice on the tap and the paste decision, each a few instructions long
@@ -1290,12 +1291,16 @@ class VoiceToText:
                     ):
                         self.esc_waiting += 1
                         self.escape_consumed = True
+                        with self.pending_lock:  # cancel_dictation's effect, for the prediction
+                            self.pred_latched, self.pred_last_tap = False, 0.0
+                            self.chorded_presses.add(self.queued_presses)
                         self.key_events.put(("esc", key, now))
             return
         if key != self.hotkey and self._will_chord(now):
             with self.pending_lock:
                 self.chords_pending += 1
                 press = self.queued_presses
+                self.chorded_presses.add(press)
                 self.chords_for[press] = self.chords_for.get(press, 0) + 1
                 self.chord_presses.append(press)
             self.key_events.put(("chord", key, now))
@@ -1316,9 +1321,11 @@ class VoiceToText:
 
     def _predict_release(self, at: float) -> None:
         """on_release's outcome for a release queued now (under pending_lock)."""
+        chorded = self.queued_presses in self.chorded_presses
+        self.chorded_presses.discard(self.queued_presses)
         if self.pred_latched:  # the tap that stops hands-free
             self.pred_latched = False
-        elif self.chords_for.get(self.queued_presses, 0):  # a shortcut: not a tap
+        elif chorded:  # a shortcut, or cancelled by Esc: not a tap
             pass
         elif at - self.last_press_queued_at < self.HOLD_S:  # a tap
             if at - self.pred_last_tap < self.DOUBLE_TAP_S:
@@ -1331,6 +1338,8 @@ class VoiceToText:
             with self.pending_lock:
                 if not self.hotkey_pending:  # nothing queued: start from the real state
                     self.pred_latched, self.pred_last_tap = self.latched, self.last_tap_at
+                    if self.chorded:
+                        self.chorded_presses.add(self.queued_presses)
                 if kind == "up":
                     self._predict_release(at)
                 self.hotkey_pending += 1  # until the hotkey thread has handled it
