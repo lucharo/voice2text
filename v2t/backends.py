@@ -68,19 +68,6 @@ def cached_locally(repo_id: str) -> bool:
     return any(any(p.iterdir()) for p in hf_snapshots(repo_id))
 
 
-def local_snapshot(repo_id: str) -> Path | None:
-    """The cached snapshot the hub's loaders would use (refs/main), if it is on disk."""
-    snapshots = hf_snapshots(repo_id)
-    if not snapshots:
-        return None
-    ref = snapshots[0].parent.parent / "refs" / "main"
-    try:
-        folder = snapshots[0].parent / ref.read_text().strip()
-    except OSError:
-        return None
-    return folder if folder.is_dir() and any(folder.iterdir()) else None
-
-
 def load_cache_first(repo_id: str, loader: Callable[[], T]) -> T:
     """Run `loader` without Hugging Face revision checks when the model is cached.
 
@@ -1056,7 +1043,7 @@ class MLXCleanup(_ChunkedCleanup):
     _prefix_tokens: list[int] = []
     _prefix_cache = None
 
-    def __init__(self, model: str = "", url: str = "", folder: Path | None = None):
+    def __init__(self, model: str = "", url: str = ""):
         try:
             from mlx_lm import load
         except ImportError as e:
@@ -1064,14 +1051,9 @@ class MLXCleanup(_ChunkedCleanup):
                 "mlx-lm missing — reinstall voice2text (Apple Silicon only)."
             ) from e
         self.model_id = model or self.default_model
-        if folder is not None:
-            # a cached snapshot, read straight from disk: no hub call, and no
-            # HF_HUB_OFFLINE, which another model may be loading under (app.warmup)
-            self.model, self.tokenizer = load(str(folder))
-        else:
-            self.model, self.tokenizer = load_cache_first(
-                self.model_id, lambda: load(self.model_id)
-            )
+        self.model, self.tokenizer = load_cache_first(
+            self.model_id, lambda: load(self.model_id)
+        )
         self.last_stats = {}
 
     def _prompt(self, chunk: str, mode: str) -> list[int]:
@@ -1190,14 +1172,11 @@ CLEANUP_CHOICES = (
 )
 
 
-def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434", folder: Path | None = None):
-    """`folder`: an MLX model's cached snapshot (local_snapshot), loaded with no hub access."""
+def make_cleanup(engine: str, model: str = "", url: str = "http://localhost:11434"):
     if engine not in CLEANUP:
         raise SystemExit(
             f"unknown cleanup engine {engine!r}; choose: {', '.join(CLEANUP)}"
         )
-    if folder is not None:
-        return CLEANUP[engine](model, url, folder=folder)
     return CLEANUP[engine](model, url)
 
 

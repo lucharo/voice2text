@@ -5892,16 +5892,13 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(attempts, [True, False])
         self.assertFalse(constants.HF_HUB_OFFLINE)
 
-    def _warm(self, make_stt, make_cleanup, snapshot=Path("/cache/snapshots/abc")):
+    def _warm(self, make_stt, make_cleanup):
         config.ensure_dirs()
         voice = app.VoiceToText(config.Config())
         voice.cfg.preview = ""
         with (
             mock.patch.object(backends, "make_stt", side_effect=make_stt),
             mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
-            mock.patch.object(backends, "local_snapshot", return_value=snapshot),
-            # warmup imports transformers before the thread starts: a 5-10 s import
-            mock.patch.dict(sys.modules, {"transformers": types.SimpleNamespace(AutoTokenizer=object)}),
         ):
             voice.warmup()
         return voice
@@ -5910,113 +5907,9 @@ class V2TSmokeTests(unittest.TestCase):
     def _stt(*_args):
         return mock.Mock(sample_rate=16000, decode=mock.Mock(return_value=""), streaming=False)
 
-    def test_a_cached_cleanup_model_loads_from_its_folder_while_the_transcription_model_does(self):
-        cleanup_started = threading.Event()
-        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
-        folders = []
-
-        def make_stt(*args):
-            # sequential loading never starts the cleanup model while this waits
-            self.assertTrue(cleanup_started.wait(5), "cleanup was not loading meanwhile")
-            return self._stt(*args)
-
-        def make_cleanup(*_args, folder=None):
-            folders.append(folder)
-            cleanup_started.set()
-            return cleaner
-
-        voice = self._warm(make_stt, make_cleanup)
-
-        self.assertIs(voice.cleaner, cleaner)
-        self.assertEqual(folders, [Path("/cache/snapshots/abc")], "no hub access, so no HF_HUB_OFFLINE")
-        cleaner.cleanup.assert_called_once_with("hi", voice.cfg.mode)
-
-    def test_a_cleanup_model_to_download_loads_after_the_transcription_model(self):
-        order = []
-        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
-
-        def make_stt(*args):
-            order.append("stt")
-            return self._stt(*args)
-
-        def make_cleanup(*_args, folder=None):
-            order.append(("cleanup", folder))
-            return cleaner
-
-        voice = self._warm(make_stt, make_cleanup, snapshot=None)
-
-        self.assertEqual(order, ["stt", ("cleanup", None)])
-        self.assertIs(voice.cleaner, cleaner)
-
-    def test_a_partial_cleanup_folder_is_loaded_again_the_normal_way(self):
-        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
-        calls = []
-
-        def make_cleanup(*_args, folder=None):
-            calls.append(folder)
-            if folder is not None:
-                raise FileNotFoundError("model.safetensors")  # an interrupted download
-            return cleaner
-
-        voice = self._warm(self._stt, make_cleanup)
-
-        self.assertEqual(calls, [Path("/cache/snapshots/abc"), None])
-        self.assertIs(voice.cleaner, cleaner)
-
-    def test_ollama_cleanup_loads_alongside_without_importing_transformers(self):
-        config.ensure_dirs()
-        voice = app.VoiceToText(config.Config(cleanup_engine="ollama"))
-        voice.cfg.preview = ""
-        cleaner = mock.Mock(cleanup=mock.Mock(return_value=("hi", 0.0, 0.0)))
-        asked = []
-
-        class Transformers(types.ModuleType):
-            def __getattr__(self, name):
-                asked.append(name)
-                return object
-
-        transformers = Transformers("transformers")
-        with (
-            mock.patch.object(backends, "make_stt", side_effect=self._stt),
-            mock.patch.object(backends, "make_cleanup", return_value=cleaner) as make_cleanup,
-            mock.patch.dict(sys.modules, {"transformers": transformers}),
-        ):
-            voice.warmup()
-
-        self.assertEqual(asked, [], "transformers is a 5-10 s import Ollama does not need")
-        self.assertIs(voice.cleaner, cleaner)
-        self.assertIsNone(make_cleanup.call_args.kwargs["folder"])
-
     def test_a_cleanup_model_that_fails_to_load_still_stops_the_engine(self):
         with self.assertRaises(SystemExit):
             self._warm(self._stt, mock.Mock(side_effect=SystemExit("cleanup needs mlx-lm")))
-
-    def test_the_cached_snapshot_is_the_one_refs_main_names(self):
-        root = Path(self.tempdir.name) / "hub" / "models--org--model"
-        for rev in ("aaa", "bbb"):
-            (root / "snapshots" / rev).mkdir(parents=True)
-            (root / "snapshots" / rev / "config.json").write_text("{}")
-        (root / "refs").mkdir()
-        (root / "refs" / "main").write_text("aaa\n")
-        os.utime(root / "snapshots" / "bbb", (2e9, 2e9))  # newer, but not main
-        constants = types.SimpleNamespace(HF_HUB_CACHE=str(root.parent))
-        with mock.patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(constants=constants)}):
-            self.assertEqual(backends.local_snapshot("org/model"), root / "snapshots" / "aaa")
-            (root / "refs" / "main").unlink()
-            self.assertIsNone(backends.local_snapshot("org/model"), "no main: load it the normal way")
-
-    def test_an_mlx_cleanup_model_given_its_folder_never_touches_the_hub(self):
-        folder = Path("/cache/snapshots/abc")
-        load = mock.Mock(return_value=("model", "tokenizer"))
-        with (
-            mock.patch.dict(sys.modules, {"mlx_lm": types.SimpleNamespace(load=load)}),
-            mock.patch.object(backends, "load_cache_first") as cache_first,
-        ):
-            cleaner = backends.make_cleanup("mlx", "org/model", folder=folder)
-
-        load.assert_called_once_with(str(folder))
-        cache_first.assert_not_called()
-        self.assertEqual(cleaner.model_id, "org/model")
 
     def test_cleanup_benchmark_skips_a_missing_engine(self):
         with (

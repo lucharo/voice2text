@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **The cleanup model loads after the transcription model again.** 0.5.17 loaded the two at the same time. Timed on a quiet Mac, startup took the same 3.6 s either way once the model files were cached (four rounds each, alternating which went first), so the extra code went.
 - **Esc and Cmd+Z behave during a slow microphone start.** Pressing Esc and then Cmd+Z straight away, while a Bluetooth microphone was still opening, sent Cmd+Z to the app instead of bringing the dictation back; it now restores the dictation. With Command as the hotkey, a shortcut such as Cmd+F followed by Esc no longer swallows the Esc, so the app's search box closes as it should (#102).
 
 ## 0.5.17
