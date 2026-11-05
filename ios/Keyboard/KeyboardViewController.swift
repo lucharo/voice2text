@@ -286,9 +286,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     view.layoutIfNeeded()
     let layout = keyboardView.layout
     let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
-    let mic = layout.keys.first { $0.action == .mic }?.frame ?? row
-    panel.show(state, style: RecordingPanel.Style(rawValue: Settings.shared.recordingStyle) ?? .a,
-               bottomRow: keyboardView.convert(row, to: panel), micKey: keyboardView.convert(mic, to: panel))
+    panel.show(state, bottomRow: keyboardView.convert(row, to: panel))
   }
 }
 

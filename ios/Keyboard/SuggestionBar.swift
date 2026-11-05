@@ -45,12 +45,15 @@ final class SuggestionBar: UIView {
   func show(_ suggestions: [Suggestion]) {
     let ordered = suggestions  // the engine puts the word as typed first, then the best guesses
     words = ordered.map(\.word)
+    // bold marks the word space will put in, as Apple's bar does: a correction beside the word as typed, never
+    // a prediction or a swipe's alternatives
+    let boldMiddle = ordered.count > 1 && ordered[0].kind == .typed && ordered[1].kind == .correction
     for (i, s) in slots.enumerated() {
       guard i < ordered.count else { s.setTitle(nil, for: .normal); s.isEnabled = false; continue }
       let sug = ordered[i]
       let title = sug.kind == .typed && ordered.count > 1 ? "“\(sug.word)”" : sug.word
       s.setTitle(title, for: .normal)
-      s.titleLabel?.font = .systemFont(ofSize: 17, weight: i == 1 ? .semibold : .regular)
+      s.titleLabel?.font = .systemFont(ofSize: 17, weight: i == 1 && boldMiddle ? .semibold : .regular)
       s.isEnabled = true
     }
   }

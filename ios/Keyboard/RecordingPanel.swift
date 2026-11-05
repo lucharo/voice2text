@@ -1,11 +1,8 @@
 import UIKit
 
 /// What the keyboard shows while it records and transcribes, in place of the keys: a live waveform of the
-/// microphone and a large control to finish. Three styles are prototyped (Settings.recordingStyle):
-/// A, a wide Stop button where the space bar is; B, Cancel and Done; C, Stop on the mic key's own spot.
+/// microphone, then Cancel (drop the recording) and Done (type it) where the bottom row of keys was.
 final class RecordingPanel: UIView {
-  enum Style: String { case a = "A", b = "B", c = "C" }
-
   var onStop: (() -> Void)?
   var onCancel: (() -> Void)?
 
@@ -13,17 +10,14 @@ final class RecordingPanel: UIView {
   private let status = UILabel()
   private let dot = UIView()
   private let spinner = UIActivityIndicatorView(style: .medium)
-  private let stop = UIButton(type: .system)
   private let cancel = UIButton(type: .system)
   private let done = UIButton(type: .system)
   private var timer: Timer?
   private var started = Date()
   private var levels: [Float] = []
-  private var style: Style = .a
   private var state: DictationState = .idle
-  /// The bottom row of keys and the mic key, in this view's coordinates, so the controls sit where keys were.
+  /// The bottom row of keys, in this view's coordinates, so the controls sit where the keys were.
   private var bottomRow: CGRect = .zero
-  private var micKey: CGRect = .zero
   /// UI tests: a made-up waveform instead of the app's levels file.
   var preview = false
 
@@ -37,11 +31,8 @@ final class RecordingPanel: UIView {
     dot.backgroundColor = .systemRed
     dot.layer.cornerRadius = 4
     spinner.hidesWhenStopped = true
-    for v in [status, dot, spinner, stop, cancel, done] as [UIView] { addSubview(v) }
+    for v in [status, dot, spinner, cancel, done] as [UIView] { addSubview(v) }
 
-    stop.configuration = Self.filled(title: "Stop", symbol: "stop.fill", color: .systemRed)
-    stop.accessibilityIdentifier = "v2t.recording.stop"
-    stop.addAction(UIAction { [weak self] _ in self?.onStop?() }, for: .touchUpInside)
     done.configuration = Self.filled(title: "Done", symbol: "checkmark", color: .systemBlue)
     done.accessibilityIdentifier = "v2t.recording.done"
     done.addAction(UIAction { [weak self] _ in self?.onStop?() }, for: .touchUpInside)
@@ -58,7 +49,7 @@ final class RecordingPanel: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-  private static func filled(title: String?, symbol: String, color: UIColor) -> UIButton.Configuration {
+  private static func filled(title: String, symbol: String, color: UIColor) -> UIButton.Configuration {
     var c = UIButton.Configuration.filled()
     c.title = title
     c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
@@ -70,19 +61,15 @@ final class RecordingPanel: UIView {
     return c
   }
 
-  /// Shows the panel for `state`, with its controls laid over the keyboard's `bottomRow` and `micKey`.
-  func show(_ state: DictationState, style: Style, bottomRow: CGRect, micKey: CGRect) {
+  /// Shows the panel for `state`, with its buttons laid over the keyboard's `bottomRow`.
+  func show(_ state: DictationState, bottomRow: CGRect) {
     if isHidden || state != self.state { started = state == .listening ? Date() : started }
     self.state = state
-    self.style = style
     self.bottomRow = bottomRow
-    self.micKey = micKey
     isHidden = false
     let listening = state == .listening
-    stop.isHidden = !listening || style == .b
-    cancel.isHidden = !listening || style != .b
-    done.isHidden = !listening || style != .b
-    stop.configuration?.title = style == .c ? nil : "Stop"
+    cancel.isHidden = !listening
+    done.isHidden = !listening
     dot.isHidden = !listening
     if listening { spinner.stopAnimating() } else { spinner.startAnimating() }
     if timer == nil {
@@ -110,17 +97,9 @@ final class RecordingPanel: UIView {
     status.frame.origin = CGPoint(x: dot.isHidden ? side + 4 : dot.frame.maxX + 6, y: 22 - status.frame.height / 2)
     spinner.center = CGPoint(x: bounds.midX, y: (bottomRow.minY > 0 ? bottomRow.midY : bounds.maxY - 30))
     let row = bottomRow.height > 0 ? bottomRow : CGRect(x: 3, y: bounds.maxY - 50, width: bounds.width - 6, height: 42)
-    switch style {
-    case .a:
-      stop.frame = row.insetBy(dx: side, dy: -3)
-    case .b:
-      let cw = (row.width - 2 * side) * 0.32
-      cancel.frame = CGRect(x: row.minX + side, y: row.minY - 3, width: cw, height: row.height + 6)
-      done.frame = CGRect(x: cancel.frame.maxX + 10, y: row.minY - 3, width: row.maxX - side - cancel.frame.maxX - 10, height: row.height + 6)
-    case .c:
-      let d = max(micKey.height + 14, 56)
-      stop.frame = CGRect(x: min(micKey.midX - d / 2, bounds.maxX - d - 4), y: min(micKey.midY - d / 2, bounds.maxY - d - 2), width: d, height: d)
-    }
+    let cw = (row.width - 2 * side) * 0.32
+    cancel.frame = CGRect(x: row.minX + side, y: row.minY - 3, width: cw, height: row.height + 6)
+    done.frame = CGRect(x: cancel.frame.maxX + 10, y: row.minY - 3, width: row.maxX - side - cancel.frame.maxX - 10, height: row.height + 6)
     drawWave()
   }
 

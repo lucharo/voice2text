@@ -1,17 +1,15 @@
 import XCTest
 
-/// Screenshots of the keyboard's recording view in each prototype style (Settings.recordingStyle), using the
-/// keyboard's preview mode (V2T_PREVIEW_RECORDING), which needs no microphone session or Full Access; and of
-/// the numbers page beside it.
+/// Screenshots of the keyboard's recording view, using the keyboard's preview mode (V2T_PREVIEW_RECORDING),
+/// which needs no microphone session or Full Access; and of the numbers and symbols pages.
 @MainActor final class RecordingViewUITests: XCTestCase {
   let app = XCUIApplication()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
 
-  func showKeyboard(style: String, preview: String?) {
+  func showKeyboard(preview: String?) {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = "en"
-    app.launchEnvironment["V2T_RECORDING_STYLE"] = style
     if let preview { app.launchEnvironment["V2T_PREVIEW_RECORDING"] = preview } else { app.launchEnvironment.removeValue(forKey: "V2T_PREVIEW_RECORDING") }
     app.launch()
     let field = app.textFields["v2t.try"]
@@ -26,19 +24,19 @@ import XCTest
     sleep(2)  // let the preview waveform fill
   }
 
-  func testRecordingViewStyles() {
-    for style in ["A", "B", "C"] {
-      showKeyboard(style: style, preview: "listening")
-      shot("rec-\(style)-listening")
-      app.terminate()
-    }
-    showKeyboard(style: "A", preview: "transcribing")
+  func testRecordingView() {
+    showKeyboard(preview: "listening")
+    XCTAssertTrue(app.buttons["v2t.recording.done"].isHittable && app.buttons["v2t.recording.cancel"].isHittable)
+    shot("rec-listening")
+    app.terminate()
+    showKeyboard(preview: "transcribing")
+    XCTAssertFalse(app.buttons["v2t.recording.done"].isHittable)
     shot("rec-transcribing")
     app.terminate()
   }
 
   func testNumbersPage() {
-    showKeyboard(style: "A", preview: nil)
+    showKeyboard(preview: nil)
     key("page").tap()
     XCTAssertTrue(key("numbers-1").waitForExistence(timeout: 5))
     shot("numbers-page")
