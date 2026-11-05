@@ -32,10 +32,16 @@ How v2t is built, tested and shipped. You only need this page to contribute.
 | `docs.yml` | docs changes | Strict docs build; deploys to GitHub Pages from `main` |
 | `release.yml` | a `v*` tag | Publishes to PyPI, signs and notarises the menu app, updates the cask |
 
+The repository is public, so GitHub Actions minutes on standard runners cost nothing and CI never pauses for a budget.
+
 ## Release
 
-1. Bump `version` in `pyproject.toml` and add a `CHANGELOG.md` entry.
-2. Push a tag `v<version>` that matches it.
+1. Bump the version in all three places: `version` in `pyproject.toml`, `__version__` in
+   `v2t/__init__.py` (a smoke test checks they match), and the `voice2text` entry's `version` line in
+   `uv.lock`. Edit that lock line by hand rather than running `uv lock` on a Mac whose uv config
+   adds a private index: `uv lock` then rewrites every source URL to that index, and the lock is
+   public. Turn `## Unreleased` in `CHANGELOG.md` into `## <version>`.
+2. Push a tag `v<version>` on the merged commit.
 
 There is no approval step: only `v*` tags reach the `release` environment, so pushing the tag is
 the release decision. The workflow publishes the engine to PyPI with trusted publishing, attaches the notarised app to
