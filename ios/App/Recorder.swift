@@ -26,10 +26,15 @@ final class Recorder: AudioSource, @unchecked Sendable {
   var level: Float { lock.lock(); defer { lock.unlock() }; return capturing ? lastLevel : 0 }
 
   /// Activates the audio session and starts the input tap (call from the foreground).
+  ///
+  /// Set up so other apps' music plays as it would without v2t, since the input runs between dictations too:
+  /// mode default rather than measurement (which "disables some dynamics processing on input and output
+  /// resulting in a lower output playback level", AVAudioSessionTypes.h), and Bluetooth headphones as A2DP
+  /// output only (no HFP, which turns them into a mono call headset), so the iPhone's own mic records.
   func warmUp() throws {
     guard !running else { return }
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP])
+    try session.setCategory(.playAndRecord, mode: .default, options: Self.options)
     try session.setActive(true)
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
@@ -52,6 +57,8 @@ final class Recorder: AudioSource, @unchecked Sendable {
     release()
     running = false
   }
+
+  static let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
 
   private func release() {
     engine.inputNode.removeTap(onBus: 0)
