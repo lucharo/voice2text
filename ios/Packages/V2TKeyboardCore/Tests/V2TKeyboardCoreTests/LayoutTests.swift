@@ -51,6 +51,8 @@ struct LayoutTests {
     #expect(symbols.keys.filter { $0.row == 1 }.map(\.label).suffix(4) == ["€", "$", "¥", "•"])
     // a multi-character symbol ("CHF") is not a key; the dollar stays
     #expect(KeyboardLayout(width: 402, page: .numbers, currency: "CHF").keys.contains { $0.label == "$" })
+    // the region's currency key keeps the long-press list the dollar key had
+    #expect(numbers.keys.first { $0.label == "£" }?.alternatives.first == "$")
   }
 
   /// Measured on an iPhone 17 Pro (iOS 26): the five marks of the numbers page's third row are about 1.5

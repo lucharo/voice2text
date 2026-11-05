@@ -99,6 +99,20 @@ struct TypingEngineTests {
     #expect(p.text == "I said teh teh ")  // learned: no longer corrected
   }
 
+  /// The bar bolds pendingAutocorrection: the word a space would put in, never one a learned word or a field
+  /// without autocorrect keeps as typed.
+  @Test func pendingAutocorrectionIsWhatSpaceWouldDo() throws {
+    let (e, _) = try engine("I said ")
+    type("teh", e)
+    #expect(e.pendingAutocorrection == "the")
+    e.learned.insert("teh")
+    #expect(e.pendingAutocorrection == nil)
+    let (f, _) = try engine("I said ")
+    f.traits = FieldTraits(autocorrect: false)
+    type("teh", f)
+    #expect(f.pendingAutocorrection == nil)
+  }
+
   @Test func doubleSpaceEndsTheSentence() throws {
     let (e, p) = try engine("Hi ")
     type("there", e)

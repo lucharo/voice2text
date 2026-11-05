@@ -41,19 +41,16 @@ final class SuggestionBar: UIView {
   }
 
   /// Shows up to three suggestions: the word as typed in quotes (when it is not the best guess), then the
-  /// best guess in the middle, as Apple's bar does.
-  func show(_ suggestions: [Suggestion]) {
+  /// best guess in the middle, as Apple's bar does. `pending` is the word a space would put in, shown bold.
+  func show(_ suggestions: [Suggestion], pending: String?) {
     let ordered = suggestions  // the engine puts the word as typed first, then the best guesses
     words = ordered.map(\.word)
-    // bold marks the word space will put in, as Apple's bar does: a correction beside the word as typed, never
-    // a prediction or a swipe's alternatives
-    let boldMiddle = ordered.count > 1 && ordered[0].kind == .typed && ordered[1].kind == .correction
     for (i, s) in slots.enumerated() {
       guard i < ordered.count else { s.setTitle(nil, for: .normal); s.isEnabled = false; continue }
       let sug = ordered[i]
       let title = sug.kind == .typed && ordered.count > 1 ? "“\(sug.word)”" : sug.word
       s.setTitle(title, for: .normal)
-      s.titleLabel?.font = .systemFont(ofSize: 17, weight: i == 1 && boldMiddle ? .semibold : .regular)
+      s.titleLabel?.font = .systemFont(ofSize: 17, weight: pending != nil && sug.word == pending ? .semibold : .regular)
       s.isEnabled = true
     }
   }

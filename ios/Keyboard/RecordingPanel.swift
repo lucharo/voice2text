@@ -5,6 +5,12 @@ import UIKit
 final class RecordingPanel: UIView {
   var onStop: (() -> Void)?
   var onCancel: (() -> Void)?
+  /// Reads the dictation state now; checked once a second while the panel is up.
+  var liveState: (() -> DictationState?)?
+  /// The state read through liveState changed without a notification (the app quit or crashed).
+  var onStateChange: ((DictationState) -> Void)?
+  /// The control VoiceOver lands on when the panel appears.
+  var focusTarget: UIView { state == .listening ? done : status }
 
   private let wave = CAShapeLayer()
   private let status = UILabel()
@@ -15,7 +21,8 @@ final class RecordingPanel: UIView {
   private var timer: Timer?
   private var started = Date()
   private var levels: [Float] = []
-  private var state: DictationState = .idle
+  private(set) var state: DictationState = .idle
+  private var ticks = 0
   /// The bottom row of keys, in this view's coordinates, so the controls sit where the keys were.
   private var bottomRow: CGRect = .zero
   /// UI tests: a made-up waveform instead of the app's levels file.
@@ -28,6 +35,7 @@ final class RecordingPanel: UIView {
     layer.addSublayer(wave)
     status.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
     status.textColor = .secondaryLabel
+    status.accessibilityIdentifier = "v2t.recording.status"
     dot.backgroundColor = .systemRed
     dot.layer.cornerRadius = 4
     spinner.hidesWhenStopped = true
@@ -104,6 +112,11 @@ final class RecordingPanel: UIView {
   }
 
   private func tick() {
+    ticks += 1
+    if !preview, ticks % 30 == 0, let live = liveState?(), live != state {
+      onStateChange?(live)
+      return
+    }
     if state == .listening {
       levels = preview ? Self.fakeLevels(Date().timeIntervalSince(started)) : DictationChannel.readLevels()
       let s = Int(Date().timeIntervalSince(started))

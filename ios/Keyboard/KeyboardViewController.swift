@@ -13,7 +13,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
   private let panel = RecordingPanel()
-  /// The user cancelled the current dictation: skip its transcribing view.
+  /// The user cancelled the current dictation: it shows no panel while it is still listening or transcribing;
+  /// cleared once the app is idle again.
   private var cancelled = false
   private var heightConstraint: NSLayoutConstraint?
   private var keysHeightConstraint: NSLayoutConstraint?
@@ -44,9 +45,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     bar.onPick = { [weak self] word in self?.edit { $0.pick(word) } }
     panel.onStop = { [weak self] in self?.dictation.toggle() }
     panel.onCancel = { [weak self] in
-      self?.cancelled = true  // the keys come straight back; its transcription is not typed
-      self?.dictation.cancel()
+      guard let self else { return }
+      cancelled = true  // the keys come straight back; its transcription is not typed
+      dictation.cancel()
+      showDictation(.listening)  // hides the panel: the cancelled recording shows nothing more
     }
+    // the app may end without another notification (quit or crashed): the panel checks the heartbeat itself
+    panel.liveState = { [weak self] in self?.dictation.state }
+    panel.onStateChange = { [weak self] state in self?.showDictation(state) }
     panel.isHidden = true
     for v in [bar, keyboardView!, panel] as [UIView] {
       v.translatesAutoresizingMaskIntoConstraints = false
@@ -136,6 +142,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView.setLayout(layout)
     heightConstraint?.constant = SuggestionBar.height + layout.height
     keysHeightConstraint?.constant = layout.height
+    if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
     if page == .letters {
       engine.replaceLayout(with: Suggester(lexicons: engine.suggester.lexicons, layout: layout))
       decoders = engine.suggester.lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
@@ -209,7 +216,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func refresh() {
     keyboardView.shift = engine.shift
     keyboardView.shiftManual = engine.shiftManual
-    bar.show(engine.suggestions())
+    bar.show(engine.suggestions(), pending: engine.pendingAutocorrection)
   }
 
   // MARK: KeyboardViewDelegate
@@ -281,12 +288,24 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
   private func showDictation(_ state: DictationState) {
-    if state == .listening { cancelled = false }
-    guard state == .listening || (state == .transcribing && !cancelled) || panel.preview else { panel.hide(); return }
+    let active = state == .listening || state == .transcribing
+    if !active { cancelled = false }
+    guard (active && !cancelled) || panel.preview else { setPanel(visible: false); return }
     view.layoutIfNeeded()
     let layout = keyboardView.layout
     let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
     panel.show(state, bottomRow: keyboardView.convert(row, to: panel))
+    setPanel(visible: true)
+  }
+
+  /// While the panel covers them, the keys and the bar are hidden from VoiceOver and focus moves to Done.
+  private func setPanel(visible: Bool) {
+    if !visible { panel.hide() }
+    let wasModal = panel.accessibilityViewIsModal
+    keyboardView.accessibilityElementsHidden = visible
+    bar.accessibilityElementsHidden = visible
+    panel.accessibilityViewIsModal = visible
+    if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }
 }
 

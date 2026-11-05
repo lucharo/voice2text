@@ -283,11 +283,18 @@ public final class TypingEngine {
 
   // MARK: internals
 
+  /// The word a space would put in place of the one being typed, or nil when it would stay as typed: the
+  /// field's autocorrect setting and the learned words apply, as in commitWord. The bar bolds this word.
+  public var pendingAutocorrection: String? {
+    guard !composing.isEmpty, traits.autocorrect,
+          let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
+    return fix
+  }
+
   /// Autocorrects the word under construction, if it needs it.
   func commitWord() {
     defer { composing = [] }
-    guard !composing.isEmpty, traits.autocorrect,
-          let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return }
+    guard let fix = pendingAutocorrection else { return }
     let original = literal
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)

@@ -16,11 +16,14 @@ import XCTest
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     sleep(2)  // the setup list settles before the field is tapped
     field.tap()
-    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
+    // while the recording view is up the keys are hidden from accessibility, so look for the panel instead
+    let v2t = preview == nil ? key("letters-q") : app.staticTexts["v2t.recording.status"]
+    for _ in 0..<5 where !v2t.waitForExistence(timeout: 3) {
       let globe = app.buttons["Next keyboard"]
       if globe.exists { globe.tap() }
     }
-    XCTAssertTrue(key("letters-q").waitForExistence(timeout: 10), app.debugDescription)
+    XCTAssertTrue(v2t.waitForExistence(timeout: 10), app.debugDescription)
+    if preview != nil { XCTAssertFalse(key("letters-q").exists, "keys under the recording view are still in the accessibility tree") }
     sleep(2)  // let the preview waveform fill
   }
 
