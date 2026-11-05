@@ -38,6 +38,13 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
     timer = nil
   }
 
+  /// The dictation was dropped (the microphone session ended): stops feeding, and no piece after the one being
+  /// decoded now is decoded.
+  func abandon() {
+    stopFeeding()
+    Task { await pieces.abandon() }
+  }
+
   /// Hands the transcriber what was recorded since the last look. While it is still decoding a piece, the
   /// next tick takes the new audio instead, so ticks never pile up behind the model.
   func feed() {

@@ -30,6 +30,7 @@ public actor PieceTranscriber {
   private var texts: [String] = []
   private var failed = false
   private var finished = false
+  private var abandoned = false
   private var report = Report()
   private var pieceCount: Int { report.piecesWhileRecording + report.piecesAtFinish }
   private var last: Task<Void, Never>?
@@ -58,10 +59,16 @@ public actor PieceTranscriber {
     try await enqueue { me in await me.complete(recording) }.get()
   }
 
+  /// Drops the dictation: no piece after the one being decoded now is decoded. Takes effect at once, not
+  /// after queued work, since it is not queued.
+  public func abandon() {
+    abandoned = true
+  }
+
   // MARK: steps, run one at a time by `enqueue`
 
   private func append(_ samples: [Float]) async {
-    guard !finished, !failed else { return }
+    guard !finished, !failed, !abandoned else { return }
     pending += samples
     await decodeSettled(atFinish: false)
   }
@@ -72,10 +79,10 @@ public actor PieceTranscriber {
       pending = Array(recording[cutTotal...])
       await decodeSettled(atFinish: true)
       if !failed {
-        if !pending.isEmpty, pieceCount > 0, pending.count < minimumTail {
-          pending += [Float](repeating: 0, count: minimumTail - pending.count)
+        if !pending.isEmpty {
+          let padding = pieceCount > 0 ? max(0, minimumTail - pending.count) : 0
+          await decodePiece(pending.count, atFinish: true, padding: padding)
         }
-        if !pending.isEmpty { await decodePiece(pending.count, atFinish: true) }
         if !failed { return .success((texts.joined(separator: " "), report)) }
       }
     }
@@ -84,14 +91,15 @@ public actor PieceTranscriber {
   }
 
   private func decodeSettled(atFinish: Bool) async {
-    while !failed, let cut = cutter.cut(pending[...]) {
+    while !failed, !abandoned || atFinish, let cut = cutter.cut(pending[...]) {
       await decodePiece(cut, atFinish: atFinish)
     }
   }
 
-  private func decodePiece(_ cut: Int, atFinish: Bool) async {
+  /// Decodes the first `cut` pending samples, followed by `padding` samples of silence.
+  private func decodePiece(_ cut: Int, atFinish: Bool, padding: Int = 0) async {
     do {
-      let text = try await decode(Array(pending[..<cut])).trimmed
+      let text = try await decode(Array(pending[..<cut]) + [Float](repeating: 0, count: padding)).trimmed
       if !text.isEmpty { texts.append(text) }
       pending.removeFirst(cut)
       cutTotal += cut

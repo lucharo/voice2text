@@ -43,6 +43,8 @@ import SwiftUI
   private var requestId = ""
   /// Transcribes the current recording in pieces while it is being made (#112).
   private var live: LiveTranscription?
+  /// The speech language when the current recording began: its pieces, its History entry (#112).
+  private var language = ""
 
   init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
     self.recommendation = recommendation
@@ -122,7 +124,7 @@ import SwiftUI
 
   func coolDown() {
     stopMeter()
-    live?.stopFeeding()
+    live?.abandon()
     live = nil
     recorder.coolDown()
     publishMicrophone()
@@ -163,7 +165,8 @@ import SwiftUI
     recording += 1
     requestId = defaults.string(forKey: DictationChannel.requestIdKey) ?? ""
     recorder.begin()
-    let language = Settings.shared.speechLanguage
+    language = Settings.shared.speechLanguage
+    let language = language
     live = LiveTranscription(source: recorder, isReady: { [weak self] in self?.engineState == .ready }) { [engine] in
       try await engine.transcribe($0, language: language)
     }
@@ -199,17 +202,18 @@ import SwiftUI
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()
-    let id = recording, request = requestId, live = live
+    let id = recording, request = requestId, live = live, language = language
     self.live = nil
-    Task { await finish(samples, id: id, request: request, live: live, stoppedAt: stoppedAt) }
+    Task { await finish(samples, id: id, request: request, language: language, live: live, stoppedAt: stoppedAt) }
   }
 
-  private func finish(_ samples: [Float], id: Int, request: String, live: LiveTranscription?, stoppedAt: ContinuousClock.Instant) async {
+  private func finish(
+    _ samples: [Float], id: Int, request: String, language: String, live: LiveTranscription?, stoppedAt: ContinuousClock.Instant
+  ) async {
     // only the latest recording owns the state: a reset session may already be listening again
     defer { if id == recording, state == .transcribing { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if engineState != .ready { await prepareModel() }
-    let language = Settings.shared.speechLanguage
     do {
       let raw: String
       if let live { raw = try await live.finish(samples, stoppedAt: stoppedAt) } else { raw = try await engine.transcribe(samples, language: language) }

@@ -9,7 +9,7 @@
 //
 // Per clip, both ways run in the same process, in alternating order:
 //   whole   the app up to build 3: the whole recording decoded after Stop. `whole_s` is that decode.
-//   pieces  V2TPieces' PieceTranscriber, fed 0.5 s at a time as the app's timer feeds it, then finish(). Pieces
+//   pieces  V2TPieces' PieceTranscriber, fed each whole 0.5 s as the app's timer feeds it, then finish(). Pieces
 //           decode on the audio's own clock, so `backlog_s` is any piece work still running at Stop (a piece
 //           that takes longer than the audio after it); `wait_s` = backlog_s + `finish_s`, the time from Stop
 //           to text.
@@ -144,8 +144,9 @@ struct PieceBench {
         var busyUntil = 0.0
         var steps: [Double] = []
         var fed = 0
-        while fed < samples.count {
-          let end = min(samples.count, fed + step)
+        // the app's timer hands over whole half-seconds; whatever arrived after the last tick goes to finish()
+        while fed + step <= samples.count {
+          let end = fed + step
           let t0 = now()
           await pieces.add(Array(samples[fed..<end]))
           let dt = now() - t0
@@ -153,7 +154,7 @@ struct PieceBench {
           if dt > 0.005 { steps.append(dt) }  // an add that decoded a piece
           busyUntil = max(busyUntil, Double(fed) / 16_000) + dt
         }
-        // piece work still running when the recording ends (including any the last 0.5 s started) is waited for
+        // piece work still running when the recording ends is waited for
         let backlog = max(0, busyUntil - duration)
         let t0 = now()
         let (text, report) = try await pieces.finish(samples)

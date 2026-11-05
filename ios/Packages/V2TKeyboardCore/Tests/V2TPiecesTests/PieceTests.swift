@@ -158,6 +158,7 @@ private func record(_ audio: [Float], into t: PieceTranscriber) async {
     #expect(await model.calls == [232_800, 8_000])
     #expect(text == "<232800> <8000>")
     #expect(report == PieceTranscriber.Report(piecesWhileRecording: 1, piecesAtFinish: 1, fellBack: false))
+    #expect(await t.decodedSamples == 238_400)  // the recording, not the padding
   }
 
   @Test func aShortRecordingWithNoCutIsNotPadded() async throws {
@@ -216,6 +217,21 @@ private func record(_ audio: [Float], into t: PieceTranscriber) async {
     #expect(await model.calls == [208_800, 183_200])
     #expect(text == "<208800> <183200>")
     #expect(report == PieceTranscriber.Report(piecesWhileRecording: 1, piecesAtFinish: 1, fellBack: false))
+  }
+
+  @Test func abandoningStopsThePiecesQueuedBehindTheOneDecoding() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(13) + silence(0.5) + speech(11.5) + silence(0.5) + speech(14)  // three settled cuts at once
+    await model.holdTheNextDecode()
+
+    let adding = Task { await t.add(audio) }
+    await model.waitUntilHeld()
+    await t.abandon()
+    await model.release()
+    await adding.value
+
+    #expect(await model.calls == [208_800])
   }
 
   @Test func audioAddedAfterFinishIsIgnored() async throws {
