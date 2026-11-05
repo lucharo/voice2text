@@ -9,6 +9,8 @@ protocol AudioSource: AnyObject, Sendable {
   func coolDown()
   func begin()
   func end() -> [Float]
+  /// Root-mean-square of the latest audio while recording, 0 otherwise.
+  var level: Float { get }
 }
 
 final class Recorder: AudioSource, @unchecked Sendable {
@@ -19,6 +21,9 @@ final class Recorder: AudioSource, @unchecked Sendable {
   private var converter: AVAudioConverter?
   private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
   private(set) var running = false
+  private var lastLevel: Float = 0
+
+  var level: Float { lock.lock(); defer { lock.unlock() }; return capturing ? lastLevel : 0 }
 
   /// Activates the audio session and starts the input tap (call from the foreground).
   func warmUp() throws {
@@ -83,7 +88,8 @@ final class Recorder: AudioSource, @unchecked Sendable {
     }
     guard error == nil, let ch = out.floatChannelData else { return }
     let chunk = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
-    lock.lock(); if capturing { samples += chunk }; lock.unlock()
+    let rms = chunk.isEmpty ? 0 : (chunk.reduce(0) { $0 + $1 * $1 } / Float(chunk.count)).squareRoot()
+    lock.lock(); if capturing { samples += chunk; lastLevel = rms }; lock.unlock()
   }
 }
 
@@ -99,8 +105,16 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
           (try? file.read(into: buf)) != nil, let ch = buf.floatChannelData else { return nil }
     samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(buf.frameLength)))
   }
+  private var began: Date?
   func warmUp() throws { running = true }
   func coolDown() { running = false }
-  func begin() {}
-  func end() -> [Float] { samples }
+  func begin() { began = Date() }
+  func end() -> [Float] { began = nil; return samples }
+  /// The clip's level at the time since begin(), looping, so the keyboard's waveform moves in UI tests.
+  var level: Float {
+    guard let began, !samples.isEmpty else { return 0 }
+    let at = Int(Date().timeIntervalSince(began) * 16_000) % samples.count
+    let window = samples[at..<min(samples.count, at + 800)]
+    return (window.reduce(0) { $0 + $1 * $1 } / Float(max(1, window.count))).squareRoot()
+  }
 }

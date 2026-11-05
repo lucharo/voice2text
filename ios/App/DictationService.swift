@@ -26,6 +26,9 @@ import SwiftUI
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
   private var heartbeat: Timer?
+  /// Samples the microphone level 20 times a second while listening, for the keyboard's waveform.
+  private var meter: Timer?
+  private var levels: [Float] = []
   /// Counts model preparations, so a late progress report from an earlier one is dropped.
   private var prepareAttempt = 0
   /// The preparation under way, so a dictation that ends meanwhile waits for it instead of failing.
@@ -100,6 +103,7 @@ import SwiftUI
   }
 
   func coolDown() {
+    stopMeter()
     recorder.coolDown()
     heartbeat?.invalidate()
     heartbeat = nil
@@ -139,10 +143,31 @@ import SwiftUI
     requestId = defaults.string(forKey: DictationChannel.requestIdKey) ?? ""
     recorder.begin()
     publish(.listening)
+    levels = []
+    meter?.invalidate()
+    meter = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.sampleLevel() }
+    }
+  }
+
+  /// Appends the level, as 0...1 over a 45 dB range from near silence to loud speech.
+  private func sampleLevel() {
+    let db = 20 * log10(max(recorder.level, 1e-6))
+    levels.append(min(1, max(0, (db + 55) / 45)))
+    if levels.count > 96 { levels.removeFirst(levels.count - 96) }
+    DictationChannel.writeLevels(levels)
+  }
+
+  private func stopMeter() {
+    meter?.invalidate()
+    meter = nil
+    levels = []
+    DictationChannel.writeLevels([])
   }
 
   func stop() {
     guard state == .listening else { return }
+    stopMeter()
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()

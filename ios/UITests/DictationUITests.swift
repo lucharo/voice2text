@@ -99,9 +99,12 @@ import XCTest
     XCTAssertTrue(key("mic").waitForExistence(timeout: 10), app.debugDescription)
     shot("12b-keyboard-v2t-mic")
     key("mic").tap()
+    // recording covers the keys with the waveform panel; Done stops it and types the text
+    let done = app.buttons["v2t.recording.done"]
+    XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
     sleep(1)
     shot("13-listening")
-    key("mic").tap()
+    done.tap()
     let deadline = Date().addingTimeInterval(120)
     while ((field.value as? String) ?? "").lowercased().contains("keyboard") == false, Date() < deadline {
       RunLoop.current.run(until: Date().addingTimeInterval(0.5))

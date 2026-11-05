@@ -109,6 +109,9 @@ public struct KeyboardLayout: Sendable {
   public let page: KeyboardPage
   public let language: KeyboardLanguage
   public let form: KeyboardForm
+  /// The currency mark on the numbers page: the region's (£ in the UK) on the English layout, as Apple's
+  /// keyboard does; € on the Spanish one.
+  public let currency: String
   public let metrics: Metrics
   public let keys: [Key]
   /// Width of one letter key.
@@ -119,11 +122,13 @@ public struct KeyboardLayout: Sendable {
   public var height: CGFloat { metrics.height }
 
   public init(width: CGFloat, page: KeyboardPage = .letters, language: KeyboardLanguage = .english,
-              form: KeyboardForm = .phone, landscape: Bool = false) {
+              form: KeyboardForm = .phone, landscape: Bool = false, currency: String? = nil) {
     self.width = width
     self.page = page
     self.language = language
     self.form = form
+    let currency = language == .spanish ? "€" : (currency.flatMap { $0.count == 1 ? $0 : nil } ?? "$")
+    self.currency = currency
     let m: Metrics
     switch form {
     case .phone: m = .phone
@@ -134,9 +139,9 @@ public struct KeyboardLayout: Sendable {
     self.metrics = m
     let (keys, u): ([Key], CGFloat)
     switch form {
-    case .phone: (keys, u) = Self.buildPhone(width: width, page: page, language: language, m: m)
+    case .phone: (keys, u) = Self.buildPhone(width: width, page: page, language: language, currency: currency, m: m)
     case .padFull where page == .letters: (keys, u) = Self.buildFull(width: width, language: language, m: m)
-    case .pad, .padFull: (keys, u) = Self.buildPad(width: width, page: page, language: language, m: m)
+    case .pad, .padFull: (keys, u) = Self.buildPad(width: width, page: page, language: language, currency: currency, m: m)
     }
     self.keys = keys
     self.unitWidth = u
@@ -151,14 +156,16 @@ public struct KeyboardLayout: Sendable {
 
   /// The characters of each page's three rows, as on the iPhone keyboard (the iPad moves the last of the
   /// numbers and symbols middle rows down, beside its wider return key).
-  static func rows(_ page: KeyboardPage, _ language: KeyboardLanguage) -> [[String]] {
+  static func rows(_ page: KeyboardPage, _ language: KeyboardLanguage, currency: String = "$") -> [[String]] {
     switch page {
     case .letters:
       return ["qwertyuiop", language == .spanish ? "asdfghjklñ" : "asdfghjkl", "zxcvbnm"].map { $0.map(String.init) }
     case .numbers:
-      return ["1234567890".map(String.init), ["-", "/", ":", ";", "(", ")", language == .spanish ? "€" : "$", "&", "@", "\""], [".", ",", "?", "!", "'"]]
+      return ["1234567890".map(String.init), ["-", "/", ":", ";", "(", ")", currency, "&", "@", "\""], [".", ",", "?", "!", "'"]]
     case .symbols:
-      return [["[", "]", "{", "}", "#", "%", "^", "*", "+", "="], ["_", "\\", "|", "~", "<", ">", language == .spanish ? "$" : "€", "£", "¥", "•"], [".", ",", "?", "!", "'"]]
+      // the other currencies, with $ standing in for the one the numbers page already has
+      let others = ["€", "£", "¥"].map { $0 == currency ? "$" : $0 }
+      return [["[", "]", "{", "}", "#", "%", "^", "*", "+", "="], ["_", "\\", "|", "~", "<", ">"] + others + ["•"], [".", ",", "?", "!", "'"]]
     }
   }
 
@@ -171,7 +178,7 @@ public struct KeyboardLayout: Sendable {
     }
   }
 
-  static func buildPhone(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, m: Metrics) -> ([Key], CGFloat) {
+  static func buildPhone(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics) -> ([Key], CGFloat) {
     let sideInset = m.sideInset, gap = m.gap, keyHeight = m.keyHeight
     func y(_ row: Int) -> CGFloat { m.topInset + CGFloat(row) * m.rowPitch }
     let u = (width - 2 * sideInset - 9 * gap) / 10
@@ -185,10 +192,22 @@ public struct KeyboardLayout: Sendable {
     }
     func centred(_ n: Int) -> CGFloat { (width - (CGFloat(n) * u + CGFloat(n - 1) * gap)) / 2 }
     let side = 1.3 * u + 0.5 * gap  // shift / delete
-    let r = rows(page, language)
+    let r = rows(page, language, currency: currency)
     charRow(0, r[0], leading: sideInset)
     charRow(1, r[1], leading: page == .letters ? centred(r[1].count) : sideInset)
-    charRow(2, r[2], leading: centred(r[2].count))
+    if page == .letters {
+      charRow(2, r[2], leading: centred(r[2].count))
+    } else {
+      // Apple's numbers and symbols pages: the five marks share the row between the page key and delete,
+      // each about 1.5 keys wide, set off from those two by a double gap (measured on an iPhone 17 Pro, iOS 26)
+      let inner = width - 2 * (sideInset + side) - 4 * gap - 4 * gap
+      let w = inner / CGFloat(r[2].count)
+      for (i, c) in r[2].enumerated() {
+        let x = sideInset + side + 2 * gap + CGFloat(i) * (w + gap)
+        keys.append(Key(id: "\(page)-\(c)", action: .character(c), label: c, frame: CGRect(x: x, y: y(2), width: w, height: keyHeight),
+                        alternatives: alternatives(c, language), row: 2))
+      }
+    }
     let sw = pageSwitch(page)
     keys.append(Key(id: sw.id, action: sw.action, label: sw.label, frame: CGRect(x: sideInset, y: y(2), width: side, height: keyHeight), alternatives: [], row: 2))
     keys.append(Key(id: "delete", action: .delete, label: "delete", frame: CGRect(x: width - sideInset - side, y: y(2), width: side, height: keyHeight), alternatives: [], row: 2))
@@ -211,7 +230,7 @@ public struct KeyboardLayout: Sendable {
   /// Apple's iPad keyboard: an 11.45-unit grid. Top row ten keys and delete; middle row indented, then
   /// return; third row a shift at each end around the letters and , and . ; bottom row next keyboard, page
   /// switch, mic, space, page switch, hide keyboard.
-  static func buildPad(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, m: Metrics) -> ([Key], CGFloat) {
+  static func buildPad(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics) -> ([Key], CGFloat) {
     let s = m.sideInset, g = m.gap, h = m.keyHeight
     func y(_ row: Int) -> CGFloat { m.topInset + CGFloat(row) * m.rowPitch }
     let u = (width - 2 * s - 10 * g) / 11.45
@@ -233,7 +252,7 @@ public struct KeyboardLayout: Sendable {
         return ("\(page)-\(c)", .character(c), c, u, alts)
       }
     }
-    var r = rows(page, language)
+    var r = rows(page, language, currency: currency)
     if page != .letters { r[2].append(r[1].removeLast()) }  // the quote or bullet moves down beside the wider return
     // the third row holds nine keys between its two page keys, as the letters row does with , and .
     switch page {
@@ -343,7 +362,7 @@ public struct KeyboardLayout: Sendable {
     case "'": ["’", "‘", "`"]
     case "\"": ["”", "“", "„", "«", "»"]
     case "-": ["–", "—", "•"]
-    case "$", "€": ["$", "€", "£", "¥", "₩", "₽", "¢"].filter { $0 != c }
+    case "$", "€", "£", "¥", "₹", "₩", "₽": ["$", "€", "£", "¥", "₩", "₽", "¢"].filter { $0 != c }
     case ".": ["…"]
     default: []
     }

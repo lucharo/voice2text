@@ -12,6 +12,8 @@ import V2TKeyboardCore
       Settings.shared.layoutLanguage = l
       Settings.shared.defaults.removeObject(forKey: "learnedWords")  // each UI test starts with nothing learned
     }
+    let env = ProcessInfo.processInfo.environment
+    Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)

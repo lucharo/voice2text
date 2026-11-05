@@ -4,8 +4,8 @@ import Foundation
 
 /// The real AOSP lexicons, built by `ios/tools/build_lexicons.py ios/build/lexicons` (ios/setup.sh runs it).
 enum Fixtures {
-  static let lexiconDir = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent().appending(path: "../../../../build/lexicons").standardized
+  static let lexiconDir = ProcessInfo.processInfo.environment["V2T_LEXICON_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../../../build/lexicons").standardized
 
   static func lexicon(_ lang: String) throws -> Lexicon {
     let url = lexiconDir.appending(path: "\(lang).v2tlex")

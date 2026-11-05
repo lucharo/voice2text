@@ -1,23 +1,18 @@
 import UIKit
 import V2TKeyboardCore
 
-/// Apple's three-slot suggestion bar, with the v2t mic at its leading edge showing the dictation state.
+/// Apple's three-slot suggestion bar. Dictation starts from the mic key on the bottom row; while it records,
+/// RecordingPanel covers the bar and the keys.
 final class SuggestionBar: UIView {
   static let height: CGFloat = 44
   var onPick: ((String) -> Void)?
-  var onMic: (() -> Void)?
-  var dictationState: DictationState = .idle { didSet { updateMic() } }
 
-  private let mic = UIButton(type: .system)
   private let slots = (0..<3).map { _ in UIButton(type: .system) }
   private let dividers = (0..<2).map { _ in UIView() }
   private var words: [String] = []
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    mic.accessibilityIdentifier = "v2t.mic"
-    mic.addAction(UIAction { [weak self] _ in self?.onMic?() }, for: .touchUpInside)
-    addSubview(mic)
     for (i, s) in slots.enumerated() {
       s.titleLabel?.font = .systemFont(ofSize: 17)
       s.titleLabel?.lineBreakMode = .byTruncatingMiddle
@@ -33,23 +28,21 @@ final class SuggestionBar: UIView {
       d.backgroundColor = .separator
       addSubview(d)
     }
-    updateMic()
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    let micW: CGFloat = 46
-    mic.frame = CGRect(x: 2, y: 0, width: micW, height: bounds.height)
-    let w = (bounds.width - micW - 4) / 3
-    for (i, s) in slots.enumerated() { s.frame = CGRect(x: micW + 2 + CGFloat(i) * w, y: 0, width: w, height: bounds.height) }
-    for (i, d) in dividers.enumerated() { d.frame = CGRect(x: micW + 2 + CGFloat(i + 1) * w, y: 11, width: 1 / UIScreen.main.scale, height: 22) }
+    let inset: CGFloat = 4
+    let w = (bounds.width - 2 * inset) / 3
+    for (i, s) in slots.enumerated() { s.frame = CGRect(x: inset + CGFloat(i) * w, y: 0, width: w, height: bounds.height) }
+    for (i, d) in dividers.enumerated() { d.frame = CGRect(x: inset + CGFloat(i + 1) * w, y: 11, width: 1 / UIScreen.main.scale, height: 22) }
   }
 
   /// Shows up to three suggestions: the word as typed in quotes (when it is not the best guess), then the
-  /// best guess in the middle, as Apple's bar does.
-  func show(_ suggestions: [Suggestion]) {
+  /// best guess in the middle, as Apple's bar does. `pending` is the word a space would put in, shown bold.
+  func show(_ suggestions: [Suggestion], pending: String?) {
     let ordered = suggestions  // the engine puts the word as typed first, then the best guesses
     words = ordered.map(\.word)
     for (i, s) in slots.enumerated() {
@@ -57,29 +50,8 @@ final class SuggestionBar: UIView {
       let sug = ordered[i]
       let title = sug.kind == .typed && ordered.count > 1 ? "“\(sug.word)”" : sug.word
       s.setTitle(title, for: .normal)
-      s.titleLabel?.font = .systemFont(ofSize: 17, weight: i == 1 ? .semibold : .regular)
+      s.titleLabel?.font = .systemFont(ofSize: 17, weight: pending != nil && sug.word == pending ? .semibold : .regular)
       s.isEnabled = true
-    }
-  }
-
-  private func updateMic() {
-    // ready to dictate shows the v2t waveform; the other states keep a symbol that says what is happening
-    let (symbol, tint): (String?, UIColor) = switch dictationState {
-    case .idle, .needsApp: (nil, .label)
-    case .listening: ("stop.circle.fill", .systemRed)
-    case .transcribing: ("ellipsis", .systemBlue)
-    case .unavailable: ("mic.slash", .secondaryLabel)
-    }
-    let image = symbol.map { UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)) }
-      ?? V2TMark.glyph(height: 21)
-    mic.setImage(image, for: .normal)
-    mic.tintColor = tint
-    mic.accessibilityLabel = switch dictationState {
-    case .idle: "Dictate"
-    case .needsApp: "Dictate (opens v2t once)"
-    case .listening: "Stop dictating"
-    case .transcribing: "Transcribing"
-    case .unavailable: "Dictation needs Full Access"
     }
   }
 }

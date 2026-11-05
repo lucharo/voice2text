@@ -33,6 +33,22 @@ enum DictationChannel {
   static let heartbeatTimeout: TimeInterval = 3
   static let url = URL(string: "v2t://dictate")!
 
+  /// The microphone level while listening, newest last, each 0...1, written by the app 20 times a second for
+  /// the keyboard's waveform. A file in the App Group rather than defaults, which are not meant for that rate.
+  static var levelsFile: URL? {
+    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Settings.group)?.appending(path: "dictation-levels.bin")
+  }
+
+  static func writeLevels(_ levels: [Float]) {
+    guard let url = levelsFile else { return }
+    try? levels.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: url)
+  }
+
+  static func readLevels() -> [Float] {
+    guard let url = levelsFile, let data = try? Data(contentsOf: url) else { return [] }
+    return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+  }
+
   static func post(_ name: String) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName(name as CFString), nil, nil, true)
   }

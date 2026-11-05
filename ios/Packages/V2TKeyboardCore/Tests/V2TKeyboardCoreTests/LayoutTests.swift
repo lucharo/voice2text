@@ -44,4 +44,25 @@ struct LayoutTests {
     #expect(es.keys.first { $0.label == "e" }?.alternatives.first == "é")
     #expect(es.keys.first { $0.label == "n" }?.alternatives.first == "ñ")
   }
+
+  @Test func theRegionCurrencyLeadsAndDollarMovesToSymbols() {
+    let numbers = KeyboardLayout(width: 402, page: .numbers, currency: "£"), symbols = KeyboardLayout(width: 402, page: .symbols, currency: "£")
+    #expect(numbers.keys.contains { $0.label == "£" } && !numbers.keys.contains { $0.label == "$" })
+    #expect(symbols.keys.filter { $0.row == 1 }.map(\.label).suffix(4) == ["€", "$", "¥", "•"])
+    // a multi-character symbol ("CHF") is not a key; the dollar stays
+    #expect(KeyboardLayout(width: 402, page: .numbers, currency: "CHF").keys.contains { $0.label == "$" })
+    // the region's currency key keeps the long-press list the dollar key had
+    #expect(numbers.keys.first { $0.label == "£" }?.alternatives.first == "$")
+  }
+
+  /// Measured on an iPhone 17 Pro (iOS 26): the five marks of the numbers page's third row are about 1.5
+  /// letter keys wide and fill the row between the page key and delete.
+  @Test func numbersThirdRowMarksAreWideAndFillTheRow() {
+    let l = KeyboardLayout(width: 402, page: .numbers)
+    let row = l.keys.filter { $0.row == 2 }.sorted { $0.frame.minX < $1.frame.minX }
+    #expect(row.map(\.label) == ["#+=", ".", ",", "?", "!", "'", "delete"])
+    let marks = row.dropFirst().dropLast()
+    for k in marks { #expect(abs(k.frame.width / l.unitWidth - 1.48) < 0.1, "\(k.label) is \(k.frame.width / l.unitWidth) keys wide") }
+    #expect(abs((marks.first!.frame.minX - row.first!.frame.maxX) - (row.last!.frame.minX - marks.last!.frame.maxX)) < 0.5)
+  }
 }
