@@ -92,7 +92,7 @@ struct PieceBench {
       opts[String(args[i].dropFirst(2))] = args[i + 1]
       i += 2
     }
-    guard let arm = opts["arm"], let setPath = opts["set"], let outPath = opts["out"] else {
+    guard let arm = opts["arm"], ["nemotron", "parakeet"].contains(arm), let setPath = opts["set"], let outPath = opts["out"] else {
       FileHandle.standardError.write(Data("usage: piece-bench --arm nemotron|parakeet --set SET.jsonl --out OUT.jsonl\n".utf8))
       exit(2)
     }
@@ -144,15 +144,21 @@ struct PieceBench {
         var busyUntil = 0.0
         var steps: [Double] = []
         var fed = 0
-        // the app's timer hands over whole half-seconds; whatever arrived after the last tick goes to finish()
-        while fed + step <= samples.count {
-          let end = fed + step
-          let t0 = now()
-          await pieces.add(Array(samples[fed..<end]))
-          let dt = now() - t0
-          fed = end
-          if dt > 0.005 { steps.append(dt) }  // an add that decoded a piece
-          busyUntil = max(busyUntil, Double(fed) / 16_000) + dt
+        // The app's timer ticks every 0.5 s of audio and hands over everything recorded since the last hand-over,
+        // but skips a tick while the previous hand-over is still decoding (LiveTranscription.feed). Whatever
+        // arrived after the last tick goes to finish().
+        var tick = step
+        while tick <= samples.count {
+          let at = Double(tick) / 16_000
+          if busyUntil <= at {
+            let t0 = now()
+            await pieces.add(Array(samples[fed..<tick]))
+            let dt = now() - t0
+            fed = tick
+            if dt > 0.005 { steps.append(dt) }  // an add that decoded a piece
+            busyUntil = at + dt
+          }
+          tick += step
         }
         // piece work still running when the recording ends is waited for
         let backlog = max(0, busyUntil - duration)
