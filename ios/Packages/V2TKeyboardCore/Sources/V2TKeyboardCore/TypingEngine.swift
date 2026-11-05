@@ -37,6 +37,8 @@ public final class TypingEngine {
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
   public var learned: Set<String> = []
   public var onLearn: ((String) -> Void)?
+  /// Text replacements (lowercase shortcut -> phrase), as Settings > General > Keyboard > Text Replacement.
+  public var replacements: [String: String] = [:]
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)?

@@ -18,6 +18,15 @@ cec1343ab5a7a8befe99af4a2d0ca847b6c84743. Tatoeba's sentences are by its contrib
 Creative Commons Attribution 2.0 France: https://creativecommons.org/licenses/by/2.0/fr/. Only word-pair counts
 are kept; no sentence is shipped.
 
+## Wikipedia misspelling lists (CC BY-SA 4.0), test data only
+
+The keyboard's autocorrect is measured (`RealTypoEval`, not shipped in the app) on misspellings fetched at
+test time by `tools/fetch_misspellings.py` from "Wikipedia:Lists of common misspellings/For machines" on the
+English Wikipedia (revision 1199637275) and "Wikipedia:Corrector ortográfico/Listado" on the Spanish Wikipedia
+(revision 176131402). By Wikipedia's contributors; licensed under Creative Commons Attribution-ShareAlike 4.0:
+https://creativecommons.org/licenses/by-sa/4.0/. The same tool takes every 200th Tatoeba sentence (see above)
+as correct text for the same test.
+
 ## FlorisBoard glide typing (Apache-2.0)
 
 `Packages/V2TKeyboardCore/Sources/V2TKeyboardCore/SwipeDecoder.swift` follows the pruning (first and last key,
