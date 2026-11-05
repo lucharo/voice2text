@@ -20,6 +20,18 @@ Set `V2T_TEAM` to your Apple development team if it is not the default. `tools/E
 archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exportOptionsPlist tools/ExportOptions.plist`);
 with another team, change its `teamID` too.
 
+On a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
+"v2t App Store" and "v2t keyboard App Store" profiles (App Store Connect API `GET /v1/profiles`, `profileContent`,
+into `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`), raise `CURRENT_PROJECT_VERSION` in `project.yml` above the last upload and rerun `./setup.sh`, then:
+
+```sh
+xcodebuild archive -project V2T.xcodeproj -scheme V2T -destination 'generic/platform=iOS' \
+  -archivePath /tmp/V2T.xcarchive -xcconfig tools/AppStore.xcconfig
+xcodebuild -exportArchive -archivePath /tmp/V2T.xcarchive -exportOptionsPlist tools/ExportOptions-manual.plist \
+  -exportPath /tmp/V2T-export -authenticationKeyPath <AuthKey.p8> -authenticationKeyID <key id> \
+  -authenticationKeyIssuerID <issuer id>
+```
+
 ## How it fits together
 
 | Part | Where | What it does |

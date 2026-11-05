@@ -1,0 +1,9 @@
+// Manual App Store signing, for a Mac that holds the Apple Distribution certificate but has no
+// account signed in to Xcode. Profiles "v2t App Store" and "v2t keyboard App Store" must be
+// installed (see ios/README.md). Used as: xcodebuild archive … -xcconfig tools/AppStore.xcconfig
+DEVELOPMENT_TEAM = 7V3HZUL435
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Apple Distribution
+V2T_PROFILE_es_luischav_v2t = v2t App Store
+V2T_PROFILE_es_luischav_v2t_keyboard = v2t keyboard App Store
+PROVISIONING_PROFILE_SPECIFIER = $(V2T_PROFILE_$(PRODUCT_BUNDLE_IDENTIFIER:identifier))
