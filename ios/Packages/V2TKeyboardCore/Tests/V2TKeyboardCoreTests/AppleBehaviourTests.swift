@@ -117,13 +117,13 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
     .init(id: "capitalised-mid-sentence", behaviour: "A capitalised word mid-sentence is not turned into a common word (a known name is fixed)", gap: false) {
       try types("Figma ", after: "I use ", gives: "Figma ") && types("Britian ", after: "I live in ", gives: "Britain ")
     },
-    .init(id: "url", behaviour: "A web address is not corrected", gap: true) {
+    .init(id: "url", behaviour: "A web address is not corrected", gap: false) {
       try types("www.exmaple.cmo ", after: "see ", gives: "www.exmaple.cmo ") && types("exmaple.com/teh ", after: "see ", gives: "exmaple.com/teh ")
     },
-    .init(id: "email", behaviour: "An email address is not corrected", gap: true) {
+    .init(id: "email", behaviour: "An email address is not corrected", gap: false) {
       try types("jhon@gmial.com ", after: "write to ", gives: "jhon@gmial.com ")
     },
-    .init(id: "handle-hashtag", behaviour: "An @handle or #hashtag is not corrected", gap: true) {
+    .init(id: "handle-hashtag", behaviour: "An @handle or #hashtag is not corrected", gap: false) {
       try types("@jhon ", after: "ping ", gives: "@jhon ") && types("#teh ", after: "tag ", gives: "#teh ")
     },
     .init(id: "numbers", behaviour: "Words with digits are not corrected", gap: false) {

@@ -41,7 +41,12 @@ public final class TypingEngine {
   public var replacements: [String: String] = [:]
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
-  public private(set) var lastCorrection: (original: String, replacement: String)?
+  public private(set) var lastCorrection: (original: String, replacement: String)? {
+    didSet { if lastCorrection == nil { correctionThenDot = false } }
+  }
+  /// A full stop typed straight after an autocorrect: a letter next means the word was part of an address
+  /// ("exmaple.com"), so the correction is undone.
+  private var correctionThenDot = false
   /// Set after a delete removed the space after an autocorrect: the bar offers `original` to revert to.
   public private(set) var revertOffer: String?
   /// We put a space after a suggestion, swipe or correction; punctuation typed next pulls it back.
@@ -65,6 +70,12 @@ public final class TypingEngine {
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
+      if correctionThenDot, let c = lastCorrection, before.hasSuffix(c.replacement + ".") {
+        // "exmaple." then "c": an address, not a sentence end; put the word back as typed
+        for _ in 0..<(c.replacement.count + 1) { proxy.deleteBackward() }
+        proxy.insertText(c.original + ".")
+      }
+      correctionThenDot = false
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
@@ -83,7 +94,8 @@ public final class TypingEngine {
   func punctuation(_ s: String) {
     let closesSentence = [".", "!", "?"].contains(s)
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
-    commitWord()
+    // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
+    let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
       proxy.deleteBackward()
       proxy.insertText(s + " ")
@@ -93,7 +105,8 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    lastCorrection = nil
+    correctionThenDot = corrected && s == "."
+    if !correctionThenDot { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
   }
@@ -300,19 +313,33 @@ public final class TypingEngine {
   /// The word a space would put in place of the one being typed, or nil when it would stay as typed: the
   /// field's autocorrect setting and the learned words apply, as in commitWord. The bar bolds this word.
   public var pendingAutocorrection: String? {
-    guard !composing.isEmpty, traits.autocorrect,
-          let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
+    guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
+    guard let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
     return fix
   }
 
-  /// Autocorrects the word under construction, if it needs it.
-  func commitWord() {
+  /// The word being typed is part of a web or email address, an @handle or a #hashtag: what is joined to it
+  /// before it ("www.", "jhon@", "@", "#", "http://") holds one of these marks.
+  var inAddress: Bool {
+    var i = before.index(before.endIndex, offsetBy: -composing.count, limitedBy: before.startIndex) ?? before.startIndex
+    while i > before.startIndex {
+      i = before.index(before: i)
+      let c = before[i]
+      if Self.isGap(c) { return false }
+      if "@#/.:_\\".contains(c) { return true }
+    }
+    return false
+  }
+
+  /// Autocorrects the word under construction, if it needs it; true when it changed it.
+  @discardableResult func commitWord() -> Bool {
     defer { composing = [] }
-    guard let fix = pendingAutocorrection else { return }
+    guard let fix = pendingAutocorrection else { return false }
     let original = literal
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
     lastCorrection = (original, fix)
+    return true
   }
 
   func spaceIfNeeded() {

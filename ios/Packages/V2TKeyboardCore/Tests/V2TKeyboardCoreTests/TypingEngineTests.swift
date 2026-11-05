@@ -223,6 +223,23 @@ struct TypingEngineTests {
     #expect(p.text == "x 4teh ")
   }
 
+  /// A correction made at a full stop stays when a space follows (a sentence end) and is undone when a letter
+  /// follows (an address: "exmaple.com").
+  @Test func aLetterAfterTheFullStopUndoesItsCorrection() throws {
+    let (e, p) = try engine("I saw ")
+    type("teh", e)
+    e.character(".", now: 50)
+    #expect(p.text == "I saw the.")
+    type(" ok", e, start: 60)
+    #expect(p.text == "I saw the. Ok")
+    let (f, q) = try engine("see ")
+    type("exmaple", f)
+    f.character(".", now: 50)
+    #expect(q.text == "see example.")
+    type("com ", f, start: 60)
+    #expect(q.text == "see exmaple.com ")
+  }
+
   /// A curly apostrophe from the long press stays inside the word, as the straight one does.
   @Test func aCurlyApostropheDoesNotEndTheWord() throws {
     let (e, p) = try engine("x ")
