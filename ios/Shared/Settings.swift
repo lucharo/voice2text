@@ -58,6 +58,13 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue, forKey: "previewRecording") }
   }
 
+  /// UI tests only: the keyboard draws its own globe key (true) or not (false) whatever iOS asks for, so a
+  /// Face ID Simulator can show the Touch ID iPhone's bottom row. The app clears it on every launch.
+  var previewGlobeKey: Bool? {
+    get { defaults.object(forKey: "previewGlobeKey") as? Bool }
+    set { defaults.set(newValue, forKey: "previewGlobeKey") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }

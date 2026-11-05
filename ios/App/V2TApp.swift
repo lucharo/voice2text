@@ -14,6 +14,7 @@ import V2TKeyboardCore
     }
     let env = ProcessInfo.processInfo.environment
     Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
+    Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)

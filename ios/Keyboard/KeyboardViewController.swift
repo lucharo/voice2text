@@ -26,6 +26,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// True while the engine edits the document, so our own edits don't trigger a resync.
   private var engineEditing = false
   private lazy var dictation = DictationClient(controller: self)
+  /// Made the first time the emoji key is tapped.
+  private var emojiPanel: EmojiPanel?
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -106,7 +108,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     let current = keyboardView.layout, wanted = makeLayout(width: view.bounds.width, page: current.page)
-    if view.bounds.width > 0, abs(current.width - view.bounds.width) > 0.5 || current.form != wanted.form || current.metrics != wanted.metrics {
+    if view.bounds.width > 0, abs(current.width - view.bounds.width) > 0.5 || current.form != wanted.form || current.metrics != wanted.metrics
+      || current.nextKeyboardKey != wanted.nextKeyboardKey {
       relayout(page: current.page)
     }
   }
@@ -120,8 +123,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       shortSide = min(screen.bounds.width, screen.bounds.height)
     }
     let form = KeyboardForm.choose(isPad: traitCollection.userInterfaceIdiom == .pad, width: width, screenShortSide: shortSide)
+    // iOS draws its own globe below the keyboard on Face ID iPhones; the emoji key then takes our globe's slot
     return KeyboardLayout(width: width, page: page, language: language, form: form, landscape: form.isPad && landscape,
-                          currency: Locale.current.currencySymbol)
+                          currency: Locale.current.currencySymbol, nextKeyboardKey: Settings.shared.previewGlobeKey ?? needsInputModeSwitchKey)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
@@ -243,7 +247,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     case .tab: edit { $0.character("\t") }
     case .page(let p): relayout(page: p)
     case .mic: startDictation()
-    case .emoji: advanceToNextInputMode()  // until the emoji page lands: hand over to the next keyboard
+    case .emoji: showEmoji(true)
+    case .nextKeyboard: advanceToNextInputMode()
     case .dismiss: dismissKeyboard()
     case .character, .delete: break
     }
@@ -278,6 +283,39 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }
     }
+  }
+
+  // MARK: emoji
+
+  /// Covers the bar and the keys with the emoji panel, or takes it away (ABC).
+  private func showEmoji(_ on: Bool) {
+    if on, emojiPanel == nil { emojiPanel = makeEmojiPanel() }
+    guard let p = emojiPanel else { return }
+    if on {
+      p.language = language
+      p.onDismiss = keyboardView.layout.form.isPad ? { [weak self] in self?.dismissKeyboard() } : nil
+      p.show()
+    }
+    p.isHidden = !on
+    keyboardView.accessibilityElementsHidden = on
+    bar.accessibilityElementsHidden = on
+    UIAccessibility.post(notification: .screenChanged, argument: on ? p : nil)
+  }
+
+  private func makeEmojiPanel() -> EmojiPanel {
+    let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
+    p.onEmoji = { [weak self] e in self?.edit("emoji") { $0.emoji(e) } }
+    p.onDelete = { [weak self] in self?.edit { $0.delete() } }
+    p.onLetters = { [weak self] in self?.showEmoji(false) }
+    p.translatesAutoresizingMaskIntoConstraints = false
+    view.insertSubview(p, belowSubview: panel)  // dictation's panel still covers everything
+    NSLayoutConstraint.activate([
+      p.topAnchor.constraint(equalTo: view.topAnchor),
+      p.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor),
+      p.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      p.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+    ])
+    return p
   }
 
   // MARK: dictation
