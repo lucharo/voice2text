@@ -20,7 +20,14 @@ Set `V2T_TEAM` to your Apple development team if it is not the default. `tools/E
 archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exportOptionsPlist tools/ExportOptions.plist`);
 with another team, change its `teamID` too.
 
-On a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
+Every push to `main` that touches `ios/` goes to TestFlight by itself ([testflight.yml](../.github/workflows/testflight.yml)):
+CI runs the keyboard engine tests, archives, uploads, and stays red unless Apple accepts the build. Build numbers
+count from 100 upwards, so there is nothing to bump. To upload `main` without a change, run the workflow by hand from
+the Actions tab. `scripts/ci-testflight-secrets.sh` loads its secrets; run it again when the Apple Distribution
+certificate or the App Store Connect key is renewed. Profiles come from App Store Connect on each run, so a renewed
+profile with the same name needs no change.
+
+To upload from a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
 "v2t App Store" and "v2t keyboard App Store" profiles (App Store Connect API `GET /v1/profiles`, `profileContent`,
 into `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`), raise `CURRENT_PROJECT_VERSION` in `project.yml` above the last upload and rerun `./setup.sh`, then:
 
