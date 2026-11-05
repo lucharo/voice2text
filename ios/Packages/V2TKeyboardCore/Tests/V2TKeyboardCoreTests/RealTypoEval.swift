@@ -109,7 +109,7 @@ enum RealTypoEval {
     return r
   }
 
-  static func pct(_ a: Int, _ n: Int) -> String { n == 0 ? "-" : String(format: "%.1f%%", 100 * Double(a) / Double(n)) }
+  static func pct(_ a: Int, _ n: Int) -> String { n == 0 ? "-" : String(format: "%.1f%% (%d)", 100 * Double(a) / Double(n), a) }
 
   static func stats(_ v: [Double]) -> String {
     let s = v.sorted()
@@ -142,7 +142,7 @@ struct RealTypoEvalTests {
     ]
     print("realtypo | correct text | words | words autocorrect changed")
     for r in text {
-      print("realtypo | \(r.name) | \(r.words) | \(r.changed) (\(RealTypoEval.pct(r.changed, r.words)))")
+      print("realtypo | \(r.name) | \(r.words) | \(RealTypoEval.pct(r.changed, r.words))")
       print("realtypo-changed | \(r.name) | \(r.changedExamples)")
     }
     print("realtypo-latency | key + bar + bold slot, Mac | \(RealTypoEval.stats(keyTimes)) over \(keyTimes.count) keys")

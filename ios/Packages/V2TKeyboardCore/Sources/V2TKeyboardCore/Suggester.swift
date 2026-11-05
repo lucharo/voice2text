@@ -115,7 +115,8 @@ public final class Suggester: @unchecked Sendable {
         }
       }
     }
-    var out = scored.values.sorted { $0.score > $1.score }
+    // ties by word: a dictionary's order changes from one launch to the next
+    var out = scored.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }
     // the literal word keeps a slot even when it is not a word, so it can always be chosen as typed
     if !out.prefix(limit).contains(where: { $0.word.lowercased() == literal.lowercased() }) {
       out.insert(Suggestion(word: literal, kind: .typed, score: -.infinity), at: min(out.count, limit - 1))
