@@ -103,10 +103,10 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
       type("its", f)
       return e.suggestions().map(\.word).contains("I'll") && f.suggestions().map(\.word).contains("it's")
     },
-    .init(id: "curly-apostrophe", behaviour: "A curly apostrophe typed in a word stays (don’t is not rewritten)", gap: true) {
+    .init(id: "curly-apostrophe", behaviour: "A curly apostrophe typed in a word stays (don’t is not rewritten)", gap: false) {
       try types("don’t ", gives: "don’t ")
     },
-    .init(id: "plural-possessive", behaviour: "A plural possessive keeps its apostrophe (parents')", gap: true) {
+    .init(id: "plural-possessive", behaviour: "A plural possessive keeps its apostrophe (parents')", gap: false) {
       try types("parents' ", after: "my ", gives: "parents' ")
     },
     .init(id: "lone-i", behaviour: "A lone i becomes I", gap: false) { try types("i ", after: "and ", gives: "I ") },

@@ -132,9 +132,11 @@ public final class Suggester: @unchecked Sendable {
     guard !literal.contains(where: \.isNumber) else { return nil }
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
     guard typed.count >= 2 else { return nil }
-    let key = Lexicon.fold(literal)
-    for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower }) {
-      return nil  // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
+    // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
+    if isWord(literal) { return nil }
+    // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
+    for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
+      if isWord(String(literal.dropLast(suffix.count))) { return nil }
     }
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
@@ -142,6 +144,17 @@ public final class Suggester: @unchecked Sendable {
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
   }
+
+  /// `word` is in a lexicon as written, ignoring case and which apostrophe was typed ("don’t").
+  func isWord(_ word: String) -> Bool {
+    let lower = Self.straightApostrophes(word.lowercased())
+    let key = Lexicon.fold(word)
+    guard !key.isEmpty else { return false }
+    return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0).lowercased() == lower } }
+  }
+
+  /// The lexicons spell apostrophes straight; the long press types the curly one.
+  static func straightApostrophes(_ s: String) -> String { s.replacingOccurrences(of: "’", with: "'") }
 
   /// The likeliest next words before anything of the next word is typed, best first: the words that most
   /// often follow the previous one (or start a sentence), in the language the context is written in.
