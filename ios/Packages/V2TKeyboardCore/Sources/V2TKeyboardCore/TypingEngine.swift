@@ -243,6 +243,18 @@ public final class TypingEngine {
     noteLanguage()
   }
 
+  /// An emoji from the emoji panel. It ends the word in progress as typed, without autocorrecting it (the user
+  /// left the letters to pick a picture, not to accept a correction), and needs no space before or after it.
+  public func emoji(_ s: String) {
+    proxy.insertText(s)
+    composing = []
+    lastSwipe = nil
+    autoSpace = false
+    lastCorrection = nil
+    revertOffer = nil
+    refreshShift()
+  }
+
   /// Text was inserted through the dictation route (or pasted): it reads as words already finished.
   public func insertFinished(_ text: String) {
     commitWord()
