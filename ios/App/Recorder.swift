@@ -11,6 +11,8 @@ protocol AudioSource: AnyObject, Sendable {
   func end() -> [Float]
   /// Root-mean-square of the latest audio while recording, 0 otherwise.
   var level: Float { get }
+  /// The input the session records from, nil when it is off.
+  var microphone: Microphone? { get }
 }
 
 final class Recorder: AudioSource, @unchecked Sendable {
@@ -59,6 +61,23 @@ final class Recorder: AudioSource, @unchecked Sendable {
   }
 
   static let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+
+  var microphone: Microphone? {
+    guard running, let input = AVAudioSession.sharedInstance().currentRoute.inputs.first else { return nil }
+    return Microphone(name: input.portName, symbol: Self.symbol(for: input.portType))
+  }
+
+  /// An SF Symbol for an input port.
+  static func symbol(for port: AVAudioSession.Port) -> String {
+    switch port {
+    case .bluetoothHFP, .bluetoothLE: "airpods"
+    case .headsetMic: "headphones"
+    case .carAudio: "car.fill"
+    case .usbAudio, .lineIn: "cable.connector"
+    case .continuityMicrophone: "iphone"
+    default: "mic.fill"
+    }
+  }
 
   private func release() {
     engine.inputNode.removeTap(onBus: 0)
@@ -114,6 +133,8 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
   }
   private var began: Date?
   func warmUp() throws { running = true }
+  /// A fixed name, so a UI test can check the keyboard shows the input without depending on the Mac's.
+  var microphone: Microphone? { running ? Microphone(name: "Test clip", symbol: "waveform") : nil }
   func coolDown() { running = false }
   func begin() { began = Date() }
   func end() -> [Float] { began = nil; return samples }

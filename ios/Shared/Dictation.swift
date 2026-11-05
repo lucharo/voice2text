@@ -11,6 +11,14 @@ public enum DictationState: String, Sendable {
   case unavailable
 }
 
+/// The microphone the app records from, as the keyboard and the app show it while dictating.
+struct Microphone: Equatable, Sendable {
+  /// What iOS calls the input ("iPhone Microphone", "AirPods Pro", "Headset Microphone").
+  let name: String
+  /// An SF Symbol for its kind of input.
+  let symbol: String
+}
+
 /// The wire between keyboard and app: Darwin notifications (no payload) plus App Group defaults for the
 /// state, a heartbeat and the finished text. Each request and result carries an id so a late or repeated
 /// notification is ignored.
@@ -32,6 +40,19 @@ enum DictationChannel {
   /// The app refreshes the heartbeat every second while warm; older than this means no session.
   static let heartbeatTimeout: TimeInterval = 3
   static let url = URL(string: "v2t://dictate")!
+  /// The microphone the warm session records from (Microphone.name and .symbol); empty when no session.
+  static let microphoneNameKey = "dictation.microphone"
+  static let microphoneSymbolKey = "dictation.microphoneSymbol"
+
+  static func writeMicrophone(_ mic: Microphone?, to defaults: UserDefaults) {
+    defaults.set(mic?.name ?? "", forKey: microphoneNameKey)
+    defaults.set(mic?.symbol ?? "", forKey: microphoneSymbolKey)
+  }
+
+  static func readMicrophone(from defaults: UserDefaults) -> Microphone? {
+    guard let name = defaults.string(forKey: microphoneNameKey), !name.isEmpty else { return nil }
+    return Microphone(name: name, symbol: defaults.string(forKey: microphoneSymbolKey) ?? "mic.fill")
+  }
 
   /// The microphone level while listening, newest last, each 0...1, written by the app 20 times a second for
   /// the keyboard's waveform. A file in the App Group rather than defaults, which are not meant for that rate.

@@ -52,6 +52,9 @@ iOS gives keyboards no microphone, so the app records:
    until turned off). During that time the mic records from the keyboard without leaving your app. The orange
    microphone dot shows while the session is on, and the app has a Stop microphone session button.
 3. Only what you say between tapping the mic and tapping it again is kept; nothing else is buffered or saved.
+4. The keyboard's recording view and the app name the microphone in use ("iPhone Microphone", a wired headset).
+   The session records from the iPhone's own microphone even with AirPods connected, so Bluetooth headphones stay
+   in music mode and other apps' audio plays at its usual level. Not yet checked on a phone.
 
 ### Which model this iPhone gets
 
