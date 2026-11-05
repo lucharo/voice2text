@@ -34,6 +34,8 @@ targets:
         product: V2TKeyboardCore
       - package: V2TKeyboardCore
         product: V2TCleanup
+      - package: V2TKeyboardCore
+        product: V2TPieces
     info:
       path: App/Info.plist
       properties:

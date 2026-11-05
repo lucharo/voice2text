@@ -41,6 +41,8 @@ import SwiftUI
   private var recording = 0
   /// The keyboard request that started the current recording; the result carries it back.
   private var requestId = ""
+  /// Transcribes the current recording in pieces while it is being made (#112).
+  private var live: LiveTranscription?
 
   init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
     self.recommendation = recommendation
@@ -120,6 +122,8 @@ import SwiftUI
 
   func coolDown() {
     stopMeter()
+    live?.stopFeeding()
+    live = nil
     recorder.coolDown()
     publishMicrophone()
     heartbeat?.invalidate()
@@ -159,6 +163,11 @@ import SwiftUI
     recording += 1
     requestId = defaults.string(forKey: DictationChannel.requestIdKey) ?? ""
     recorder.begin()
+    let language = Settings.shared.speechLanguage
+    live = LiveTranscription(source: recorder, isReady: { [weak self] in self?.engineState == .ready }) { [engine] in
+      try await engine.transcribe($0, language: language)
+    }
+    live?.start()
     publish(.listening)
     levels = []
     meter?.invalidate()
@@ -185,21 +194,25 @@ import SwiftUI
   func stop() {
     guard state == .listening else { return }
     stopMeter()
+    let stoppedAt = ContinuousClock.now
+    live?.stopFeeding()
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()
-    let id = recording, request = requestId
-    Task { await finish(samples, id: id, request: request) }
+    let id = recording, request = requestId, live = live
+    self.live = nil
+    Task { await finish(samples, id: id, request: request, live: live, stoppedAt: stoppedAt) }
   }
 
-  private func finish(_ samples: [Float], id: Int, request: String) async {
+  private func finish(_ samples: [Float], id: Int, request: String, live: LiveTranscription?, stoppedAt: ContinuousClock.Instant) async {
     // only the latest recording owns the state: a reset session may already be listening again
     defer { if id == recording, state == .transcribing { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if engineState != .ready { await prepareModel() }
     let language = Settings.shared.speechLanguage
     do {
-      let raw = try await engine.transcribe(samples, language: language)
+      let raw: String
+      if let live { raw = try await live.finish(samples, stoppedAt: stoppedAt) } else { raw = try await engine.transcribe(samples, language: language) }
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
       let heard = text
@@ -207,6 +220,7 @@ import SwiftUI
       text = dictionary.applyReplacements(text)
       lastText = text
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language))
+      dictationLog.log("text ready \((ContinuousClock.now - stoppedAt) / .milliseconds(1), format: .fixed(precision: 0), privacy: .public) ms after Stop")
       guard id == recording else { return }  // kept in History, but not typed into whatever field is open now
       defaults.set(text, forKey: DictationChannel.resultKey)
       defaults.set(request, forKey: DictationChannel.resultIdKey)
