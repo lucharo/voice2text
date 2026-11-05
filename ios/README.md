@@ -79,6 +79,14 @@ Apple gives third-party keyboards none of its own swipe, prediction or autocorre
 - No text selection, edit menu or system undo, and the space-bar cursor moves left and right only.
 - Apple's keyboard takes over in password and phone-number fields, and in apps that refuse custom keyboards.
 - Key previews on the top row draw over the suggestion bar, never above the keyboard.
+- The globe and microphone below the keys on Face ID iPhones belong to iOS; no keyboard can put its own key there.
+  v2t sets `hasDictationKey`, the one API for it (UIInputViewController.h: "the system dictation key, if
+  provided, will be disabled"), since its own mic key dictates. Whether iOS then hides the microphone or only
+  greys it out is unverified: the Simulator draws no key there. If it still shows, Settings › General ›
+  Keyboard › Enable Dictation off removes it, for Apple's keyboard too.
+- A keyboard never sees taps outside itself, and the app you type in decides when the keyboard hides (the only
+  call a keyboard has is `dismissKeyboard()`), so v2t cannot hide when you tap away. The chevron at the end of
+  the suggestion bar hides it on the iPhone; the iPad has a hide-keyboard key in the bottom row.
 
 What has been checked so far, and how:
 
