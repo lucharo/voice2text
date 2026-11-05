@@ -4,8 +4,10 @@ An iPhone and iPad app and keyboard ([#75](https://github.com/lucharo/voice2text
 only one you need, with v2t dictation built in. Speech is transcribed on the device; audio never leaves it.
 The iPad gets its own keyboard layouts, including the full keyboard with a number row on 13-inch iPads.
 
-Status: in development. Runs on the iPhone Simulator; nothing has been installed on a phone or iPad yet, and the
-iPad layouts have only been rendered off-screen (the installed Simulator runtime offers no iPad).
+Status: internal TestFlight testing, with no public invitation. Builds 1 to 3 went to TestFlight on 5 November 2026
+(build 3 is main as of #110), and build 1 ran on an iPhone 17 Pro. Nothing has run on an iPad: the iPad layouts have
+only been rendered off-screen (the installed Simulator runtime offers no iPad). The user guide is
+[docs/iphone.md](../docs/iphone.md), published at <https://v2t.luischav.es/iphone/>.
 
 ## Build and test
 
