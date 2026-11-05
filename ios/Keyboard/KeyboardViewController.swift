@@ -97,7 +97,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       shortSide = min(screen.bounds.width, screen.bounds.height)
     }
     let form = KeyboardForm.choose(isPad: traitCollection.userInterfaceIdiom == .pad, width: width, screenShortSide: shortSide)
-    return KeyboardLayout(width: width, page: page, language: language, form: form, landscape: form.isPad && landscape)
+    return KeyboardLayout(width: width, page: page, language: language, form: form, landscape: form.isPad && landscape,
+                          currency: Locale.current.currencySymbol)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
