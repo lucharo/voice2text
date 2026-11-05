@@ -23,6 +23,7 @@ public actor PieceTranscriber {
   }
 
   private let cutter: PieceCutter
+  private let minimumTail: Int
   private let decode: Decode
   private var pending: [Float] = []
   private var cutTotal = 0
@@ -30,10 +31,16 @@ public actor PieceTranscriber {
   private var failed = false
   private var finished = false
   private var report = Report()
+  private var pieceCount: Int { report.piecesWhileRecording + report.piecesAtFinish }
   private var last: Task<Void, Never>?
 
-  public init(cutter: PieceCutter = PieceCutter(), decode: @escaping Decode) {
+  /// `minimumTail`: a last piece shorter than this many samples is padded with silence to it. A recording can
+  /// end a fraction of a second after a cut, and FluidAudio's Parakeet refuses anything under 0.3 s
+  /// (`ASRConstants.minimumAudioDurationSeconds` at 55f65d9); its encoder pads every piece with silence to
+  /// 15 s anyway.
+  public init(cutter: PieceCutter = PieceCutter(), minimumTail: Int = 8_000, decode: @escaping Decode) {
     self.cutter = cutter
+    self.minimumTail = minimumTail
     self.decode = decode
   }
 
@@ -65,6 +72,9 @@ public actor PieceTranscriber {
       pending = Array(recording[cutTotal...])
       await decodeSettled(atFinish: true)
       if !failed {
+        if !pending.isEmpty, pieceCount > 0, pending.count < minimumTail {
+          pending += [Float](repeating: 0, count: minimumTail - pending.count)
+        }
         if !pending.isEmpty { await decodePiece(pending.count, atFinish: true) }
         if !failed { return .success((texts.joined(separator: " "), report)) }
       }

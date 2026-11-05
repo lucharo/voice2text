@@ -147,6 +147,30 @@ private func record(_ audio: [Float], into t: PieceTranscriber) async {
     #expect(report == PieceTranscriber.Report(piecesWhileRecording: 0, piecesAtFinish: 2, fellBack: false))
   }
 
+  @Test func aTailOfAFractionOfASecondIsPaddedToHalfASecond() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(14.5) + silence(0.4)  // the pause starts at 14.5 s: cut at 14.55 s, 0.35 s left
+
+    await record(audio, into: t)
+    let (text, report) = try await t.finish(audio)
+
+    #expect(await model.calls == [232_800, 8_000])
+    #expect(text == "<232800> <8000>")
+    #expect(report == PieceTranscriber.Report(piecesWhileRecording: 1, piecesAtFinish: 1, fellBack: false))
+  }
+
+  @Test func aShortRecordingWithNoCutIsNotPadded() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(0.3)
+
+    let (text, _) = try await t.finish(audio)
+
+    #expect(await model.calls == [4_800])
+    #expect(text == "<4800>")
+  }
+
   @Test func emptyPiecesAddNoSpaces() async throws {
     let model = FakeModel()
     await model.text(" ", forCall: 1)
