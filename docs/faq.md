@@ -472,8 +472,9 @@ to match Apple's swipe yet.
 
 ## Which iPhones and iPads does v2t work on, and how fast is it?
 
-Any iPhone or iPad on iOS 26 or later can install it, but only two iPhones have been checked. The
-speech and cleanup models were measured on an iPhone 16 Pro in a separate benchmark app
+It needs iOS 26 or later and, for now, an invitation to the internal TestFlight. Only two iPhones
+have been checked. The speech and cleanup models were measured on an iPhone 16 Pro in a separate
+benchmark app
 ([#85](https://github.com/lucharo/voice2text/issues/85),
 [#67](https://github.com/lucharo/voice2text/issues/67)): text came back about 0.1 s after you stop,
 and Apple Intelligence cleanup added about 1.2 s. TestFlight build 1 ran on an iPhone 17 Pro. No iPad

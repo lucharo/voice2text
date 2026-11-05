@@ -14,12 +14,14 @@
 
 ## Will it work on my device?
 
-- **Supported:** any iPhone or iPad on iOS 26 or later, which rules out the iPhone XS, XR and older.
+- **Installs on:** any iPhone or iPad on iOS 26 or later, which rules out the iPhone XS, XR and
+  older. No iPad has been tried.
 - **Recommended:** an iPhone that can run Apple Intelligence: the iPhone 15 Pro and Pro Max, the
   iPhone 16 and 17 families, 16e, 17e, Air, Duo, and 18 Pro and Pro Max. These get the more
   accurate speech model and cleanup.
 - **Measured so far:** the speech and cleanup models on one iPhone 16 Pro, in a separate benchmark
-  app, and the app itself on an iPhone 17 Pro (TestFlight build 1). No other iPhone model has been
+  app, and the app itself on an iPhone 17 Pro (TestFlight build 1). No result from build
+  3, the one described here, has been reported from a phone yet. No other iPhone model has been
   tested. v2t has never run on an iPad, and the project will claim iPad support only once an
   M-series iPad and the iPad mini (A17 Pro) pass an end-to-end test.
 
@@ -33,7 +35,7 @@ one choice:
 
 Older phones get Parakeet, which makes a few more mistakes (see
 [Benchmarks](benchmarks.md#on-the-iphone)), because the int8 build of Nemotron's sibling model
-failed to load on the A16 chip of the iPhone 14 Pro and 15
+failed to load on the A16 chip (as in the iPhone 14 Pro and 15)
 ([FluidAudio #828](https://github.com/FluidInference/FluidAudio/issues/828)). Nemotron itself
 has not been tried there. iPads follow the same rule. The app's **This iPhone** (or **This iPad**)
 section shows what your device got and why, and says so when your iPhone model is untested.
@@ -60,7 +62,7 @@ section shows what your device got and why, and says so when your iPhone model i
 
 ## Dictate
 
-Tap the v2t mic key, to the left of return.
+Tap the v2t mic key (on the iPhone, to the left of return).
 
 When no microphone session is on, the v2t app itself opens, because iOS gives keyboards no
 microphone. It is already listening: go back to your app (tap ◀ at the top left, or swipe right
@@ -91,7 +93,7 @@ typing anything, though v2t still saves the dictation in History.
 ### The microphone session
 
 - iOS shows the orange microphone dot while the session is on. v2t keeps only what you say between
-  tapping the mic and tapping Done; it records and saves nothing else.
+  tapping the mic and tapping Done or Cancel; it records and saves nothing else.
 - The session turns off 15 minutes after your last dictation. Change that under **Languages and
   typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
   yourself, as below.
@@ -119,8 +121,8 @@ flowchart LR
   written, and the keyboard never autocorrects them. **Replace** turns what v2t heard into what you
   want written (whole words, any capitalisation); it runs after cleanup, whether cleanup is on or
   off. The file format is the Mac app's, so you can paste your Mac dictionary into **Edit as text**.
-- **History** lists every dictation on this device, newest first. A **Heard:** line shows the words
-  before cleanup and replacements changed them. Touch and hold to select and copy; swipe left to
+- **History** lists your dictations on this device, newest first. A **Heard:** line shows the words
+  before cleanup and replacements changed them. Touch and hold an entry to copy it; swipe left to
   delete.
 - **Speech language**: English, Español, or Detect.
 

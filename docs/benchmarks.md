@@ -62,7 +62,7 @@ Apple Intelligence on the same iPhone 16 Pro, again in the benchmark app, over 6
 v2t's Mac cleanup benchmark. Cleanup is there for punctuation, so the question is whether it changes
 the words you said. Words wrong:
 
-| | LibriSpeech clean | LibriSpeech other | AMI meetings | Earnings calls | Per dictation (median) |
+| | LibriSpeech clean | LibriSpeech other | AMI meetings | Earnings calls | Per clip (median) |
 |---|--:|--:|--:|--:|--:|
 | Transcript before cleanup | 1.9% | 4.2% | 33.3% | 10.8% | |
 | Apple Intelligence, as v2t runs it | 1.9% | 4.3% | 34.1% | 10.8% | 1.17 s |
@@ -81,8 +81,8 @@ accuracy so far comes from simulated touches, not fingers:
   98.3% of the time in English and 89.7% in Spanish; with a sloppier finger, 89.6% and 84.6%.
 - **Autocorrect** fixed 187 of 200 simulated typos per language and changed none of 1,000 correctly
   typed common words.
-- **The typing rules** (capitals, double-space full stop, undoing an autocorrect) are checked by tests
-  that drive the keyboard in the iPhone Simulator.
+- **The typing rules** (capitals, double-space full stop, undoing an autocorrect) are checked by unit tests on the Mac and by UI
+  tests that drive the keyboard in the iPhone Simulator.
 - **On a real iPhone 17 Pro** (TestFlight build 1), swiping "hey how is it going" typed "GRU how is it
   govt". Build 3 changed the ranking that caused it; that has not been re-measured on a phone.
 
