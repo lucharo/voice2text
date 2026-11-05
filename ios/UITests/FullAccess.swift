@@ -12,6 +12,14 @@ extension XCTestCase {
     XCTAssertTrue(settings.wait(for: .runningForeground, timeout: 30))  // Settings opens slowly on a busy Mac
     let route = settings.staticTexts["Keyboards"].firstMatch.waitForExistence(timeout: 10) ? ["Keyboards"] : ["General", "Keyboard", "Keyboards", "v2t"]
     for label in route {
+      // a fresh Simulator has not added the keyboard yet: Add New Keyboard › v2t puts it in the list
+      if label == "v2t", !settings.staticTexts[label].firstMatch.waitForExistence(timeout: 2) {
+        settings.buttons["Add New Keyboard"].firstMatch.tap()
+        let offered = settings.descendants(matching: .any).matching(NSPredicate(format: "label == 'v2t'")).firstMatch
+        for _ in 0..<6 where !offered.waitForExistence(timeout: 1) { settings.swipeUp(velocity: .slow) }
+        offered.tap()
+        sleep(1)
+      }
       let row = settings.staticTexts[label].firstMatch
       for _ in 0..<6 where !row.waitForExistence(timeout: 1) { settings.swipeUp(velocity: .slow) }  // rows load as they scroll in
       // a fresh Simulator has not added the keyboard yet: add it as a user would, from Add New Keyboard
