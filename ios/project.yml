@@ -10,7 +10,7 @@ settings:
     DEVELOPMENT_TEAM: ${V2T_TEAM}
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "2"  # TestFlight build number: raise it before every upload
+    CURRENT_PROJECT_VERSION: "3"  # TestFlight build number: raise it before every upload
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio

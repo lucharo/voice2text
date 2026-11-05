@@ -459,9 +459,16 @@ Yes: slide one finger across the letters, as on Apple's keyboard. Apple gives th
 none of its own swipe or autocorrect engines, so v2t decodes swipes itself
 (`ios/Packages/V2TKeyboardCore`). On 1,000 synthetic traces per language it puts the right word first
 96.8% of the time in English and 96.4% in Spanish (in the top three 99.7% and 100%). Those traces come
-from the test's own model of a finger. Accuracy with real fingers has not been measured, and the
-keyboard has run only in the Simulator (November 2026), so v2t does not claim to match Apple's swipe
-yet.
+from the test's own model of a finger.
+
+On a real iPhone 17 Pro (TestFlight build 1, 5 November 2026), swiping "hey how is it going" typed
+"GRU how is it govt". Spanish words beat English ones, and acronyms ranked too high. From build 3, each
+language is weighted by what you have been writing, capitals and acronyms are demoted, and the word
+before the cursor counts. The bar also predicts the next word after a space. Swiping whole messages
+with a sloppy finger, the right word now comes first 89.6% of the time in English (it was 83.5%) and
+84.6% in Spanish (it was 69.2%), still on simulated traces (`QualityEval` in
+`ios/Packages/V2TKeyboardCore`). Nobody has measured accuracy with real fingers, so v2t does not claim
+to match Apple's swipe yet.
 
 ## Which iPhones and iPads does v2t work on, and how fast is it?
 
