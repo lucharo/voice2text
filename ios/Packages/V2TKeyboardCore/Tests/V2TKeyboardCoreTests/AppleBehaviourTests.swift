@@ -91,10 +91,10 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
     .init(id: "dont", behaviour: "dont becomes don't", gap: false) { try types("dont ", gives: "don't ") },
     .init(id: "im", behaviour: "im becomes I'm", gap: false) { try types("im ", gives: "I'm ") },
     .init(id: "youre", behaviour: "youre becomes you're", gap: false) { try types("youre ", gives: "you're ") },
-    .init(id: "cant-wont", behaviour: "cant and wont (rare words) become can't and won't", gap: true) {
+    .init(id: "cant-wont", behaviour: "cant and wont (rare words) become can't and won't", gap: false) {
       try types("cant ", gives: "can't ") && types("wont ", gives: "won't ")
     },
-    .init(id: "whats", behaviour: "whats becomes what's", gap: true) { try types("whats ", gives: "what's ") },
+    .init(id: "whats", behaviour: "whats becomes what's", gap: false) { try types("whats ", gives: "what's ") },
     .init(id: "ill-its-kept", behaviour: "ill, its, were, well, hell stay (common words), I'll and it's in the bar", gap: false) {
       for w in ["ill", "its", "were", "well", "hell"] where try !types(w + " ", gives: w + " ") { return false }
       let (e, _) = try engine("I said ")
@@ -110,7 +110,7 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
       try types("parents' ", after: "my ", gives: "parents' ")
     },
     .init(id: "lone-i", behaviour: "A lone i becomes I", gap: false) { try types("i ", after: "and ", gives: "I ") },
-    .init(id: "i-contractions", behaviour: "i'm, i'll, i'd become I'm, I'll, I'd", gap: true) {
+    .init(id: "i-contractions", behaviour: "i'm, i'll, i'd become I'm, I'll, I'd", gap: false) {
       try types("i'm ", after: "and ", gives: "I'm ") && types("i'll ", after: "and ", gives: "I'll ") && types("i'd ", after: "and ", gives: "I'd ")
     },
     // what is left alone
@@ -169,7 +169,7 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
     .init(id: "es-accents", behaviour: "Spanish: a missing accent is restored (cancion → canción), real words stay (como)", gap: false) {
       try types("cancion ", after: "una ", gives: "canción ", spanish: true) && types("como ", after: "y ", gives: "como ", spanish: true)
     },
-    .init(id: "es-rare-variant", behaviour: "Spanish: ano and anos (rare words) become año and años", gap: true) {
+    .init(id: "es-rare-variant", behaviour: "Spanish: ano and anos (rare words) become año and años", gap: false) {
       try types("ano ", after: "este ", gives: "año ", spanish: true) && types("anos ", after: "dos ", gives: "años ", spanish: true)
     },
   ]

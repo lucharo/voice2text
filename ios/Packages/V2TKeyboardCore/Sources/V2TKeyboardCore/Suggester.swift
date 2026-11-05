@@ -135,8 +135,10 @@ public final class Suggester: @unchecked Sendable {
     // a capitalised word in mid-sentence is likely a name the lists lack ("Figma", "Susan"): left as typed
     // (ios/AUTOCORRECT.md item 8) rather than turned into a word ("Usan") or another name ("Kian" -> "Lian");
     // the bar still offers the corrections ("Londno": London)
-    // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
-    if isWord(literal) { return nil }
+    // a real word, as typed, stays, unless it is a rare spelling of a common word with an apostrophe or
+    // accent ("cant", "ano") or an i that should be I ("i'm"); a missing accent or apostrophe on a non-word
+    // ("cancion", "dont") is corrected below
+    if isWord(literal) { return markedVariant(of: literal) }
     // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
     for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
       if isWord(String(literal.dropLast(suffix.count))) { return nil }
@@ -151,6 +153,34 @@ public final class Suggester: @unchecked Sendable {
     if !context.sentenceStart, Self.isTitleCase(literal), !isNameEntry(best.word) { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
+  }
+
+  /// Frequency steps (0-255) a spelling with an apostrophe or accent must beat the word as typed by to replace
+  /// it. From the lists: the rare words that should change sit 88 to 154 steps under their marked spelling
+  /// (anos/años 88, cant/can't 90, wont/won't 108, whats/what's 154); the common words that must stay sit at
+  /// most 52 under (ill/I'll 52, lets/let's 39, id/I'd 37) or above it (were/we're, como/cómo).
+  public var markedVariantGap = 80
+
+  /// For a real word typed with plain letters, the much commoner spelling of the same letters with an
+  /// apostrophe or accent; for "i'm", "i'll" and the like, the capital I. Nil to leave the word as typed.
+  func markedVariant(of literal: String) -> String? {
+    let lower = Self.straightApostrophes(literal.lowercased())
+    let key = Lexicon.fold(literal)
+    if lower.hasPrefix("i'"), literal.first == "i" {
+      for lex in lexicons { for i in lex.exactRange(key) where lex.word(i).lowercased() == lower && lex.word(i).hasPrefix("I'") { return lex.word(i) } }
+    }
+    guard literal.allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }  // marks the user typed stay
+    var typed = -1, best: (word: String, frequency: Int)?
+    for lex in lexicons {
+      for i in lex.exactRange(key) {
+        let w = lex.word(i), f = lex.frequency(i)
+        if w.lowercased() == lower { typed = max(typed, f); continue }
+        guard EntryCase(w) == .lower, !w.allSatisfy(\.isASCII) || w.contains("'") else { continue }
+        if best == nil || f > best!.frequency { best = (w, f) }
+      }
+    }
+    guard let b = best, b.frequency - typed >= markedVariantGap else { return nil }
+    return Self.applyCase(of: literal, to: b.word)
   }
 
   /// `word` is in a lexicon as written, ignoring case and which apostrophe was typed ("don’t").
