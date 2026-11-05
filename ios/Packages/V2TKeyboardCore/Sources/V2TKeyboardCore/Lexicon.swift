@@ -23,17 +23,68 @@ public final class Lexicon: @unchecked Sendable {
   public init(data: Data, language: String) throws {
     guard data.count >= 20, data.prefix(4) == Data("V2TL".utf8) else { throw FormatError(description: "not a v2tlex file") }
     func u32(_ at: Int) -> Int { Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt32.self).littleEndian }) }
-    guard u32(4) == 1 else { throw FormatError(description: "unsupported v2tlex version \(u32(4))") }
+    let version = u32(4)
+    guard version == 1 || version == 2 else { throw FormatError(description: "unsupported v2tlex version \(version)") }
     let n = u32(8), keyLen = u32(12), wordLen = u32(16)
     keyOffsets = 20
     wordOffsets = keyOffsets + 4 * (n + 1)
     freqs = wordOffsets + 4 * (n + 1)
     keyBlob = freqs + n
     wordBlob = keyBlob + keyLen
-    guard wordBlob + wordLen == data.count else { throw FormatError(description: "v2tlex size mismatch") }
+    let end = wordBlob + wordLen
+    // version 2 appends the bigram section: "BIGR" u32 pairs, u32 prev[], u32 next[], u8 cost[], u8 lift[]
+    var pairs = 0
+    if version == 2 {
+      guard end + 8 <= data.count, data[data.startIndex + end..<data.startIndex + end + 4] == Data("BIGR".utf8) else {
+        throw FormatError(description: "v2tlex bigram section missing")
+      }
+      pairs = u32(end + 4)
+      guard end + 8 + 10 * pairs == data.count else { throw FormatError(description: "v2tlex bigram size mismatch") }
+    } else {
+      guard end == data.count else { throw FormatError(description: "v2tlex size mismatch") }
+    }
+    bigramCount = pairs
+    bigramPrev = end + 8
+    bigramNext = bigramPrev + 4 * pairs
+    bigramCost = bigramNext + 4 * pairs
+    bigramLift = bigramCost + pairs
     self.data = data
     self.count = n
     self.language = language
+  }
+
+  // MARK: bigrams
+
+  /// Entry pairs (word, a word that often follows it), from version 2 files; 0 otherwise.
+  public let bigramCount: Int
+  private let bigramPrev: Int, bigramNext: Int, bigramCost: Int, bigramLift: Int
+  static let sentenceStart = UInt32.max
+
+  public struct Follower: Equatable, Sendable {
+    /// The following word's entry.
+    public let entry: Int
+    /// ln P(word | previous word), at most 0.
+    public let logProbability: Double
+    /// ln(P(word | previous word) / P(word)), floored at 0: how much more likely the word is here than anywhere.
+    public let lift: Double
+  }
+
+  /// The words that most often follow entry `previous` (nil: the start of a sentence), likeliest first.
+  public func followers(of previous: Int?) -> [Follower] {
+    guard bigramCount > 0 else { return [] }
+    let key = previous.map(UInt32.init) ?? Self.sentenceStart
+    func prev(_ k: Int) -> UInt32 { data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: bigramPrev + 4 * k, as: UInt32.self).littleEndian } }
+    var lo = 0, hi = bigramCount
+    while lo < hi { let mid = (lo + hi) / 2; if prev(mid) < key { lo = mid + 1 } else { hi = mid } }
+    var out: [Follower] = []
+    var k = lo
+    while k < bigramCount, prev(k) == key {
+      let next = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: bigramNext + 4 * k, as: UInt32.self).littleEndian }
+      let cost = Double(data[data.startIndex + bigramCost + k]) / 16, lift = Double(data[data.startIndex + bigramLift + k]) / 16
+      out.append(Follower(entry: Int(next), logProbability: -cost, lift: lift))
+      k += 1
+    }
+    return out
   }
 
   @inline(__always) private func offset(_ table: Int, _ i: Int) -> Int {

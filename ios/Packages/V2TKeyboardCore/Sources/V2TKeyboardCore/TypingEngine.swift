@@ -179,16 +179,35 @@ public final class TypingEngine {
   /// the next one.
   public func suggestions() -> [Suggestion] {
     if let r = revertOffer {
-      return [Suggestion(word: r, kind: .typed, score: 0)] + suggester.suggestions(for: composing, limit: 2).filter { $0.word != r }
+      return [Suggestion(word: r, kind: .typed, score: 0)] + suggester.suggestions(for: composing, context: context, limit: 2).filter { $0.word != r }
     }
     if let s = lastSwipe {
-      return s.alternatives.prefix(3).map { Suggestion(word: $0, kind: .correction, score: 0) }
+      return Self.bestInMiddle(s.alternatives.prefix(3).map { Suggestion(word: $0, kind: .correction, score: 0) })
     }
-    guard !composing.isEmpty else { return [] }
-    let all = suggester.suggestions(for: composing, limit: 3)
+    guard !composing.isEmpty else {
+      // nothing typed yet: predict the next word, capitalised where the sentence or field wants it
+      guard before.last.map(Self.isGap) ?? true else { return [] }
+      return Self.bestInMiddle(suggester.predictions(context: context).map { Suggestion(word: styled($0.word), kind: $0.kind, score: $0.score) })
+    }
+    let all = suggester.suggestions(for: composing, context: context, limit: 3)
     let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed }
     return typed + rest
   }
+
+  /// A whole word as the shift state writes it: caps lock and all-capitals fields write it in capitals, a
+  /// single shift only its first letter.
+  func styled(_ word: String) -> String {
+    if shift == .locked || traits.capitalization == .all { return word.uppercased() }
+    return shift != .off ? word.prefix(1).uppercased() + word.dropFirst() : word
+  }
+
+  /// The bar's middle slot is the bold, best one: [second, best, third].
+  static func bestInMiddle(_ s: [Suggestion]) -> [Suggestion] {
+    s.count >= 2 ? [s[1], s[0]] + s.dropFirst(2) : s
+  }
+
+  /// The words before the one being typed.
+  public var context: TypingContext { TypingContext(before: String(before.dropLast(composing.count))) }
 
   /// The user tapped a suggestion: it replaces the word, followed by a space.
   public func pick(_ word: String) {
@@ -211,18 +230,17 @@ public final class TypingEngine {
     guard !candidates.isEmpty else { return }
     commitWord()
     spaceIfNeeded()
-    // caps lock and all-capitals fields write the whole word in capitals; a single shift only its first letter
-    let all = shift == .locked || traits.capitalization == .all, initial = shift != .off
-    let styled = candidates.map { all ? $0.uppercased() : initial ? $0.prefix(1).uppercased() + $0.dropFirst() : $0 }
-    let word = styled[0]
+    let words = candidates.map(styled)
+    let word = words[0]
     if shift == .on { shift = .off }
     if traits.capitalization == .all { shift = .on }
     proxy.insertText(word)
     autoSpace = false
     lastCorrection = nil
     revertOffer = nil
-    lastSwipe = (word, Array(styled.dropFirst()))
+    lastSwipe = (word, Array(words.dropFirst()))
     composing = []
+    noteLanguage()
   }
 
   /// Text was inserted through the dictation route (or pasted): it reads as words already finished.
@@ -242,6 +260,7 @@ public final class TypingEngine {
   /// the same letter geometry (numbers for an apostrophe, then letters) keeps the points.
   public func replaceLayout(with suggester: Suggester) {
     let moved = suggester.layout.letterCenters != self.suggester.layout.letterCenters || suggester.layout.unitWidth != self.suggester.layout.unitWidth
+    suggester.languagePrior.recentLanguage = self.suggester.languagePrior.recentLanguage
     self.suggester = suggester
     if moved { composing = composing.map { TypedKey($0.character) } }
   }
@@ -267,7 +286,8 @@ public final class TypingEngine {
   /// Autocorrects the word under construction, if it needs it.
   func commitWord() {
     defer { composing = [] }
-    guard !composing.isEmpty, traits.autocorrect, let fix = suggester.autocorrection(for: composing, learned: learned), fix != literal else { return }
+    guard !composing.isEmpty, traits.autocorrect,
+          let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return }
     let original = literal
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
@@ -291,8 +311,18 @@ public final class TypingEngine {
     onLearn?(w)
   }
 
-  /// Sentence capitals: at the start of the field, after a newline, or after ". ", "! ", "? ".
+  /// Remembers which language the words before the cursor are in, so the next field's first word (which has
+  /// no words before it) starts in that language.
+  func noteLanguage() {
+    if let lang = suggester.languagePrior.likeliest(suggester.lexicons, primary: suggester.layout.language.rawValue, context: context) {
+      suggester.languagePrior.recentLanguage = lang
+    }
+  }
+
+  /// Sentence capitals: at the start of the field, after a newline, or after ". ", "! ", "? ". Also notes the
+  /// language written in, since this runs after every word boundary.
   func refreshShift() {
+    noteLanguage()
     guard shift != .locked else { return }
     switch traits.capitalization {
     case .none: shift = .off

@@ -256,14 +256,15 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
-    let decoders = self.decoders
+    var decoder = MultiSwipeDecoder(decoders)
+    decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()
     let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
+    // the words before the swipe pick the language and promote the words that usually come next
+    let context = textDocumentProxy.documentContextBeforeInput ?? ""
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
-      let merged = decoders.flatMap { $0.decode(trace, limit: 4) }.sorted { $0.score > $1.score }
-      var seen = Set<String>()
-      let words = merged.map(\.word).filter { seen.insert($0.lowercased()).inserted }
+      let words = decoder.decode(trace, context: context, limit: 4)
       DispatchQueue.main.async { [weak self] in
         guard let self, !words.isEmpty, self.inputEpoch == epoch,
               self.textDocumentProxy.documentIdentifier == document else { return }

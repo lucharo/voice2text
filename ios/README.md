@@ -11,7 +11,7 @@ iPad layouts have only been rendered off-screen (the installed Simulator runtime
 
 ```sh
 cd ios
-./setup.sh                 # word lists (pinned AOSP commit), then generate V2T.xcodeproj with xcodegen
+./setup.sh                 # word lists (pinned AOSP commit) and next-word counts (pinned Tatoeba revision) via uv, then V2T.xcodeproj with xcodegen
 ./setup.sh test            # the app's unit and UI tests on an iPhone simulator (iPad UI tests skip there)
 (cd Packages/V2TKeyboardCore && swift test)   # keyboard engines and cleanup guard, on the Mac
 ```
@@ -77,8 +77,9 @@ What has been checked so far, and how:
 
 | Behaviour | Checked by | Result |
 | --- | --- | --- |
-| Swipe decoding | 1,000 synthetic noisy traces per language (the test's own trace model) | EN 96.8% top-1, 99.7% top-3; ES 96.4%, 100%. Real-finger accuracy unmeasured |
-| Autocorrect | 200 synthetic noisy-tap typos per language; 1,000 correctly typed common words | EN fixes 187, ES 189; changes 0 correct words. Real typing unmeasured |
+| Swipe decoding | 1,000 synthetic noisy traces per language (the test's own trace model) | EN 96.5% top-1, 99.7% top-3; ES 95.6%, 100%. Real-finger accuracy unmeasured |
+| Swipe, suggestions and next word as on a phone | `QualityEval`: 300 everyday English and 100 Spanish words, and 30 short messages swiped word by word, with finger-like traces (per-key scatter, a per-swipe offset, cut corners; "sloppy" has a 2.5 times larger offset and wider scatter) on the 402 pt iPhone layout with English and Spanish both on | Messages: EN 98.3% top-1, sloppy 89.6%; ES 89.7%, sloppy 84.6%. The next word is in the bar 37% of the time in English messages. Prints the full table: `swift test --filter QualityEval` |
+| Autocorrect | 200 synthetic noisy-tap typos per language; 1,000 correctly typed common words | EN fixes 187, ES 187; changes 0 correct words. Real typing unmeasured |
 | Typing rules (capitals, double-space full stop, revert, swipe spacing) | Unit tests, and UI tests driving the keyboard in the Simulator | See the test files |
 | Keystroke latency | Not yet measured on a phone. Provisional target: under one 120 Hz frame (8 ms) of our own handling per key, logged as `latency` in the keyboard | Untested |
 | Keyboard memory | Not yet measured. Provisional target: 40 MB, well under the ~60 MB commonly reported limit (Apple documents no number) | Untested |
