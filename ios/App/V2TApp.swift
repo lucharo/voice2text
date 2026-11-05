@@ -247,7 +247,7 @@ struct KeyboardHandoffView: View {
         .font(.system(size: 64)).foregroundStyle(.red).symbolEffect(.variableColor, isActive: dictation.state == .listening)
       Text(dictation.state == .listening ? "Listening" : "Mic is ready").font(.largeTitle.bold())
       if let mic = dictation.microphone { MicrophoneLabel(mic: mic) }
-      Text("Go back to your app and keep talking: tap ◀ at the top left, or swipe right along the bottom edge. Tap the mic on the v2t keyboard when you're done.")
+      Text("Go back to your app and keep talking: tap ◀ at the top left, or swipe right along the bottom edge. Tap Done on the v2t keyboard when you're finished.")
         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
       Image(systemName: "arrow.right").font(.title).foregroundStyle(.secondary)
       Spacer()
