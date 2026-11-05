@@ -12,6 +12,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
+  private let panel = RecordingPanel()
+  /// The user cancelled the current dictation: skip its transcribing view.
+  private var cancelled = false
   private var heightConstraint: NSLayoutConstraint?
   private var keysHeightConstraint: NSLayoutConstraint?
   private let haptics = UIImpactFeedbackGenerator(style: .light)
@@ -39,12 +42,18 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView.delegate = self
     keyboardView.clipsToBounds = false
     bar.onPick = { [weak self] word in self?.edit { $0.pick(word) } }
-    bar.onMic = { [weak self] in self?.startDictation() }
-    for v in [bar, keyboardView!] as [UIView] {
+    panel.onStop = { [weak self] in self?.dictation.toggle() }
+    panel.onCancel = { [weak self] in
+      self?.cancelled = true  // the keys come straight back; its transcription is not typed
+      self?.dictation.cancel()
+    }
+    panel.isHidden = true
+    for v in [bar, keyboardView!, panel] as [UIView] {
       v.translatesAutoresizingMaskIntoConstraints = false
       view.addSubview(v)
     }
     view.bringSubviewToFront(keyboardView)
+    view.bringSubviewToFront(panel)  // the recording view covers the keys (key previews draw outside them)
     let h = view.heightAnchor.constraint(equalToConstant: SuggestionBar.height + layout.height)
     h.priority = .defaultHigh
     heightConstraint = h
@@ -59,9 +68,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       keyboardView.topAnchor.constraint(equalTo: bar.bottomAnchor),
       keyboardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       keyboardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      panel.topAnchor.constraint(equalTo: view.topAnchor),
+      panel.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor),
+      panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
     ])
     dictation.onText = { [weak self] text in self?.edit { $0.insertFinished(text) } }
-    dictation.onState = { [weak self] state in self?.bar.dictationState = state }
+    dictation.onState = { [weak self] state in self?.showDictation(state) }
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -71,6 +84,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.resync()
     refresh()
     dictation.attach()
+    if let p = Settings.shared.previewRecording {
+      panel.preview = true
+      showDictation(p == "transcribing" ? .transcribing : .listening)
+    }
     // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
     if hasFullAccess { Settings.shared.keyboardFullAccessSeen = Date() }
   }
@@ -259,6 +276,18 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   private func startDictation() {
     dictation.toggle()
+  }
+
+  /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
+  private func showDictation(_ state: DictationState) {
+    if state == .listening { cancelled = false }
+    guard state == .listening || (state == .transcribing && !cancelled) || panel.preview else { panel.hide(); return }
+    view.layoutIfNeeded()
+    let layout = keyboardView.layout
+    let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+    let mic = layout.keys.first { $0.action == .mic }?.frame ?? row
+    panel.show(state, style: RecordingPanel.Style(rawValue: Settings.shared.recordingStyle) ?? .a,
+               bottomRow: keyboardView.convert(row, to: panel), micKey: keyboardView.convert(mic, to: panel))
   }
 }
 

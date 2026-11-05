@@ -43,6 +43,15 @@ import UIKit
     onState?(state)
   }
 
+  /// Stops recording and drops the result: the request id moves on, so the text that comes back answers an
+  /// older request and is never typed (the app still keeps it in History).
+  func cancel() {
+    guard state == .listening else { return }
+    defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
+    DictationChannel.post(DictationChannel.stop)
+    onState?(state)
+  }
+
   private func newRequest() {
     defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
     stampDocument()

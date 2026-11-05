@@ -51,6 +51,20 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardFullAccessSeen") }
   }
 
+  /// How the keyboard looks while it records (a prototype switch while the design is chosen): "A" a waveform
+  /// and a wide Stop button, "B" a waveform with Cancel and Done, "C" a waveform with Stop where the mic key is.
+  var recordingStyle: String {
+    get { defaults.string(forKey: "recordingStyle") ?? "A" }
+    set { defaults.set(newValue, forKey: "recordingStyle") }
+  }
+
+  /// UI tests only: the keyboard shows its recording view in this state ("listening" or "transcribing") with
+  /// a made-up waveform, without a microphone session or Full Access. The app clears it on every launch.
+  var previewRecording: String? {
+    get { defaults.string(forKey: "previewRecording") }
+    set { defaults.set(newValue, forKey: "previewRecording") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }

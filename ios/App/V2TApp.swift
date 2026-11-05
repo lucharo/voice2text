@@ -12,6 +12,9 @@ import V2TKeyboardCore
       Settings.shared.layoutLanguage = l
       Settings.shared.defaults.removeObject(forKey: "learnedWords")  // each UI test starts with nothing learned
     }
+    let env = ProcessInfo.processInfo.environment
+    if let style = env["V2T_RECORDING_STYLE"] { Settings.shared.recordingStyle = style }
+    Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
@@ -326,6 +329,7 @@ struct KeyboardSettingsView: View {
   @State private var layout = Settings.shared.layoutLanguage
   @State private var bilingual = Settings.shared.suggestionLanguages.count > 1
   @State private var warm = Settings.shared.warmMinutes
+  @State private var recordingStyle = Settings.shared.recordingStyle
   var body: some View {
     Form {
       Picker("Layout", selection: $layout) {
@@ -339,10 +343,20 @@ struct KeyboardSettingsView: View {
         Text("1 hour").tag(60)
         Text("Until I turn it off").tag(0)
       }
+      Section {
+        Picker("While recording", selection: $recordingStyle) {
+          Text("A: waveform, Stop").tag("A")
+          Text("B: waveform, Cancel and Done").tag("B")
+          Text("C: waveform, Stop where the mic is").tag("C")
+        }
+      } footer: {
+        Text("Prototype: try each and say which to keep.")
+      }
     }
     .navigationTitle("Keyboard")
     .onChange(of: layout) { Settings.shared.layoutLanguage = layout; saveLanguages() }
     .onChange(of: bilingual) { saveLanguages() }
+    .onChange(of: recordingStyle) { Settings.shared.recordingStyle = recordingStyle }
     .onChange(of: warm) {
       Settings.shared.warmMinutes = warm
       dictation.applyWarmSetting()  // a session already on takes the new length from now
