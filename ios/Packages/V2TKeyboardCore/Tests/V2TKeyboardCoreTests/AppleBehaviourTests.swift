@@ -114,8 +114,8 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
       try types("i'm ", after: "and ", gives: "I'm ") && types("i'll ", after: "and ", gives: "I'll ") && types("i'd ", after: "and ", gives: "I'd ")
     },
     // what is left alone
-    .init(id: "capitalised-mid-sentence", behaviour: "A capitalised word mid-sentence (a name) is not corrected", gap: true) {
-      try types("Figma ", after: "I use ", gives: "Figma ") && types("Kian ", after: "I met ", gives: "Kian ")
+    .init(id: "capitalised-mid-sentence", behaviour: "A capitalised word mid-sentence is not turned into a common word (a known name is fixed)", gap: false) {
+      try types("Figma ", after: "I use ", gives: "Figma ") && types("Britian ", after: "I live in ", gives: "Britain ")
     },
     .init(id: "url", behaviour: "A web address is not corrected", gap: true) {
       try types("www.exmaple.cmo ", after: "see ", gives: "www.exmaple.cmo ") && types("exmaple.com/teh ", after: "see ", gives: "exmaple.com/teh ")

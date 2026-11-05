@@ -46,7 +46,7 @@ and "observed" items rest on widely reported behaviour rather than a specificati
 | 6 | Common words that are also contractions without the apostrophe stay: ill, its, were, well, hell (the contraction is in the bar) | [9] (ill → I'll was dropped because ill is a word); observed | `ill-its-kept` |
 | 6a | An apostrophe you typed stays as typed: a curly one (don’t) is not rewritten, a plural possessive (parents') keeps it | Observed | `curly-apostrophe`, `plural-possessive` |
 | 7 | A lone i becomes I, and i'm, i'll, i'd become I'm, I'll, I'd | Observed | `lone-i`, `i-contractions` |
-| 8 | Capitalised words in mid-sentence (names) are left alone | Observed; [3] says auto-capitalisation "capitalizes proper nouns" | `capitalised-mid-sentence` |
+| 8 | Capitalised words in mid-sentence (names) are not turned into common words; a misspelt known name is fixed (Britian → Britain) | Observed; [3] says auto-capitalisation "capitalizes proper nouns" | `capitalised-mid-sentence` |
 | 9 | Web addresses, email addresses, @handles and #hashtags are left alone | Observed; [5] says the system keyboard adapts to URL and email fields | `url`, `email`, `handle-hashtag` |
 | 10 | Words with digits are left alone (10am, 2nd) | Observed | `numbers` |
 | 11 | Words in the user's dictionary are never corrected away; text replacements expand (omw → On my way!) | [4]; [6]: custom keyboards get the user's text replacements and contact names through `UILexicon` | `user-dictionary`, `text-replacement` |

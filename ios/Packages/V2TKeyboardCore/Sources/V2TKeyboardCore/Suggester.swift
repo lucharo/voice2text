@@ -132,6 +132,9 @@ public final class Suggester: @unchecked Sendable {
     guard !literal.contains(where: \.isNumber) else { return nil }
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
     guard typed.count >= 2 else { return nil }
+    // a capitalised word in mid-sentence is likely a name the lists lack ("Figma", "Susan"): left as typed
+    // (ios/AUTOCORRECT.md item 8) rather than turned into a word ("Usan") or another name ("Kian" -> "Lian");
+    // the bar still offers the corrections ("Londno": London)
     // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
     if isWord(literal) { return nil }
     // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
@@ -141,6 +144,11 @@ public final class Suggester: @unchecked Sendable {
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
     guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
+    // a capitalised word in mid-sentence is likely a name (ios/AUTOCORRECT.md item 8): it may become a name
+    // the lists know ("Britian" -> "Britain") but never a common word ("Figma" -> "Firma", "Susan" -> "Usan").
+    // An unknown name can still become a known one ("Kian" -> "Lian"); never correcting names lost 1.9
+    // points of RealTypoEval's English fixes for two fewer changed words in 14,000 of correct text.
+    if !context.sentenceStart, Self.isTitleCase(literal), !isNameEntry(best.word) { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
   }
@@ -151,6 +159,19 @@ public final class Suggester: @unchecked Sendable {
     let key = Lexicon.fold(word)
     guard !key.isEmpty else { return false }
     return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0).lowercased() == lower } }
+  }
+
+  /// "Figma": a capital first and lowercase after (not "NASA", which typing in capitals produces).
+  static func isTitleCase(_ s: String) -> Bool {
+    guard let f = s.first, f.isUppercase else { return false }
+    return s.dropFirst().contains(where: \.isLowercase)
+  }
+
+  /// `word` is a lexicon entry spelled as a name, exactly as written ("London"; not "FIMA" or "Dogma").
+  func isNameEntry(_ word: String) -> Bool {
+    guard EntryCase(word) == .name else { return false }
+    let key = Lexicon.fold(word)
+    return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0) == word } }
   }
 
   /// The lexicons spell apostrophes straight; the long press types the curly one.
