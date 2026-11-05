@@ -24,8 +24,14 @@ public final class SwipeDecoder: @unchecked Sendable {
   /// Ideal and actual trace lengths may differ by this many key radii.
   static let lengthThreshold: Double = 8.42
   /// Nats of prior between the rarest suggestible word and the commonest. AOSP's 0-255 frequency is
-  /// already logarithmic, so it enters linearly; tuned on the synthetic trace tests.
+  /// already logarithmic, so it enters linearly. A stronger prior (10, 15, 20) measured worse on
+  /// QualityEval's everyday words, not better: the AOSP counts come from encyclopedic text, so they
+  /// under-rate chat words ("hey" 135 against "get" 160) and over-rate "the" against "there" and "time".
   public var frequencyWeight: Double = 5
+  /// A swipe is drawn in lowercase: a capitalised entry (a name) is less likely meant, an all-capitals one
+  /// (an acronym: "GRU" for "hey") much less. Tuned on QualityEval.
+  public var properNounPenalty: Double = 2
+  public var acronymPenalty: Double = 4
 
   public let lexicon: Lexicon
   public let layout: KeyboardLayout
@@ -57,8 +63,9 @@ public final class SwipeDecoder: @unchecked Sendable {
     public let score: Double
   }
 
-  /// Ranked words for a trace in keyboard coordinates, best first.
-  public func decode(_ trace: [CGPoint], limit: Int = 5) -> [Candidate] {
+  /// Ranked words for a trace in keyboard coordinates, best first. `bonus` adds nats to entries the context
+  /// makes likelier (the words that often follow the previous one).
+  public func decode(_ trace: [CGPoint], limit: Int = 5, bonus: [Int: Double] = [:]) -> [Candidate] {
     guard trace.count >= 2 else { return [] }
     let user = Self.resample(trace, Self.samples)
     let userNorm = Self.normalise(user)
@@ -82,7 +89,7 @@ public final class SwipeDecoder: @unchecked Sendable {
           let dEnd = Double(hypot(ideal[ideal.count - 1].x - trace[trace.count - 1].x, ideal[ideal.count - 1].y - trace[trace.count - 1].y))
           let lEnds = -0.5 * (pow(dStart / (endpointStd * radius), 2) + pow(dEnd / (endpointStd * radius), 2))
           let lFreq = frequencyWeight * (Double(lexicon.frequency(i)) / 255 - 1)
-          let score = lShape + lLoc + lEnds + lFreq
+          let score = lShape + lLoc + lEnds + lFreq - casePenalty(word) + (bonus[i] ?? 0)
           if best.count < keep || score > best[best.count - 1].score {
             let at = best.firstIndex { $0.score < score } ?? best.count
             best.insert(Candidate(word: word, score: score), at: at)
@@ -93,6 +100,14 @@ public final class SwipeDecoder: @unchecked Sendable {
     }
     var seen = Set<String>()
     return Array(best.filter { seen.insert($0.word.lowercased()).inserted }.prefix(limit))
+  }
+
+  func casePenalty(_ word: String) -> Double {
+    switch EntryCase(word) {
+    case .lower: 0
+    case .name: properNounPenalty
+    case .acronym: acronymPenalty
+    }
   }
 
   /// The ideal trace through a word's keys, with repeated letters collapsed. Letters with no key of their own
@@ -178,5 +193,34 @@ public final class SwipeDecoder: @unchecked Sendable {
     var d = 0.0
     for i in 0..<min(a.count, b.count) { d += Double(abs(a[i].x - b[i].x) + abs(a[i].y - b[i].y)) }
     return d / Double(a.count) / 2
+  }
+}
+
+/// One decoder per suggestion language, merged into the words a swipe types and offers.
+public struct MultiSwipeDecoder: Sendable {
+  public let decoders: [SwipeDecoder]
+  public var languagePrior = LanguagePrior()
+  /// Nats per nat of bigram lift: how much the previous word can promote the words that often follow it.
+  /// 1 is the lift taken at face value; on QualityEval it beat 0.5 on Spanish sentences, and 2 on both.
+  public var bigramWeight: Double = 1
+  /// Alternatives scoring more than this many nats below the best word are not offered. On QualityEval, 4
+  /// dropped junk alternatives (38% to 30%) without losing a single intended word from the bar.
+  public var alternativeMargin: Double = 4
+  public init(_ decoders: [SwipeDecoder]) { self.decoders = decoders }
+
+  /// Ranked words for a trace, best first, one spelling per word. `context` is the text before the cursor.
+  /// Each language's words carry that language's prior, so a Spanish word does not take an English swipe
+  /// unless the sentence is Spanish, and the words that often follow the previous one are promoted.
+  public func decode(_ trace: [CGPoint], context: String = "", limit: Int = 4) -> [String] {
+    let ctx = TypingContext(before: context)
+    let priors = languagePrior.priors(decoders.map(\.lexicon), primary: decoders.first?.layout.language.rawValue, context: ctx)
+    let merged = zip(decoders, priors).flatMap { d, p in
+      let bonus = ctx.followerBonus(in: d.lexicon, weight: bigramWeight)
+      return d.decode(trace, limit: limit, bonus: bonus).map { SwipeDecoder.Candidate(word: $0.word, score: $0.score + p) }
+    }.sorted { $0.score > $1.score }
+    // alternatives far behind the best are noise ("gift", "fount", "glint" under "going"): leave them out
+    let floor = (merged.first?.score ?? 0) - alternativeMargin
+    var seen = Set<String>()
+    return Array(merged.filter { $0.score >= floor }.map(\.word).filter { seen.insert($0.lowercased()).inserted }.prefix(limit))
   }
 }

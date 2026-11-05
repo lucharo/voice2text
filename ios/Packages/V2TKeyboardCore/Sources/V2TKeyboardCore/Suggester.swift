@@ -35,12 +35,19 @@ public final class Suggester: @unchecked Sendable {
   public var frequencyWeight: Double = 8.0
   /// Per letter a completion adds beyond what was typed.
   public var completionPenalty: Double = 0.4
+  /// Letters typed before the commonest longer words are offered as completions.
+  public var minCompletionPrefix = 2
   public var beamWidth = 48
   public var maxEdits = 2
   /// Typed in lowercase, a capitalised entry (a name: "Ford" for "doed") is less likely meant.
   public var properNounPenalty: Double = 2.0
   /// Nats a correction must beat the word as typed by before autocorrect applies it.
   public var autocorrectMargin: Double = 2.0
+  /// An all-capitals entry (an acronym) typed in lowercase, on top of `properNounPenalty`.
+  public var acronymPenalty: Double = 2
+  public var languagePrior = LanguagePrior()
+  /// Nats per nat of bigram lift, as MultiSwipeDecoder's.
+  public var bigramWeight: Double = 1
 
   private let centers: [CGPoint?]
 
@@ -59,21 +66,33 @@ public final class Suggester: @unchecked Sendable {
   }
 
   /// Up to `limit` suggestions, best first: the typed word when it is a word, corrections and completions.
-  public func suggestions(for typed: [TypedKey], limit: Int = 3) -> [Suggestion] {
+  /// `context` (the words before this one) sets each language's prior and promotes the words that often
+  /// follow the previous one.
+  public func suggestions(for typed: [TypedKey], context: TypingContext = .empty, limit: Int = 3) -> [Suggestion] {
     let literal = String(typed.map(\.character))
     let folded = Lexicon.fold(literal)
     guard !folded.isEmpty else { return [] }
     let states = search(typed)
     var scored: [String: Suggestion] = [:]
     let typedLower = literal == literal.lowercased()
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let bonuses = bigramWeight > 0 ? lexicons.map { context.followerBonus(in: $0, weight: bigramWeight) } : lexicons.map { _ in [:] }
     func offer(_ word: String, _ kind: Suggestion.Kind, _ raw: Double) {
-      let score = typedLower && word.first?.isUppercase == true ? raw - properNounPenalty : raw
+      var score = raw
+      if typedLower {
+        switch EntryCase(word) {
+        case .lower: break
+        case .name: score -= properNounPenalty
+        case .acronym: score -= properNounPenalty + acronymPenalty
+        }
+      }
       let w = Self.applyCase(of: literal, to: word)
       if let old = scored[w.lowercased()], old.score >= score { return }
       scored[w.lowercased()] = Suggestion(word: w, kind: kind, score: score)
     }
     for s in states {
       let lex = lexicons[s.lex]
+      let lang = priors[s.lex], bonus = bonuses[s.lex]
       // finished words: keys equal to the prefix
       var i = s.range.lowerBound
       while i < s.range.upperBound, lex.keyLength(i) == s.prefix.count {
@@ -81,15 +100,18 @@ public final class Suggester: @unchecked Sendable {
         if f > 0 || lex.word(i).lowercased() == literal.lowercased() {
           let w = lex.word(i)
           let kind: Suggestion.Kind = w.lowercased() == literal.lowercased() ? .typed : .correction
-          offer(w, kind, -s.cost + prior(f))
+          offer(w, kind, -s.cost + prior(f) + lang + (bonus[i] ?? 0))
         }
         i += 1
       }
-      // completions: the commonest longer words in the range
-      if s.prefix.count >= 2 {
-        for (j, f) in topFrequencies(lex, i..<s.range.upperBound, 3) {
+      // completions: the commonest longer words in the range, and the likely next words that complete it
+      if s.prefix.count >= minCompletionPrefix || !bonus.isEmpty {
+        var seen = Set<Int>()
+        let followers = bonus.keys.filter { $0 >= i && $0 < s.range.upperBound }.map { ($0, lex.frequency($0)) }
+        let common = s.prefix.count >= minCompletionPrefix ? topFrequencies(lex, i..<s.range.upperBound, 3) : []
+        for (j, f) in common + followers where seen.insert(j).inserted {
           let extra = lex.keyLength(j) - s.prefix.count
-          offer(lex.word(j), .completion, -s.cost + prior(f) - completionPenalty * Double(extra) - 0.5)
+          offer(lex.word(j), .completion, -s.cost + prior(f) - completionPenalty * Double(extra) - 0.5 + lang + (bonus[j] ?? 0))
         }
       }
     }
@@ -102,7 +124,7 @@ public final class Suggester: @unchecked Sendable {
   }
 
   /// The replacement autocorrect should apply when the word is finished, or nil to leave it as typed.
-  public func autocorrection(for typed: [TypedKey], learned: Set<String> = []) -> String? {
+  public func autocorrection(for typed: [TypedKey], learned: Set<String> = [], context: TypingContext = .empty) -> String? {
     let literal = String(typed.map(\.character))
     let lower = literal.lowercased()
     guard Lexicon.fold(literal).count >= 1, !learned.contains(lower) else { return nil }
@@ -115,10 +137,25 @@ public final class Suggester: @unchecked Sendable {
       return nil  // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
     }
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
-    let all = suggestions(for: typed, limit: 10)
+    let all = suggestions(for: typed, context: context, limit: 10)
     guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
+  }
+
+  /// The likeliest next words before anything of the next word is typed, best first: the words that most
+  /// often follow the previous one (or start a sentence), in the language the context is written in.
+  public func predictions(context: TypingContext, limit: Int = 3) -> [Suggestion] {
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    var best: [String: Suggestion] = [:]
+    for (n, lex) in lexicons.enumerated() {
+      for f in context.followers(in: lex) {
+        let w = lex.word(f.entry), score = f.logProbability + priors[n]
+        if let old = best[w.lowercased()], old.score >= score { continue }
+        best[w.lowercased()] = Suggestion(word: w, kind: .prediction, score: score)
+      }
+    }
+    return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
 
   func prior(_ f: Int) -> Double { frequencyWeight * (Double(f) / 255 - 1) }
