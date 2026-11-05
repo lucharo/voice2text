@@ -118,7 +118,7 @@ final class RecordingPanel: UIView {
       return
     }
     if state == .listening {
-      levels = preview ? Self.fakeLevels(Date().timeIntervalSince(started)) : DictationChannel.readLevels()
+      if preview { levels = Self.fakeLevels(Date().timeIntervalSince(started)) } else if let read = DictationChannel.readLevels() { levels = read }
       let s = Int(Date().timeIntervalSince(started))
       status.text = String(format: "%d:%02d", s / 60, s % 60)
     } else {

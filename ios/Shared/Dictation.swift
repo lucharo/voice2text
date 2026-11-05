@@ -41,11 +41,23 @@ enum DictationChannel {
 
   static func writeLevels(_ levels: [Float]) {
     guard let url = levelsFile else { return }
-    try? levels.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: url)
+    writeLevels(levels, to: url)
   }
 
-  static func readLevels() -> [Float] {
-    guard let url = levelsFile, let data = try? Data(contentsOf: url) else { return [] }
+  /// Atomic (a temporary file renamed over the old one): a plain write truncates the file first, so the
+  /// keyboard, reading on its own timer, caught it empty or half-written and drew a flat waveform for a frame.
+  static func writeLevels(_ levels: [Float], to url: URL) {
+    try? levels.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: url, options: .atomic)
+  }
+
+  /// nil when the file could not be read, so the keyboard keeps the waveform it has instead of blanking it.
+  static func readLevels() -> [Float]? {
+    guard let url = levelsFile else { return nil }
+    return readLevels(from: url)
+  }
+
+  static func readLevels(from url: URL) -> [Float]? {
+    guard let data = try? Data(contentsOf: url) else { return nil }
     return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
   }
 
