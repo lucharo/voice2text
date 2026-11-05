@@ -42,7 +42,7 @@ import XCTest
   func testTheIPadRowsTypeAndHide() {
     launch()
     showKeyboard()
-    for id in ["delete", "return", "shift", "shift-right", "letters-,", "letters-.", "page-right", "dismiss", "mic", "emoji"] {
+    for id in ["delete", "return", "shift", "shift-right", "letters-,", "letters-.", "page-right", "dismiss", "mic", "globe", "emoji"] {
       XCTAssertTrue(key(id).exists, "no key.\(id)")
     }
     // delete ends the top row (letters on most iPads, numbers on a 13-inch), return the home row
@@ -107,7 +107,7 @@ import XCTest
   func testAppleIPadKeyboardBaseline() {
     launch()
     showKeyboard()
-    key("emoji").tap()  // hands over to Apple's keyboard, for a side-by-side comparison
+    key("globe").tap()  // hands over to Apple's keyboard, for a side-by-side comparison
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "space").firstMatch.waitForExistence(timeout: 5))
     shot("44-apple-ipad-keyboard-portrait")
     XCUIDevice.shared.orientation = .landscapeLeft
