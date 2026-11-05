@@ -314,6 +314,7 @@ public final class TypingEngine {
   /// field's autocorrect setting and the learned words apply, as in commitWord. The bar bolds this word.
   public var pendingAutocorrection: String? {
     guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
+    if let r = replacements[Suggester.straightApostrophes(literal.lowercased())] { return r }
     guard let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
     return fix
   }

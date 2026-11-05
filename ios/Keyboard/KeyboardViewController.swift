@@ -28,6 +28,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private lazy var dictation = DictationClient(controller: self)
   /// Made when the emoji key is tapped, dropped when the panel closes.
   private var emojiPanel: EmojiPanel?
+  /// Contact names and no-shortcut phrases from the system's supplementary lexicon.
+  private var systemWords = Set<String>()
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -36,8 +38,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let layout = makeLayout(width: max(320, view.bounds.width), page: .letters)
     let proxy = ProxyAdapter(self)
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
-    engine.learned = Settings.shared.learnedWords.union(PersonalDictionary().autocorrectExclusions)
+    engine.learned = userWords()
     engine.onLearn = { Settings.shared.learn($0) }
+    // the user's text replacements and contact names, as Apple's keyboard uses them (UILexicon)
+    requestSupplementaryLexicon { [weak self] lexicon in
+      guard let self else { return }
+      let (replacements, words) = Self.split(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
+      engine.replacements = replacements
+      systemWords = words
+      engine.learned = userWords()
+    }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
     // no background of our own: the system's keyboard glass shows through around and behind the keys, as it
@@ -135,10 +145,30 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
                           currency: Locale.current.currencySymbol, nextKeyboardKey: Settings.shared.previewGlobeKey ?? needsInputModeSwitchKey)
   }
 
+  /// Words autocorrect never changes: the ones the user kept, v2t's dictionary and the system's (contact
+  /// names, phrases in Text Replacement with no shortcut).
+  private func userWords() -> Set<String> {
+    Settings.shared.learnedWords.union(PersonalDictionary().autocorrectExclusions).union(systemWords)
+  }
+
+  /// UILexicon entries as (shortcut -> phrase) replacements, keyed lowercase, and the words of every entry
+  /// typed as written (names, phrases with no shortcut).
+  static func split(_ entries: [(input: String, text: String)]) -> ([String: String], Set<String>) {
+    var replacements: [String: String] = [:], words = Set<String>()
+    for (input, text) in entries {
+      if !input.isEmpty, input.lowercased() != text.lowercased(), !input.contains(" ") {
+        replacements[input.lowercased()] = text
+      } else {
+        words.formUnion(text.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init))
+      }
+    }
+    return (replacements, words)
+  }
+
   /// The app may have changed the layout language, the suggestion languages or the learned words.
   private func reloadSettings() {
     let settings = Settings.shared
-    engine.learned = settings.learnedWords.union(PersonalDictionary().autocorrectExclusions)  // the dictionary is never corrected away
+    engine.learned = userWords()
     let wanted = settings.suggestionLanguages.map(\.rawValue)
     if settings.layoutLanguage != language || engine.suggester.lexicons.map(\.language) != wanted {
       language = settings.layoutLanguage

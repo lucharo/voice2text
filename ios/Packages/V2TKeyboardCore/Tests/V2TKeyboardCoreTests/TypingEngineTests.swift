@@ -240,6 +240,20 @@ struct TypingEngineTests {
     #expect(q.text == "see exmaple.com ")
   }
 
+  /// A text replacement expands like a correction, and delete offers the shortcut back.
+  @Test func aTextReplacementExpandsAndReverts() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["omw": "On my way!"]
+    type("omw", e)
+    #expect(e.pendingAutocorrection == "On my way!")
+    type(" ", e, start: 10)
+    #expect(p.text == "ok On my way! ")
+    e.delete()
+    #expect(e.suggestions().first?.word == "omw")
+    e.pick("omw")
+    #expect(p.text == "ok omw ")
+  }
+
   /// A curly apostrophe from the long press stays inside the word, as the straight one does.
   @Test func aCurlyApostropheDoesNotEndTheWord() throws {
     let (e, p) = try engine("x ")

@@ -135,7 +135,7 @@ struct AppleBehaviour: CustomTestStringConvertible, Sendable {
       type("fluide ", e)
       return p.text == "I use fluide "
     },
-    .init(id: "text-replacement", behaviour: "A text replacement (omw → On my way!) expands at the end of the word", gap: true) {
+    .init(id: "text-replacement", behaviour: "A text replacement (omw → On my way!) expands at the end of the word", gap: false) {
       let (e, p) = try engine("ok ")
       e.replacements = ["omw": "On my way!"]
       type("omw ", e)
