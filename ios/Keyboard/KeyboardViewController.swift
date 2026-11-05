@@ -40,11 +40,18 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.onLearn = { Settings.shared.learn($0) }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
-    view.backgroundColor = Palette.background
+    // no background of our own: the system's keyboard glass shows through around and behind the keys, as it
+    // does behind Apple's keyboard (an opaque fill sat inside the glass as a lighter or darker box, #111)
+    view.backgroundColor = .clear
+    // iOS disables its own dictation key (the mic below the keyboard on Face ID iPhones): v2t's mic key dictates
+    hasDictationKey = true
     keyboardView = KeyboardView(layout: layout)
     keyboardView.delegate = self
     keyboardView.clipsToBounds = false
+    keyboardView.micStyle = Settings.shared.previewMicStyle.flatMap { MicKeyStyle(rawValue: String($0.prefix(1))) } ?? .standard
     bar.onPick = { [weak self] word in self?.edit { $0.pick(word) } }
+    bar.onDismiss = { [weak self] in self?.dismissKeyboard() }
+    bar.showsDismiss = !layout.form.isPad
     panel.onStop = { [weak self] in self?.dictation.toggle() }
     panel.onCancel = { [weak self] in
       guard let self else { return }
@@ -144,6 +151,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func relayout(page: KeyboardPage) {
     let layout = makeLayout(width: view.bounds.width, page: page)
     keyboardView.setLayout(layout)
+    bar.showsDismiss = !layout.form.isPad
     heightConstraint?.constant = SuggestionBar.height + layout.height
     keysHeightConstraint?.constant = layout.height
     if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
@@ -346,6 +354,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
   private func showDictation(_ state: DictationState) {
     let active = state == .listening || state == .transcribing
+    keyboardView.micWarm = state == .idle || active || Settings.shared.previewMicStyle == "C-warm"
     if !active { cancelled = false }
     guard (active && !cancelled) || panel.preview else { setPanel(visible: false); return }
     view.layoutIfNeeded()
@@ -361,6 +370,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let wasModal = panel.accessibilityViewIsModal
     keyboardView.accessibilityElementsHidden = visible || emojiPanel != nil  // the emoji panel may cover them too
     bar.accessibilityElementsHidden = visible || emojiPanel != nil
+    // the panel is clear like the rest of the keyboard, so the keys and bar it replaces are hidden
+    keyboardView.isHidden = visible || emojiPanel != nil
+    bar.isHidden = visible || emojiPanel != nil
     panel.accessibilityViewIsModal = visible
     if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }
