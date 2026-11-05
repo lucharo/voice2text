@@ -138,6 +138,12 @@ default since the release after 0.5.16 runs Parakeet on the Neural Engine instea
 Once the models are cached, startup never waits on the network
 ([How it works](how-it-works.md#startup)).
 
+With Qwen3-ASR and the same cleanup model, four starts on a quiet M4 Pro (3 November 2026) took
+3.6 to 3.7 s once the model files were in the disk cache, and 10.3 s the first time. 0.5.17 loaded
+the cleanup model at the same time as the speech model; with the files cached that saved nothing
+(3.6 to 5.4 s), so 0.5.18 went back to loading them one after the other. In a 9.9 s load profiled on 2 November, 7.2 s was
+Python importing `transformers`, about 3,500 small file reads.
+
 ## Can v2t transcribe faster on a Mac?
 
 It already got faster in 0.5.15 ([#51](https://github.com/lucharo/voice2text/pull/51)). The median
