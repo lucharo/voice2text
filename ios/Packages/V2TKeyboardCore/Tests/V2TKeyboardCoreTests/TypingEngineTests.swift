@@ -305,6 +305,42 @@ struct TypingEngineTests {
     #expect(p.text == "ok local taxi ")
   }
 
+  /// Space, return or dictated text after delete reopened a phrase end the offer: the shortcut can no
+  /// longer delete text that is not the phrase.
+  @Test func movingOnEndsAPhraseRevertOffer() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["aw": "a way"]
+    type("aw ", e)
+    e.delete()
+    type(" ", e, start: 20)
+    #expect(e.revertOffer == nil && p.text == "ok a way ")
+  }
+
+  /// A rejected shortcut stays rejected whichever apostrophe it is typed with.
+  @Test func aRejectedShortcutStaysRejectedWithEitherApostrophe() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["we're": "we are"]
+    type("we", e)
+    e.character("’", now: 50)
+    type("re ", e, start: 60)
+    e.delete()
+    e.pick("we’re")
+    type("we're ", e, start: 80)
+    #expect(p.text == "ok we’re we're ")
+  }
+
+  /// A correction of a word typed with a curly apostrophe keeps it, in the bar and on space alike.
+  @Test func aCorrectionKeepsTheTypedCurlyApostrophe() throws {
+    let (e, p) = try engine("I ")
+    type("do", e)
+    e.character("’", now: 50)
+    type("nt", e, start: 60)
+    let pending = e.pendingAutocorrection
+    #expect(pending == "don’t" && e.suggestions().map(\.word).contains("don’t"))
+    type(" ", e, start: 70)
+    #expect(p.text == "I don’t ")
+  }
+
   /// An address mark after a corrected word's plus sign ("teh+_tag") puts the word back too.
   @Test func anAddressMarkAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")

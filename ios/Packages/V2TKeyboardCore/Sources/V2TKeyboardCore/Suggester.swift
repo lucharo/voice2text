@@ -136,7 +136,7 @@ public final class Suggester: @unchecked Sendable {
   public func autocorrection(for typed: [TypedKey], learned: Set<String> = [], context: TypingContext = .empty) -> String? {
     let literal = String(typed.map(\.character))
     let lower = literal.lowercased()
-    guard Lexicon.fold(literal).count >= 1, !learned.contains(lower) else { return nil }
+    guard Lexicon.fold(literal).count >= 1, !learned.contains(lower), !learned.contains(Self.straightApostrophes(lower)) else { return nil }
     // the search sees letters only, so a correction would drop the digits ("hello1" -> "hello")
     guard !literal.contains(where: \.isNumber) else { return nil }
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
