@@ -47,6 +47,20 @@ import XCTest
     shot("look-\(appearance)-suggestions")
   }
 
+  /// The emoji panel sits on the same glass as the keys, with the keys and bar hidden under it.
+  func testEmojiPanelOnTheGlass() {
+    showKeyboard()
+    key("emoji").tap()
+    XCTAssertTrue(app.descendants(matching: .any)["v2t.emoji"].waitForExistence(timeout: 3))
+    expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: key("letters-q"))
+    waitForExpectations(timeout: 3)  // hidden from accessibility as well as from view
+    app.buttons["emoji.category.smileys"].tap()
+    sleep(1)
+    shot("emoji-\(appearance)")
+    app.buttons["emoji.abc"].tap()
+    onScreen(key("letters-q"))
+  }
+
   /// A keyboard never sees taps outside itself, so the bar's chevron is how the user hides it.
   func testTheBarsChevronHidesTheKeyboard() throws {
     try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "the iPad hides its keyboard with a bottom-row key instead")
