@@ -142,7 +142,7 @@ import SwiftUI
   /// The picker is disabled while listening or transcribing; with no session, the next warm-up uses it.
   func applyMicrophoneChoice() {
     guard recorder.running, state == .idle else { return }
-    recorder.coolDown()
+    coolDown()  // the whole session (heartbeat, warm-until), so a failed restart leaves nothing running
     warmUp()
   }
 

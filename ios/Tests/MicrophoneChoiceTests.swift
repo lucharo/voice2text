@@ -6,7 +6,13 @@ import Testing
 final class SpyAudio: AudioSource, @unchecked Sendable {
   private(set) var running = false
   private(set) var calls: [String] = []
-  func warmUp() throws { running = true; calls.append("warmUp") }
+  var failWarmUp = false
+  struct Refused: Error {}
+  func warmUp() throws {
+    calls.append("warmUp")
+    if failWarmUp { throw Refused() }
+    running = true
+  }
   func coolDown() { running = false; calls.append("coolDown") }
   func begin() {}
   func end() -> [Float] { [] }
@@ -34,6 +40,20 @@ final class SpyAudio: AudioSource, @unchecked Sendable {
     #expect(spy.calls == ["warmUp", "coolDown", "warmUp"])
     #expect(spy.running)
     dictation.coolDown()
+  }
+
+  /// The new microphone cannot start: the session ends cleanly rather than leaving its heartbeat running.
+  @Test func aFailedRestartEndsTheSession() {
+    let spy = SpyAudio()
+    let dictation = service(spy)
+    dictation.warmUp()
+    spy.failWarmUp = true
+
+    dictation.applyMicrophoneChoice()
+
+    #expect(dictation.state == .needsApp)
+    #expect(dictation.warmUntil == nil)
+    #expect(spy.running == false)
   }
 
   @Test func noSessionMeansNothingRestarts() {
