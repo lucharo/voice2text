@@ -151,6 +151,10 @@ import XCTest
     key("delete").tap()  // deletes in the field, not the document
     XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "piz")
     XCTAssertEqual(text, "🍕")
+    key("page").tap()  // the numbers page; a space goes back to letters, as when typing the document
+    key("space").tap()
+    XCTAssertTrue(key("letters-q").waitForExistence(timeout: 3))
+    key("delete").tap()
     key("shift").tap()  // search's own shift: a capital in the field, matched case-insensitively
     key("letters-z").tap()
     XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "pizZ")

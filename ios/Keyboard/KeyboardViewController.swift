@@ -292,6 +292,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     if let s = emojiSearch {
       s.type(text)
       if searchShift { searchShift = false; refresh() }
+      if v.layout.page != .letters, text == "'" { relayout(page: .letters) }  // as when typing the document
       return
     }
     edit { $0.character(text, at: point, now: CACurrentMediaTime()) }
@@ -302,7 +303,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   func keyboardView(_ v: KeyboardView, action: KeyAction) {
     if let s = emojiSearch {
       switch action {
-      case .space: s.type(" "); return
+      case .space:
+        s.type(" ")
+        if v.layout.page != .letters { relayout(page: .letters) }  // as when typing the document
+        return
       case .returnKey, .emoji: endEmojiSearch(); return
       case .shift: searchShift.toggle(); refresh(); return  // its own shift: "!" on the full iPad keyboard
       case .mic, .tab, .capsLock: return  // and the document's shift is left alone
@@ -353,7 +357,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
       let words = decoder.decode(trace, context: context, limit: 4)
       DispatchQueue.main.async { [weak self] in
-        guard let self, !words.isEmpty, self.inputEpoch == epoch,
+        guard let self, !words.isEmpty, self.inputEpoch == epoch, self.emojiSearch == nil,
               self.textDocumentProxy.documentIdentifier == document else { return }
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }
@@ -419,6 +423,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// Emoji search: the keys come back with the search field and its results in the bar's place.
   private func startEmojiSearch() {
     guard emojiSearch == nil else { return }
+    inputEpoch += 1  // a swipe still decoding must not land in the document while search is open
     // the suggestion languages' keywords, the layout language's first
     let langs = [language] + Settings.shared.suggestionLanguages.filter { $0 != language }
     let s = EmojiSearchBar(indexes: langs.compactMap { emojiIndexes[$0.rawValue] }, recents: { EmojiStore.load().recents })
