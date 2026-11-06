@@ -79,8 +79,9 @@ accuracy so far comes from simulated touches, not fingers:
 
 - **Swiping whole messages** with finger-like traces on the iPhone layout, the right word came first
   98.3% of the time in English and 89.7% in Spanish; with a sloppier finger, 89.6% and 84.6%.
-- **Autocorrect** fixed 187 of 200 simulated typos per language and changed none of 1,000 correctly
-  typed common words.
+- **Autocorrect** is checked against what Apple's keyboard does and against Wikipedia's lists of
+  common misspellings, typed at the centre of each key; the results are in the
+  [autocorrect rows of ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md#how-close-it-is-to-apples-keyboard).
 - **The typing rules** (capitals, double-space full stop, undoing an autocorrect) are checked by unit tests on the Mac and by UI
   tests that drive the keyboard in the iPhone Simulator.
 - **On a real iPhone 17 Pro** (TestFlight build 1), swiping "hey how is it going" typed "GRU how is it

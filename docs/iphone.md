@@ -9,7 +9,8 @@
 
     v2t for iPhone is in internal testing on TestFlight. Only testers the maintainer adds to the app's
     App Store Connect team can install it. It has no public TestFlight link and no App Store listing
-    yet. This page describes TestFlight build 3 (5 November 2026). Send problems through TestFlight's
+    yet. Every change to the app goes to TestFlight; this page describes it as of 6 November 2026.
+    Send problems through TestFlight's
     **Send Beta Feedback** or as a [GitHub issue](https://github.com/lucharo/voice2text/issues).
 
 ## Will it work on my device?
@@ -57,12 +58,12 @@ section shows what your device got and why, and says so when your iPhone model i
 
 <figure markdown>
   ![The v2t app's setup list with all three rows ticked: the keyboard is on, it last opened with Full Access, and the speech model is ready](images/iphone/setup.png){ width="340" }
-  <figcaption>Setup done. All screenshots on this page: build 3 in the iPhone Simulator.</figcaption>
+  <figcaption>Setup done. All screenshots on this page come from the iPhone Simulator, 6 November 2026.</figcaption>
 </figure>
 
 ## Dictate
 
-Tap the v2t mic key (on the iPhone, to the left of return).
+Tap the red v2t mic key (on the iPhone, to the left of return).
 
 When no microphone session is on, the v2t app itself opens, because iOS gives keyboards no
 microphone. It is already listening: go back to your app (tap ◀ at the top left, or swipe right
@@ -70,8 +71,8 @@ along the bottom edge) and keep talking. iOS gives v2t no way to send you back. 
 microphone session stays on, and the mic key records without leaving your app.
 
 <figure markdown>
-  ![The v2t app's Listening screen: go back to your app and keep talking, then tap Done on the v2t keyboard; a Stop and stay here button at the bottom](images/iphone/handoff.png){ width="300" }
-  <figcaption>What the first mic tap of a session opens.</figcaption>
+  ![The v2t app's Listening screen: the microphone in use, then go back to your app and keep talking, how to go back, and tap Done on the v2t keyboard; a Stop and stay here button at the bottom](images/iphone/handoff.png){ width="300" }
+  <figcaption>What the first mic tap of a session opens. On a phone it names the real microphone.</figcaption>
 </figure>
 
 ```mermaid
@@ -86,18 +87,19 @@ sequenceDiagram
     Note over K,A: later mic taps record without leaving your app
 ```
 
-While you talk, a waveform and a timer cover the keys. Tap **Done** to finish: transcription starts
-then, and the keyboard shows "Transcribing…" before it types the text. **Cancel** stops without
-typing anything, though v2t still saves the dictation in History.
+While you talk, a waveform, a timer and the name of the microphone in use cover the keys. Tap
+**Done** to finish: the keyboard shows "Transcribing…", then types the text. A dictation over about
+15 seconds is transcribed in pieces while you talk, so only the last piece is left after Done.
+**Cancel** stops without typing anything, though v2t still saves the dictation in History.
 
 <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
-  ![The v2t keyboard: suggestion bar, letter keys, and a bottom row of 123, globe, space, the v2t mic key and return](images/iphone/keyboard.png){ width="320" }
-  <figcaption>The v2t mic key, left of return.</figcaption>
+  ![The v2t keyboard: suggestion bar with the hide chevron at its right end, letter keys, and a bottom row of 123, globe, emoji, space with v2t in its corner, the red mic key and return](images/iphone/keyboard.png){ width="320" }
+  <figcaption>The red mic key, left of return. The Simulator draws no iOS globe below the keys, so v2t shows its own here.</figcaption>
 </figure>
 <figure markdown>
-  ![The v2t keyboard while recording: a waveform and a timer cover the keys, with Cancel and Done buttons at the bottom](images/iphone/recording.png){ width="320" }
-  <figcaption>Recording: Cancel or Done.</figcaption>
+  ![The v2t keyboard while recording: a waveform, a timer and the microphone's name cover the keys, with Cancel and Done buttons at the bottom](images/iphone/recording.png){ width="320" }
+  <figcaption>Recording: Cancel or Done. "Test clip" is the Simulator's stand-in for a microphone.</figcaption>
 </figure>
 </div>
 
@@ -105,6 +107,9 @@ typing anything, though v2t still saves the dictation in History.
 
 - iOS shows the orange microphone dot while the session is on. v2t keeps only what you say between
   tapping the mic and tapping Done or Cancel; it records and saves nothing else.
+- v2t records from the iPhone's own microphone, even with AirPods connected, so music in other apps
+  keeps playing as it would without v2t. The app shows **Recording from** and the microphone's name
+  under **Mic ready for the keyboard**. This has not been checked on a phone yet.
 - The session turns off 15 minutes after your last dictation. Change that under **Languages and
   typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
   yourself, as below.
@@ -144,6 +149,13 @@ Apple's from other keyboards. It has English (QWERTY) and Spanish (with ñ) layo
 and Spanish together unless you turn that off, offers accents on a long press, and moves the cursor
 when you hold the space bar and slide. Their settings are under **Languages and typing** in the app.
 
+- **Emoji:** on Face ID iPhones the emoji key sits after 123, where Apple's keyboard has it, and
+  opens v2t's emoji panel; long-press an emoji for skin tones and tap **ABC** to go back. iOS's own
+  globe below the keys switches keyboards. Where iOS draws no globe (iPads, Touch ID iPhones), v2t
+  shows its own globe with the emoji key after it.
+- **Hide the keyboard** with the chevron at the right end of the suggestion bar (on the iPad, the
+  hide key in the bottom row).
+
 iOS limits every third-party keyboard, v2t's included:
 
 - No text selection, edit menu or system undo. The space-bar cursor moves only left and right.
@@ -152,6 +164,12 @@ iOS limits every third-party keyboard, v2t's included:
 - Key previews on the top row draw over the suggestion bar, not above the keyboard.
 - A keyboard cannot use the microphone or open its own app on request, so the first dictation of a
   session goes through the v2t app.
+- A keyboard never sees taps outside itself, so it cannot hide when you tap away; the app you type
+  in decides that. Use the chevron.
+- The globe and microphone below the keys on Face ID iPhones belong to iOS. v2t asks iOS to
+  disable that microphone, since its own mic key dictates. Whether iOS then hides it or only greys
+  it out has not been checked on a phone. If it still shows, Settings › General › Keyboard ›
+  **Enable Dictation** off removes it, for Apple's keyboard too.
 
 ## Troubleshooting
 
@@ -186,9 +204,9 @@ Each part was measured separately, and the gaps are listed too. Details and sour
 
 - **Transcription:** speech models timed and scored on one iPhone 16 Pro, in a benchmark app.
 - **Cleanup:** Apple Intelligence scored on the same iPhone 16 Pro, also in a benchmark app.
-- **Keyboard:** swipe and autocorrect accuracy comes from simulated touches, and the typing rules
-  from tests in the iPhone Simulator. Nobody has measured accuracy with real fingers, or anything on
-  an iPad.
+- **Keyboard:** swipe accuracy comes from simulated touches, autocorrect from checks against Apple's
+  keyboard and lists of real misspellings, and the typing rules from tests in the iPhone Simulator.
+  Nobody has measured accuracy with real fingers, or anything on an iPad.
 
 ## Build it yourself
 
