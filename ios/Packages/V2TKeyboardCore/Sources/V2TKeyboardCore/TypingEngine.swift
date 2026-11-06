@@ -369,7 +369,9 @@ public final class TypingEngine {
   var pendingReplacement: String? {
     let key = Self.shortcutKey(literal)
     guard !composing.isEmpty, traits.autocorrect, !inAddress, !learned.contains(key), !learned.contains(literal.lowercased()) else { return nil }
-    return replacements[key]
+    // a case-only replacement already typed as written ("V2T" for v2t -> V2T) has nothing to do
+    guard let r = replacements[key], r != literal else { return nil }
+    return r
   }
 
   /// How a shortcut is looked up: lowercase, straight apostrophes.

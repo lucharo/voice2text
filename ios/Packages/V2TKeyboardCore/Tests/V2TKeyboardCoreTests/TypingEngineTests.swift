@@ -463,6 +463,19 @@ struct TypingEngineTests {
     #expect(p.text == "mail teh+.tag@example.com ")
   }
 
+  /// A case-only replacement typed already as written offers nothing and learns nothing.
+  @Test func aCaseOnlyReplacementTypedAsWrittenIsANoOp() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["v2t": "V2T"]
+    for (i, c) in "V2T".enumerated() { e.character(String(c), now: Double(10 + i)) }
+    #expect(e.pendingAutocorrection == nil)
+    let bar = e.suggestions().map(\.word)
+    #expect(bar.count == Set(bar).count, "\(bar)")
+    type(" ", e, start: 20)
+    e.delete()
+    #expect(e.revertOffer == nil && p.text == "ok V2T" && !e.learned.contains("v2t"))
+  }
+
   /// "i’m" takes the capital and keeps the curly apostrophe typed.
   @Test func iContractionsKeepTheirApostrophe() throws {
     let (e, p) = try engine("and ")
