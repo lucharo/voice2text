@@ -47,6 +47,29 @@ struct PersonalDictionaryTests {
     #expect(app.terms == ["Claude", "marimo", "Fluide", "Kian"])
   }
 
+  /// "Edit as text" left open while the keyboard adds a word: closing it unchanged writes nothing, and an
+  /// edited draft keeps the keyboard's word.
+  @Test func theTextEditorKeepsWordsAddedWhileItWasOpen() throws {
+    let app = try dictionary("Claude\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).addTerm("marimo")
+    try app.saveEdit(snapshot, from: snapshot)
+    #expect(PersonalDictionary(file: app.file).terms == ["Claude", "marimo"])
+    try PersonalDictionary(file: app.file).addTerm("Kian")
+    try app.saveEdit("Claude\nFluide\n", from: snapshot)
+    #expect(PersonalDictionary(file: app.file).terms == ["Claude", "Fluide", "marimo", "Kian"])
+  }
+
+  /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
+  @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
+    let file = try dictionary("").file
+    let words = (0..<20).map { "word\($0)" }
+    await withTaskGroup(of: Void.self) { group in
+      for w in words { group.addTask { try? PersonalDictionary(file: file).addTerm(w) } }
+    }
+    #expect(Set(PersonalDictionary(file: file).terms) == Set(words))
+  }
+
   @Test func addingRefusesEmptyArrowsAndDuplicates() throws {
     let d = try dictionary("Claude\nai => AI\n")
     #expect(throws: PersonalDictionary.EntryError.empty) { try d.addTerm("  ") }

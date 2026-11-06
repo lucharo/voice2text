@@ -310,13 +310,14 @@ struct DictionaryView: View {
 struct DictionaryTextView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
   @State private var draft = ""
+  @State private var snapshot = ""
   var body: some View {
     TextEditor(text: $draft)
       .font(.body.monospaced())
       .padding(.horizontal, 8)
       .navigationTitle("Dictionary file")
-      .onAppear { dictionary.reload(); draft = dictionary.text }
-      .onDisappear { try? dictionary.save(draft) }
+      .onAppear { dictionary.reload(); draft = dictionary.text; snapshot = draft }
+      .onDisappear { try? dictionary.saveEdit(draft, from: snapshot) }
   }
 }
 

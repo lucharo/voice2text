@@ -31,6 +31,38 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   }
 
   func save(_ newText: String) throws {
+    try transaction { try write(newText) }
+  }
+
+  /// Saves the "Edit as text" draft, which started as `snapshot`: an unchanged draft writes nothing, and lines
+  /// another copy added to the file meanwhile (a word kept on the keyboard) are kept at the end.
+  func saveEdit(_ draft: String, from snapshot: String) throws {
+    try transaction {
+      guard draft != snapshot else { return }
+      let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) } }
+      let before = Set(lines(snapshot)), mine = Set(lines(draft))
+      let added = lines(text).filter { !$0.isEmpty && !before.contains($0) && !mine.contains($0) }
+      var t = draft
+      if !added.isEmpty, !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
+      try write(t + added.map { $0 + "\n" }.joined())
+    }
+  }
+
+  /// Runs a read-modify-write on the file with the file freshly read and no other process (the keyboard, the
+  /// app) writing it meanwhile: NSFileCoordinator serialises writers across processes in the App Group.
+  func transaction<T>(_ body: () throws -> T) throws -> T {
+    var result: Result<T, Error>?
+    var coordinationError: NSError?
+    NSFileCoordinator().coordinate(writingItemAt: file, options: .forMerging, error: &coordinationError) { _ in
+      reload()
+      result = Result { try body() }
+    }
+    if let e = coordinationError { throw e }
+    return try result!.get()
+  }
+
+  /// Writes the file; call inside `transaction`.
+  private func write(_ newText: String) throws {
     text = newText
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     try newText.write(to: file, atomically: true, encoding: .utf8)
@@ -80,36 +112,40 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   }
 
   func addTerm(_ term: String) throws {
-    reload()
     let t = term.trimmingCharacters(in: .whitespaces)
     guard !t.isEmpty else { throw EntryError.empty }
     guard !t.contains("=>"), !t.hasPrefix("#") else { throw EntryError.arrow }
-    guard !terms.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) else { throw EntryError.duplicate }
-    try append(t)
+    try transaction {
+      guard !terms.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) else { throw EntryError.duplicate }
+      try append(t)
+    }
   }
 
   func addReplacement(heard: String, written: String) throws {
-    reload()
     let h = heard.trimmingCharacters(in: .whitespaces), w = written.trimmingCharacters(in: .whitespaces)
     guard !h.isEmpty, !w.isEmpty else { throw EntryError.empty }
     guard !h.contains("=>"), !w.contains("=>"), !h.hasPrefix("#") else { throw EntryError.arrow }
-    guard !entries.replacements.contains(where: { $0.heard.caseInsensitiveCompare(h) == .orderedSame }) else { throw EntryError.duplicate }
-    try append("\(h) => \(w)")
+    try transaction {
+      guard !entries.replacements.contains(where: { $0.heard.caseInsensitiveCompare(h) == .orderedSame }) else { throw EntryError.duplicate }
+      try append("\(h) => \(w)")
+    }
   }
 
   /// Removes the first line stored exactly as `line` (an `Item.line`), keeping every other line and comment.
   func remove(_ line: String) throws {
-    reload()
-    var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
-    guard let i = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == line }) else { return }
-    lines.remove(at: i)
-    try save(lines.joined(separator: "\n"))
+    try transaction {
+      var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+      guard let i = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == line }) else { return }
+      lines.remove(at: i)
+      try write(lines.joined(separator: "\n"))
+    }
   }
 
+  /// Call inside `transaction`.
   private func append(_ line: String) throws {
     var t = text
     if !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
-    try save(t + line + "\n")
+    try write(t + line + "\n")
   }
 
   var terms: [String] { entries.terms }
