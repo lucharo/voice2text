@@ -44,3 +44,44 @@ import Testing
     #expect([DictationState.transcribing, .cleaningUp].map(\.waitingLabel) == ["Transcribing…", "Cleaning up…"])
   }
 }
+
+@MainActor struct TimingsExportTests {
+  @Test func csvHasOneRowPerTimedDictationOldestFirstAndNoText() {
+    let old = Dictation(text: "secret one", date: Date(timeIntervalSince1970: 1_793_527_200), language: "en",
+                        timings: DictationTimings(audio: 45.2, speech: 0.08, cleanup: 1.24, total: 1.4, piecesWhileRecording: 3))
+    let untimed = Dictation(text: "before #123", date: Date(timeIntervalSince1970: 1_793_527_300), language: "en")
+    let new = Dictation(text: "secret two", date: Date(timeIntervalSince1970: 1_793_527_400), language: "es",
+                        timings: DictationTimings(audio: 6.3, speech: 0.09, cleanup: nil, total: 0.1))
+
+    let csv = TimingsCSV.make([new, untimed, old])  // History keeps newest first
+
+    #expect(csv == """
+      date,language,audio_s,speech_s,cleanup_s,total_s,pieces_while_recording
+      2026-11-01T10:00:00Z,en,45.20,0.080,1.240,1.400,3
+      2026-11-01T10:03:20Z,es,6.30,0.090,,0.100,0
+
+      """)
+  }
+
+  @Test func wordEditsIgnoreCaseAndPunctuation() {
+    #expect(wordEdits("um so the CAP app which was that", "So the CAP app. Which was that?") == 1)
+    #expect(wordEdits("send it to me please", "Send it to me.") == 1)
+    #expect(wordEdits("", "two words") == 2)
+  }
+
+  @Test func summaryTakesTheMedianOfEachMode() {
+    let runs = [
+      [CleanupRun(mode: "casual", seconds: 1.0, words: 10, wordsChanged: 1), CleanupRun(mode: "thorough", seconds: 2.0, words: 10, wordsChanged: 4)],
+      [CleanupRun(mode: "casual", seconds: 1.2, words: 20, wordsChanged: 2), CleanupRun(mode: "thorough", seconds: 2.4, words: 20, wordsChanged: 6)],
+      [CleanupRun(mode: "casual", seconds: 0.8, words: 5, wordsChanged: 0), CleanupRun(mode: "thorough", seconds: 1.6, words: 5, wordsChanged: 2)],
+    ]
+
+    #expect(CleanupComparison.summary(runs) == "casual 1.00 s, 1 words changed · thorough 2.00 s, 4 words changed")
+    #expect(CleanupComparison.csv(Array(runs.prefix(1)), audio: [12.5]) == """
+      dictation,audio_s,mode,cleanup_s,words,words_changed
+      1,12.5,casual,1.000,10,1
+      1,12.5,thorough,2.000,10,4
+
+      """)
+  }
+}

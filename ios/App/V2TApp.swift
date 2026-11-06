@@ -339,6 +339,7 @@ struct HistoryView: View {
     }
     .overlay { if history.items.isEmpty { Text("No dictations yet").foregroundStyle(.secondary) } }
     .navigationTitle("History")
+    .toolbar { TimingsToolbar() }
   }
 }
 

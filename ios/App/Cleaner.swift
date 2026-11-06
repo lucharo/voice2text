@@ -16,14 +16,16 @@ private let log = Logger(subsystem: "es.luischav.v2t", category: "cleanup")
 struct Cleaner: Sendable {
   let kind: Recommendation.Cleanup
 
-  func clean(_ text: String, terms: [String]) async -> String {
+  /// `mode`: casual (the app's setting, with the spoken-words guard) or strict ("thorough": drops fillers and
+  /// false starts, length guard only, as on the Mac), the latter for the cleanup comparison (#122).
+  func clean(_ text: String, terms: [String], mode: CleanupMode = .casual) async -> String {
     guard kind == .appleIntelligence else { log.info("cleanup skipped: not recommended on this iPhone"); return text }
     #if canImport(FoundationModels)
     let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
     guard case .available = model.availability else { log.info("cleanup skipped: Apple Intelligence unavailable"); return text }
     var parts: [String] = []
     for chunk in chunkText(text) {
-      let instructions = CleanupPrompt.messages(for: chunk, mode: .casual, vocabulary: terms)[0].content
+      let instructions = CleanupPrompt.messages(for: chunk, mode: mode, vocabulary: terms)[0].content
       let words = chunk.split(separator: " ").count
       let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: max(64, words * 3))
       let cleaned: String
@@ -43,10 +45,10 @@ struct Cleaner: Sendable {
         continue
       }
       let c = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-      if c.isEmpty || !withinLengthGuard(raw: chunk, clean: c, mode: .casual) {
+      if c.isEmpty || !withinLengthGuard(raw: chunk, clean: c, mode: mode) {
         parts.append(chunk)
       } else {
-        parts.append(keepSpokenWords(raw: chunk, clean: c, vocabulary: terms).text)
+        parts.append(mode == .casual ? keepSpokenWords(raw: chunk, clean: c, vocabulary: terms).text : c)
       }
     }
     let out = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
