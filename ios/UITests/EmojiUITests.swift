@@ -56,7 +56,9 @@ import XCTest
   func testTheGlobeStaysBeforeTheEmojiKeyWhenIOSDrawsNone() {
     launch(globe: "1")
     XCTAssertTrue(key("globe").waitForExistence(timeout: 5))
-    XCTAssertLessThan(key("page").frame.maxX, key("globe").frame.minX)
+    if UIDevice.current.userInterfaceIdiom == .phone {  // the iPad's row starts with the globe, before its page key
+      XCTAssertLessThan(key("page").frame.maxX, key("globe").frame.minX)
+    }
     XCTAssertLessThan(key("globe").frame.maxX, key("emoji").frame.minX)
     XCTAssertLessThan(key("emoji").frame.maxX, key("space").frame.minX)
     shot("54-keyboard-globe-and-emoji")

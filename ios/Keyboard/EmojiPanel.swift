@@ -37,7 +37,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private let flow = UICollectionViewFlowLayout()
   private let grid: UICollectionView
   private let letters = UIButton(type: .system)
-  private let delete = UIButton(type: .system)
+  private let delete = DeleteButton(type: .system)
   private let dismiss = UIButton(type: .system)
   private var categoryButtons: [UIButton] = []
   private let picker = TonePicker()
@@ -103,6 +103,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     delete.accessibilityLabel = "delete"
     // as the keys' delete: once on touch-down, then repeating while held
     delete.addAction(UIAction { [weak self] _ in self?.startDelete() }, for: .touchDown)
+    delete.onAccessibilityActivate = { [weak self] in self?.onDelete?() }  // VoiceOver sends no touch-down
     for e: UIControl.Event in [.touchUpInside, .touchUpOutside, .touchCancel] {
       delete.addAction(UIAction { [weak self] _ in self?.stopDelete() }, for: e)
     }
@@ -158,7 +159,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private func sizeCells() {
     let gh = grid.bounds.height
     guard gh > 0 else { return }
-    let isPad = traitCollection.userInterfaceIdiom == .pad
+    let isPad = bounds.width >= 600  // an iPad's floating keyboard is phone sized, and gets the phone's grid
     let rows = max(3, Int(gh / (isPad ? 56 : 37)))
     let side = floor(gh / CGFloat(rows))
     flow.itemSize = CGSize(width: side + (isPad ? 10 : 5), height: side)
@@ -187,17 +188,21 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: EmojiCell.reuse, for: ip) as! EmojiCell
     let e = text(at: ip)
     cell.show(e, font: emojiFont.font(size: emojiSize))
-    if emojiFont.note(e), !renewing {
-      // after the cells on screen are drawn, swap the font for a fresh one and redraw them with it
-      renewing = true
-      DispatchQueue.main.async { [weak self] in
-        guard let self else { return }
-        emojiFont.renew()
-        grid.reloadData()
-        renewing = false
-      }
-    }
+    if emojiFont.note(e) { renewSoon() }
     return cell
+  }
+
+  /// After the cells on screen are drawn, swaps the font for a fresh one and redraws them with it. An open
+  /// skin-tone picker keeps the old copy until it closes.
+  private func renewSoon() {
+    guard !renewing else { return }
+    renewing = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      emojiFont.renew()
+      grid.reloadData()
+      renewing = false
+    }
   }
 
   func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout, insetForSectionAt section: Int) -> UIEdgeInsets {
@@ -240,7 +245,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   }
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
-    picker.isHidden = true
+    picker.hide()
     updateHeader(force: false)
   }
 
@@ -319,13 +324,17 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
       pressed = (it, shown)
       guard let it, !it.skinTones.isEmpty else { return }
       let options = [it.base] + it.skinTones
+      let font = emojiFont.font(size: emojiSize)
+      var renew = false
+      for o in options where emojiFont.note(o) { renew = true }
       picker.show(options, chosen: options.firstIndex(of: shown) ?? 0, over: cell.convert(cell.bounds, to: self), in: bounds,
-                  size: emojiSize, traits: traitCollection)
+                  font: font, traits: traitCollection)
+      if renew { renewSoon() }
       bringSubviewToFront(picker)
     case .changed:
       if !picker.isHidden { picker.choose(at: g.location(in: picker).x) }
     case .ended:
-      defer { pressed = nil; picker.isHidden = true }
+      defer { pressed = nil; picker.hide() }
       guard let p = pressed else { return }
       if picker.isHidden { insert(p.text, from: p.item); return }  // an emoji with no skin tones: typed on release
       let chosen = picker.chosen
@@ -335,7 +344,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
       grid.reloadItems(at: grid.indexPathsForVisibleItems.filter { $0.section > 0 && item(at: $0)?.base == base })
     default:
       pressed = nil
-      picker.isHidden = true
+      picker.hide()
     }
   }
 }
@@ -420,6 +429,15 @@ final class EmojiFont {
   }
 }
 
+/// The panel's delete: VoiceOver activates a button without a touch-down, so it deletes through this.
+final class DeleteButton: UIButton {
+  var onAccessibilityActivate: (() -> Void)?
+  override func accessibilityActivate() -> Bool {
+    onAccessibilityActivate?()
+    return true
+  }
+}
+
 /// The row of skin tones over a long-pressed emoji; the finger slides along it to choose.
 final class TonePicker: UIView {
   private var labels: [UILabel] = []
@@ -439,10 +457,11 @@ final class TonePicker: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-  func show(_ options: [String], chosen: Int, over cell: CGRect, in bounds: CGRect, size: CGFloat, traits: UITraitCollection) {
+  func show(_ options: [String], chosen: Int, over cell: CGRect, in bounds: CGRect, font: UIFont, traits: UITraitCollection) {
     labels.forEach { $0.removeFromSuperview() }
     self.options = options
-    let cellW = max(cell.width, size + 12), h = cell.height + 8
+    // as wide as a cell each, but never wider than the keyboard
+    let cellW = min(max(cell.width, font.pointSize + 12), (bounds.width - 12) / CGFloat(options.count)), h = cell.height + 8
     let w = cellW * CGFloat(options.count) + 8
     let x = max(bounds.minX + 2, min(bounds.maxX - w - 2, cell.midX - w / 2))
     // above the emoji when it fits, else below it (the top row)
@@ -452,7 +471,7 @@ final class TonePicker: UIView {
     labels = options.enumerated().map { i, e in
       let l = UILabel(frame: CGRect(x: 4 + CGFloat(i) * cellW, y: 4, width: cellW, height: h - 8))
       l.text = e
-      l.font = .systemFont(ofSize: size)
+      l.font = font
       l.textAlignment = .center
       l.layer.cornerRadius = 8
       l.clipsToBounds = true
@@ -462,6 +481,13 @@ final class TonePicker: UIView {
     }
     select(chosen)
     isHidden = false
+  }
+
+  /// Hides the picker and lets go of its labels, and so of the emoji font they were drawn with.
+  func hide() {
+    isHidden = true
+    labels.forEach { $0.removeFromSuperview() }
+    labels = []
   }
 
   /// `x` in the picker's own space.

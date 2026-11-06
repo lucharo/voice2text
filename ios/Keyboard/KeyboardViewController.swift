@@ -309,7 +309,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
     p.onEmoji = { [weak self] e in self?.edit("emoji") { $0.emoji(e) } }
     p.onDelete = { [weak self] in self?.edit { $0.delete() } }
-    p.onLetters = { [weak self] in self?.showEmoji(false) }
+    p.onLetters = { [weak self] in
+      guard let self else { return }
+      showEmoji(false)
+      if keyboardView.layout.page != .letters { relayout(page: .letters) }  // ABC means letters, from any page
+    }
     p.translatesAutoresizingMaskIntoConstraints = false
     view.insertSubview(p, belowSubview: panel)  // dictation's panel still covers everything
     NSLayoutConstraint.activate([
@@ -343,8 +347,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func setPanel(visible: Bool) {
     if !visible { panel.hide() }
     let wasModal = panel.accessibilityViewIsModal
-    keyboardView.accessibilityElementsHidden = visible
-    bar.accessibilityElementsHidden = visible
+    keyboardView.accessibilityElementsHidden = visible || emojiPanel != nil  // the emoji panel may cover them too
+    bar.accessibilityElementsHidden = visible || emojiPanel != nil
     panel.accessibilityViewIsModal = visible
     if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }
