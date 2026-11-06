@@ -25,6 +25,7 @@ struct Cleaner: Sendable {
     guard case .available = model.availability else { log.info("cleanup skipped: Apple Intelligence unavailable"); return text }
     var parts: [String] = []
     for chunk in chunkText(text) {
+      if Task.isCancelled { parts.append(chunk); continue }  // a cancelled comparison stops asking the model
       let instructions = CleanupPrompt.messages(for: chunk, mode: mode, vocabulary: terms)[0].content
       let words = chunk.split(separator: " ").count
       let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: max(64, words * 3))

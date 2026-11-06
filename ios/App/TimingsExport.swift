@@ -92,6 +92,7 @@ struct CompareCleanupView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
   @State private var runs: [[CleanupRun]] = []
   @State private var running = false
+  @State private var task: Task<Void, Never>?
   static let count = 10
 
   var body: some View {
@@ -100,7 +101,7 @@ struct CompareCleanupView: View {
       Section {
         Text("Cleans your last \(min(Self.count, items.count)) dictations two ways with Apple Intelligence, one after the other, and times each. Nothing leaves this \(dictation.recommendation.deviceName); History is not changed.")
           .font(.footnote).foregroundStyle(.secondary)
-        Button(running ? "Cleaning…" : "Run") { Task { await run(items) } }
+        Button(running ? "Cleaning…" : "Run") { task = Task { await run(items) } }
           .disabled(running || items.isEmpty || dictation.recommendation.cleanup != .appleIntelligence)
           .accessibilityIdentifier("v2t.compare.run")
         if dictation.recommendation.cleanup != .appleIntelligence {
@@ -124,23 +125,29 @@ struct CompareCleanupView: View {
       }
     }
     .navigationTitle("Compare cleanup")
+    .onDisappear { task?.cancel() }  // leaving stops the batch, so a second Run never competes with it
   }
 
   private func run(_ items: [Dictation]) async {
     running = true
     runs = []
     let cleaner = Cleaner(kind: dictation.recommendation.cleanup), terms = dictionary.terms
+    defer { running = false }
     for d in items {
+      if Task.isCancelled { return }
       let heard = d.heard ?? d.text
       var row: [CleanupRun] = []
       for mode in [CleanupMode.casual, .strict] {
         let t0 = ContinuousClock.now
         let out = await cleaner.clean(heard, terms: terms, mode: mode)
-        row.append(CleanupRun(audio: d.timings?.audio, mode: mode == .strict ? "thorough" : "casual", seconds: (ContinuousClock.now - t0).seconds,
-                              words: heard.split(separator: " ").count, wordsChanged: wordEdits(heard, out)))
+        let seconds = (ContinuousClock.now - t0).seconds
+        if Task.isCancelled { return }
+        // quadratic in words: off the main actor, so a long dictation cannot stall the app
+        let changed = await Task.detached(priority: .utility) { wordEdits(heard, out) }.value
+        row.append(CleanupRun(audio: d.timings?.audio, mode: mode == .strict ? "thorough" : "casual", seconds: seconds,
+                              words: heard.split(separator: " ").count, wordsChanged: changed))
       }
       runs.append(row)
     }
-    running = false
   }
 }
