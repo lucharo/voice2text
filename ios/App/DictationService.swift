@@ -20,6 +20,9 @@ import SwiftUI
   @Published private(set) var storageError: String?
   /// Deleting the model: no recording, preparation or second delete starts until it is done.
   @Published private(set) var deletingModel = false
+  /// Dictations stopped but not yet transcribed. Stopping the mic session does not end them, so the model
+  /// cannot be deleted under one (its audio is in memory only and would be lost).
+  @Published private(set) var pendingTranscriptions = 0
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
 
@@ -58,13 +61,13 @@ import SwiftUI
   private var language = ""
 
   /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
-  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil) {
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil) {
     self.recorder = recorder ?? Self.defaultRecorder()
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
     self.engine = SpeechEngine(speech: recommendation.speech)
-    self.store = .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
+    self.store = store ?? .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
@@ -108,7 +111,7 @@ import SwiftUI
 
   /// Any speech-model files left (a partial download, or what a failed delete left behind) can be deleted.
   var canDeleteModel: Bool {
-    modelBytes > 0 && !deletingModel && !engineState.isPreparing && state != .listening && state != .transcribing
+    modelBytes > 0 && !deletingModel && pendingTranscriptions == 0 && !engineState.isPreparing && state != .listening && state != .transcribing
   }
 
   /// Deletes the model's files and its compiled copy; dictation then needs a new download.
@@ -275,7 +278,11 @@ import SwiftUI
     extendWarmth()
     let id = recording, request = requestId, live = live, language = language
     self.live = nil
-    Task { await finish(samples, id: id, request: request, language: language, live: live, stoppedAt: stoppedAt) }
+    pendingTranscriptions += 1
+    Task {
+      await finish(samples, id: id, request: request, language: language, live: live, stoppedAt: stoppedAt)
+      pendingTranscriptions -= 1
+    }
   }
 
   private func finish(

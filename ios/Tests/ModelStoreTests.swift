@@ -14,6 +14,12 @@ struct ModelStoreTests {
     }
   }
 
+  /// A compiled model as a finished download leaves it: weights and the root coremldata.bin.
+  func writeBundle(_ name: String) throws {
+    try write(10_000, to: store.modelFolder.appending(path: "\(name)/weights/weight.bin"))
+    try write(100, to: store.modelFolder.appending(path: "\(name)/coremldata.bin"))
+  }
+
   func write(_ bytes: Int, to url: URL) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data(repeating: 1, count: bytes).write(to: url)
@@ -31,10 +37,44 @@ struct ModelStoreTests {
   }
 
   @Test func everyRequiredFileMeansOnDevice() throws {
-    try write(10_000, to: store.modelFolder.appending(path: "Encoder.mlmodelc/weights.bin"))
+    try writeBundle("Encoder.mlmodelc")
     try write(100, to: store.modelFolder.appending(path: "vocab.json"))
 
     #expect(store.isOnDevice)
+  }
+
+  /// Interrupted mid-weights: the bundle folder and the vocabulary exist, but no coremldata.bin yet.
+  @Test func aBundleWithoutItsCoreMLDataIsNotOnDevice() throws {
+    try write(10_000, to: store.modelFolder.appending(path: "Encoder.mlmodelc/weights/weight.bin"))
+    try write(100, to: store.modelFolder.appending(path: "vocab.json"))
+
+    #expect(store.isOnDevice == false)
+  }
+
+  @Test func aBundleWithAPartialFileIsNotOnDevice() throws {
+    try writeBundle("Encoder.mlmodelc")
+    try write(5_000, to: store.modelFolder.appending(path: "Encoder.mlmodelc/weights/weight.bin.partial"))
+    try write(100, to: store.modelFolder.appending(path: "vocab.json"))
+
+    #expect(store.isOnDevice == false)
+  }
+
+  /// The Parakeet check: every compiled model in the folder must be load-ready, whatever its name.
+  @Test func allBundlesLoadReadyRejectsAnyHalfDownloadedBundle() throws {
+    try writeBundle("Preprocessor.mlmodelc")
+    #expect(ModelStore.allBundlesLoadReady(in: store.modelFolder))
+
+    try write(10_000, to: store.modelFolder.appending(path: "Decoder.mlmodelc/weights/weight.bin"))
+
+    #expect(ModelStore.allBundlesLoadReady(in: store.modelFolder) == false)
+  }
+
+  /// A plain file still downloading beside finished bundles (the vocabulary, say) is not ready either.
+  @Test func allBundlesLoadReadyRejectsAPartialFileBesideTheBundles() throws {
+    try writeBundle("Preprocessor.mlmodelc")
+    try write(100, to: store.modelFolder.appending(path: "vocab.json.partial"))
+
+    #expect(ModelStore.allBundlesLoadReady(in: store.modelFolder) == false)
   }
 
   /// An interrupted download: some files, not all. Not on the device, so nothing loads or downloads it by itself.
@@ -62,7 +102,7 @@ struct ModelStoreTests {
   }
 
   @Test func deleteRemovesTheDownloadsAndTheCompiledCopy() throws {
-    try write(100_000, to: store.modelFolder.appending(path: "Encoder.mlmodelc/weights.bin"))
+    try writeBundle("Encoder.mlmodelc")
     try write(100, to: store.modelFolder.appending(path: "vocab.json"))
     try write(50_000, to: compiled.appending(path: "bundle/model.bin"))
 

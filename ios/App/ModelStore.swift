@@ -25,9 +25,35 @@ struct ModelStore: Sendable {
   /// Bytes the speech models take on the device, compiled copies and partial downloads included.
   var bytes: Int64 { folders.reduce(0) { $0 + Self.bytes(in: $1) } }
 
-  /// True when every one of `names` is in `folder` (a file, or a compiled model folder).
+  /// True when every one of `names` is in `folder` and ready to load: a compiled model (`.mlmodelc`) needs its
+  /// root `coremldata.bin` and no `*.partial` file from an interrupted download; a plain file must exist.
+  /// FluidAudio's own rule at the pinned 55f65d9 (`ModelCache.incompleteFiles`, internal there).
   static func hasAll(_ names: [String], in folder: URL) -> Bool {
-    names.allSatisfy { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) }
+    names.allSatisfy { name in
+      let path = folder.appending(path: name)
+      guard name.hasSuffix(".mlmodelc") else { return FileManager.default.fileExists(atPath: path.path) }
+      return isLoadReady(path)
+    }
+  }
+
+  /// A compiled model folder with its root `coremldata.bin` and no `*.partial` staging file inside.
+  static func isLoadReady(_ bundle: URL) -> Bool {
+    guard FileManager.default.fileExists(atPath: bundle.appending(path: "coremldata.bin").path) else { return false }
+    return !hasPartialDownload(bundle)
+  }
+
+  /// True when an interrupted download left a `*.partial` file anywhere under `url`.
+  static func hasPartialDownload(_ url: URL) -> Bool {
+    guard let walk = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) else { return false }
+    for case let item as URL in walk where item.pathExtension == "partial" { return true }
+    return false
+  }
+
+  /// Every compiled model directly in `folder` is ready to load (for a model whose file list FluidAudio keeps
+  /// private, checked beside its own shallow `modelsExist`).
+  static func allBundlesLoadReady(in folder: URL) -> Bool {
+    guard let items = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return false }
+    return !hasPartialDownload(folder) && items.filter { $0.pathExtension == "mlmodelc" }.allSatisfy(isLoadReady)
   }
 
   func delete() throws {

@@ -75,7 +75,8 @@ actor SpeechEngine {
       let names = [family.offlineEncoderFile(precision: .int8), family.decoderFile, family.jointDecisionFile, family.vocab]
       return { ModelStore.hasAll(names, in: $0) }
     case .parakeet:
-      return { AsrModels.modelsExist(at: $0, version: .v3, encoderPrecision: .int8V2) }
+      // modelsExist only checks that the paths exist; also reject half-downloaded bundles
+      return { AsrModels.modelsExist(at: $0, version: .v3, encoderPrecision: .int8V2) && ModelStore.allBundlesLoadReady(in: $0) }
     }
   }
 
