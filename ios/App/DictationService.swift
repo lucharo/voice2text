@@ -138,6 +138,10 @@ import SwiftUI
     publish(.needsApp)
   }
 
+  /// Whether the picker may change the microphone now: only with no dictation under way (idle or no session),
+  /// since a change applies by restarting the session, so never while listening, transcribing or cleaning up.
+  static func allowsMicrophoneChange(_ state: DictationState) -> Bool { state == .idle || state == .needsApp }
+
   /// The microphone choice changed (in the app, so in the foreground): a warm, idle session restarts with it.
   /// The picker is disabled while listening or transcribing; with no session, the next warm-up uses it.
   func applyMicrophoneChoice() {

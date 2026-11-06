@@ -65,6 +65,12 @@ final class SpyAudio: AudioSource, @unchecked Sendable {
     #expect(spy.calls == [])
   }
 
+  @Test func theMicrophoneChangesOnlyWithNoDictationUnderWay() {
+    let states: [DictationState] = [.idle, .needsApp, .listening, .transcribing, .cleaningUp, .unavailable]
+
+    #expect(states.filter(DictationService.allowsMicrophoneChange) == [.idle, .needsApp])
+  }
+
   @Test func theChoicePersists() {
     let defaults = UserDefaults(suiteName: "v2t-choice-\(UUID().uuidString)")!
 

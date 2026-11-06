@@ -212,7 +212,7 @@ struct MicrophoneRow: View {
       }
       .accessibilityIdentifier("v2t.microphoneChoice")
       // a choice made mid-dictation could only apply by restarting the session, which may be in the background
-      .disabled(dictation.state == .listening || dictation.state == .transcribing)
+      .disabled(!DictationService.allowsMicrophoneChange(dictation.state))
       Text(choice == .iPhone
         ? "Speak towards your \(dictation.recommendation.deviceName). AirPods and other headphones keep playing music in full quality."
         : "Uses AirPods or a wired headset when one is connected. With AirPods, music drops to call quality while the mic is ready.")
