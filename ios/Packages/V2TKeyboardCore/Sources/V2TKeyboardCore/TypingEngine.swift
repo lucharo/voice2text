@@ -40,6 +40,9 @@ public final class TypingEngine {
     didSet { if learned.contains(where: { $0.contains("’") || $0 != $0.lowercased() }) { learned = Set(learned.map(Self.shortcutKey)) } }
   }
   public var onLearn: ((String) -> Void)?
+  /// A word the user kept that no word list knows ("marimo" over the correction "merino"), spelt as typed,
+  /// for the keyboard to add to the v2t dictionary as a term.
+  public var onNewWord: ((String) -> Void)?
   /// Text replacements (lowercase shortcut -> phrase), as Settings > General > Keyboard > Text Replacement.
   public var replacements: [String: String] = [:]
 
@@ -444,6 +447,8 @@ public final class TypingEngine {
     let w = Self.shortcutKey(word)
     guard learned.insert(w).inserted else { return }
     onLearn?(w)
+    // a new word, not a real one kept as typed ("form") or a text-replacement shortcut kept unexpanded ("omw")
+    if word.filter(\.isLetter).count >= 2, replacements[w] == nil, !suggester.isWord(word) { onNewWord?(word) }
   }
 
   /// Remembers which language the words before the cursor are in, so the next field's first word (which has

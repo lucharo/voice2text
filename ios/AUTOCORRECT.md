@@ -91,8 +91,9 @@ Still different from Apple's keyboard, or unmeasured:
   autocorrect does with touches on a phone is unmeasured.
 - **Names at the start of a sentence** are still corrected when the word list lacks them ("Tom" → "Ton" with
   only Spanish on); a capitalised typo cannot be told from a name there.
-- **Learning.** v2t learns a word after one rejection; it does not learn words you type often without
-  rejecting a correction.
+- **Learning.** v2t learns a word after one rejection, and a kept word no word list knows ("marimo" over
+  "merino") also goes into the v2t dictionary as a term, so dictation spells it too. It does not learn words
+  you type often without rejecting a correction.
 - **Smart quotes and dashes** are left to the host field; unverified.
 - **Corrections after punctuation** cannot be reverted with delete, only after a space.
 - **A hyphen before an address** ("exmaple-site.com") still corrects its first part: a hyphen applies the

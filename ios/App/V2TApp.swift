@@ -237,6 +237,7 @@ struct KeyboardHandoffView: View {
 /// Mac app; "Edit as text" opens the file itself.
 struct DictionaryView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
+  @Environment(\.scenePhase) private var scenePhase
   @State private var term = ""
   @State private var heard = ""
   @State private var written = ""
@@ -259,7 +260,7 @@ struct DictionaryView: View {
             .accessibilityIdentifier("v2t.dict.addTerm")
         }
       } header: { Text("Spell exactly") } footer: {
-        Text("Names, products or jargon the recogniser gets wrong. Cleanup spells them as written here, and the keyboard never autocorrects them.")
+        Text("Names, products or jargon the recogniser gets wrong. Cleanup spells them as written here, and the keyboard never autocorrects them. A word you keep on the keyboard over its correction is added here.")
       }
 
       Section {
@@ -287,6 +288,9 @@ struct DictionaryView: View {
       Section { NavigationLink("Edit as text") { DictionaryTextView() } }
     }
     .navigationTitle("Dictionary")
+    .onAppear { dictionary.reload() }
+    // back from another app, where the keyboard may have added a word (the text editor keeps its own draft)
+    .onChange(of: scenePhase) { _, phase in if phase == .active { dictionary.reload() } }
     .alert("Couldn't add that", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK", role: .cancel) {}
     } message: { Text(error ?? "") }
@@ -309,13 +313,14 @@ struct DictionaryView: View {
 struct DictionaryTextView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
   @State private var draft = ""
+  @State private var snapshot = ""
   var body: some View {
     TextEditor(text: $draft)
       .font(.body.monospaced())
       .padding(.horizontal, 8)
       .navigationTitle("Dictionary file")
-      .onAppear { draft = dictionary.text }
-      .onDisappear { try? dictionary.save(draft) }
+      .onAppear { dictionary.reload(); draft = dictionary.text; snapshot = draft }
+      .onDisappear { try? dictionary.saveEdit(draft, from: snapshot) }
   }
 }
 

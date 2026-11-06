@@ -550,6 +550,28 @@ struct TypingEngineTests {
     #expect(p.text == "and I’m ")
   }
 
+  /// A word kept over its correction that no word list knows is reported as typed, once; a real word kept
+  /// as typed, or a shortcut kept unexpanded, is not.
+  @Test func aKeptUnknownWordIsReportedForTheDictionary() throws {
+    let (e, _) = try engine("I use ")
+    var reported: [String] = []
+    e.onNewWord = { reported.append($0) }
+    e.replacements = ["omw": "On my way!"]
+    type("marimo ", e)  // corrected to a word the lists know
+    e.delete()
+    e.pick("marimo")
+    type("form", e, start: 20)
+    e.pick("form")
+    type("omw ", e, start: 30)
+    e.delete()
+    e.pick("omw")
+    e.character("K", now: 40)
+    type("ian", e, start: 41)
+    e.pick("Kian")
+    type("marimo ", e, start: 50)
+    #expect(reported == ["marimo", "Kian"])
+  }
+
   /// A curly apostrophe from the long press stays inside the word, as the straight one does.
   @Test func aCurlyApostropheDoesNotEndTheWord() throws {
     let (e, p) = try engine("x ")
