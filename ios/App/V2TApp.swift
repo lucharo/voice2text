@@ -266,6 +266,8 @@ struct KeyboardHandoffView: View {
       }
       .padding(.bottom, 32)
     }
+    // the session ended (timed out or turned off): the screen's "keyboard records in place" no longer holds
+    .onChange(of: dictation.state) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
   }
 }
 
