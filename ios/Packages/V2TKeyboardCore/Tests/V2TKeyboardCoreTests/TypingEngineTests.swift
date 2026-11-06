@@ -337,6 +337,14 @@ struct TypingEngineTests {
     #expect(e.revertOffer == nil && p.text == "ok local tax local tax")
   }
 
+  /// A never-correct word given with a curly apostrophe protects the straight spelling too.
+  @Test func aProtectedWordMatchesEitherApostrophe() throws {
+    let (e, p) = try engine("I ")
+    e.learned = TypingEngine.systemLexicon([("", "do’nt")]).words
+    type("do'nt ", e)
+    #expect(p.text == "I do'nt ")
+  }
+
   /// A rejected shortcut stays rejected whichever apostrophe it is typed with.
   @Test func aRejectedShortcutStaysRejectedWithEitherApostrophe() throws {
     let (e, p) = try engine("ok ")

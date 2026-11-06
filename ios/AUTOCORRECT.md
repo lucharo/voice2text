@@ -70,13 +70,15 @@ Before #114, 20 of the 31 checks passed; now all 31 do. The 11 that failed:
 | `text-replacement` | No text replacements | The user's replacements and contact names come from the system (UILexicon) |
 
 On misspellings people made (`RealTypoEval`, Wikipedia's lists, release build:
-`swift test -c release -Xswiftc -enable-testing --filter RealTypoEval`):
+`swift test -c release -Xswiftc -enable-testing --filter RealTypoEval`). Of 4,256 English and 20,227 Spanish
+entries, the scored ones are those that are not words themselves (57 and 701 real-word errors are left out) and
+whose meant word is in the keyboard's word list (77 and 3,825 are not):
 
 | Set | Fixed | Wrong word | Meant word in the bar |
 | --- | --- | --- | --- |
-| English, 4,122 misspellings, before | 83.6% | 13.1% | 88.1% |
+| English, 4,122 scored, before | 83.6% | 13.1% | 88.1% |
 | English, now | 89.6% | 8.9% | 93.4% |
-| Spanish, 15,701 misspellings, before | 89.0% | 10.0% | 91.2% |
+| Spanish, 15,701 scored, before | 89.0% | 10.0% | 91.2% |
 | Spanish, now | 91.1% | 8.2% | 93.7% |
 
 Typing 1,043 correct Tatoeba sentences per language, autocorrect changed 8 English and 220 Spanish words before,
@@ -93,6 +95,8 @@ Still different from Apple's keyboard, or unmeasured:
   rejecting a correction.
 - **Smart quotes and dashes** are left to the host field; unverified.
 - **Corrections after punctuation** cannot be reverted with delete, only after a space.
+- **A hyphen before an address** ("exmaple-site.com") still corrects its first part: a hyphen applies the
+  correction, so compound words are corrected part by part.
 
 ## Where Gboard and SwiftKey differ
 

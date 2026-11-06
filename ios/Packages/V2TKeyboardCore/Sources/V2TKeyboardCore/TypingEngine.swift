@@ -35,7 +35,10 @@ public final class TypingEngine {
   /// Keys of the word under construction, since the last word boundary.
   public private(set) var composing: [TypedKey] = []
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
-  public var learned: Set<String> = []
+  public var learned: Set<String> = [] {
+    // kept lowercase with straight apostrophes, as `learn` stores them, so either apostrophe matches
+    didSet { if learned.contains(where: { $0.contains("’") || $0 != $0.lowercased() }) { learned = Set(learned.map(Self.shortcutKey)) } }
+  }
   public var onLearn: ((String) -> Void)?
   /// Text replacements (lowercase shortcut -> phrase), as Settings > General > Keyboard > Text Replacement.
   public var replacements: [String: String] = [:]
@@ -375,7 +378,7 @@ public final class TypingEngine {
       if word, input != text {
         replacements[shortcutKey(input)] = text  // "v2t" -> "V2T" too: a change of case is a replacement
       } else {
-        words.formUnion(text.lowercased().split { !($0.isLetter || $0.isNumber || isApostrophe($0)) }.map(String.init))
+        words.formUnion(text.split { !($0.isLetter || $0.isNumber || isApostrophe($0)) }.map { shortcutKey(String($0)) })
       }
     }
     return (replacements, words)
