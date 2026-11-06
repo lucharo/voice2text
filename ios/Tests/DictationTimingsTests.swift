@@ -69,15 +69,16 @@ import Testing
     #expect(wordEdits("", "two words") == 2)
   }
 
-  @Test func summaryTakesTheMedianOfEachMode() {
+  @Test func summaryTakesTheMedianOfEachModeAveragingTheMiddlePair() {
     let runs = [
-      [CleanupRun(mode: "casual", seconds: 1.0, words: 10, wordsChanged: 1), CleanupRun(mode: "thorough", seconds: 2.0, words: 10, wordsChanged: 4)],
-      [CleanupRun(mode: "casual", seconds: 1.2, words: 20, wordsChanged: 2), CleanupRun(mode: "thorough", seconds: 2.4, words: 20, wordsChanged: 6)],
-      [CleanupRun(mode: "casual", seconds: 0.8, words: 5, wordsChanged: 0), CleanupRun(mode: "thorough", seconds: 1.6, words: 5, wordsChanged: 2)],
+      [CleanupRun(audio: 12.5, mode: "casual", seconds: 1.0, words: 10, wordsChanged: 1), CleanupRun(audio: 12.5, mode: "thorough", seconds: 2.0, words: 10, wordsChanged: 4)],
+      [CleanupRun(audio: 12.5, mode: "casual", seconds: 1.2, words: 20, wordsChanged: 2), CleanupRun(audio: 12.5, mode: "thorough", seconds: 2.4, words: 20, wordsChanged: 6)],
+      [CleanupRun(audio: 12.5, mode: "casual", seconds: 0.8, words: 5, wordsChanged: 0), CleanupRun(audio: 12.5, mode: "thorough", seconds: 1.6, words: 5, wordsChanged: 2)],
     ]
 
     #expect(CleanupComparison.summary(runs) == "casual 1.00 s, 1 words changed · thorough 2.00 s, 4 words changed")
-    #expect(CleanupComparison.csv(Array(runs.prefix(1)), audio: [12.5]) == """
+    #expect(CleanupComparison.summary(Array(runs.prefix(2))) == "casual 1.10 s, 2 words changed · thorough 2.20 s, 5 words changed")
+    #expect(CleanupComparison.csv(Array(runs.prefix(1))) == """
       dictation,audio_s,mode,cleanup_s,words,words_changed
       1,12.5,casual,1.000,10,1
       1,12.5,thorough,2.000,10,4

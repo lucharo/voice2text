@@ -238,15 +238,17 @@ import SwiftUI
       }
       text = dictionary.applyReplacements(text)
       lastText = text
+      // the text goes to the keyboard first; History is written after, so its time is not in the wait
+      if id == recording {  // otherwise kept in History, but not typed into whatever field is open now
+        defaults.set(text, forKey: DictationChannel.resultKey)
+        defaults.set(request, forKey: DictationChannel.resultIdKey)
+        DictationChannel.post(DictationChannel.changed)
+      }
       let timings = DictationTimings(
         audio: Double(samples.count) / 16_000, speech: speech.seconds, cleanup: cleanup?.seconds,
         total: (ContinuousClock.now - stoppedAt).seconds, piecesWhileRecording: pieces)
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language, timings: timings))
       dictationLog.log("text ready \(timings.summary, privacy: .public)")
-      guard id == recording else { return }  // kept in History, but not typed into whatever field is open now
-      defaults.set(text, forKey: DictationChannel.resultKey)
-      defaults.set(request, forKey: DictationChannel.resultIdKey)
-      DictationChannel.post(DictationChannel.changed)
     } catch {
       lastText = "Couldn't transcribe: \(error.localizedDescription)"
     }

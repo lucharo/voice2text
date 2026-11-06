@@ -36,6 +36,8 @@ func wordEdits(_ a: String, _ b: String) -> Int {
 
 /// One dictation cleaned in one mode.
 struct CleanupRun: Equatable, Sendable {
+  /// The dictation's length, taken when it was cleaned, so a later dictation cannot shift the rows.
+  var audio: Double?
   var mode: String
   var seconds: Double
   var words: Int
@@ -44,11 +46,13 @@ struct CleanupRun: Equatable, Sendable {
 
 enum CleanupComparison {
   /// CSV of every run: dictation index (1 = newest), its length, the mode, seconds, words in and changed.
-  static func csv(_ runs: [[CleanupRun]], audio: [Double?]) -> String {
+  static func csv(_ runs: [[CleanupRun]]) -> String {
     var out = "dictation,audio_s,mode,cleanup_s,words,words_changed\n"
     for (i, row) in runs.enumerated() {
-      let a = audio[i].map { String(format: "%.1f", $0) } ?? ""
-      for r in row { out += "\(i + 1),\(a),\(r.mode),\(String(format: "%.3f", r.seconds)),\(r.words),\(r.wordsChanged)\n" }
+      for r in row {
+        let a = r.audio.map { String(format: "%.1f", $0) } ?? ""
+        out += "\(i + 1),\(a),\(r.mode),\(String(format: "%.3f", r.seconds)),\(r.words),\(r.wordsChanged)\n"
+      }
     }
     return out
   }
@@ -58,7 +62,10 @@ enum CleanupComparison {
     let modes = runs.first?.map(\.mode) ?? []
     return modes.map { m in
       let rs = runs.compactMap { $0.first { $0.mode == m } }
-      func median(_ v: [Double]) -> Double { let s = v.sorted(); return s.isEmpty ? 0 : s[s.count / 2] }
+      func median(_ v: [Double]) -> Double {
+        let s = v.sorted(), n = s.count
+        return n == 0 ? 0 : n % 2 == 1 ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2
+      }
       return String(format: "%@ %.2f s, %.0f words changed", m, median(rs.map(\.seconds)), median(rs.map { Double($0.wordsChanged) }))
     }.joined(separator: " · ")
   }
@@ -104,7 +111,7 @@ struct CompareCleanupView: View {
         Section("Median per dictation") {
           Text(CleanupComparison.summary(runs)).monospacedDigit()
           Button("Copy results (CSV)", systemImage: "doc.on.doc") {
-            UIPasteboard.general.string = CleanupComparison.csv(runs, audio: items.prefix(runs.count).map { $0.timings?.audio })
+            UIPasteboard.general.string = CleanupComparison.csv(runs)
           }
         }
         Section("Each dictation") {
@@ -129,7 +136,7 @@ struct CompareCleanupView: View {
       for mode in [CleanupMode.casual, .strict] {
         let t0 = ContinuousClock.now
         let out = await cleaner.clean(heard, terms: terms, mode: mode)
-        row.append(CleanupRun(mode: mode == .strict ? "thorough" : "casual", seconds: (ContinuousClock.now - t0).seconds,
+        row.append(CleanupRun(audio: d.timings?.audio, mode: mode == .strict ? "thorough" : "casual", seconds: (ContinuousClock.now - t0).seconds,
                               words: heard.split(separator: " ").count, wordsChanged: wordEdits(heard, out)))
       }
       runs.append(row)
