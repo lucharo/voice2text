@@ -295,6 +295,13 @@ struct KeyboardHandoffView: View {
   var body: some View {
     Group { if neededModel { modelNeeded } else { handoff } }
       .onAppear { neededModel = !dictation.canDictate }
+      // the model can fail to load after this screen appeared (damaged files): stop telling the user to keep
+      // talking, and show Try again instead
+      .onChange(of: dictation.engineState) { _, state in
+        guard case .failed = state, !neededModel else { return }
+        if dictation.state == .listening { dictation.stop() }
+        neededModel = true
+      }
   }
 
   private var modelNeeded: some View {
