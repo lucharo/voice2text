@@ -55,6 +55,10 @@ iOS gives keyboards no microphone, so the app records:
 4. The keyboard's recording view and the app name the microphone in use ("iPhone Microphone", a wired headset).
    The session records from the iPhone's own microphone even with AirPods connected, so Bluetooth headphones stay
    in music mode and other apps' audio plays at its usual level. Not yet checked on a phone.
+5. While you talk, the app transcribes what you have said so far in pieces of up to 14.9 s, each cut at the quietest
+   moment near its 12 s mark (the Mac app's rule), so when you tap the mic again only the last piece is left. A
+   dictation under 14.9 s is transcribed whole, as before (#112). Each dictation logs its timing under category
+   `dictation`: how long speech took after Stop, and how many pieces were transcribed while you talked.
 
 ### Which model this iPhone gets
 

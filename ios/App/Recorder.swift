@@ -9,6 +9,8 @@ protocol AudioSource: AnyObject, Sendable {
   func coolDown()
   func begin()
   func end() -> [Float]
+  /// The current recording's samples from `offset` on (empty past its end), for transcribing while recording.
+  func captured(from offset: Int) -> [Float]
   /// Root-mean-square of the latest audio while recording, 0 otherwise.
   var level: Float { get }
   /// The input the session records from, nil when it is off.
@@ -98,6 +100,11 @@ final class Recorder: AudioSource, @unchecked Sendable {
     return out
   }
 
+  func captured(from offset: Int) -> [Float] {
+    lock.lock(); defer { lock.unlock() }
+    return capturing && offset < samples.count ? Array(samples[max(0, offset)...]) : []
+  }
+
   private func append(_ buffer: AVAudioPCMBuffer) {
     lock.lock(); let on = capturing; lock.unlock()
     guard on, let converter else { return }
@@ -138,6 +145,12 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
   func coolDown() { running = false }
   func begin() { began = Date() }
   func end() -> [Float] { began = nil; return samples }
+  /// The part of the clip a microphone would have delivered by now.
+  func captured(from offset: Int) -> [Float] {
+    guard let began else { return [] }
+    let end = min(samples.count, Int(Date().timeIntervalSince(began) * 16_000))
+    return offset < end ? Array(samples[max(0, offset)..<end]) : []
+  }
   /// The clip's level at the time since begin(), looping, so the keyboard's waveform moves in UI tests.
   var level: Float {
     guard let began, !samples.isEmpty else { return 0 }
