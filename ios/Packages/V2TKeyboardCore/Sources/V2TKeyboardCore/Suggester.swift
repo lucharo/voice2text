@@ -39,6 +39,14 @@ public final class Suggester: @unchecked Sendable {
   public var minCompletionPrefix = 2
   public var beamWidth = 48
   public var maxEdits = 2
+  /// A letter typed in place of another that is not next to it on the keyboard: a spelling slip
+  /// ("absorbtion", "accomadation") rather than a touch that landed off its key. Infinity turns it off.
+  /// Tuned on RealTypoEval's Wikipedia misspellings (RealTypoTuning): off fixed 83.6% of the English ones
+  /// and 89.0% of the Spanish; 5 to 8 all fixed 87 to 90% and 91%; 4 and below, or 10, lost the gain.
+  public var substitutionPenalty: Double = 7
+  /// The same between two vowels, the commonest slip ("seperate", "definate"): 5 beat 7 by 1.5 points on
+  /// the English misspellings and matched it on the Spanish.
+  public var vowelSubstitutionPenalty: Double = 5
   /// Typed in lowercase, a capitalised entry (a name: "Ford" for "doed") is less likely meant.
   public var properNounPenalty: Double = 2.0
   /// Nats a correction must beat the word as typed by before autocorrect applies it.
@@ -223,6 +231,8 @@ public final class Suggester: @unchecked Sendable {
     return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
 
+  static let vowels: Set<UInt8> = Set("aeiou".utf8)
+
   func prior(_ f: Int) -> Double { frequencyWeight * (Double(f) / 255 - 1) }
 
   func search(_ typed: [TypedKey]) -> [State] {
@@ -244,6 +254,13 @@ public final class Suggester: @unchecked Sendable {
           if !r.isEmpty { next.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + cost, edits: s.edits)) }
         }
         guard s.edits < maxEdits else { continue }
+        let kids = lex.children(s.prefix, in: s.range)
+        // another letter than the touch's key or its neighbours
+        let hitVowel = Self.vowels.contains(h)
+        for (x, r) in kids where !options.contains(where: { $0.0 == x }) {
+          let cost = hitVowel && Self.vowels.contains(x) ? vowelSubstitutionPenalty : substitutionPenalty
+          if cost < .infinity { next.append(State(lex: s.lex, range: r, prefix: s.prefix + [x], cost: s.cost + cost, edits: s.edits + 1)) }
+        }
         // this touch was a mistake: skip it
         next.append(State(lex: s.lex, range: s.range, prefix: s.prefix, cost: s.cost + editPenalty, edits: s.edits + 1))
         // two letters swapped ("becuase"): take the next one first, then this one
@@ -255,9 +272,9 @@ public final class Suggester: @unchecked Sendable {
         }
         // a letter was missed before this touch
         if s.prefix.count >= 1 {
-          for x in UInt8(97)...UInt8(122) {
+          for (x, xr) in kids {
             let p = s.prefix + [x, h]
-            let r = lex.prefixRange(p, in: s.range)
+            let r = lex.prefixRange(p, in: xr)
             // a doubled letter typed once ("helo", "tomorow") is the commonest miss, so it costs half
             let cost = x == s.prefix.last ? editPenalty * 0.5 : editPenalty
             if !r.isEmpty { next.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + cost, edits: s.edits + 1)) }

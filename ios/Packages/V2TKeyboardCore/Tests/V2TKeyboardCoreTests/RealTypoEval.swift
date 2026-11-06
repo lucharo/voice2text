@@ -14,8 +14,15 @@ import Testing
 /// The misspellings were typed on physical keyboards, so the taps here are at the key centres of the letters
 /// as misspelt: the measure is the language side of autocorrect, not the touch model.
 ///
-/// Print the table: `swift test --filter RealTypoEval 2>&1 | grep '^realtypo'`.
+/// It runs in an optimised build only (a debug build takes over half an hour on the whole sets):
+/// `swift test -c release -Xswiftc -enable-testing --filter RealTypoEval 2>&1 | grep '^realtypo'`.
 enum RealTypoEval {
+  #if DEBUG
+  static let optimised = false
+  #else
+  static let optimised = true
+  #endif
+
   static let dir = ProcessInfo.processInfo.environment["V2T_MISSPELLING_DIR"].map { URL(fileURLWithPath: $0) }
     ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../../../build/misspellings").standardized
 
@@ -119,7 +126,8 @@ enum RealTypoEval {
 }
 
 struct RealTypoEvalTests {
-  @Test func realMisspellingsAndRealText() throws {
+  @Test(.enabled(if: RealTypoEval.optimised, "slow in a debug build: run swift test -c release -Xswiftc -enable-testing --filter RealTypoEval"))
+  func realMisspellingsAndRealText() throws {
     let en = try Fixtures.english.get(), es = try Fixtures.spanish.get()
     let enLayout = KeyboardLayout(width: 402, language: .english), esLayout = KeyboardLayout(width: 402, language: .spanish)
     let rows = [
@@ -146,5 +154,56 @@ struct RealTypoEvalTests {
       print("realtypo-changed | \(r.name) | \(r.changedExamples)")
     }
     print("realtypo-latency | key + bar + bold slot, Mac | \(RealTypoEval.stats(keyTimes)) over \(keyTimes.count) keys")
+    // floors a couple of points under the measured values (2026-11-05), so a regression fails
+    func share(_ a: Int, _ n: Int) -> Double { 100 * Double(a) / Double(max(1, n)) }
+    #expect(share(rows[0].fixed, rows[0].scored) >= 87.5, "English misspellings fixed")
+    #expect(share(rows[0].wrong, rows[0].scored) <= 10.5, "English misspellings made a wrong word")
+    #expect(share(rows[1].fixed, rows[1].scored) >= 89.5, "Spanish misspellings fixed")
+    #expect(share(rows[1].wrong, rows[1].scored) <= 9.5, "Spanish misspellings made a wrong word")
+    #expect(share(text[0].changed, text[0].words) <= 0.5, "correct English words changed")
+    #expect(share(text[1].changed, text[1].words) <= 2.5, "correct Spanish words changed")
+    #expect(share(text[2].changed, text[2].words) <= 0.5, "correct English words changed with Spanish on")
+  }
+}
+
+/// RealTypoEval's misspelling rows under other autocorrect weights, off by default:
+///
+///     V2T_TYPO_TUNE='off:sub=inf,vow=inf;s5:sub=5,vow=3.5' \
+///       swift test -c release -Xswiftc -enable-testing --filter RealTypoTuning
+///
+/// Keys: sub/vow the substitution penalties, edit the skip/insert penalty, margin the autocorrect margin,
+/// fw the frequency weight, pn the proper-noun penalty, edits the most edits.
+struct RealTypoTuning {
+  static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
+
+  @Test(.enabled(if: spec != nil))
+  func table() throws {
+    let en = try Fixtures.english.get(), es = try Fixtures.spanish.get()
+    let enLayout = KeyboardLayout(width: 402, language: .english), esLayout = KeyboardLayout(width: 402, language: .spanish)
+    let enRows = try RealTypoEval.misspellings("en"), esRows = try RealTypoEval.misspellings("es")
+    for item in Self.spec!.split(separator: ";") {
+      let parts = item.split(separator: ":", maxSplits: 1)
+      func make(_ lex: [Lexicon], _ layout: KeyboardLayout) -> Suggester {
+        let s = Suggester(lexicons: lex, layout: layout)
+        for kv in parts.count > 1 ? parts[1].split(separator: ",") : [] {
+          let p = kv.split(separator: "="), v = p[1] == "inf" ? Double.infinity : Double(p[1])!
+          switch p[0] {
+          case "sub": s.substitutionPenalty = v
+          case "vow": s.vowelSubstitutionPenalty = v
+          case "edit": s.editPenalty = v
+          case "margin": s.autocorrectMargin = v
+          case "fw": s.frequencyWeight = v
+          case "pn": s.properNounPenalty = v
+          case "edits": s.maxEdits = Int(v)
+          default: Issue.record("unknown key \(p[0])")
+          }
+        }
+        return s
+      }
+      for r in [RealTypoEval.misspellingRow("EN", enRows, suggester: make([en], enLayout), context: "I think the "),
+                RealTypoEval.misspellingRow("ES", esRows, suggester: make([es], esLayout), context: "Creo que el ")] {
+        print("typotune | \(parts[0]) | \(r.name) | fixed \(RealTypoEval.pct(r.fixed, r.scored)) | wrong \(RealTypoEval.pct(r.wrong, r.scored)) | top-3 \(RealTypoEval.pct(r.top3, r.scored))")
+      }
+    }
   }
 }

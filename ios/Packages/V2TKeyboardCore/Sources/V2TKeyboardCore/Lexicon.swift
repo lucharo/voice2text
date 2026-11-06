@@ -117,6 +117,22 @@ public final class Lexicon: @unchecked Sendable {
     return lo..<hi
   }
 
+  /// The letters that follow `prefix` in `range` (whose entries all start with `prefix`), each with the range
+  /// of entries it leads to: one binary search per letter that exists, rather than one per letter a-z.
+  public func children(_ prefix: [UInt8], in range: Range<Int>) -> [(letter: UInt8, range: Range<Int>)] {
+    let depth = prefix.count
+    var lo = range.lowerBound
+    while lo < range.upperBound, keyLength(lo) == depth { lo += 1 }  // the prefix itself sorts first
+    var out: [(letter: UInt8, range: Range<Int>)] = []
+    while lo < range.upperBound {
+      let b = withKey(lo) { $0[depth] }
+      let r = prefixRange(prefix + [b], in: lo..<range.upperBound)
+      out.append((b, r))
+      lo = r.upperBound
+    }
+    return out
+  }
+
   /// Entries whose key equals `key` exactly (several words can share one key: "como", "cómo").
   public func exactRange(_ key: [UInt8]) -> Range<Int> {
     let p = prefixRange(key)
