@@ -11,6 +11,13 @@ import SwiftUI
   @Published private(set) var warmUntil: Date?
   /// The input the warm session records from, also sent to the keyboard; nil when the session is off.
   @Published private(set) var microphone: Microphone?
+
+  /// The speech model's files are on the device (downloaded only when the user asks, #124).
+  @Published private(set) var modelOnDevice = false
+  /// Bytes the model takes on the device, its compiled copy included.
+  @Published private(set) var modelBytes: Int64 = 0
+  /// Why deleting the model or the history failed, shown under the button.
+  @Published private(set) var storageError: String?
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
 
@@ -19,6 +26,7 @@ import SwiftUI
   let history: History
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
+  private let store: ModelStore
   private let recorder: AudioSource
   private static func defaultRecorder() -> AudioSource {
     guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
@@ -54,6 +62,7 @@ import SwiftUI
     self.history = history
     self.dictionary = dictionary
     self.engine = SpeechEngine(speech: recommendation.speech)
+    self.store = .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech))
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
@@ -62,6 +71,7 @@ import SwiftUI
     routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
       MainActor.assumeIsolated { self?.publishMicrophone() }
     }
+    refreshModelStorage()
   }
 
   private func publishMicrophone() {
@@ -78,6 +88,40 @@ import SwiftUI
   }
 
   // MARK: model
+
+  /// Re-reads whether the model is on the device and its size, and tells the keyboard: without the model, its
+  /// mic key opens v2t, which offers the download, instead of recording something it cannot transcribe.
+  func refreshModelStorage() {
+    modelOnDevice = store.isOnDevice
+    modelBytes = store.bytes
+    defaults.set(!modelOnDevice, forKey: DictationChannel.modelMissingKey)
+  }
+
+  /// At launch: loads the model if it is on the device; never starts a download (#124).
+  func loadModelIfOnDevice() async {
+    refreshModelStorage()
+    guard modelOnDevice else { return }
+    await prepareModel()
+  }
+
+  var canDeleteModel: Bool {
+    modelOnDevice && !engineState.isPreparing && state != .listening && state != .transcribing
+  }
+
+  /// Deletes the model's files and its compiled copy; dictation then needs a new download.
+  func deleteModel() async {
+    guard canDeleteModel else { return }
+    storageError = nil
+    await engine.unload()
+    engineState = .notDownloaded
+    do { try store.delete() } catch { storageError = "Couldn't delete the model: \(error.localizedDescription)" }
+    refreshModelStorage()
+  }
+
+  func clearHistory() {
+    storageError = nil
+    do { try history.clear() } catch { storageError = "Couldn't clear History: \(error.localizedDescription)" }
+  }
 
   func prepareModel() async {
     guard engineState != .ready else { return }
@@ -104,6 +148,7 @@ import SwiftUI
     } catch {
       engineState = .failed(error.localizedDescription)
     }
+    refreshModelStorage()
   }
 
   // MARK: session
@@ -169,12 +214,14 @@ import SwiftUI
   /// user can swipe back and keep talking.
   func handleKeyboardLaunch() {
     cameFromKeyboard = true
+    guard modelOnDevice else { return }  // the hand-off screen offers the download instead
     if !recorder.running { warmUp() }
     start()
   }
 
   func start() {
     guard state == .idle || state == .needsApp else { return }
+    guard modelOnDevice else { return }  // nothing to transcribe with: the keyboard opens the app instead
     if !recorder.running { warmUp() }
     guard recorder.running else { return }
     recording += 1
@@ -228,7 +275,11 @@ import SwiftUI
     // only the latest recording owns the state: a reset session may already be listening again
     defer { if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
-    if engineState != .ready { await prepareModel() }
+    if engineState != .ready {
+      // load a model that is on the device, but never download one behind the user's back
+      guard store.isOnDevice else { lastText = "Couldn't transcribe: the speech model is not on this \(recommendation.deviceName)."; return }
+      await prepareModel()
+    }
     do {
       let raw: String
       var pieces = 0

@@ -60,6 +60,18 @@ struct DictationTimings: Codable, Equatable, Sendable {
     try save()
   }
 
+  /// Deletes every dictation and the file that held them.
+  func clear() throws {
+    items = []
+    if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+  }
+
+  /// The bytes the history file takes; dictations are kept as text only, never audio.
+  var bytes: Int64 {
+    let v = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+    return Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
+  }
+
   private func save() throws {
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     try JSONEncoder.v2t.encode(items).write(to: file, options: [.atomic, .completeFileProtection])

@@ -57,6 +57,22 @@ actor SpeechEngine {
     }
   }
 
+  /// Drops the loaded model, before its files are deleted.
+  func unload() {
+    nemotron = nil
+    nemotronLanguage = nil
+    parakeet = nil
+    state = .notDownloaded
+  }
+
+  /// Where FluidAudio keeps this model's downloaded files (its default under Application Support).
+  static func modelFolder(for speech: Recommendation.Speech) -> URL {
+    switch speech {
+    case .nemotron: MLModelConfigurationUtils.defaultModelsDirectory(for: UnifiedConfig(family: .nemotronMultilingual(.en)).family.repo)
+    case .parakeet: AsrModels.defaultCacheDirectory(for: .v3)
+    }
+  }
+
   /// 16 kHz mono samples to text.
   func transcribe(_ samples: [Float], language: String) async throws -> String {
     switch speech {

@@ -1,0 +1,41 @@
+import Foundation
+
+/// The speech model's files on the device: whether they are there, how much space they take, and deleting them.
+/// FluidAudio keeps downloads under Application Support/FluidAudio/Models; Core ML keeps its compiled copy for the
+/// Neural Engine in the app's Caches (com.apple.e5rt.e5bundlecache), which grows with every reinstall.
+struct ModelStore: Sendable {
+  /// The folder holding the downloaded files of the model this device uses.
+  let modelFolder: URL
+  /// Every folder that belongs to speech models (all downloads and the compiled copy), measured and deleted together.
+  let folders: [URL]
+
+  static func forDevice(modelFolder: URL) -> ModelStore {
+    let bundle = Bundle.main.bundleIdentifier ?? "es.luischav.v2t"
+    return ModelStore(modelFolder: modelFolder, folders: [
+      URL.applicationSupportDirectory.appending(path: "FluidAudio/Models"),
+      URL.cachesDirectory.appending(path: "\(bundle)/com.apple.e5rt.e5bundlecache"),
+    ])
+  }
+
+  /// True when the model's folder holds files: downloaded, or partly downloaded (a load completes the rest).
+  var isOnDevice: Bool { Self.bytes(in: modelFolder) > 0 }
+
+  /// Bytes the model takes on the device, its compiled copy included.
+  var bytes: Int64 { folders.reduce(0) { $0 + Self.bytes(in: $1) } }
+
+  func delete() throws {
+    for f in folders where FileManager.default.fileExists(atPath: f.path) { try FileManager.default.removeItem(at: f) }
+  }
+
+  /// The size on disk of every file under `url`, 0 when it does not exist.
+  static func bytes(in url: URL) -> Int64 {
+    let keys: [URLResourceKey] = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey]
+    guard let walk = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys) else { return 0 }
+    var total: Int64 = 0
+    for case let file as URL in walk {
+      guard let v = try? file.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+      total += Int64(v.totalFileAllocatedSize ?? v.fileSize ?? 0)
+    }
+    return total
+  }
+}

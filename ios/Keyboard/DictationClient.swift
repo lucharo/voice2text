@@ -27,6 +27,13 @@ import UIKit
   func detach() { observer = nil }
 
   func toggle() {
+    // no speech model yet (or deleted): open v2t, which offers the download, rather than record for nothing
+    if defaults.bool(forKey: DictationChannel.modelMissingKey), state == .idle || state == .needsApp {
+      newRequest()
+      openApp()
+      onState?(state)
+      return
+    }
     switch state {
     case .idle:
       newRequest()
