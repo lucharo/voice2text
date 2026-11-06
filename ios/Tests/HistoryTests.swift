@@ -47,4 +47,25 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: file.path()))
     #expect(try String(contentsOf: file.appendingPathExtension("unreadable"), encoding: .utf8) == "not json")
   }
+
+  @Test func clearDeletesEveryDictationAndTheFile() throws {
+    let history = History(file: file)
+    try history.add(dictation("one", 1_000))
+    try history.add(dictation("two", 2_000))
+
+    try history.clear()
+
+    #expect(history.items == [])
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    #expect(History(file: file).items == [])
+  }
+
+  @Test func bytesIsZeroWithoutAFileAndGrowsWithDictations() throws {
+    let history = History(file: file)
+    #expect(history.bytes == 0)
+
+    try history.add(dictation("a sentence someone said", 1_000))
+
+    #expect(history.bytes > 0)
+  }
 }
