@@ -56,8 +56,8 @@ section shows what your device got and why, and says so when your iPhone model i
    session is now on, so your first dictation records without the trip to the app described below.
 
 <figure markdown>
-  ![The v2t app's setup list: the keyboard added, Full Access allowed and the speech model ready](images/iphone/setup.png){ width="320" }
-  <figcaption>Setup done. Simulator screenshot, build 3.</figcaption>
+  ![The v2t app's setup list with all three rows ticked: the keyboard is on, it last opened with Full Access, and the speech model is ready](images/iphone/setup.png){ width="340" }
+  <figcaption>Setup done. All screenshots on this page: build 3 in the iPhone Simulator.</figcaption>
 </figure>
 
 ## Dictate
@@ -68,6 +68,11 @@ When no microphone session is on, the v2t app itself opens, because iOS gives ke
 microphone. It is already listening: go back to your app (tap ◀ at the top left, or swipe right
 along the bottom edge) and keep talking. iOS gives v2t no way to send you back. From then on the
 microphone session stays on, and the mic key records without leaving your app.
+
+<figure markdown>
+  ![The v2t app's Listening screen: go back to your app and keep talking, then tap Done on the v2t keyboard; a Stop and stay here button at the bottom](images/iphone/handoff.png){ width="300" }
+  <figcaption>What the first mic tap of a session opens.</figcaption>
+</figure>
 
 ```mermaid
 sequenceDiagram
@@ -85,10 +90,16 @@ While you talk, a waveform and a timer cover the keys. Tap **Done** to finish: t
 then, and the keyboard shows "Transcribing…" before it types the text. **Cancel** stops without
 typing anything, though v2t still saves the dictation in History.
 
+<div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
-  ![The v2t keyboard while recording: a live waveform, a timer, and Cancel and Done buttons](images/iphone/recording.png){ width="320" }
-  <figcaption>Recording. Simulator screenshot, build 3.</figcaption>
+  ![The v2t keyboard: suggestion bar, letter keys, and a bottom row of 123, globe, space, the v2t mic key and return](images/iphone/keyboard.png){ width="320" }
+  <figcaption>The v2t mic key, left of return.</figcaption>
 </figure>
+<figure markdown>
+  ![The v2t keyboard while recording: a waveform and a timer cover the keys, with Cancel and Done buttons at the bottom](images/iphone/recording.png){ width="320" }
+  <figcaption>Recording: Cancel or Done.</figcaption>
+</figure>
+</div>
 
 ### The microphone session
 
@@ -104,12 +115,7 @@ typing anything, though v2t still saves the dictation in History.
 
 ```mermaid
 flowchart LR
-    R[Your recording] --> S[Speech model, on the device]
-    S --> C{Cleanup on?}
-    C -- yes --> AI[Apple Intelligence: punctuation, fillers]
-    C -- no --> D
-    AI --> D[Dictionary replacements]
-    D --> T[Typed in your app and saved in History]
+    R[Recording] --> S[Speech model] --> C[Cleanup, if on] --> D[Replacements] --> T[Typed and in History]
 ```
 
 - **Cleanup** runs only on a device that can run Apple Intelligence, with Apple Intelligence turned
@@ -125,6 +131,11 @@ flowchart LR
   before cleanup and replacements changed them. Touch and hold an entry to copy it; swipe left to
   delete.
 - **Speech language**: English, Español, or Detect.
+
+<figure markdown>
+  ![History with one dictation: Testing the V2T keyboard on the iPhone Simulator, with Heard: Testing the V2T keyboard on the simulator underneath](images/iphone/history.png){ width="340" }
+  <figcaption>A dictation in History. A replacement (simulator becomes iPhone Simulator) changed it, so the Heard line shows the original.</figcaption>
+</figure>
 
 ## Typing
 

@@ -47,10 +47,10 @@ On one iPhone 16 Pro, in a separate benchmark app rather than v2t itself (Octobe
 Open ASR Leaderboard's way. Words wrong, the wait for the text after you stop, and how long the model
 took to load the first time:
 
-| Model | Which devices get it | LibriSpeech clean | LibriSpeech other | FLEURS Spanish | Wait after you stop (median) | First load |
-|---|---|--:|--:|--:|--:|--:|
-| Nemotron-Labs Unified ASR 0.6B, int8 | those that can run Apple Intelligence | 1.7% | 3.4% | 3.4% | 105 ms | 18 s |
-| Parakeet TDT 0.6B v3 | the rest | 1.9% | 3.9% | 4.1% | 103 ms | 24 s |
+| Model (who gets it) | LibriSpeech clean | LibriSpeech other | FLEURS Spanish | Wait after you stop (median) | First load |
+|---|--:|--:|--:|--:|--:|
+| Nemotron-Labs Unified ASR 0.6B, int8 (devices that can run Apple Intelligence) | 1.7% | 3.4% | 3.4% | 105 ms | 18 s |
+| Parakeet TDT 0.6B v3 (the rest) | 1.9% | 3.9% | 4.1% | 103 ms | 24 s |
 
 The Parakeet row was measured on the iPhone 16 Pro too; the older iPhones that get it have not been
 tested. v2t's own timings on a phone have not been measured, and cleanup adds its time on top.
