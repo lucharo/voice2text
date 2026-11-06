@@ -63,7 +63,7 @@ section shows what your device got and why, and says so when your iPhone model i
 
 ## Dictate
 
-Tap the v2t mic key, the one with the red waveform (on the iPhone, to the left of return).
+Tap the red v2t mic key (on the iPhone, to the left of return).
 
 When no microphone session is on, the v2t app itself opens, because iOS gives keyboards no
 microphone. It is already listening: go back to your app (tap ◀ at the top left, or swipe right
@@ -88,14 +88,15 @@ sequenceDiagram
 ```
 
 While you talk, a waveform, a timer and the name of the microphone in use cover the keys. Tap
-**Done** to finish: the keyboard shows "Transcribing…", then types the text. A dictation over about
+**Done** to finish: the keyboard shows "Transcribing…", then "Cleaning up…" if cleanup is on, then
+types the text. A dictation over about
 15 seconds is transcribed in pieces while you talk, so only the last piece is left after Done.
 **Cancel** stops without typing anything, though v2t still saves the dictation in History.
 
 <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
-  ![The v2t keyboard: suggestion bar with the hide chevron at its right end, letter keys, and a bottom row of 123, globe, emoji, space with v2t in its corner, the mic key with its red waveform, and return](images/iphone/keyboard.png){ width="320" }
-  <figcaption>The mic key, with its red waveform, left of return. The Simulator draws no iOS globe below the keys, so v2t shows its own here.</figcaption>
+  ![The v2t keyboard: suggestion bar with the hide chevron at its right end, letter keys, and a bottom row of 123, globe, emoji, space with v2t in its corner, the red mic key with a white waveform, and return](images/iphone/keyboard.png){ width="320" }
+  <figcaption>The red mic key, left of return. The Simulator draws no iOS globe below the keys, so v2t shows its own here.</figcaption>
 </figure>
 <figure markdown>
   ![The v2t keyboard while recording: a waveform, a timer and the microphone's name cover the keys, with Cancel and Done buttons at the bottom](images/iphone/recording.png){ width="320" }
@@ -107,9 +108,11 @@ While you talk, a waveform, a timer and the name of the microphone in use cover 
 
 - iOS shows the orange microphone dot while the session is on. v2t keeps only what you say between
   tapping the mic and tapping Done or Cancel; it records and saves nothing else.
-- v2t records from the iPhone's own microphone, even with AirPods connected, so music in other apps
-  keeps playing as it would without v2t. The app shows **Recording from** and the microphone's name
-  under **Mic ready for the keyboard**. This has not been checked on a phone yet.
+- **Microphone**, under the mic switch, picks where v2t records from. **This iPhone** (the default)
+  uses the phone's own microphone even with AirPods connected, so music in other apps keeps playing
+  as it would without v2t. **Connected headset** uses AirPods or a wired headset; with AirPods, music
+  drops to call quality while the session is on. The app and the recording view show the
+  microphone's name. None of this has been checked on a phone yet.
 - The session turns off 15 minutes after your last dictation. Change that under **Languages and
   typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
   yourself, as below.
@@ -134,7 +137,8 @@ flowchart LR
   off. The file format is the Mac app's, so you can paste your Mac dictionary into **Edit as text**.
 - **History** lists your dictations on this device, newest first. A **Heard:** line shows the words
   before cleanup and replacements changed them. Touch and hold an entry to copy it; swipe left to
-  delete.
+  delete. Each entry also keeps how long the dictation took; the stopwatch menu copies those timings
+  and opens **Compare cleanup**.
 - **Speech language**: English, Español, or Detect.
 
 <figure markdown>
@@ -152,7 +156,11 @@ when you hold the space bar and slide. Their settings are under **Languages and 
 - **Emoji:** on Face ID iPhones the emoji key sits after 123, where Apple's keyboard has it, and
   opens v2t's emoji panel; long-press an emoji for skin tones and tap **ABC** to go back. iOS's own
   globe below the keys switches keyboards. Where iOS draws no globe (iPads, Touch ID iPhones), v2t
-  shows its own globe with the emoji key after it.
+  shows its own globe with the emoji key after it. The panel has a **Search Emoji** field, and while
+  you type, the suggestion bar's last slot offers the word's emoji (🍕 after "pizza").
+- **Words you keep:** when autocorrect changes a word and you take yours back (delete, then tap it
+  in the bar), v2t adds it to your dictionary if no word list knows it. Autocorrect then leaves it
+  alone, and cleanup spells it too. Delete a typo kept by mistake in **Dictionary**.
 - **Hide the keyboard** with the chevron at the right end of the suggestion bar (on the iPad, the
   hide key in the bottom row).
 
