@@ -47,8 +47,8 @@ public final class TypingEngine {
   public private(set) var lastCorrection: (original: String, replacement: String)? {
     didSet { if lastCorrection == nil { correctionThenMark = nil } }
   }
-  /// The full stop or plus sign typed straight after an autocorrect: a letter next means the word was part of
-  /// an address ("exmaple.com", "teh+tag@example.com"), so the correction is undone.
+  /// The full stop, plus sign or colon typed straight after an autocorrect: a letter or an address mark next
+  /// means the word was part of an address ("exmaple.com", "teh+tag@", "https://"), so it is undone.
   private var correctionThenMark: String?
   /// Set after a delete removed the space after an autocorrect: the bar offers `original` to revert to.
   public private(set) var revertOffer: String? { didSet { if revertOffer == nil { revertPhrase = nil } } }
@@ -111,7 +111,7 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    correctionThenMark = corrected && [".", "+"].contains(s) ? s : nil
+    correctionThenMark = corrected && [".", "+", ":"].contains(s) ? s : nil
     if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
@@ -223,7 +223,7 @@ public final class TypingEngine {
     let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed && !typed.map(\.word).contains($0.word) }
     if let r = pendingReplacement {
       // a text replacement takes the middle slot, beside the shortcut as typed
-      return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r }.prefix(1)
+      return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r && $0.word != literal }.prefix(1)
     }
     return typed + rest
   }
@@ -343,7 +343,7 @@ public final class TypingEngine {
     return word
   }
 
-  /// A correction followed by "." or "+" turned out to be inside an address: put the word back as typed.
+  /// A correction followed by ".", "+" or ":" turned out to be inside an address: put the word back as typed.
   func undoCorrectionBeforeMark() {
     defer { correctionThenMark = nil }
     guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }

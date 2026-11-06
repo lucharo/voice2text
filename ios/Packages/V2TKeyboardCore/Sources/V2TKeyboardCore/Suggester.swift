@@ -147,7 +147,7 @@ public final class Suggester: @unchecked Sendable {
     // a real word, as typed, stays, unless it is a rare spelling of a common word with an apostrophe or
     // accent ("cant", "ano") or an i that should be I ("i'm"); a missing accent or apostrophe on a non-word
     // ("cancion", "dont") is corrected below
-    if isWord(literal) { return markedVariant(of: literal) }
+    if isWord(literal) { return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) }
     // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
     for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
       if isWord(String(literal.dropLast(suffix.count))) { return nil }

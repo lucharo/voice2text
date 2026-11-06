@@ -391,6 +391,35 @@ struct TypingEngineTests {
     #expect(bar.first == "do’nt" && !bar.contains("don't") && bar.count == Set(bar).count, "\(bar)")
   }
 
+  /// A shortcut that is also a URL scheme expands at the colon, and goes back when the address goes on.
+  @Test func aSchemeShortcutGoesBackInAnAddress() throws {
+    let (e, p) = try engine("see ")
+    e.replacements = ["https": "https://example.com"]
+    type("https", e)
+    e.character(":", now: 50)
+    e.character("/", now: 51)
+    #expect(p.text == "see https:/")
+  }
+
+  /// A capitalised rare word mid-sentence is a name, not cant missing its apostrophe.
+  @Test func aCapitalisedRareWordMidSentenceStays() throws {
+    let (e, p) = try engine("I know ")
+    e.character("C", now: 50)  // type() taps lowercase keys
+    type("ant ", e, start: 60)
+    #expect(p.text == "I know Cant ")
+  }
+
+  /// A curly-apostrophe shortcut shows once beside its phrase.
+  @Test func aCurlyShortcutShowsOnceBesideItsPhrase() throws {
+    let (e, _) = try engine("I ")
+    e.replacements = ["don't": "do not"]
+    type("don", e)
+    e.character("’", now: 50)
+    type("t", e, start: 60)
+    let bar = e.suggestions().map(\.word)
+    #expect(bar.prefix(2) == ["don’t", "do not"] && bar.count == Set(bar).count, "\(bar)")
+  }
+
   /// An address mark after a corrected word's plus sign ("teh+_tag") puts the word back too.
   @Test func anAddressMarkAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")
