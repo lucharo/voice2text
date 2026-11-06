@@ -18,6 +18,7 @@ final class SuggestionBar: UIView {
   private let dismiss = UIButton(type: .system)
   private let dismissDivider = UIView()
   private var words: [String] = []
+  private let emojiFont = EmojiFont()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -68,7 +69,13 @@ final class SuggestionBar: UIView {
       let sug = ordered[i]
       let title = sug.kind == .typed && ordered.count > 1 ? "“\(sug.word)”" : sug.word
       s.setTitle(title, for: .normal)
-      s.titleLabel?.font = .systemFont(ofSize: 17, weight: pending != nil && sug.word == pending ? .semibold : .regular)
+      if sug.kind == .emoji {
+        // a private emoji font, renewed like the panel's, so emoji offered while typing don't pile up decoded
+        if emojiFont.note(sug.word) { emojiFont.renew() }
+        s.titleLabel?.font = emojiFont.font(size: 24)
+      } else {
+        s.titleLabel?.font = .systemFont(ofSize: 17, weight: pending != nil && sug.word == pending ? .semibold : .regular)
+      }
       s.isEnabled = true
     }
   }

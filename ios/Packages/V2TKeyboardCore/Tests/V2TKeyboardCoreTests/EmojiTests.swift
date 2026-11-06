@@ -166,3 +166,111 @@ struct EmojiTests {
     #expect(p.text == "Hi ")
   }
 }
+
+/// Emoji search and the bar's emoji, from the bundled keywords (CLDR 47 annotations, English and Spanish).
+struct EmojiIndexTests {
+  static func load(_ lang: String) -> Result<EmojiIndex, Error> {
+    Result {
+      try EmojiIndex(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .appending(path: "../../../../Keyboard/emoji-keywords-\(lang).txt").standardized)
+    }
+  }
+  static let index = load("en")
+  static let spanish = load("es")
+
+  @Test func aWordNamesItsEmojiFirstAndAccentsAndCapitalsDoNotMatter() throws {
+    let i = try Self.index.get()
+    let es = try Self.spanish.get()
+    #expect(i.count == 7207)
+    #expect(es.count == 6283)
+    #expect(i.emoji(for: "spain") == ["🇪🇸"])  // flags come from CLDR's derived annotations
+    #expect(es.emoji(for: "España") == ["🇪🇸"])
+    #expect(i.emoji(for: "pie") == ["🥧"])  // one file per language: "pie" is a foot in Spanish
+    #expect(es.emoji(for: "pie") == ["🦶"])
+    #expect(i.search("united king").first == "🇬🇧")
+    #expect(i.emoji(for: "pizza").first == "🍕")
+    #expect(i.emoji(for: "Pizza").first == "🍕")
+    #expect(es.emoji(for: "perro").prefix(2) == ["🐕", "🐶"])
+    #expect(es.emoji(for: "corazón") == es.emoji(for: "corazon"))
+    #expect(!es.emoji(for: "corazon").isEmpty)
+    #expect(i.emoji(for: "pizz") == [])  // whole words only
+    #expect(i.emoji(for: "pizzas").first == "🍕")  // plurals fall back to the singular
+    #expect(es.emoji(for: "perros").prefix(2) == ["🐕", "🐶"])
+    #expect(i.emoji(for: "") == [])
+  }
+
+  @Test func searchFindsPrefixesThenEveryWord() throws {
+    let i = try Self.index.get()
+    #expect(i.search("pizz").first == "🍕")
+    #expect(i.search("thumbs u").first == "👍")
+    // no keyword begins "cat smil": the emoji both words find
+    #expect(Set(i.search("cat smil")) == ["😺", "😸", "😼", "😻"])
+    #expect(i.search("zzzz") == [])
+    #expect(i.search("a", limit: 10).count == 10)
+  }
+
+  @Test func parsesASmallFileAndSkipsComments() {
+    let i = EmojiIndex(data: Data("# c\nbee\t🐝\ncat\t🐈 😺\ncats\t🐈\n".utf8))
+    #expect(i.count == 3)
+    #expect(i.emoji(for: "cat") == ["🐈", "😺"])
+    #expect(i.search("ca") == ["🐈", "😺"])
+    #expect(i.emoji(for: "cats") == ["🐈"])  // the last line, without its newline
+    #expect(i.emoji(for: "dog") == [])
+  }
+}
+
+/// The bar's emoji while typing.
+struct EmojiSuggestionTests {
+  func engine(_ start: String = "", spanish: Bool = false) throws -> (TypingEngine, FakeProxy) {
+    let p = FakeProxy()
+    p.text = start
+    let lex = spanish ? try Fixtures.spanish.get() : try Fixtures.english.get()
+    let layout = KeyboardLayout(width: 402, language: spanish ? .spanish : .english)
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [lex], layout: layout))
+    e.emojiIndexes = ["en": try EmojiIndexTests.index.get(), "es": try EmojiIndexTests.spanish.get()]
+    e.resync()
+    return (e, p)
+  }
+
+  /// Only the suggestion languages' keywords count: "pie" is 🥧 to an English typist, a foot to a Spanish one.
+  @Test func theBarsEmojiFollowsTheLanguage() throws {
+    let (en, _) = try engine("I baked a ")
+    for ch in "pie" { en.character(String(ch)) }
+    #expect(en.emojiSuggestion == "🥧")
+    let (es, _) = try engine("Me duele el ", spanish: true)
+    for ch in "pie" { es.character(String(ch)) }
+    #expect(es.emojiSuggestion == "🦶")
+  }
+
+  @Test func theBarOffersTheWordsEmojiInItsLastSlot() throws {
+    let (e, _) = try engine("I want ")
+    for ch in "pizza" { e.character(String(ch)) }
+    let bar = e.suggestions()
+    #expect(bar.count == 3)
+    #expect(bar.last == Suggestion(word: "🍕", kind: .emoji, score: 0))
+  }
+
+  @Test func pickingTheEmojiReplacesTheWord() throws {
+    let (e, p) = try engine("I want ")
+    for ch in "pizza" { e.character(String(ch)) }
+    e.pick("🍕")
+    #expect(p.text == "I want 🍕 ")
+    #expect(e.composing.isEmpty)
+  }
+
+  @Test func shortWordsAndWordsWithNoEmojiGetNone() throws {
+    let (e, _) = try engine("x ")
+    for ch in "ok" { e.character(String(ch)) }
+    #expect(e.emojiSuggestion == nil)
+    e.space(now: 1)
+    for ch in "the" { e.character(String(ch)) }  // a word, but no emoji's keyword
+    #expect(!e.suggestions().contains { $0.kind == .emoji })
+  }
+
+  @Test func aTypoGetsTheEmojiOfItsCorrection() throws {
+    let (e, _) = try engine("I want ")
+    for ch in "pizzs" { e.character(String(ch)) }
+    #expect(e.pendingAutocorrection == "pizzas")  // no keyword of its own: its singular names 🍕
+    #expect(e.emojiSuggestion == "🍕")
+  }
+}

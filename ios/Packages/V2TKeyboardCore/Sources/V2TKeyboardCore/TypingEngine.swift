@@ -45,6 +45,9 @@ public final class TypingEngine {
   public var onNewWord: ((String) -> Void)?
   /// Text replacements (lowercase shortcut -> phrase), as Settings > General > Keyboard > Text Replacement.
   public var replacements: [String: String] = [:]
+  /// The emoji keywords by language ("en", "es"); the bar offers the emoji a word names, as Apple's does for
+  /// "pizza" or "love". Empty leaves the bar words only.
+  public var emojiIndexes: [String: EmojiIndex] = [:]
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
@@ -234,7 +237,27 @@ public final class TypingEngine {
       // a text replacement takes the middle slot, beside the shortcut as typed
       return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r && $0.word != literal }.prefix(1)
     }
-    return typed + rest
+    guard let e = emojiSuggestion else { return typed + rest }
+    // the emoji takes the last slot, as on Apple's bar
+    return Array((typed + rest).prefix(2)) + [Suggestion(word: e, kind: .emoji, score: 0)]
+  }
+
+  /// The emoji the bar offers for the word being typed (or the word autocorrect would make of it), when it
+  /// is at least three letters long and names one, in the language being written: English "pie" is 🥧,
+  /// Spanish "pie" a foot. Only the suggestion languages' keywords count.
+  public var emojiSuggestion: String? {
+    guard !emojiIndexes.isEmpty, !composing.isEmpty, revertOffer == nil else { return nil }
+    let languages = suggester.lexicons.map(\.language)
+    let first = [suggester.languagePrior.recentLanguage, suggester.layout.language.rawValue].compactMap { $0 }
+    var order: [String] = []
+    for l in first + languages where languages.contains(l) && !order.contains(l) { order.append(l) }
+    func emoji(_ word: String) -> String? {
+      guard word.count >= 3 else { return nil }
+      for l in order { if let e = emojiIndexes[l]?.emoji(for: word).first { return e } }
+      return nil
+    }
+    // the word as typed first: the correction is a beam search, only run when the word itself names nothing
+    return emoji(literal) ?? pendingAutocorrection.flatMap(emoji)
   }
 
   /// Suggestions spelled with the apostrophe the user typed ("i’m": I’m), so a tap writes what space would,
@@ -263,7 +286,8 @@ public final class TypingEngine {
   /// The words before the one being typed.
   public var context: TypingContext { TypingContext(before: String(before.dropLast(composing.count))) }
 
-  /// The user tapped a suggestion: it replaces the word, followed by a space.
+  /// The user tapped a suggestion: it replaces the word, followed by a space. The bar's emoji replaces the
+  /// word the same way, as Apple's does.
   public func pick(_ word: String) {
     let replacing: Int
     if let s = lastSwipe { replacing = s.word.count } else if revertOffer == word, let ph = revertPhrase, before.hasSuffix(ph) { replacing = ph.count } else { replacing = composing.count }
