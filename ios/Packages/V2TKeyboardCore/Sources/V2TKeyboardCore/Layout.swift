@@ -3,7 +3,11 @@ import Foundation
 
 public enum KeyAction: Hashable, Sendable {
   case character(String)
-  case shift, delete, space, returnKey, mic, emoji
+  case shift, delete, space, returnKey, mic
+  /// Opens v2t's emoji panel, in the slot of Apple's emoji key.
+  case emoji
+  /// The globe: hands over to the next keyboard. Only when iOS draws no globe of its own below the keyboard.
+  case nextKeyboard
   /// iPad only: hides the keyboard, as Apple's bottom-right key does.
   case dismiss
   /// The 13-inch iPad keyboard only: a tab character, and caps lock in one tap.
@@ -112,6 +116,10 @@ public struct KeyboardLayout: Sendable {
   /// The currency mark on the numbers page: the region's (£ in the UK) on the English layout, as Apple's
   /// keyboard does; € on the Spanish one.
   public let currency: String
+  /// The bottom row has a globe key before the emoji key: iOS asks for one (`needsInputModeSwitchKey`) when it
+  /// draws no globe below the keyboard itself (Touch ID iPhones, iPads). Without it the emoji key takes the
+  /// globe's slot, as on Apple's keyboard on Face ID iPhones.
+  public let nextKeyboardKey: Bool
   public let metrics: Metrics
   public let keys: [Key]
   /// Width of one letter key.
@@ -122,8 +130,9 @@ public struct KeyboardLayout: Sendable {
   public var height: CGFloat { metrics.height }
 
   public init(width: CGFloat, page: KeyboardPage = .letters, language: KeyboardLanguage = .english,
-              form: KeyboardForm = .phone, landscape: Bool = false, currency: String? = nil) {
+              form: KeyboardForm = .phone, landscape: Bool = false, currency: String? = nil, nextKeyboardKey: Bool = true) {
     self.width = width
+    self.nextKeyboardKey = nextKeyboardKey
     self.page = page
     self.language = language
     self.form = form
@@ -139,9 +148,9 @@ public struct KeyboardLayout: Sendable {
     self.metrics = m
     let (keys, u): ([Key], CGFloat)
     switch form {
-    case .phone: (keys, u) = Self.buildPhone(width: width, page: page, language: language, currency: currency, m: m)
-    case .padFull where page == .letters: (keys, u) = Self.buildFull(width: width, language: language, m: m)
-    case .pad, .padFull: (keys, u) = Self.buildPad(width: width, page: page, language: language, currency: currency, m: m)
+    case .phone: (keys, u) = Self.buildPhone(width: width, page: page, language: language, currency: currency, m: m, globe: nextKeyboardKey)
+    case .padFull where page == .letters: (keys, u) = Self.buildFull(width: width, language: language, m: m, globe: nextKeyboardKey)
+    case .pad, .padFull: (keys, u) = Self.buildPad(width: width, page: page, language: language, currency: currency, m: m, globe: nextKeyboardKey)
     }
     self.keys = keys
     self.unitWidth = u
@@ -178,7 +187,7 @@ public struct KeyboardLayout: Sendable {
     }
   }
 
-  static func buildPhone(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics) -> ([Key], CGFloat) {
+  static func buildPhone(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics, globe: Bool) -> ([Key], CGFloat) {
     let sideInset = m.sideInset, gap = m.gap, keyHeight = m.keyHeight
     func y(_ row: Int) -> CGFloat { m.topInset + CGFloat(row) * m.rowPitch }
     let u = (width - 2 * sideInset - 9 * gap) / 10
@@ -212,11 +221,12 @@ public struct KeyboardLayout: Sendable {
     keys.append(Key(id: sw.id, action: sw.action, label: sw.label, frame: CGRect(x: sideInset, y: y(2), width: side, height: keyHeight), alternatives: [], row: 2))
     keys.append(Key(id: "delete", action: .delete, label: "delete", frame: CGRect(x: width - sideInset - side, y: y(2), width: side, height: keyHeight), alternatives: [], row: 2))
 
-    // bottom row as Apple's iOS 27 keyboard: page switch, next keyboard, space, mic, return
+    // bottom row as Apple's iOS 27 keyboard: page switch, emoji (after the globe when iOS asks for one), space,
+    // mic, return
     let small = 1.2 * u, ret = 1.6 * u
     var x = sideInset
     let pageKey: (KeyAction, String) = page == .letters ? (.page(.numbers), "123") : (.page(.letters), "ABC")
-    for (id, action, label, w) in [("page", pageKey.0, pageKey.1, small), ("emoji", KeyAction.emoji, "next keyboard", small)] {
+    for (id, action, label, w) in [("page", pageKey.0, pageKey.1, small)] + Self.switchKeys(globe: globe, small) {
       keys.append(Key(id: id, action: action, label: label, frame: CGRect(x: x, y: y(3), width: w, height: keyHeight), alternatives: [], row: 3))
       x += w + gap
     }
@@ -228,9 +238,9 @@ public struct KeyboardLayout: Sendable {
   }
 
   /// Apple's iPad keyboard: an 11.45-unit grid. Top row ten keys and delete; middle row indented, then
-  /// return; third row a shift at each end around the letters and , and . ; bottom row next keyboard, page
-  /// switch, mic, space, page switch, hide keyboard.
-  static func buildPad(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics) -> ([Key], CGFloat) {
+  /// return; third row a shift at each end around the letters and , and . ; bottom row next keyboard and
+  /// emoji, page switch, mic, space, page switch, hide keyboard.
+  static func buildPad(width: CGFloat, page: KeyboardPage, language: KeyboardLanguage, currency: String, m: Metrics, globe: Bool) -> ([Key], CGFloat) {
     let s = m.sideInset, g = m.gap, h = m.keyHeight
     func y(_ row: Int) -> CGFloat { m.topInset + CGFloat(row) * m.rowPitch }
     let u = (width - 2 * s - 10 * g) / 11.45
@@ -266,8 +276,7 @@ public struct KeyboardLayout: Sendable {
     let sw = pageSwitch(page)
     row(2, from: s, [(sw.id, sw.action, sw.label, u, [])] + chars(r[2]) + [("\(sw.id)-right", sw.action, sw.label, nil, [])])
     let pageKey: (KeyAction, String) = page == .letters ? (.page(.numbers), ".?123") : (.page(.letters), "ABC")
-    row(3, from: s, [
-      ("emoji", .emoji, "next keyboard", u, []),
+    row(3, from: s, Self.switchKeys(globe: globe, u).map { ($0.0, $0.1, $0.2, $0.3, []) } + [
       ("page", pageKey.0, pageKey.1, 1.45 * u, []),
       ("mic", .mic, "mic", u, []),
       ("space", .space, language == .spanish ? "espacio" : "space", nil, []),
@@ -282,7 +291,7 @@ public struct KeyboardLayout: Sendable {
   /// Shift types a key's second mark as on a hardware keyboard (1 gives !). Spanish follows Apple's Spanish
   /// layout without its ´ and ` dead keys (accents come from long-press and autocorrect, as on the other
   /// layouts); @ and + take their place on the tab row.
-  static func buildFull(width: CGFloat, language: KeyboardLanguage, m: Metrics) -> ([Key], CGFloat) {
+  static func buildFull(width: CGFloat, language: KeyboardLanguage, m: Metrics, globe: Bool) -> ([Key], CGFloat) {
     let s = m.sideInset, g = m.gap, h = m.keyHeight
     func y(_ row: Int) -> CGFloat { m.topInset + CGFloat(row) * m.rowPitch }
     let u = (width - 2 * s - 13 * g) / 14.6  // the number row: 13 character keys and a 1.6-unit delete
@@ -318,8 +327,7 @@ public struct KeyboardLayout: Sendable {
     row(1, [("tab", .tab, "tab", nil, nil)] + chars(tabRow))
     row(2, [("capslock", .capsLock, "caps lock", 1.9 * u, nil)] + chars(homeRow) + [("return", .returnKey, es ? "intro" : "return", nil, nil)])
     row(3, [("shift", .shift, "shift", (es ? 1.4 : 2.4) * u, nil)] + chars(bottomRow) + [("shift-right", .shift, "shift", nil, nil)])
-    row(4, [
-      ("emoji", .emoji, "next keyboard", 1.6 * u, nil),
+    row(4, Self.switchKeys(globe: globe, 1.6 * u).map { ($0.0, $0.1, $0.2, $0.3, nil) } + [
       ("page", .page(.numbers), ".?123", 1.6 * u, nil),
       ("mic", .mic, "mic", 1.3 * u, nil),
       ("space", .space, es ? "espacio" : "space", nil, nil),
@@ -327,6 +335,13 @@ public struct KeyboardLayout: Sendable {
       ("dismiss", .dismiss, "hide keyboard", 1.6 * u, nil),
     ])
     return (keys, u)
+  }
+
+  /// The bottom row's globe (when iOS asks for one) and emoji keys, each `w` wide. Apple's own keyboard has one
+  /// key for both, since its emoji keyboard is one of the keyboards the globe cycles through; v2t's emoji
+  /// panel is not, so it needs a key of its own.
+  static func switchKeys(globe: Bool, _ w: CGFloat) -> [(String, KeyAction, String, CGFloat)] {
+    (globe ? [("globe", KeyAction.nextKeyboard, "next keyboard", w)] : []) + [("emoji", KeyAction.emoji, "emoji", w)]
   }
 
   /// The key a touch at `p` belongs to: its row by the midpoint between rows, then the horizontally nearest

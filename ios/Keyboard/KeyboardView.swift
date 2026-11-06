@@ -171,7 +171,8 @@ final class KeyboardView: UIView {
     case .space: "space"
     case .returnKey: returnLabel
     case .mic: "dictate"
-    case .emoji: "next keyboard"
+    case .emoji: "emoji"
+    case .nextKeyboard: "next keyboard"
     case .dismiss: "hide keyboard"
     case .tab: "tab"
     case .capsLock: shift == .locked ? "caps lock on" : "caps lock"
@@ -186,7 +187,8 @@ final class KeyboardView: UIView {
     case .delete: "delete.left"
     case .returnKey where returnLabel == "return" || returnLabel == "intro": "return.left"
     case .mic: "mic"
-    case .emoji: "globe"
+    case .emoji: "face.smiling"
+    case .nextKeyboard: "globe"
     case .dismiss: "keyboard.chevron.compact.down"
     case .tab: "arrow.right.to.line"
     case .capsLock: shift == .locked ? "capslock.fill" : "capslock"
@@ -209,7 +211,8 @@ final class KeyboardView: UIView {
     case .space: return ("", 16)  // Apple's space bar carries no label
     case .returnKey: return (returnLabel, layout.form.isPad ? 20 : 16)
     case .mic: return ("🎙", 19)
-    case .emoji: return ("🌐", 19)  // next keyboard, until v2t has its own emoji page
+    case .emoji: return ("☺", 19)
+    case .nextKeyboard: return ("🌐", 19)
     case .dismiss: return ("⌨", 19)
     case .tab: return ("⇥", 20)
     case .capsLock: return ("⇪", 20)

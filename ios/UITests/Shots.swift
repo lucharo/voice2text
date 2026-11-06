@@ -14,12 +14,20 @@ extension XCTestCase {
     }
   }
 
-  /// typeText drives Apple's keyboard, so hand over from v2t's with its globe key when v2t's is up.
+  /// typeText drives Apple's keyboard, so hand over from v2t's when v2t's is up.
   @MainActor func typeWithAppleKeyboard(_ text: String, into field: XCUIElement, app: XCUIApplication) {
     field.tap()
-    let v2tGlobe = app.descendants(matching: .any)["key.emoji"]
-    if v2tGlobe.waitForExistence(timeout: 2) { v2tGlobe.tap() }
+    if app.descendants(matching: .any)["key.space"].waitForExistence(timeout: 2) { leaveV2TKeyboard(app) }
     field.typeText(text)
+  }
+
+  /// Hands over from v2t's keyboard to the next one: with v2t's own globe key where it has one (iPads, Touch
+  /// ID iPhones), else with the globe iOS draws below the keyboard (Face ID iPhones, where v2t's slot holds
+  /// its emoji key).
+  @MainActor func leaveV2TKeyboard(_ app: XCUIApplication) {
+    let v2tGlobe = app.descendants(matching: .any)["key.globe"]
+    if v2tGlobe.exists { v2tGlobe.tap(); return }
+    app.buttons["Next keyboard"].firstMatch.tap()
   }
 
   /// Swipes `app`'s main list up until `element` can be tapped (at most six swipes).

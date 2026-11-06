@@ -99,6 +99,7 @@ targets:
       # the keyboard's key area, compiled in so its iPad layouts can be rendered off-screen (no iPad Simulator)
       - Keyboard/KeyboardView.swift
       - Keyboard/V2TMark.swift
+      - Keyboard/EmojiPanel.swift
     dependencies:
       - target: V2T
       - package: V2TKeyboardCore

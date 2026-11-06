@@ -42,4 +42,16 @@ import V2TKeyboardCore
       try png.write(to: URL(fileURLWithPath: dir).appending(path: "\(name).png"))
     }
   }
+
+  /// The iPad's bottom row with v2t's globe and emoji keys (iOS asks every iPad keyboard for a globe), and
+  /// with the emoji key alone, as it would be if iOS drew a globe below the iPad keyboard.
+  @Test(arguments: [("70-ipad-11in-globe-and-emoji", true), ("71-ipad-11in-emoji-only", false)])
+  func rendersTheIPadEmojiKey(name: String, globe: Bool) throws {
+    let layout = KeyboardLayout(width: 834, form: .pad, nextKeyboardKey: globe)
+    let png = try #require(Self.render(layout).pngData())
+    #expect(png.count > 20_000, "\(name): \(png.count) bytes")
+    if let dir = ProcessInfo.processInfo.environment["V2T_SHOTS"] {
+      try png.write(to: URL(fileURLWithPath: dir).appending(path: "\(name).png"))
+    }
+  }
 }
