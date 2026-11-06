@@ -254,6 +254,41 @@ struct TypingEngineTests {
     #expect(p.text == "ok omw ")
   }
 
+  /// After delete offers the shortcut back, the phrase is not a word being typed: space leaves it alone,
+  /// and the bar shows the phrase beside the shortcut before it expands.
+  @Test func aReplacementPhraseIsNotRetypedAsAWord() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["aw": "a way"]
+    type("aw", e)
+    #expect(e.suggestions().prefix(2).map(\.word) == ["aw", "a way"])
+    type(" ", e, start: 10)
+    #expect(p.text == "ok a way ")
+    e.delete()
+    #expect(e.composing.isEmpty && e.suggestions().first?.word == "aw")
+    type(" ", e, start: 20)
+    #expect(p.text == "ok a way ")
+  }
+
+  /// A plus sign after a corrected word, then a letter: an email tag ("teh+tag@"), so the word goes back.
+  @Test func aLetterAfterAPlusUndoesItsCorrection() throws {
+    let (e, p) = try engine("mail ")
+    type("teh", e)
+    e.character("+", now: 50)
+    #expect(p.text == "mail the+")
+    type("tag", e, start: 60)
+    e.character("@", now: 70)
+    #expect(p.text == "mail teh+tag@")
+  }
+
+  /// "i’m" takes the capital and keeps the curly apostrophe typed.
+  @Test func iContractionsKeepTheirApostrophe() throws {
+    let (e, p) = try engine("and ")
+    type("i", e)
+    e.character("’", now: 50)
+    type("m ", e, start: 60)
+    #expect(p.text == "and I’m ")
+  }
+
   /// A curly apostrophe from the long press stays inside the word, as the straight one does.
   @Test func aCurlyApostropheDoesNotEndTheWord() throws {
     let (e, p) = try engine("x ")

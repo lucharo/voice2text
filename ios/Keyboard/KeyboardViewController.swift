@@ -152,11 +152,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   /// UILexicon entries as (shortcut -> phrase) replacements, keyed lowercase, and the words of every entry
-  /// typed as written (names, phrases with no shortcut).
+  /// typed as written (names, phrases with no shortcut). Shortcuts with other marks are left out.
   static func split(_ entries: [(input: String, text: String)]) -> ([String: String], Set<String>) {
     var replacements: [String: String] = [:], words = Set<String>()
     for (input, text) in entries {
-      if !input.isEmpty, input.lowercased() != text.lowercased(), !input.contains(" ") {
+      // a shortcut the engine can see as one word (letters, digits, apostrophes): ";em" or "@@" never reach it
+      let word = !input.isEmpty && input.allSatisfy { $0.isLetter || $0.isNumber || $0 == "'" || $0 == "’" }
+      if word, input.lowercased() != text.lowercased() {
         replacements[input.lowercased()] = text
       } else {
         words.formUnion(text.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init))

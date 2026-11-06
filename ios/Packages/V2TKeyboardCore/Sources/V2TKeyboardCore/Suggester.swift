@@ -176,7 +176,10 @@ public final class Suggester: @unchecked Sendable {
     let lower = Self.straightApostrophes(literal.lowercased())
     let key = Lexicon.fold(literal)
     if lower.hasPrefix("i'"), literal.first == "i" {
-      for lex in lexicons { for i in lex.exactRange(key) where lex.word(i).lowercased() == lower && lex.word(i).hasPrefix("I'") { return lex.word(i) } }
+      // the capital only: a curly apostrophe typed stays ("i’m" -> "I’m")
+      for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower && lex.word($0).hasPrefix("I'") }) {
+        return "I" + literal.dropFirst()
+      }
     }
     guard literal.allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }  // marks the user typed stay
     var typed = -1, best: (word: String, frequency: Int)?

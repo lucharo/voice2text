@@ -42,13 +42,16 @@ public final class TypingEngine {
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
-    didSet { if lastCorrection == nil { correctionThenDot = false } }
+    didSet { if lastCorrection == nil { correctionThenMark = nil } }
   }
-  /// A full stop typed straight after an autocorrect: a letter next means the word was part of an address
-  /// ("exmaple.com"), so the correction is undone.
-  private var correctionThenDot = false
+  /// The full stop or plus sign typed straight after an autocorrect: a letter next means the word was part of
+  /// an address ("exmaple.com", "teh+tag@example.com"), so the correction is undone.
+  private var correctionThenMark: String?
   /// Set after a delete removed the space after an autocorrect: the bar offers `original` to revert to.
-  public private(set) var revertOffer: String?
+  public private(set) var revertOffer: String? { didSet { if revertOffer == nil { revertLength = 0 } } }
+  /// While `revertOffer` stands for a phrase (a text replacement: "On my way!"), the characters picking the
+  /// original deletes; the phrase is not a word to keep typing, so it is not put back into `composing`.
+  private var revertLength = 0
   /// We put a space after a suggestion, swipe or correction; punctuation typed next pulls it back.
   private var autoSpace = false
   private var lastSwipe: (word: String, alternatives: [String])?
@@ -70,12 +73,12 @@ public final class TypingEngine {
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
-      if correctionThenDot, let c = lastCorrection, before.hasSuffix(c.replacement + ".") {
+      if let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) {
         // "exmaple." then "c": an address, not a sentence end; put the word back as typed
-        for _ in 0..<(c.replacement.count + 1) { proxy.deleteBackward() }
-        proxy.insertText(c.original + ".")
+        for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
+        proxy.insertText(c.original + m)
       }
-      correctionThenDot = false
+      correctionThenMark = nil
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
@@ -105,8 +108,8 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    correctionThenDot = corrected && s == "."
-    if !correctionThenDot { lastCorrection = nil }
+    correctionThenMark = corrected && [".", "+"].contains(s) ? s : nil
+    if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
   }
@@ -143,8 +146,12 @@ public final class TypingEngine {
     revertOffer = nil
     if let c = lastCorrection, before.hasSuffix(c.replacement + " ") {
       proxy.deleteBackward()
-      composing = c.replacement.map { TypedKey($0) }
       revertOffer = c.original
+      if c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
+        composing = c.replacement.map { TypedKey($0) }
+      } else {
+        revertLength = c.replacement.count
+      }
       autoSpace = false
       refreshShift()
       return
@@ -206,6 +213,10 @@ public final class TypingEngine {
     }
     let all = suggester.suggestions(for: composing, context: context, limit: 3)
     let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed }
+    if let r = pendingReplacement {
+      // a text replacement takes the middle slot, beside the shortcut as typed
+      return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r }.prefix(1)
+    }
     return typed + rest
   }
 
@@ -227,7 +238,7 @@ public final class TypingEngine {
   /// The user tapped a suggestion: it replaces the word, followed by a space.
   public func pick(_ word: String) {
     let replacing: Int
-    if let s = lastSwipe { replacing = s.word.count } else { replacing = composing.count }
+    if let s = lastSwipe { replacing = s.word.count } else if revertOffer == word, revertLength > 0 { replacing = revertLength } else { replacing = composing.count }
     for _ in 0..<replacing { proxy.deleteBackward() }
     if revertOffer == word || word == literal { learn(word) }
     proxy.insertText(word + " ")
@@ -314,9 +325,15 @@ public final class TypingEngine {
   /// field's autocorrect setting and the learned words apply, as in commitWord. The bar bolds this word.
   public var pendingAutocorrection: String? {
     guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
-    if let r = replacements[Suggester.straightApostrophes(literal.lowercased())] { return r }
+    if let r = pendingReplacement { return r }
     guard let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
     return fix
+  }
+
+  /// The user's text replacement for the word being typed, if it is a shortcut.
+  var pendingReplacement: String? {
+    guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
+    return replacements[Suggester.straightApostrophes(literal.lowercased())]
   }
 
   /// The word being typed is part of a web or email address, an @handle or a #hashtag: what is joined to it
