@@ -68,7 +68,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     flow.minimumInteritemSpacing = 0
     grid = UICollectionView(frame: .zero, collectionViewLayout: flow)
     super.init(frame: .zero)
-    backgroundColor = Palette.background
+    backgroundColor = .clear  // the keyboard's glass, as behind the keys (the controller hides the keys)
     accessibilityIdentifier = "v2t.emoji"
 
     header.font = .systemFont(ofSize: 12, weight: .semibold)

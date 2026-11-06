@@ -21,12 +21,18 @@ final class KeyboardView: UIView {
   /// The user tapped shift (rather than a sentence start): number keys show and type their second marks.
   var shiftManual = false { didSet { if shiftManual != oldValue { relabel() } } }
   var returnLabel = "return" { didSet { relabel() } }
+  /// How the mic key stands out from the other keys (#111).
+  var micStyle = MicKeyStyle.standard { didSet { if micStyle != oldValue { rebuild() } } }
+  /// The app's microphone session is on, so the mic key records without leaving the host app.
+  var micWarm = false { didSet { if micWarm != oldValue { rebuild() } } }
 
   private var keyLayers: [String: CALayer] = [:]
   private var keyElements: [KeyElement] = []
   /// SF Symbol glyphs for special keys, kept apart from the text layers (a CATextLayer redraws over contents).
   private var symbolLayers: [String: CALayer] = [:]
   private var labelLayers: [String: CATextLayer] = [:]
+  /// The small "v2t" in the space bar's bottom-right corner, where Apple's keyboard names its language.
+  private(set) var brandLayer: CATextLayer?
   private let preview = PreviewLayer()
   private let trail = CAShapeLayer()
 
@@ -83,17 +89,30 @@ final class KeyboardView: UIView {
     }
   }
 
+  /// A key's resting colour: the mic key's depends on its style.
+  private func keyColor(_ k: Key) -> UIColor {
+    if k.action == .mic, micStyle.redKey(warm: micWarm) { return Palette.record }
+    return isSpecial(k) ? Palette.specialKey : Palette.key
+  }
+
+  /// The mic key's waveform colour: red on the plain key when its style says so, white on the red key.
+  private func micGlyphColor() -> UIColor {
+    if micStyle.redKey(warm: micWarm) { return .white }
+    return micStyle.redGlyph(warm: micWarm) ? Palette.record : .label
+  }
+
   private func rebuild() {
     keyLayers.values.forEach { $0.removeFromSuperlayer() }
     keyLayers = [:]
     labelLayers = [:]
     symbolLayers = [:]
+    brandLayer = nil
     let scale = window?.screen.scale ?? UIScreen.main.scale
     for k in layout.keys {
       let l = CALayer()
       l.frame = k.frame
       l.cornerRadius = 8.5
-      l.backgroundColor = (isSpecial(k) ? Palette.specialKey : Palette.key).resolvedColor(with: traitCollection).cgColor
+      l.backgroundColor = keyColor(k).resolvedColor(with: traitCollection).cgColor
       l.shadowColor = UIColor.black.cgColor
       l.shadowOpacity = 0.12
       l.shadowRadius = 0
@@ -107,6 +126,7 @@ final class KeyboardView: UIView {
       sym.contentsGravity = .center
       l.addSublayer(sym)
       symbolLayers[k.id] = sym
+      if k.action == .space { l.addSublayer(makeBrand(in: k.frame.size, scale: scale)) }
       layer.insertSublayer(l, below: trail)
       keyLayers[k.id] = l
       labelLayers[k.id] = t
@@ -121,6 +141,21 @@ final class KeyboardView: UIView {
       return e
     }
     relabel()
+  }
+
+  /// Small and secondary, like the language name Apple's space bar shows; not an accessibility element (the
+  /// key is still read as "space").
+  private func makeBrand(in size: CGSize, scale: CGFloat) -> CATextLayer {
+    let b = CATextLayer()
+    b.contentsScale = scale
+    b.string = "v2t"
+    b.font = UIFont.systemFont(ofSize: 11, weight: .medium)
+    b.fontSize = 11
+    b.alignmentMode = .right
+    b.foregroundColor = UIColor.secondaryLabel.resolvedColor(with: traitCollection).cgColor
+    b.frame = CGRect(x: 0, y: size.height - 18, width: size.width - 9, height: 14)
+    brandLayer = b
+    return b
   }
 
   override var accessibilityElements: [Any]? { get { keyElements } set {} }
@@ -140,7 +175,7 @@ final class KeyboardView: UIView {
       let (text, size) = label(for: k)
       if let symbol = symbol(for: k), let sym = symbolLayers[k.id] {
         t.string = nil
-        let img = k.action == .mic ? V2TMark.glyph(height: 20, color: UIColor.label.resolvedColor(with: traitCollection)) : Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
+        let img = k.action == .mic ? V2TMark.glyph(height: 20, color: micGlyphColor().resolvedColor(with: traitCollection)) : Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
         sym.contents = img.cgImage
         sym.contentsScale = img.scale
         sym.frame = CGRect(origin: .zero, size: k.frame.size)
@@ -224,7 +259,7 @@ final class KeyboardView: UIView {
     guard let l = keyLayers[k.id] else { return }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    l.backgroundColor = (on ? Palette.pressed : (isSpecial(k) ? Palette.specialKey : Palette.key)).resolvedColor(with: traitCollection).cgColor
+    l.backgroundColor = (on ? Palette.pressed : keyColor(k)).resolvedColor(with: traitCollection).cgColor
     CATransaction.commit()
   }
 
@@ -410,16 +445,39 @@ final class KeyboardView: UIView {
   private func setTrackpad(_ on: Bool) {
     for t in labelLayers.values { t.opacity = on ? 0 : 1 }
     for t in symbolLayers.values { t.opacity = on ? 0 : 1 }
+    brandLayer?.opacity = on ? 0 : 1
   }
 }
 
+/// How the mic key stands out from the other keys (#111: "more distinctive, perhaps red for recording").
+/// Luis picks one; `standard` is the one the keyboard ships with.
+enum MicKeyStyle: String, CaseIterable {
+  /// A: the waveform in red on the normal key.
+  case redGlyph = "A"
+  /// B: a red key with a white waveform.
+  case redKey = "B"
+  /// C: the normal key, with the waveform turning red while the app's mic session is on (a tap records in
+  /// place); a tap on the grey one opens v2t first.
+  case redWhenWarm = "C"
+
+  static let standard = MicKeyStyle.redGlyph
+
+  func redKey(warm: Bool) -> Bool { self == .redKey }
+  func redGlyph(warm: Bool) -> Bool { self == .redGlyph || (self == .redWhenWarm && warm) }
+}
+
 enum Palette {
-  // Apple's iOS 27 keyboard, sampled from a Simulator screenshot (light): every key white on rgb(224, 226, 232),
-  // pressed keys rgb(197, 198, 204). Dark values are not yet sampled.
-  static let key = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
+  // Apple's iOS 27 keyboard, sampled from Simulator screenshots: keys white in light mode and rgb(68-70) in dark
+  // mode, pressed keys rgb(197, 198, 204) in light mode.
+  static let key = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.27, alpha: 1) : .white }
   static let specialKey = key
-  static let pressed = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.30, alpha: 1) : UIColor(red: 197 / 255, green: 198 / 255, blue: 204 / 255, alpha: 1) }
-  static let background = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.17, alpha: 1) : UIColor(red: 224 / 255, green: 226 / 255, blue: 232 / 255, alpha: 1) }
+  static let pressed = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : UIColor(red: 197 / 255, green: 198 / 255, blue: 204 / 255, alpha: 1) }
+  /// The mic key's red, Apple's record red.
+  static let record = UIColor.systemRed
+  /// What the system's keyboard glass looks like behind the keys over a plain page (sampled: rgb(224, 226, 232)
+  /// light, rgb(32-34) dark), for off-screen renders only. On screen the keyboard draws no background of its
+  /// own, so the glass shows through as it does behind Apple's keys.
+  static let background = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.13, alpha: 1) : UIColor(red: 224 / 255, green: 226 / 255, blue: 232 / 255, alpha: 1) }
 }
 
 /// The balloon above a pressed key, and the row of long-press alternatives.

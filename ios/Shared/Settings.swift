@@ -65,6 +65,13 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue, forKey: "previewGlobeKey") }
   }
 
+  /// UI tests only: how the keyboard draws its mic key ("A", "B", "C", or "C-warm" for C with the mic session
+  /// on), so each style can be screenshotted. The app clears it on every launch.
+  var previewMicStyle: String? {
+    get { defaults.string(forKey: "previewMicStyle") }
+    set { defaults.set(newValue, forKey: "previewMicStyle") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }

@@ -33,7 +33,7 @@ final class RecordingPanel: UIView {
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    backgroundColor = Palette.background
+    backgroundColor = .clear  // the keyboard's glass, as behind the keys (the controller hides the keys)
     wave.fillColor = UIColor.label.cgColor
     layer.addSublayer(wave)
     status.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
