@@ -26,7 +26,7 @@ struct PadLayoutTests {
     #expect(row(en, 0).map(\.label) == "qwertyuiop".map(String.init) + ["delete"])
     #expect(row(en, 1).map(\.label) == "asdfghjkl".map(String.init) + ["return"])
     #expect(row(en, 2).map(\.label) == ["shift"] + "zxcvbnm,.".map(String.init) + ["shift"])
-    #expect(row(en, 3).map(\.id) == ["emoji", "page", "mic", "space", "page-right", "dismiss"])
+    #expect(row(en, 3).map(\.id) == ["globe", "emoji", "page", "mic", "space", "page-right", "dismiss"])
     let es = KeyboardLayout(width: 834, language: .spanish, form: .pad)
     #expect(row(es, 1).map(\.label) == "asdfghjklñ".map(String.init) + ["intro"])
   }

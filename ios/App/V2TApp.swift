@@ -14,6 +14,7 @@ import V2TKeyboardCore
     }
     let env = ProcessInfo.processInfo.environment
     Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
+    Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
@@ -144,6 +145,7 @@ struct WarmRow: View {
       VStack(alignment: .leading, spacing: 2) {
         Text("Mic ready for the keyboard")
         Text(subtitle).font(.footnote).foregroundStyle(.secondary)
+        if let mic = dictation.microphone { MicrophoneLabel(mic: mic) }
       }
     }
     .accessibilityIdentifier("v2t.warm")
@@ -197,6 +199,16 @@ struct RecommendationCard: View {
   }
 }
 
+/// The input the session records from, by the name iOS gives it, so a headset or car taking over is obvious.
+struct MicrophoneLabel: View {
+  let mic: Microphone
+  var body: some View {
+    Label("Recording from \(mic.name)", systemImage: mic.symbol)
+      .font(.footnote).foregroundStyle(.secondary)
+      .accessibilityIdentifier("v2t.microphone")
+  }
+}
+
 /// Shown when the keyboard's mic opened v2t: recording has started; the user goes back to keep talking.
 struct KeyboardHandoffView: View {
   @EnvironmentObject var dictation: DictationService
@@ -206,6 +218,7 @@ struct KeyboardHandoffView: View {
       Image(systemName: dictation.state == .listening ? "waveform" : "mic.fill")
         .font(.system(size: 64)).foregroundStyle(.red).symbolEffect(.variableColor, isActive: dictation.state == .listening)
       Text(dictation.state == .listening ? "Listening" : "Mic is ready").font(.largeTitle.bold())
+      if let mic = dictation.microphone { MicrophoneLabel(mic: mic) }
       Text("Go back to your app and keep talking: tap ◀ at the top left, or swipe right along the bottom edge. Tap the mic on the v2t keyboard when you're done.")
         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
       Image(systemName: "arrow.right").font(.title).foregroundStyle(.secondary)

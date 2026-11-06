@@ -34,6 +34,8 @@ targets:
         product: V2TKeyboardCore
       - package: V2TKeyboardCore
         product: V2TCleanup
+      - package: V2TKeyboardCore
+        product: V2TPieces
     info:
       path: App/Info.plist
       properties:
@@ -97,6 +99,7 @@ targets:
       # the keyboard's key area, compiled in so its iPad layouts can be rendered off-screen (no iPad Simulator)
       - Keyboard/KeyboardView.swift
       - Keyboard/V2TMark.swift
+      - Keyboard/EmojiPanel.swift
     dependencies:
       - target: V2T
       - package: V2TKeyboardCore

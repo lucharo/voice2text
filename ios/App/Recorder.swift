@@ -9,8 +9,12 @@ protocol AudioSource: AnyObject, Sendable {
   func coolDown()
   func begin()
   func end() -> [Float]
+  /// The current recording's samples from `offset` on (empty past its end), for transcribing while recording.
+  func captured(from offset: Int) -> [Float]
   /// Root-mean-square of the latest audio while recording, 0 otherwise.
   var level: Float { get }
+  /// The input the session records from, nil when it is off.
+  var microphone: Microphone? { get }
 }
 
 final class Recorder: AudioSource, @unchecked Sendable {
@@ -26,10 +30,15 @@ final class Recorder: AudioSource, @unchecked Sendable {
   var level: Float { lock.lock(); defer { lock.unlock() }; return capturing ? lastLevel : 0 }
 
   /// Activates the audio session and starts the input tap (call from the foreground).
+  ///
+  /// Set up so other apps' music plays as it would without v2t, since the input runs between dictations too:
+  /// mode default rather than measurement (which "disables some dynamics processing on input and output
+  /// resulting in a lower output playback level", AVAudioSessionTypes.h), and Bluetooth headphones as A2DP
+  /// output only (no HFP, which turns them into a mono call headset), so the iPhone's own mic records.
   func warmUp() throws {
     guard !running else { return }
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP])
+    try session.setCategory(.playAndRecord, mode: .default, options: Self.options)
     try session.setActive(true)
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
@@ -53,6 +62,25 @@ final class Recorder: AudioSource, @unchecked Sendable {
     running = false
   }
 
+  static let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+
+  var microphone: Microphone? {
+    guard running, let input = AVAudioSession.sharedInstance().currentRoute.inputs.first else { return nil }
+    return Microphone(name: input.portName, symbol: Self.symbol(for: input.portType))
+  }
+
+  /// An SF Symbol for an input port.
+  static func symbol(for port: AVAudioSession.Port) -> String {
+    switch port {
+    case .bluetoothHFP, .bluetoothLE: "airpods"
+    case .headsetMic: "headphones"
+    case .carAudio: "car.fill"
+    case .usbAudio, .lineIn: "cable.connector"
+    case .continuityMicrophone: "iphone"
+    default: "mic.fill"
+    }
+  }
+
   private func release() {
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
@@ -70,6 +98,11 @@ final class Recorder: AudioSource, @unchecked Sendable {
     let out = samples
     samples = []
     return out
+  }
+
+  func captured(from offset: Int) -> [Float] {
+    lock.lock(); defer { lock.unlock() }
+    return capturing && offset < samples.count ? Array(samples[max(0, offset)...]) : []
   }
 
   private func append(_ buffer: AVAudioPCMBuffer) {
@@ -107,9 +140,17 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
   }
   private var began: Date?
   func warmUp() throws { running = true }
+  /// A fixed name, so a UI test can check the keyboard shows the input without depending on the Mac's.
+  var microphone: Microphone? { running ? Microphone(name: "Test clip", symbol: "waveform") : nil }
   func coolDown() { running = false }
   func begin() { began = Date() }
   func end() -> [Float] { began = nil; return samples }
+  /// The part of the clip a microphone would have delivered by now.
+  func captured(from offset: Int) -> [Float] {
+    guard let began else { return [] }
+    let end = min(samples.count, Int(Date().timeIntervalSince(began) * 16_000))
+    return offset < end ? Array(samples[max(0, offset)..<end]) : []
+  }
   /// The clip's level at the time since begin(), looping, so the keyboard's waveform moves in UI tests.
   var level: Float {
     guard let began, !samples.isEmpty else { return 0 }

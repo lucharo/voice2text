@@ -18,7 +18,7 @@ struct PadFullLayoutTests {
     #expect(row(l, 1).map(\.label) == ["tab"] + "qwertyuiop".map(String.init) + ["[", "]", "\\"])
     #expect(row(l, 2).map(\.label) == ["caps lock"] + "asdfghjkl".map(String.init) + [";", "'", "return"])
     #expect(row(l, 3).map(\.label) == ["shift"] + "zxcvbnm".map(String.init) + [",", ".", "/", "shift"])
-    #expect(row(l, 4).map(\.id) == ["emoji", "page", "mic", "space", "page-right", "dismiss"])
+    #expect(row(l, 4).map(\.id) == ["globe", "emoji", "page", "mic", "space", "page-right", "dismiss"])
   }
 
   @Test func spanishRowsFollowApplesSpanishKeyboardWithoutDeadKeys() {

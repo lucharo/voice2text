@@ -26,6 +26,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// True while the engine edits the document, so our own edits don't trigger a resync.
   private var engineEditing = false
   private lazy var dictation = DictationClient(controller: self)
+  /// Made when the emoji key is tapped, dropped when the panel closes.
+  private var emojiPanel: EmojiPanel?
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -106,7 +108,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     let current = keyboardView.layout, wanted = makeLayout(width: view.bounds.width, page: current.page)
-    if view.bounds.width > 0, abs(current.width - view.bounds.width) > 0.5 || current.form != wanted.form || current.metrics != wanted.metrics {
+    if view.bounds.width > 0, abs(current.width - view.bounds.width) > 0.5 || current.form != wanted.form || current.metrics != wanted.metrics
+      || current.nextKeyboardKey != wanted.nextKeyboardKey {
       relayout(page: current.page)
     }
   }
@@ -120,8 +123,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       shortSide = min(screen.bounds.width, screen.bounds.height)
     }
     let form = KeyboardForm.choose(isPad: traitCollection.userInterfaceIdiom == .pad, width: width, screenShortSide: shortSide)
+    // iOS draws its own globe below the keyboard on Face ID iPhones; the emoji key then takes our globe's slot
     return KeyboardLayout(width: width, page: page, language: language, form: form, landscape: form.isPad && landscape,
-                          currency: Locale.current.currencySymbol)
+                          currency: Locale.current.currencySymbol, nextKeyboardKey: Settings.shared.previewGlobeKey ?? needsInputModeSwitchKey)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
@@ -143,6 +147,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     heightConstraint?.constant = SuggestionBar.height + layout.height
     keysHeightConstraint?.constant = layout.height
     if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
+    syncEmojiPanel()  // the layout language or the keyboard's form may have changed under an open panel
     if page == .letters {
       engine.replaceLayout(with: Suggester(lexicons: engine.suggester.lexicons, layout: layout))
       decoders = engine.suggester.lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
@@ -243,7 +248,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     case .tab: edit { $0.character("\t") }
     case .page(let p): relayout(page: p)
     case .mic: startDictation()
-    case .emoji: advanceToNextInputMode()  // until the emoji page lands: hand over to the next keyboard
+    case .emoji: showEmoji(true)
+    case .nextKeyboard: advanceToNextInputMode()
     case .dismiss: dismissKeyboard()
     case .character, .delete: break
     }
@@ -280,6 +286,57 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     }
   }
 
+  // MARK: emoji
+
+  /// Covers the bar and the keys with the emoji panel, or takes it away (ABC). The panel is dropped when it
+  /// closes, with the emoji it has drawn: a keyboard's memory is tight.
+  private func showEmoji(_ on: Bool) {
+    if on {
+      let p = emojiPanel ?? makeEmojiPanel()
+      emojiPanel = p
+      syncEmojiPanel()
+      view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
+      p.show()
+    } else {
+      emojiPanel?.removeFromSuperview()
+      emojiPanel = nil
+    }
+    keyboardView.accessibilityElementsHidden = on
+    bar.accessibilityElementsHidden = on
+    UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
+  }
+
+  /// The panel's category names follow the layout language, the full iPad keyboard's has a hide key, and it
+  /// has a globe wherever the keys have one.
+  private func syncEmojiPanel() {
+    guard let p = emojiPanel else { return }
+    if p.language != language { p.language = language }
+    let pad = keyboardView.layout.form.isPad
+    if pad != (p.onDismiss != nil) { p.onDismiss = pad ? { [weak self] in self?.dismissKeyboard() } : nil }
+    let globe = keyboardView.layout.nextKeyboardKey
+    if globe != (p.onNextKeyboard != nil) { p.onNextKeyboard = globe ? { [weak self] in self?.advanceToNextInputMode() } : nil }
+  }
+
+  private func makeEmojiPanel() -> EmojiPanel {
+    let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
+    p.onEmoji = { [weak self] e in self?.edit("emoji") { $0.emoji(e) } }
+    p.onDelete = { [weak self] in self?.edit { $0.delete() } }
+    p.onLetters = { [weak self] in
+      guard let self else { return }
+      showEmoji(false)
+      if keyboardView.layout.page != .letters { relayout(page: .letters) }  // ABC means letters, from any page
+    }
+    p.translatesAutoresizingMaskIntoConstraints = false
+    view.insertSubview(p, belowSubview: panel)  // dictation's panel still covers everything
+    NSLayoutConstraint.activate([
+      p.topAnchor.constraint(equalTo: view.topAnchor),
+      p.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor),
+      p.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      p.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+    ])
+    return p
+  }
+
   // MARK: dictation
 
   private func startDictation() {
@@ -302,8 +359,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func setPanel(visible: Bool) {
     if !visible { panel.hide() }
     let wasModal = panel.accessibilityViewIsModal
-    keyboardView.accessibilityElementsHidden = visible
-    bar.accessibilityElementsHidden = visible
+    keyboardView.accessibilityElementsHidden = visible || emojiPanel != nil  // the emoji panel may cover them too
+    bar.accessibilityElementsHidden = visible || emojiPanel != nil
     panel.accessibilityViewIsModal = visible
     if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }

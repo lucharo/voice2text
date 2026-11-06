@@ -101,7 +101,7 @@ import XCTest
   func testAppleKeyboardBaseline() {
     launch()
     showKeyboard()
-    key("emoji").tap()  // v2t's globe: hands over to the next keyboard, Apple's
+    leaveV2TKeyboard(app)  // hands over to the next keyboard, Apple's
     // Apple's keys carry bare identifiers ("space"); v2t's are prefixed ("key.space")
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "space").firstMatch.waitForExistence(timeout: 5), app.debugDescription)
     shot("07-apple-keyboard-baseline")
