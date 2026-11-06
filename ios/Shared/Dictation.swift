@@ -7,8 +7,13 @@ public enum DictationState: String, Sendable {
   case needsApp
   case listening
   case transcribing
+  /// Apple Intelligence is tidying the transcript (#123).
+  case cleaningUp
   /// The keyboard has no Full Access, so it cannot talk to the app.
   case unavailable
+
+  /// What the keyboard's recording panel says while the app works after Done (#123).
+  public var waitingLabel: String { self == .cleaningUp ? "Cleaning up…" : "Transcribing…" }
 }
 
 /// The microphone the app records from, as the keyboard and the app show it while dictating.

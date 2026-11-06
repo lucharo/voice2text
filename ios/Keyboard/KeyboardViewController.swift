@@ -104,7 +104,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     dictation.attach()
     if let p = Settings.shared.previewRecording {
       panel.preview = true
-      showDictation(p == "transcribing" ? .transcribing : .listening)
+      showDictation(DictationState(rawValue: p).flatMap { $0 == .listening ? nil : $0 } ?? .listening)
     }
     // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
     if hasFullAccess { Settings.shared.keyboardFullAccessSeen = Date() }
@@ -387,7 +387,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
   private func showDictation(_ state: DictationState) {
-    let active = state == .listening || state == .transcribing
+    let active = [.listening, .transcribing, .cleaningUp].contains(state)
     if !active { cancelled = false }
     guard (active && !cancelled) || panel.preview else { setPanel(visible: false); return }
     view.layoutIfNeeded()

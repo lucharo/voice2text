@@ -37,7 +37,7 @@ import UIKit
     case .needsApp:
       newRequest()
       openApp()
-    case .transcribing, .unavailable:
+    case .transcribing, .cleaningUp, .unavailable:
       break
     }
     onState?(state)

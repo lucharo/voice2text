@@ -61,13 +61,13 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
 
   /// The text for the whole recording: decodes what the pieces have not covered, after any piece still being
   /// decoded, and logs how long that took and where the work ran (counts and times only, never text).
-  func finish(_ recording: [Float], stoppedAt: ContinuousClock.Instant) async throws -> String {
+  func finish(_ recording: [Float], stoppedAt: ContinuousClock.Instant) async throws -> (text: String, report: PieceTranscriber.Report) {
     stopFeeding()
     let (text, report) = try await pieces.finish(recording)
     let ms = (ContinuousClock.now - stoppedAt) / .milliseconds(1)
     let seconds = Double(recording.count) / 16_000
     let detail = report.fellBack ? "a piece failed, whole recording" : "\(report.piecesWhileRecording) pieces while recording, \(report.piecesAtFinish) after"
     dictationLog.log("speech \(Int(ms), privacy: .public) ms after Stop for \(seconds, format: .fixed(precision: 1), privacy: .public) s of audio (\(detail, privacy: .public))")
-    return text
+    return (text, report)
   }
 }

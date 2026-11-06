@@ -42,7 +42,7 @@ private let dictation: [Float] =
     live.feed()
     try await waitForCalls(calls, count: 1)
     let beforeStop = await calls.lengths
-    let text = try await live.finish(dictation, stoppedAt: .now)
+    let text = try await live.finish(dictation, stoppedAt: .now).text
 
     #expect(beforeStop == [208_800])
     #expect(await calls.lengths == [208_800, 183_200])
@@ -57,7 +57,7 @@ private let dictation: [Float] =
     live.feed()
     try await Task.sleep(nanoseconds: 100_000_000)
     let beforeStop = await calls.lengths
-    let text = try await live.finish(dictation, stoppedAt: .now)
+    let text = try await live.finish(dictation, stoppedAt: .now).text
 
     #expect(beforeStop == [])
     #expect(await calls.lengths == [208_800, 183_200])
