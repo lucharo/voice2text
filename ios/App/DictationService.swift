@@ -19,12 +19,13 @@ import SwiftUI
   let history: History
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
-  private let recorder: AudioSource = {
+  private let recorder: AudioSource
+  private static func defaultRecorder() -> AudioSource {
     guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
     // a test asked for the synthetic clip: never fall back to the real microphone
     guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
     return f
-  }()
+  }
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
   private var routeObserver: NSObjectProtocol?
@@ -46,7 +47,9 @@ import SwiftUI
   /// The speech language when the current recording began: its pieces, its History entry (#112).
   private var language = ""
 
-  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
+  /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil) {
+    self.recorder = recorder ?? Self.defaultRecorder()
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
