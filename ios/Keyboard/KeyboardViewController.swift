@@ -365,7 +365,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let layout = keyboardView.layout
     let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
     panel.show(state, bottomRow: keyboardView.convert(row, to: panel))
-    setPanel(visible: true)
+    // show() can find the app gone and hide the panel at once (onStateChange): then the keys must come back
+    setPanel(visible: !panel.isHidden)
   }
 
   /// While the panel covers them, the keys and the bar are hidden from VoiceOver and focus moves to Done.
