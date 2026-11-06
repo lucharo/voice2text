@@ -254,7 +254,8 @@ struct StorageRows: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      LabeledContent("Speech model", value: dictation.modelOnDevice ? Self.size(dictation.modelBytes) : "Not downloaded")
+      LabeledContent("Speech model", value: dictation.modelBytes == 0 ? "Not downloaded"
+        : dictation.modelOnDevice ? Self.size(dictation.modelBytes) : "\(Self.size(dictation.modelBytes)), incomplete")
         .accessibilityIdentifier("v2t.storage.model")
       Button("Delete speech model", role: .destructive) { confirmModel = true }
         .disabled(!dictation.canDeleteModel)

@@ -31,9 +31,11 @@ actor SpeechEngine {
     ModelRegistry.revisionOverrides = Self.pins
   }
 
-  /// Downloads (first launch only) and loads the model. `progress` reports `.downloading` only while files
-  /// actually download; a model already on the phone goes straight to `.loading`.
-  func prepare(language: String, progress: @escaping @Sendable (State) -> Void) async throws {
+  /// Loads the model, downloading what is missing only when `allowDownload` (the user tapped Download or Try
+  /// again). Otherwise FluidAudio runs offline: nothing is fetched, and a damaged copy is reported, never
+  /// deleted and downloaded again. `progress` reports `.downloading` only while files actually download.
+  func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
+    ModelHub.offlineMode = !allowDownload  // preparations never overlap: DictationService runs one at a time
     state = .loading
     let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
@@ -65,6 +67,18 @@ actor SpeechEngine {
     state = .notDownloaded
   }
 
+  /// Whether `folder` holds every file the model loads (FluidAudio's own lists at the pinned 55f65d9).
+  static func isComplete(_ speech: Recommendation.Speech) -> @Sendable (URL) -> Bool {
+    switch speech {
+    case .nemotron:
+      let family = UnifiedConfig(family: .nemotronMultilingual(.en)).family
+      let names = [family.offlineEncoderFile(precision: .int8), family.decoderFile, family.jointDecisionFile, family.vocab]
+      return { ModelStore.hasAll(names, in: $0) }
+    case .parakeet:
+      return { AsrModels.modelsExist(at: $0, version: .v3, encoderPrecision: .int8V2) }
+    }
+  }
+
   /// Where FluidAudio keeps this model's downloaded files (its default under Application Support).
   static func modelFolder(for speech: Recommendation.Speech) -> URL {
     switch speech {
@@ -79,7 +93,8 @@ actor SpeechEngine {
     case .nemotron:
       let lang = Self.nemotronLanguage(language)
       if lang != nemotronLanguage {
-        // the language prompt is fixed per manager: reload with the new one (files are already local)
+        // the language prompt is fixed per manager: reload with the new one from the local files, offline
+        ModelHub.offlineMode = true
         let m = UnifiedAsrManager(config: UnifiedConfig(family: .nemotronMultilingual(lang)), encoderPrecision: .int8)
         try await m.loadModels(to: nil, configuration: nil, progressHandler: nil)
         nemotron = m

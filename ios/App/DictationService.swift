@@ -18,6 +18,8 @@ import SwiftUI
   @Published private(set) var modelBytes: Int64 = 0
   /// Why deleting the model or the history failed, shown under the button.
   @Published private(set) var storageError: String?
+  /// Deleting the model: no recording, preparation or second delete starts until it is done.
+  @Published private(set) var deletingModel = false
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
 
@@ -62,7 +64,7 @@ import SwiftUI
     self.history = history
     self.dictionary = dictionary
     self.engine = SpeechEngine(speech: recommendation.speech)
-    self.store = .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech))
+    self.store = .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
@@ -97,21 +99,27 @@ import SwiftUI
     defaults.set(!modelOnDevice, forKey: DictationChannel.modelMissingKey)
   }
 
-  /// At launch: loads the model if it is on the device; never starts a download (#124).
+  /// At launch: loads the model if it is on the device, offline; never starts a download (#124).
   func loadModelIfOnDevice() async {
     refreshModelStorage()
     guard modelOnDevice else { return }
-    await prepareModel()
+    await prepareModel(allowDownload: false)
   }
 
+  /// Any speech-model files left (a partial download, or what a failed delete left behind) can be deleted.
   var canDeleteModel: Bool {
-    modelOnDevice && !engineState.isPreparing && state != .listening && state != .transcribing
+    modelBytes > 0 && !deletingModel && !engineState.isPreparing && state != .listening && state != .transcribing
   }
 
   /// Deletes the model's files and its compiled copy; dictation then needs a new download.
   func deleteModel() async {
     guard canDeleteModel else { return }
+    deletingModel = true
+    defer { deletingModel = false }
     storageError = nil
+    // mark it gone before the first await, so a keyboard start arriving meanwhile is refused
+    modelOnDevice = false
+    defaults.set(true, forKey: DictationChannel.modelMissingKey)
     await engine.unload()
     engineState = .notDownloaded
     do { try store.delete() } catch { storageError = "Couldn't delete the model: \(error.localizedDescription)" }
@@ -123,21 +131,22 @@ import SwiftUI
     do { try history.clear() } catch { storageError = "Couldn't clear History: \(error.localizedDescription)" }
   }
 
-  func prepareModel() async {
-    guard engineState != .ready else { return }
+  /// Loads the model; `allowDownload` only from the user's Download or Try again.
+  func prepareModel(allowDownload: Bool = true) async {
+    guard engineState != .ready, !deletingModel else { return }
     if let preparing { await preparing.value; return }
-    let task = Task { await self.loadModel() }
+    let task = Task { await self.loadModel(allowDownload: allowDownload) }
     preparing = task
     await task.value
     preparing = nil
   }
 
-  private func loadModel() async {
+  private func loadModel(allowDownload: Bool) async {
     prepareAttempt += 1
     let attempt = prepareAttempt
     engineState = .loading  // a cached model only loads; the first download's progress replaces this
     do {
-      try await engine.prepare(language: Settings.shared.speechLanguage) { s in
+      try await engine.prepare(language: Settings.shared.speechLanguage, allowDownload: allowDownload) { s in
         Task { @MainActor in
           // a report that lands after ready or failed, or from an earlier attempt, never undoes it
           guard self.prepareAttempt == attempt, self.engineState.isPreparing else { return }
@@ -221,7 +230,7 @@ import SwiftUI
 
   func start() {
     guard state == .idle || state == .needsApp else { return }
-    guard modelOnDevice else { return }  // nothing to transcribe with: the keyboard opens the app instead
+    guard modelOnDevice, !deletingModel else { return }  // nothing to transcribe with: the keyboard opens the app instead
     if !recorder.running { warmUp() }
     guard recorder.running else { return }
     recording += 1
@@ -278,7 +287,7 @@ import SwiftUI
     if engineState != .ready {
       // load a model that is on the device, but never download one behind the user's back
       guard store.isOnDevice else { lastText = "Couldn't transcribe: the speech model is not on this \(recommendation.deviceName)."; return }
-      await prepareModel()
+      await prepareModel(allowDownload: false)
     }
     do {
       let raw: String

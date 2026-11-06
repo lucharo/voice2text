@@ -60,6 +60,19 @@ import Testing
     #expect(History(file: file).items == [])
   }
 
+  /// A file that cannot be removed leaves the list as it is on disk, so Clear History can be tried again.
+  @Test func aFailedClearKeepsEveryDictation() throws {
+    let history = History(file: file)
+    let one = dictation("one", 1_000)
+    try history.add(one)
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+    #expect(throws: (any Error).self) { try history.clear() }
+
+    #expect(history.items == [one])
+  }
+
   @Test func bytesIsZeroWithoutAFileAndGrowsWithDictations() throws {
     let history = History(file: file)
     #expect(history.bytes == 0)

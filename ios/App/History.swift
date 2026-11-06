@@ -62,8 +62,9 @@ struct DictationTimings: Codable, Equatable, Sendable {
 
   /// Deletes every dictation and the file that held them.
   func clear() throws {
-    items = []
+    // the file first: if it cannot be removed, the list stays as it is on disk and Clear can be tried again
     if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+    items = []
   }
 
   /// The bytes the history file takes; dictations are kept as text only, never audio.
