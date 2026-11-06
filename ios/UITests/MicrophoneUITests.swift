@@ -28,6 +28,10 @@ import XCTest
     XCTAssertTrue(isOn(), "mic-ready switch never turned on")
     // the app names the input beside the switch
     XCTAssertTrue(app.staticTexts["Recording from Test clip"].waitForExistence(timeout: 5), app.debugDescription)
+    // the microphone choice sits under the switch, on this iPhone's microphone unless changed
+    let choice = app.descendants(matching: .any)["v2t.microphoneChoice"].firstMatch
+    reveal(choice, in: app)
+    XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
     shot("20-app-microphone")
 
     let field = app.textFields["v2t.try"]
@@ -47,6 +51,14 @@ import XCTest
     let mic = app.staticTexts["v2t.recording.mic"]
     XCTAssertTrue(mic.waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertEqual(mic.label, "Microphone: Test clip")
+    // no microphone change mid-dictation: it could only apply by restarting the session. The list drops rows
+    // scrolled out of view, so bring the picker back above the keyboard first.
+    // drag in the visible part of the list, above the keyboard (a plain swipeUp lands on the keyboard)
+    let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+    let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08))
+    for _ in 0..<5 where !(choice.exists && choice.isHittable) { from.press(forDuration: 0.05, thenDragTo: to) }
+    XCTAssertTrue(choice.exists, app.debugDescription)
+    XCTAssertFalse(choice.isEnabled, "the microphone picker stays enabled while recording")
     // V2T_HOLD_SECONDS keeps the waveform up longer, for a screen recording of it
     let hold = Double(ProcessInfo.processInfo.environment["V2T_HOLD_SECONDS"] ?? "") ?? 2
     RunLoop.current.run(until: Date().addingTimeInterval(hold))

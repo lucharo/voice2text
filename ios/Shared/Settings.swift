@@ -3,6 +3,12 @@ import V2TKeyboardCore
 
 /// Settings shared by the app and the keyboard through the App Group. The keyboard can read them always,
 /// and write them only with Full Access.
+enum MicrophoneChoice: String, CaseIterable, Sendable {
+  case iPhone = "iphone"
+  /// Wired headphones, a USB mic or AirPods when one is connected; the iPhone's otherwise.
+  case connected
+}
+
 final class Settings: @unchecked Sendable {
   static let group = "group.es.luischav.v2t"
   static let shared = Settings()
@@ -35,6 +41,13 @@ final class Settings: @unchecked Sendable {
   var warmMinutes: Int {
     get { defaults.object(forKey: "warmMinutes") as? Int ?? 15 }
     set { defaults.set(newValue, forKey: "warmMinutes") }
+  }
+
+  /// Which microphone dictation records from. The iPhone's own by default, so AirPods keep playing music in
+  /// high quality; a connected headset's or AirPods' mic turns Bluetooth headphones into a call headset.
+  var microphoneChoice: MicrophoneChoice {
+    get { MicrophoneChoice(rawValue: defaults.string(forKey: "microphoneChoice") ?? "") ?? .iPhone }
+    set { defaults.set(newValue.rawValue, forKey: "microphoneChoice") }
   }
 
   /// Speech language for transcription: "en", "es" or "auto".

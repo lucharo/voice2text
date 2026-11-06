@@ -33,13 +33,18 @@ final class Recorder: AudioSource, @unchecked Sendable {
   ///
   /// Set up so other apps' music plays as it would without v2t, since the input runs between dictations too:
   /// mode default rather than measurement (which "disables some dynamics processing on input and output
-  /// resulting in a lower output playback level", AVAudioSessionTypes.h), and Bluetooth headphones as A2DP
-  /// output only (no HFP, which turns them into a mono call headset), so the iPhone's own mic records.
+  /// resulting in a lower output playback level", AVAudioSessionTypes.h). With the iPhone microphone chosen
+  /// (the default), Bluetooth headphones are A2DP output only, so they stay in music mode; choosing the
+  /// connected microphone allows HFP, which turns them into a mono call headset while the session is on.
   func warmUp() throws {
     guard !running else { return }
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .default, options: Self.options)
+    let choice = Settings.shared.microphoneChoice
+    try session.setCategory(.playAndRecord, mode: .default, options: Self.options(for: choice))
     try session.setActive(true)
+    // a wired headset would otherwise take over the input even with the iPhone's microphone chosen
+    let builtIn = session.availableInputs?.first { $0.portType == .builtInMic }
+    try? session.setPreferredInput(choice == .iPhone ? builtIn : nil)
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
     converter = AVAudioConverter(from: format, to: target)
@@ -62,23 +67,14 @@ final class Recorder: AudioSource, @unchecked Sendable {
     running = false
   }
 
-  static let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+  static func options(for choice: MicrophoneChoice) -> AVAudioSession.CategoryOptions {
+    let base: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+    return choice == .iPhone ? base : base.union(.allowBluetoothHFP)
+  }
 
   var microphone: Microphone? {
     guard running, let input = AVAudioSession.sharedInstance().currentRoute.inputs.first else { return nil }
-    return Microphone(name: input.portName, symbol: Self.symbol(for: input.portType))
-  }
-
-  /// An SF Symbol for an input port.
-  static func symbol(for port: AVAudioSession.Port) -> String {
-    switch port {
-    case .bluetoothHFP, .bluetoothLE: "airpods"
-    case .headsetMic: "headphones"
-    case .carAudio: "car.fill"
-    case .usbAudio, .lineIn: "cable.connector"
-    case .continuityMicrophone: "iphone"
-    default: "mic.fill"
-    }
+    return Microphone(name: input.portName)
   }
 
   private func release() {
@@ -141,7 +137,7 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
   private var began: Date?
   func warmUp() throws { running = true }
   /// A fixed name, so a UI test can check the keyboard shows the input without depending on the Mac's.
-  var microphone: Microphone? { running ? Microphone(name: "Test clip", symbol: "waveform") : nil }
+  var microphone: Microphone? { running ? Microphone(name: "Test clip") : nil }
   func coolDown() { running = false }
   func begin() { began = Date() }
   func end() -> [Float] { began = nil; return samples }

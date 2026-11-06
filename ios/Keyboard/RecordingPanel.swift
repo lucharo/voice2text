@@ -140,14 +140,14 @@ final class RecordingPanel: UIView {
     setNeedsLayout()
   }
 
-  /// Shows the app's microphone as a symbol and its name; hidden when the app has not said which.
+  /// Shows the app's microphone as a mic icon and its name; hidden when the app has not said which.
   private func refreshMicrophone() {
-    let now = preview ? Microphone(name: "iPhone Microphone", symbol: "mic.fill") : DictationChannel.readMicrophone(from: Settings.shared.defaults)
+    let now = preview ? Microphone(name: "iPhone Microphone") : DictationChannel.readMicrophone(from: Settings.shared.defaults)
     guard now != shownMicrophone else { return }
     shownMicrophone = now
     guard let now else { mic.attributedText = nil; mic.accessibilityLabel = nil; return }
     let text = NSMutableAttributedString()
-    if let image = UIImage(systemName: now.symbol, withConfiguration: UIImage.SymbolConfiguration(font: mic.font))?.withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal) {
+    if let image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(font: mic.font))?.withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal) {
       text.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
       text.append(NSAttributedString(string: " "))
     }

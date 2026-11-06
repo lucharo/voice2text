@@ -67,6 +67,7 @@ struct HomeView: View {
         }
         Section("Dictation") {
           WarmRow()
+          MicrophoneRow()
           CleanupRow()
           Picker("Speech language", selection: Binding(get: { Settings.shared.speechLanguage }, set: { Settings.shared.speechLanguage = $0 })) {
             Text("English").tag("en")
@@ -199,12 +200,39 @@ struct RecommendationCard: View {
   }
 }
 
+/// Which microphone dictation uses: this iPhone's by default, or a connected headset's or AirPods'.
+struct MicrophoneRow: View {
+  @EnvironmentObject var dictation: DictationService
+  @State private var choice = Settings.shared.microphoneChoice
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Picker("Microphone", selection: $choice) {
+        Text("This \(dictation.recommendation.deviceName)").tag(MicrophoneChoice.iPhone)
+        Text("Connected headset").tag(MicrophoneChoice.connected)
+      }
+      .accessibilityIdentifier("v2t.microphoneChoice")
+      // a choice made mid-dictation could only apply by restarting the session, which may be in the background
+      .disabled(!DictationService.allowsMicrophoneChange(dictation.state))
+      Text(choice == .iPhone
+        ? "Speak towards your \(dictation.recommendation.deviceName). AirPods and other headphones keep playing music in full quality."
+        : "Uses AirPods or a wired headset when one is connected. With AirPods, music drops to call quality while the mic is ready.")
+        .font(.footnote).foregroundStyle(.secondary)
+    }
+    .onChange(of: choice) {
+      Settings.shared.microphoneChoice = choice
+      dictation.applyMicrophoneChoice()
+    }
+  }
+}
+
 /// The input the session records from, by the name iOS gives it, so a headset or car taking over is obvious.
 struct MicrophoneLabel: View {
   let mic: Microphone
   var body: some View {
-    Label("Recording from \(mic.name)", systemImage: mic.symbol)
+    // the icon inside the text: as a Label in the switch's row it drew on a line of its own
+    Text("\(Image(systemName: "mic.fill")) Recording from \(mic.name)")
       .font(.footnote).foregroundStyle(.secondary)
+      .accessibilityLabel("Recording from \(mic.name)")
       .accessibilityIdentifier("v2t.microphone")
   }
 }

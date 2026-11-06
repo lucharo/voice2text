@@ -19,12 +19,13 @@ import SwiftUI
   let history: History
   let dictionary: PersonalDictionary
   private let engine: SpeechEngine
-  private let recorder: AudioSource = {
+  private let recorder: AudioSource
+  private static func defaultRecorder() -> AudioSource {
     guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
     // a test asked for the synthetic clip: never fall back to the real microphone
     guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
     return f
-  }()
+  }
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
   private var routeObserver: NSObjectProtocol?
@@ -46,7 +47,9 @@ import SwiftUI
   /// The speech language when the current recording began: its pieces, its History entry (#112).
   private var language = ""
 
-  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary) {
+  /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil) {
+    self.recorder = recorder ?? Self.defaultRecorder()
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
@@ -133,6 +136,18 @@ import SwiftUI
     warmUntil = nil
     defaults.set(0, forKey: DictationChannel.heartbeatKey)
     publish(.needsApp)
+  }
+
+  /// Whether the picker may change the microphone now: only with no dictation under way (idle or no session),
+  /// since a change applies by restarting the session, so never while listening, transcribing or cleaning up.
+  static func allowsMicrophoneChange(_ state: DictationState) -> Bool { state == .idle || state == .needsApp }
+
+  /// The microphone choice changed (in the app, so in the foreground): a warm, idle session restarts with it.
+  /// The picker is disabled while listening or transcribing; with no session, the next warm-up uses it.
+  func applyMicrophoneChoice() {
+    guard recorder.running, state == .idle else { return }
+    coolDown()  // the whole session (heartbeat, warm-until), so a failed restart leaves nothing running
+    warmUp()
   }
 
   /// The "keep the mic ready" setting changed: a session already on runs for the new length from now.
