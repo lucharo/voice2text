@@ -99,7 +99,8 @@ public final class TypingEngine {
     let closesSentence = [".", "!", "?"].contains(s)
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
     // "teh+_tag": an address mark after the plus, so the word goes back as typed
-    if "@_+/:#\\=".contains(s) { undoCorrectionBeforeMark() }
+    // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too
+    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark == "+" { undoCorrectionBeforeMark() }
     // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
     let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {

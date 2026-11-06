@@ -450,6 +450,19 @@ struct TypingEngineTests {
     #expect(p.text == "mail teh+tag@")
   }
 
+  /// A full stop straight after a corrected word's plus sign ("teh+.tag@") keeps the whole address as typed.
+  @Test func aFullStopAfterAPlusKeepsTheAddress() throws {
+    let (e, p) = try engine("mail ")
+    type("teh", e)
+    for (i, c) in "+.".enumerated() { e.character(String(c), now: Double(50 + i)) }
+    type("tag", e, start: 60)
+    e.character("@", now: 70)
+    type("example", e, start: 80)
+    e.character(".", now: 90)
+    type("com ", e, start: 100)
+    #expect(p.text == "mail teh+.tag@example.com ")
+  }
+
   /// "i’m" takes the capital and keeps the curly apostrophe typed.
   @Test func iContractionsKeepTheirApostrophe() throws {
     let (e, p) = try engine("and ")
