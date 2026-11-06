@@ -24,6 +24,19 @@ import XCTest
     if stop.exists { stop.tap() }  // leave no microphone session on for the next test
   }
 
+  /// When the microphone cannot start, the keyboard's mic must not leave the handoff screen up saying the
+  /// keyboard records in place: v2t shows its home screen with the mic switch off instead.
+  func testHandoffClosesWhenTheMicrophoneCannotStart() {
+    continueAfterFailure = false
+    app.launchEnvironment["V2T_FIXTURE_AUDIO"] = DictationUITests.fixture
+    app.launchEnvironment["V2T_FIXTURE_MIC_FAILS"] = "1"
+    app.launch()
+    app.open(URL(string: "v2t://dictate")!)
+    XCTAssertFalse(app.staticTexts["Mic is ready"].waitForExistence(timeout: 5), "handoff stayed up with no session")
+    XCTAssertFalse(app.staticTexts["Listening"].exists)
+    XCTAssertTrue(app.staticTexts["v2t"].exists, app.debugDescription)
+  }
+
   /// The "This iPhone" section: which speech model and cleanup this device gets, and why.
   func testDeviceCardNamesTheModel() {
     continueAfterFailure = false

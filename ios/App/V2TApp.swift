@@ -266,8 +266,9 @@ struct KeyboardHandoffView: View {
       }
       .padding(.bottom, 32)
     }
-    // the session ended (timed out or turned off): the screen's "keyboard records in place" no longer holds
-    .onChange(of: dictation.state) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
+    // no session (it timed out or was turned off, or the microphone never started): the screen's "keyboard
+    // records in place" does not hold, so close it, also when it opens that way
+    .onChange(of: dictation.state, initial: true) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
   }
 }
 
