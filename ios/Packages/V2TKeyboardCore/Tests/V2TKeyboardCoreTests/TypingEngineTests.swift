@@ -513,6 +513,34 @@ struct TypingEngineTests {
     #expect(p.text == "and i'm " && e.learned.contains("i'm"))
   }
 
+  /// "teh!tag@" and "teh#tag@" are email addresses; "teh! " still ends a sentence corrected.
+  @Test func exclamationAndHashInAnAddressKeepTheWord() throws {
+    for mark in ["!", "#"] {
+      let (e, p) = try engine("mail ")
+      type("teh", e)
+      e.character(mark, now: 50)
+      type("tag", e, start: 60)
+      e.character("@", now: 70)
+      #expect(p.text == "mail teh\(mark)tag@")
+    }
+    let (f, q) = try engine("I saw ")
+    type("teh", f)
+    f.character("!", now: 50)
+    type(" ok", f, start: 60)
+    #expect(q.text == "I saw the! Ok")
+  }
+
+  /// A contraction typed onto a reopened replacement ("we" + "'re") is one word, not a new shortcut.
+  @Test func aContractionOnAReopenedReplacementIsOneWord() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["ww": "we", "re": "regarding"]
+    type("ww ", e)
+    e.delete()
+    e.character("'", now: 30)
+    type("re ", e, start: 40)
+    #expect(p.text == "ok we're ")
+  }
+
   /// "i’m" takes the capital and keeps the curly apostrophe typed.
   @Test func iContractionsKeepTheirApostrophe() throws {
     let (e, p) = try engine("and ")

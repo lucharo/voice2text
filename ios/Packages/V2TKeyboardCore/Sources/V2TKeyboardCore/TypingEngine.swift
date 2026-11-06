@@ -75,11 +75,15 @@ public final class TypingEngine {
 
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
+    // typing on after delete reopened a phrase replacement ("local tax"): the word is its last one, so an
+    // apostrophe joins it ("we're") rather than starting a word of its own
+    if revertPhrase != nil, ch.isLetter || ch.isNumber || Self.isApostrophe(ch) {
+      composing = Self.trailingWord(before)
+      revertOffer = nil
+    }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
       // "exmaple." then "c": an address, not a sentence end; put the word back as typed
       undoCorrectionBeforeMark()
-      // typing on after delete reopened a phrase replacement ("local tax"): the word is its last one
-      if revertPhrase != nil { composing = Self.trailingWord(before) }
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
@@ -100,7 +104,7 @@ public final class TypingEngine {
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
     // "teh+_tag": an address mark after the plus, so the word goes back as typed
     // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too
-    if "@_+/:#\\=".contains(s) || s == "." && ["+", "="].contains(correctionThenMark) { undoCorrectionBeforeMark() }
+    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark != nil && correctionThenMark != "." { undoCorrectionBeforeMark() }
     // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
     let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
@@ -112,7 +116,8 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    correctionThenMark = corrected && [".", "+", ":", "="].contains(s) ? s : nil
+    // marks an email address can hold straight after a word ("teh!tag@", "teh#tag@"): a letter next undoes it
+    correctionThenMark = corrected && Self.addressMarks.contains(s) ? s : nil
     if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
@@ -346,7 +351,11 @@ public final class TypingEngine {
     return word
   }
 
-  /// A correction followed by ".", "+" or ":" turned out to be inside an address: put the word back as typed.
+  /// Marks that can sit inside a web or email address right after a word (RFC 5322's local part, ":" of a
+  /// scheme): a correction made at one is undone if the address goes on.
+  static let addressMarks: Set<String> = [".", "+", ":", "=", "!", "#", "$", "%", "&", "*", "?", "^", "{", "|", "}", "~"]
+
+  /// A correction followed by an address mark turned out to be inside an address: put the word back as typed.
   func undoCorrectionBeforeMark() {
     defer { correctionThenMark = nil }
     guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }
