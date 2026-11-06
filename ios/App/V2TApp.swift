@@ -193,6 +193,8 @@ struct CleanupRow: View {
 }
 
 struct RecommendationCard: View {
+  /// The FAQ answer on the iPhone models we measured and why this one ships.
+  static let evaluation = URL(string: "https://v2t.luischav.es/faq/#what-would-v2t-on-an-iphone-use")!
   let rec: Recommendation
   @AppStorage("cleanupEnabled", store: Settings.shared.defaults) private var cleanup = true
   var body: some View {
@@ -201,6 +203,9 @@ struct RecommendationCard: View {
       Label(rec.cleanup == .appleIntelligence && !cleanup ? "Cleanup: off (turned off above)" : rec.cleanupName, systemImage: "sparkles").font(.subheadline)
       Text(rec.reason).font(.footnote).foregroundStyle(.secondary)
       if !rec.measured { Text("Untested on this \(rec.deviceName) model.").font(.footnote).foregroundStyle(.orange) }
+      // one model that just works, picked from our tests, rather than a choice to make; the tests are public
+      Link("How we chose this model", destination: Self.evaluation).font(.footnote)
+        .accessibilityIdentifier("v2t.model.evaluation")
     }
     .padding(.vertical, 4)
   }
