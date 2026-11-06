@@ -78,6 +78,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     grid.delegate = self
     grid.register(EmojiCell.self, forCellWithReuseIdentifier: EmojiCell.reuse)
     grid.delaysContentTouches = false
+    grid.isPrefetchingEnabled = false  // only the emoji on screen get drawn, and decoded
     let hold = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
     hold.minimumPressDuration = 0.4
     grid.addGestureRecognizer(hold)
@@ -406,9 +407,9 @@ final class EmojiCell: UICollectionViewCell {
 /// back to 41 MB in the same measurement), so the grid swaps in a fresh copy after `limit` distinct emoji.
 /// Falls back to the system font if the file cannot be read.
 final class EmojiFont {
-  /// About 14 MB of decoded emoji at most, and far more than one screen of emoji, so a swap redraws one
-  /// screen at most once per few screens scrolled.
-  static let limit = 300
+  /// About 5 MB of decoded emoji at most, and about two screens of emoji (an iPhone shows about 55), so a
+  /// fling swaps the font every couple of screens.
+  static let limit = 120
   private var graphicsFont: CGFont?
   private var sized: [CGFloat: UIFont] = [:]
   private var drawn = Set<String>()
