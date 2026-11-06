@@ -102,7 +102,8 @@ enum RealTypoEval {
         // what the keyboard does after every key: refresh the bar and its bold slot
         _ = e.suggestions()
         _ = e.pendingAutocorrection
-        keyTimes.append(Double((ContinuousClock.now - start).components.attoseconds) / 1e15)
+        let d = (ContinuousClock.now - start).components
+        keyTimes.append(Double(d.seconds) * 1000 + Double(d.attoseconds) / 1e15)
       }
       e.space(now: t + 1)
       let want = sentence.split(separator: " "), got = p.text.split(separator: " ")

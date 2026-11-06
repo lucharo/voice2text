@@ -295,6 +295,35 @@ struct TypingEngineTests {
     #expect(p.text == "ok we are ")
   }
 
+  /// Delete reopens a phrase replacement; typing on continues its last word, not a new one.
+  @Test func typingOnAfterReopeningAPhraseContinuesItsLastWord() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["lt": "local tax"]
+    type("lt ", e)
+    e.delete()
+    type("i ", e, start: 20)
+    #expect(p.text == "ok local taxi ")
+  }
+
+  /// An address mark after a corrected word's plus sign ("teh+_tag") puts the word back too.
+  @Test func anAddressMarkAfterAPlusUndoesItsCorrection() throws {
+    let (e, p) = try engine("mail ")
+    type("teh", e)
+    e.character("+", now: 50)
+    e.character("_", now: 51)
+    #expect(p.text == "mail teh+_")
+  }
+
+  /// With a curly apostrophe typed, the bar's correction is spelled the same, so tapping it matches space.
+  @Test func theBarSpellsApostrophesAsTyped() throws {
+    let (e, _) = try engine("and ")
+    type("i", e)
+    e.character("’", now: 50)
+    type("m", e, start: 60)
+    #expect(e.pendingAutocorrection == "I’m")
+    #expect(e.suggestions().map(\.word).contains("I’m"))
+  }
+
   /// A plus sign after a corrected word, then a letter: an email tag ("teh+tag@"), so the word goes back.
   @Test func aLetterAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")

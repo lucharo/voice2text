@@ -73,12 +73,10 @@ public final class TypingEngine {
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
-      if let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) {
-        // "exmaple." then "c": an address, not a sentence end; put the word back as typed
-        for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
-        proxy.insertText(c.original + m)
-      }
-      correctionThenMark = nil
+      // "exmaple." then "c": an address, not a sentence end; put the word back as typed
+      undoCorrectionBeforeMark()
+      // typing on after delete reopened a phrase replacement ("local tax"): the word is its last one
+      if revertLength > 0 { composing = Self.trailingWord(before) }
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
@@ -97,6 +95,8 @@ public final class TypingEngine {
   func punctuation(_ s: String) {
     let closesSentence = [".", "!", "?"].contains(s)
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
+    // "teh+_tag": an address mark after the plus, so the word goes back as typed
+    if "@_+/:#\\=".contains(s) { undoCorrectionBeforeMark() }
     // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
     let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
@@ -211,7 +211,11 @@ public final class TypingEngine {
       guard before.last.map(Self.isGap) ?? true else { return [] }
       return Self.bestInMiddle(suggester.predictions(context: context).map { Suggestion(word: styled($0.word), kind: $0.kind, score: $0.score) })
     }
-    let all = suggester.suggestions(for: composing, context: context, limit: 3)
+    // the bar spells apostrophes as typed ("i’m": I’m), so a tap matches what space would write
+    let curly = composing.contains { $0.character == "’" }
+    let all = suggester.suggestions(for: composing, context: context, limit: 3).map {
+      curly ? Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) : $0
+    }
     let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed }
     if let r = pendingReplacement {
       // a text replacement takes the middle slot, beside the shortcut as typed
@@ -310,13 +314,26 @@ public final class TypingEngine {
     autoSpace = false
     lastCorrection = nil
     revertOffer = nil
+    composing = Self.trailingWord(before)
+    refreshShift()
+  }
+
+  /// The word at the end of `text`, as character() composes it.
+  static func trailingWord(_ text: String) -> [TypedKey] {
     var word: [TypedKey] = []
-    for ch in before.reversed() {
-      guard ch.isLetter || ch.isNumber || Self.isApostrophe(ch) else { break }  // as character() composes
+    for ch in text.reversed() {
+      guard ch.isLetter || ch.isNumber || isApostrophe(ch) else { break }
       word.insert(TypedKey(ch), at: 0)
     }
-    composing = word
-    refreshShift()
+    return word
+  }
+
+  /// A correction followed by "." or "+" turned out to be inside an address: put the word back as typed.
+  func undoCorrectionBeforeMark() {
+    defer { correctionThenMark = nil }
+    guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }
+    for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
+    proxy.insertText(c.original + m)
   }
 
   // MARK: internals
