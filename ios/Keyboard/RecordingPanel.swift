@@ -14,6 +14,9 @@ final class RecordingPanel: UIView {
 
   private let wave = CAShapeLayer()
   private let status = UILabel()
+  /// The microphone the app records from, top right while listening ("iPhone Microphone", "AirPods Pro").
+  private let mic = UILabel()
+  private var shownMicrophone: Microphone?
   private let dot = UIView()
   private let spinner = UIActivityIndicatorView(style: .medium)
   private let cancel = UIButton(type: .system)
@@ -36,10 +39,14 @@ final class RecordingPanel: UIView {
     status.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
     status.textColor = .secondaryLabel
     status.accessibilityIdentifier = "v2t.recording.status"
+    mic.font = .systemFont(ofSize: 13, weight: .medium)
+    mic.textColor = .secondaryLabel
+    mic.lineBreakMode = .byTruncatingTail
+    mic.accessibilityIdentifier = "v2t.recording.mic"
     dot.backgroundColor = .systemRed
     dot.layer.cornerRadius = 4
     spinner.hidesWhenStopped = true
-    for v in [status, dot, spinner, cancel, done] as [UIView] { addSubview(v) }
+    for v in [status, mic, dot, spinner, cancel, done] as [UIView] { addSubview(v) }
 
     done.configuration = Self.filled(title: "Done", symbol: "checkmark", color: .systemBlue)
     done.accessibilityIdentifier = "v2t.recording.done"
@@ -79,6 +86,8 @@ final class RecordingPanel: UIView {
     cancel.isHidden = !listening
     done.isHidden = !listening
     dot.isHidden = !listening
+    mic.isHidden = !listening
+    refreshMicrophone()
     if listening { spinner.stopAnimating() } else { spinner.startAnimating() }
     if timer == nil {
       timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
@@ -103,6 +112,9 @@ final class RecordingPanel: UIView {
     status.sizeToFit()
     dot.frame = CGRect(x: side + 4, y: 18, width: 8, height: 8)
     status.frame.origin = CGPoint(x: dot.isHidden ? side + 4 : dot.frame.maxX + 6, y: 22 - status.frame.height / 2)
+    mic.sizeToFit()
+    let micWidth = min(mic.frame.width, bounds.width - status.frame.maxX - 2 * side - 8)
+    mic.frame = CGRect(x: bounds.maxX - side - 4 - micWidth, y: 22 - mic.frame.height / 2, width: max(0, micWidth), height: mic.frame.height)
     spinner.center = CGPoint(x: bounds.midX, y: (bottomRow.minY > 0 ? bottomRow.midY : bounds.maxY - 30))
     let row = bottomRow.height > 0 ? bottomRow : CGRect(x: 3, y: bounds.maxY - 50, width: bounds.width - 6, height: 42)
     let cw = (row.width - 2 * side) * 0.32
@@ -117,13 +129,31 @@ final class RecordingPanel: UIView {
       onStateChange?(live)
       return
     }
+    if ticks % 30 == 0 { refreshMicrophone() }  // the input can change mid-dictation (a headset plugged in)
     if state == .listening {
-      levels = preview ? Self.fakeLevels(Date().timeIntervalSince(started)) : DictationChannel.readLevels()
+      if preview { levels = Self.fakeLevels(Date().timeIntervalSince(started)) } else if let read = DictationChannel.readLevels() { levels = read }
       let s = Int(Date().timeIntervalSince(started))
       status.text = String(format: "%d:%02d", s / 60, s % 60)
     } else {
       status.text = "Transcribing…"
     }
+    setNeedsLayout()
+  }
+
+  /// Shows the app's microphone as a symbol and its name; hidden when the app has not said which.
+  private func refreshMicrophone() {
+    let now = preview ? Microphone(name: "iPhone Microphone", symbol: "mic.fill") : DictationChannel.readMicrophone(from: Settings.shared.defaults)
+    guard now != shownMicrophone else { return }
+    shownMicrophone = now
+    guard let now else { mic.attributedText = nil; mic.accessibilityLabel = nil; return }
+    let text = NSMutableAttributedString()
+    if let image = UIImage(systemName: now.symbol, withConfiguration: UIImage.SymbolConfiguration(font: mic.font))?.withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal) {
+      text.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
+      text.append(NSAttributedString(string: " "))
+    }
+    text.append(NSAttributedString(string: now.name, attributes: [.font: mic.font!, .foregroundColor: UIColor.secondaryLabel]))
+    mic.attributedText = text
+    mic.accessibilityLabel = "Microphone: \(now.name)"
     setNeedsLayout()
   }
 

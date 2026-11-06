@@ -9,6 +9,8 @@ import SwiftUI
   @Published private(set) var engineState: SpeechEngine.State = .notDownloaded
   @Published private(set) var lastText = ""
   @Published private(set) var warmUntil: Date?
+  /// The input the warm session records from, also sent to the keyboard; nil when the session is off.
+  @Published private(set) var microphone: Microphone?
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
 
@@ -25,6 +27,7 @@ import SwiftUI
   }()
   private let defaults = Settings.shared.defaults
   private var observers: [DarwinObserver] = []
+  private var routeObserver: NSObjectProtocol?
   private var heartbeat: Timer?
   /// Samples the microphone level 20 times a second while listening, for the keyboard's waveform.
   private var meter: Timer?
@@ -48,6 +51,18 @@ import SwiftUI
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
     ]
+    // a headset plugged in or AirPods connected mid-session can change the input
+    routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.publishMicrophone() }
+    }
+  }
+
+  private func publishMicrophone() {
+    let mic = recorder.microphone
+    guard mic != microphone else { return }
+    microphone = mic
+    DictationChannel.writeMicrophone(mic, to: defaults)
+    DictationChannel.post(DictationChannel.changed)
   }
 
   func refreshRecommendation() {
@@ -90,6 +105,7 @@ import SwiftUI
   func warmUp() {
     do {
       try recorder.warmUp()
+      publishMicrophone()
       extendWarmth()
       publish(.idle)
       heartbeat?.invalidate()
@@ -105,6 +121,7 @@ import SwiftUI
   func coolDown() {
     stopMeter()
     recorder.coolDown()
+    publishMicrophone()
     heartbeat?.invalidate()
     heartbeat = nil
     warmUntil = nil
