@@ -330,10 +330,29 @@ public final class TypingEngine {
     return fix
   }
 
-  /// The user's text replacement for the word being typed, if it is a shortcut.
+  /// The user's text replacement for the word being typed, if it is a shortcut the user has not rejected.
   var pendingReplacement: String? {
-    guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
-    return replacements[Suggester.straightApostrophes(literal.lowercased())]
+    guard !composing.isEmpty, traits.autocorrect, !inAddress, !learned.contains(literal.lowercased()) else { return nil }
+    return replacements[Self.shortcutKey(literal)]
+  }
+
+  /// How a shortcut is looked up: lowercase, straight apostrophes.
+  static func shortcutKey(_ s: String) -> String { Suggester.straightApostrophes(s.lowercased()) }
+
+  /// The system's supplementary lexicon (UILexicon: the user's text replacements, contact names, phrases
+  /// with no shortcut) as replacements keyed by `shortcutKey`, and the words never to correct (lowercase).
+  /// A shortcut the engine cannot see as one word (";em", "@@") is left out.
+  public static func systemLexicon(_ entries: [(input: String, text: String)]) -> (replacements: [String: String], words: Set<String>) {
+    var replacements: [String: String] = [:], words = Set<String>()
+    for (input, text) in entries {
+      let word = !input.isEmpty && input.allSatisfy { $0.isLetter || $0.isNumber || isApostrophe($0) }
+      if word, input != text {
+        replacements[shortcutKey(input)] = text  // "v2t" -> "V2T" too: a change of case is a replacement
+      } else {
+        words.formUnion(text.lowercased().split { !($0.isLetter || $0.isNumber || isApostrophe($0)) }.map(String.init))
+      }
+    }
+    return (replacements, words)
   }
 
   /// The word being typed is part of a web or email address, an @handle or a #hashtag: what is joined to it

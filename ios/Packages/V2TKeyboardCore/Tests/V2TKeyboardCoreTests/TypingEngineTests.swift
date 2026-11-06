@@ -269,6 +269,32 @@ struct TypingEngineTests {
     #expect(p.text == "ok a way ")
   }
 
+  /// A shortcut the user put back is learned, so it no longer expands.
+  @Test func aRejectedReplacementStopsExpanding() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["omw": "On my way!"]
+    type("omw ", e)
+    e.delete()
+    e.pick("omw")
+    type("omw ", e, start: 20)
+    #expect(p.text == "ok omw omw ")
+  }
+
+  /// UILexicon entries: shortcuts (any apostrophe, case-only changes too) become replacements; names and
+  /// phrases without a shortcut become words never corrected; shortcuts with other marks are left out.
+  @Test func theSystemLexiconSplitsIntoReplacementsAndWords() throws {
+    let (r, w) = TypingEngine.systemLexicon([("omw", "On my way!"), ("v2t", "V2T"), ("we’re", "we are"),
+                                             ("Siobhan", "Siobhan"), (";em", "—"), ("", "Nobody Corrects")])
+    #expect(r == ["omw": "On my way!", "v2t": "V2T", "we're": "we are"])
+    #expect(w == ["siobhan", "nobody", "corrects"])
+    let (e, p) = try engine("ok ")
+    e.replacements = r
+    type("we", e)
+    e.character("’", now: 50)
+    type("re ", e, start: 60)
+    #expect(p.text == "ok we are ")
+  }
+
   /// A plus sign after a corrected word, then a letter: an email tag ("teh+tag@"), so the word goes back.
   @Test func aLetterAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")

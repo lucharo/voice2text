@@ -43,7 +43,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // the user's text replacements and contact names, as Apple's keyboard uses them (UILexicon)
     requestSupplementaryLexicon { [weak self] lexicon in
       guard let self else { return }
-      let (replacements, words) = Self.split(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
+      let (replacements, words) = TypingEngine.systemLexicon(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
       engine.replacements = replacements
       systemWords = words
       engine.learned = userWords()
@@ -149,22 +149,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// names, phrases in Text Replacement with no shortcut).
   private func userWords() -> Set<String> {
     Settings.shared.learnedWords.union(PersonalDictionary().autocorrectExclusions).union(systemWords)
-  }
-
-  /// UILexicon entries as (shortcut -> phrase) replacements, keyed lowercase, and the words of every entry
-  /// typed as written (names, phrases with no shortcut). Shortcuts with other marks are left out.
-  static func split(_ entries: [(input: String, text: String)]) -> ([String: String], Set<String>) {
-    var replacements: [String: String] = [:], words = Set<String>()
-    for (input, text) in entries {
-      // a shortcut the engine can see as one word (letters, digits, apostrophes): ";em" or "@@" never reach it
-      let word = !input.isEmpty && input.allSatisfy { $0.isLetter || $0.isNumber || $0 == "'" || $0 == "’" }
-      if word, input.lowercased() != text.lowercased() {
-        replacements[input.lowercased()] = text
-      } else {
-        words.formUnion(text.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init))
-      }
-    }
-    return (replacements, words)
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
