@@ -101,10 +101,17 @@ What has been checked so far, and how:
 | --- | --- | --- |
 | Swipe decoding | 1,000 synthetic noisy traces per language (the test's own trace model) | EN 96.5% top-1, 99.7% top-3; ES 95.6%, 100%. Real-finger accuracy unmeasured |
 | Swipe, suggestions and next word as on a phone | `QualityEval`: 300 everyday English and 100 Spanish words, and 30 short messages swiped word by word, with finger-like traces (per-key scatter, a per-swipe offset, cut corners; "sloppy" has a 2.5 times larger offset and wider scatter) on the 402 pt iPhone layout with English and Spanish both on | Messages: EN 98.3% top-1, sloppy 89.6%; ES 89.7%, sloppy 84.6%. The next word is in the bar 37% of the time in English messages. Prints the full table: `swift test --filter QualityEval` |
-| Autocorrect | 200 synthetic noisy-tap typos per language; 1,000 correctly typed common words | EN fixes 187, ES 187; changes 0 correct words. Real typing unmeasured |
+| Autocorrect against Apple's keyboard | `AppleBehaviourTests`: 31 checks of what Apple's keyboard does, each with its source in [AUTOCORRECT.md](AUTOCORRECT.md) (when a correction applies, revert, contractions, names, addresses, text replacements, Spanish accents) | All 31 pass (20 before #114) |
+| Autocorrect on real misspellings | `RealTypoEval`: Wikipedia's lists of common misspellings at pinned revisions (4,256 English, 20,227 Spanish, mostly missing accents), typed at the key centres. Scored: the 4,122 and 15,701 that are not themselves words and whose meant word is in the keyboard's word list | EN fixes 89.6% (a wrong word 8.9%, the meant word in the bar 93.4%); ES 91.1% (8.2%, 93.7%). Before #114: EN 83.6% (13.1%, 88.1%), ES 89.0% (10.0%, 91.2%) |
+| Autocorrect on correct text | `RealTypoEval`: 1,043 Tatoeba sentences per language typed through the keyboard's engine | Changes 2 of 7,088 English words and 141 of 6,909 Spanish ones (220 before #114), mostly names at the start of a sentence and Spanish verb forms the word list lacks |
+| Autocorrect, synthetic typos | 200 noisy-tap typos per language; 1,000 correctly typed common words | EN fixes 187, ES 187; changes 0 correct words |
 | Typing rules (capitals, double-space full stop, revert, swipe spacing) | Unit tests, and UI tests driving the keyboard in the Simulator | See the test files |
-| Keystroke latency | Not yet measured on a phone. Provisional target: under one 120 Hz frame (8 ms) of our own handling per key, logged as `latency` in the keyboard | Untested |
+| Keystroke latency | Not yet measured on a phone. Provisional target: under one 120 Hz frame (8 ms) of our own handling per key, logged as `latency` in the keyboard. On the Mac, `RealTypoEval` times key + suggestion bar + bold slot over 109,509 keys (release build) | Phone untested. Mac, English and Spanish on, with the Mac loaded by other builds: mean 1.2 ms, p95 3.3 ms, p99 4.2 ms; with #114's spelling-slip search off, in the same run, 0.6, 1.8 and 2.4 ms |
 | Keyboard memory | Not yet measured. Provisional target: 40 MB, well under the ~60 MB commonly reported limit (Apple documents no number) | Untested |
+
+Autocorrect is not yet measured with real fingers on a phone: the misspellings above were made on physical
+keyboards, so the taps sit at the key centres and the touch model is not exercised; whether iOS turns the
+straight quotes the keyboard types into curly ones is also unchecked.
 
 The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard will only be claimed
 from side-by-side measurements on a phone.

@@ -35,13 +35,26 @@ public final class TypingEngine {
   /// Keys of the word under construction, since the last word boundary.
   public private(set) var composing: [TypedKey] = []
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
-  public var learned: Set<String> = []
+  public var learned: Set<String> = [] {
+    // kept lowercase with straight apostrophes, as `learn` stores them, so either apostrophe matches
+    didSet { if learned.contains(where: { $0.contains("’") || $0 != $0.lowercased() }) { learned = Set(learned.map(Self.shortcutKey)) } }
+  }
   public var onLearn: ((String) -> Void)?
+  /// Text replacements (lowercase shortcut -> phrase), as Settings > General > Keyboard > Text Replacement.
+  public var replacements: [String: String] = [:]
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
-  public private(set) var lastCorrection: (original: String, replacement: String)?
+  public private(set) var lastCorrection: (original: String, replacement: String)? {
+    didSet { if lastCorrection == nil { correctionThenMark = nil } }
+  }
+  /// The full stop, plus sign or colon typed straight after an autocorrect: a letter or an address mark next
+  /// means the word was part of an address ("exmaple.com", "teh+tag@", "https://"), so it is undone.
+  private var correctionThenMark: String?
   /// Set after a delete removed the space after an autocorrect: the bar offers `original` to revert to.
-  public private(set) var revertOffer: String?
+  public private(set) var revertOffer: String? { didSet { if revertOffer == nil { revertPhrase = nil } } }
+  /// While `revertOffer` stands for a phrase (a text replacement: "On my way!"), the phrase picking the
+  /// original deletes; the phrase is not a word to keep typing, so it is not put back into `composing`.
+  private var revertPhrase: String?
   /// We put a space after a suggestion, swipe or correction; punctuation typed next pulls it back.
   private var autoSpace = false
   private var lastSwipe: (word: String, alternatives: [String])?
@@ -62,7 +75,15 @@ public final class TypingEngine {
 
   public func character(_ s: String, at point: CGPoint? = nil, now: TimeInterval = 0) {
     guard let ch = s.first else { return }
+    // typing on after delete reopened a phrase replacement ("local tax"): the word is its last one, so an
+    // apostrophe joins it ("we're") rather than starting a word of its own
+    if revertPhrase != nil, ch.isLetter || ch.isNumber || Self.isApostrophe(ch) {
+      composing = Self.trailingWord(before)
+      revertOffer = nil
+    }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {
+      // "exmaple." then "c": an address, not a sentence end; put the word back as typed
+      undoCorrectionBeforeMark()
       if lastSwipe != nil { spaceIfNeeded() }  // a letter after a swiped word starts the next word
       lastSwipe = nil
       autoSpace = false
@@ -81,7 +102,11 @@ public final class TypingEngine {
   func punctuation(_ s: String) {
     let closesSentence = [".", "!", "?"].contains(s)
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
-    commitWord()
+    // "teh+_tag": an address mark after the plus, so the word goes back as typed
+    // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too
+    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark != nil && correctionThenMark != "." { undoCorrectionBeforeMark() }
+    // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
+    let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
       proxy.deleteBackward()
       proxy.insertText(s + " ")
@@ -91,13 +116,16 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    lastCorrection = nil
+    // marks an email address can hold straight after a word ("teh!tag@", "teh#tag@"): a letter next undoes it
+    correctionThenMark = corrected && Self.addressMarks.contains(s) ? s : nil
+    if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
   }
 
   public func space(now: TimeInterval = 0) {
     defer { lastSpaceAt = now }
+    revertOffer = nil
     if composing.isEmpty, now - lastSpaceAt < Self.doubleTap, before.hasSuffix(" "),
        let prev = before.dropLast().last, prev.isLetter || prev.isNumber {
       proxy.deleteBackward()
@@ -116,6 +144,7 @@ public final class TypingEngine {
   }
 
   public func returnKey() {
+    revertOffer = nil
     commitWord()
     proxy.insertText("\n")
     autoSpace = false
@@ -128,8 +157,14 @@ public final class TypingEngine {
     revertOffer = nil
     if let c = lastCorrection, before.hasSuffix(c.replacement + " ") {
       proxy.deleteBackward()
-      composing = c.replacement.map { TypedKey($0) }
       revertOffer = c.original
+      // a text replacement is the user's own text: reopened, it is not a word to autocorrect again
+      let replaced = replacements[Self.shortcutKey(c.original)] == c.replacement
+      if !replaced, c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
+        composing = c.replacement.map { TypedKey($0) }
+      } else {
+        revertPhrase = c.replacement
+      }
       autoSpace = false
       refreshShift()
       return
@@ -179,7 +214,7 @@ public final class TypingEngine {
   /// the next one.
   public func suggestions() -> [Suggestion] {
     if let r = revertOffer {
-      return [Suggestion(word: r, kind: .typed, score: 0)] + suggester.suggestions(for: composing, context: context, limit: 2).filter { $0.word != r }
+      return [Suggestion(word: r, kind: .typed, score: 0)] + typedApostrophes(suggester.suggestions(for: composing, context: context, limit: 3)).filter { $0.word != r }.prefix(2)
     }
     if let s = lastSwipe {
       return Self.bestInMiddle(s.alternatives.prefix(3).map { Suggestion(word: $0, kind: .correction, score: 0) })
@@ -189,9 +224,25 @@ public final class TypingEngine {
       guard before.last.map(Self.isGap) ?? true else { return [] }
       return Self.bestInMiddle(suggester.predictions(context: context).map { Suggestion(word: styled($0.word), kind: $0.kind, score: $0.score) })
     }
-    let all = suggester.suggestions(for: composing, context: context, limit: 3)
-    let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed }
+    let all = typedApostrophes(suggester.suggestions(for: composing, context: context, limit: 3))
+    // the word as typed once ("don’t" typed and the list's "don't" read the same once spelled alike)
+    let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed && !typed.map(\.word).contains($0.word) }
+    if let r = pendingReplacement {
+      // a text replacement takes the middle slot, beside the shortcut as typed
+      return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r && $0.word != literal }.prefix(1)
+    }
     return typed + rest
+  }
+
+  /// Suggestions spelled with the apostrophe the user typed ("i’m": I’m), so a tap writes what space would,
+  /// and without the repeats that spelling makes ("don’t" and the list's "don't").
+  func typedApostrophes(_ list: [Suggestion]) -> [Suggestion] {
+    guard composing.contains(where: { $0.character == "’" }) else { return list }
+    // the word as typed stays exactly as typed ("rock'n’roll"), and goes first so a repeat of it is dropped
+    var seen = Set(list.filter { $0.kind == .typed }.map(\.word))
+    return list.filter { $0.kind == .typed } + list.filter { $0.kind != .typed }
+      .map { Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) }
+      .filter { seen.insert($0.word).inserted }
   }
 
   /// A whole word as the shift state writes it: caps lock and all-capitals fields write it in capitals, a
@@ -212,7 +263,7 @@ public final class TypingEngine {
   /// The user tapped a suggestion: it replaces the word, followed by a space.
   public func pick(_ word: String) {
     let replacing: Int
-    if let s = lastSwipe { replacing = s.word.count } else { replacing = composing.count }
+    if let s = lastSwipe { replacing = s.word.count } else if revertOffer == word, let ph = revertPhrase, before.hasSuffix(ph) { replacing = ph.count } else { replacing = composing.count }
     for _ in 0..<replacing { proxy.deleteBackward() }
     if revertOffer == word || word == literal { learn(word) }
     proxy.insertText(word + " ")
@@ -257,7 +308,9 @@ public final class TypingEngine {
 
   /// Text was inserted through the dictation route (or pasted): it reads as words already finished.
   public func insertFinished(_ text: String) {
+    revertOffer = nil
     commitWord()
+    lastCorrection = nil  // the text after it is not ours to revert
     spaceIfNeeded()
     proxy.insertText(text)
     composing = []
@@ -284,13 +337,30 @@ public final class TypingEngine {
     autoSpace = false
     lastCorrection = nil
     revertOffer = nil
+    composing = Self.trailingWord(before)
+    refreshShift()
+  }
+
+  /// The word at the end of `text`, as character() composes it.
+  static func trailingWord(_ text: String) -> [TypedKey] {
     var word: [TypedKey] = []
-    for ch in before.reversed() {
-      guard ch.isLetter || ch.isNumber || Self.isApostrophe(ch) else { break }  // as character() composes
+    for ch in text.reversed() {
+      guard ch.isLetter || ch.isNumber || isApostrophe(ch) else { break }
       word.insert(TypedKey(ch), at: 0)
     }
-    composing = word
-    refreshShift()
+    return word
+  }
+
+  /// Marks that can sit inside a web or email address right after a word (RFC 5322's local part, ":" of a
+  /// scheme): a correction made at one is undone if the address goes on.
+  static let addressMarks: Set<String> = [".", "+", ":", "=", "!", "#", "$", "%", "&", "*", "?", "^", "{", "|", "}", "~"]
+
+  /// A correction followed by an address mark turned out to be inside an address: put the word back as typed.
+  func undoCorrectionBeforeMark() {
+    defer { correctionThenMark = nil }
+    guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }
+    for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
+    proxy.insertText(c.original + m)
   }
 
   // MARK: internals
@@ -298,19 +368,64 @@ public final class TypingEngine {
   /// The word a space would put in place of the one being typed, or nil when it would stay as typed: the
   /// field's autocorrect setting and the learned words apply, as in commitWord. The bar bolds this word.
   public var pendingAutocorrection: String? {
-    guard !composing.isEmpty, traits.autocorrect,
-          let fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
+    guard !composing.isEmpty, traits.autocorrect, !inAddress else { return nil }
+    if let r = pendingReplacement { return r }
+    guard var fix = suggester.autocorrection(for: composing, learned: learned, context: context), fix != literal else { return nil }
+    // the apostrophe the user typed, as the bar shows it ("do’nt": don’t)
+    if composing.contains(where: { $0.character == "’" }) { fix = fix.replacingOccurrences(of: "'", with: "’") }
     return fix
   }
 
-  /// Autocorrects the word under construction, if it needs it.
-  func commitWord() {
+  /// The user's text replacement for the word being typed, if it is a shortcut the user has not rejected.
+  var pendingReplacement: String? {
+    let key = Self.shortcutKey(literal)
+    guard !composing.isEmpty, traits.autocorrect, !inAddress, !learned.contains(key), !learned.contains(literal.lowercased()) else { return nil }
+    // a case-only replacement already typed as written ("V2T" for v2t -> V2T) has nothing to do
+    guard let r = replacements[key], r != literal else { return nil }
+    return r
+  }
+
+  /// How a shortcut is looked up: lowercase, straight apostrophes.
+  static func shortcutKey(_ s: String) -> String { Suggester.straightApostrophes(s.lowercased()) }
+
+  /// The system's supplementary lexicon (UILexicon: the user's text replacements, contact names, phrases
+  /// with no shortcut) as replacements keyed by `shortcutKey`, and the words never to correct (lowercase).
+  /// A shortcut the engine cannot see as one word (";em", "@@") is left out.
+  public static func systemLexicon(_ entries: [(input: String, text: String)]) -> (replacements: [String: String], words: Set<String>) {
+    var replacements: [String: String] = [:], words = Set<String>()
+    for (input, text) in entries {
+      let word = !input.isEmpty && input.allSatisfy { $0.isLetter || $0.isNumber || isApostrophe($0) }
+      if word, input != text {
+        replacements[shortcutKey(input)] = text  // "v2t" -> "V2T" too: a change of case is a replacement
+      } else {
+        words.formUnion(text.split { !($0.isLetter || $0.isNumber || isApostrophe($0)) }.map { shortcutKey(String($0)) })
+      }
+    }
+    return (replacements, words)
+  }
+
+  /// The word being typed is part of a web or email address, an @handle or a #hashtag: what is joined to it
+  /// before it ("www.", "jhon@", "@", "#", "http://") holds one of these marks.
+  var inAddress: Bool {
+    var i = before.index(before.endIndex, offsetBy: -composing.count, limitedBy: before.startIndex) ?? before.startIndex
+    while i > before.startIndex {
+      i = before.index(before: i)
+      let c = before[i]
+      if Self.isGap(c) { return false }
+      if "@#/.:_\\".contains(c) { return true }
+    }
+    return false
+  }
+
+  /// Autocorrects the word under construction, if it needs it; true when it changed it.
+  @discardableResult func commitWord() -> Bool {
     defer { composing = [] }
-    guard let fix = pendingAutocorrection else { return }
+    guard let fix = pendingAutocorrection else { return false }
     let original = literal
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
     lastCorrection = (original, fix)
+    return true
   }
 
   func spaceIfNeeded() {
@@ -324,8 +439,9 @@ public final class TypingEngine {
   /// Inside a word ("don't", "Teh’Code"): the straight apostrophe and the curly one from its long press.
   static func isApostrophe(_ c: Character) -> Bool { c == "'" || c == "’" }
 
+  /// Learned words are kept lowercase with straight apostrophes, so "we’re" and "we're" are one word.
   func learn(_ word: String) {
-    let w = word.lowercased()
+    let w = Self.shortcutKey(word)
     guard learned.insert(w).inserted else { return }
     onLearn?(w)
   }

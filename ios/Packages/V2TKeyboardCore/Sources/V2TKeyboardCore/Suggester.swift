@@ -39,6 +39,14 @@ public final class Suggester: @unchecked Sendable {
   public var minCompletionPrefix = 2
   public var beamWidth = 48
   public var maxEdits = 2
+  /// A letter typed in place of another that is not next to it on the keyboard: a spelling slip
+  /// ("absorbtion", "accomadation") rather than a touch that landed off its key. Infinity turns it off.
+  /// Tuned on RealTypoEval's Wikipedia misspellings (RealTypoTuning): off fixed 83.6% of the English ones
+  /// and 89.0% of the Spanish; 5 to 8 all fixed 87 to 90% and 91%; 4 and below, or 10, lost the gain.
+  public var substitutionPenalty: Double = 7
+  /// The same between two vowels, the commonest slip ("seperate", "definate"): 5 beat 7 by 1.5 points on
+  /// the English misspellings and matched it on the Spanish.
+  public var vowelSubstitutionPenalty: Double = 5
   /// Typed in lowercase, a capitalised entry (a name: "Ford" for "doed") is less likely meant.
   public var properNounPenalty: Double = 2.0
   /// Nats a correction must beat the word as typed by before autocorrect applies it.
@@ -99,7 +107,8 @@ public final class Suggester: @unchecked Sendable {
         let f = lex.frequency(i)
         if f > 0 || lex.word(i).lowercased() == literal.lowercased() {
           let w = lex.word(i)
-          let kind: Suggestion.Kind = w.lowercased() == literal.lowercased() ? .typed : .correction
+          // the word as typed only when the bar would write it exactly so ("i'm" is not "I'm")
+          let kind: Suggestion.Kind = Self.applyCase(of: literal, to: w) == literal ? .typed : .correction
           offer(w, kind, -s.cost + prior(f) + lang + (bonus[i] ?? 0))
         }
         i += 1
@@ -115,9 +124,10 @@ public final class Suggester: @unchecked Sendable {
         }
       }
     }
-    var out = scored.values.sorted { $0.score > $1.score }
+    // ties by word: a dictionary's order changes from one launch to the next
+    var out = scored.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }
     // the literal word keeps a slot even when it is not a word, so it can always be chosen as typed
-    if !out.prefix(limit).contains(where: { $0.word.lowercased() == literal.lowercased() }) {
+    if !out.prefix(limit).contains(where: { $0.word == literal }) {
       out.insert(Suggestion(word: literal, kind: .typed, score: -.infinity), at: min(out.count, limit - 1))
     }
     return Array(out.prefix(limit))
@@ -127,21 +137,88 @@ public final class Suggester: @unchecked Sendable {
   public func autocorrection(for typed: [TypedKey], learned: Set<String> = [], context: TypingContext = .empty) -> String? {
     let literal = String(typed.map(\.character))
     let lower = literal.lowercased()
-    guard Lexicon.fold(literal).count >= 1, !learned.contains(lower) else { return nil }
+    guard Lexicon.fold(literal).count >= 1, !learned.contains(lower), !learned.contains(Self.straightApostrophes(lower)) else { return nil }
     // the search sees letters only, so a correction would drop the digits ("hello1" -> "hello")
     guard !literal.contains(where: \.isNumber) else { return nil }
     if lower == "i", lexicons.contains(where: { $0.language == "en" }) { return "I" }
     guard typed.count >= 2 else { return nil }
-    let key = Lexicon.fold(literal)
-    for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower }) {
-      return nil  // a real word, as typed; a missing accent or apostrophe ("cancion", "dont") is corrected below
+    // a capitalised word in mid-sentence is likely a name the lists lack ("Figma", "Susan"): left as typed
+    // (ios/AUTOCORRECT.md item 8) rather than turned into a word ("Usan") or another name ("Kian" -> "Lian");
+    // the bar still offers the corrections ("Londno": London)
+    // a real word, as typed, stays, unless it is a rare spelling of a common word with an apostrophe or
+    // accent ("cant", "ano") or an i that should be I ("i'm"); a missing accent or apostrophe on a non-word
+    // ("cancion", "dont") is corrected below
+    if isWord(literal) { return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) }
+    // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
+    for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
+      if isWord(String(literal.dropLast(suffix.count))) { return nil }
     }
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
     guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
+    // a capitalised word in mid-sentence is likely a name (ios/AUTOCORRECT.md item 8): it may become a name
+    // the lists know ("Britian" -> "Britain") but never a common word ("Figma" -> "Firma", "Susan" -> "Usan").
+    // An unknown name can still become a known one ("Kian" -> "Lian"); never correcting names lost 1.9
+    // points of RealTypoEval's English fixes for two fewer changed words in 14,000 of correct text.
+    if !context.sentenceStart, Self.isTitleCase(literal), !isNameEntry(best.word) { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
     return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
   }
+
+  /// Frequency steps (0-255) a spelling with an apostrophe or accent must beat the word as typed by to replace
+  /// it. From the lists: the rare words that should change sit 88 to 154 steps under their marked spelling
+  /// (anos/años 88, cant/can't 90, wont/won't 108, whats/what's 154); the common words that must stay sit at
+  /// most 52 under (ill/I'll 52, lets/let's 39, id/I'd 37) or above it (were/we're, como/cómo).
+  public var markedVariantGap = 80
+
+  /// For a real word typed with plain letters, the much commoner spelling of the same letters with an
+  /// apostrophe or accent; for "i'm", "i'll" and the like, the capital I. Nil to leave the word as typed.
+  func markedVariant(of literal: String) -> String? {
+    let lower = Self.straightApostrophes(literal.lowercased())
+    let key = Lexicon.fold(literal)
+    if lower.hasPrefix("i'"), literal.first == "i" {
+      // the capital only: a curly apostrophe typed stays ("i’m" -> "I’m")
+      for lex in lexicons where lex.exactRange(key).contains(where: { lex.word($0).lowercased() == lower && lex.word($0).hasPrefix("I'") }) {
+        return "I" + literal.dropFirst()
+      }
+    }
+    guard literal.allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }  // marks the user typed stay
+    var typed = -1, best: (word: String, frequency: Int)?
+    for lex in lexicons {
+      for i in lex.exactRange(key) {
+        let w = lex.word(i), f = lex.frequency(i)
+        if w.lowercased() == lower { typed = max(typed, f); continue }
+        guard EntryCase(w) == .lower, !w.allSatisfy(\.isASCII) || w.contains("'") else { continue }
+        if best == nil || f > best!.frequency { best = (w, f) }
+      }
+    }
+    guard let b = best, b.frequency - typed >= markedVariantGap else { return nil }
+    return Self.applyCase(of: literal, to: b.word)
+  }
+
+  /// `word` is in a lexicon as written, ignoring case and which apostrophe was typed ("don’t").
+  func isWord(_ word: String) -> Bool {
+    let lower = Self.straightApostrophes(word.lowercased())
+    let key = Lexicon.fold(word)
+    guard !key.isEmpty else { return false }
+    return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0).lowercased() == lower } }
+  }
+
+  /// "Figma": a capital first and lowercase after (not "NASA", which typing in capitals produces).
+  static func isTitleCase(_ s: String) -> Bool {
+    guard let f = s.first, f.isUppercase else { return false }
+    return s.dropFirst().contains(where: \.isLowercase)
+  }
+
+  /// `word` is a lexicon entry spelled as a name, exactly as written ("London"; not "FIMA" or "Dogma").
+  func isNameEntry(_ word: String) -> Bool {
+    guard EntryCase(word) == .name else { return false }
+    let key = Lexicon.fold(word)
+    return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0) == word } }
+  }
+
+  /// The lexicons spell apostrophes straight; the long press types the curly one.
+  static func straightApostrophes(_ s: String) -> String { s.replacingOccurrences(of: "’", with: "'") }
 
   /// The likeliest next words before anything of the next word is typed, best first: the words that most
   /// often follow the previous one (or start a sentence), in the language the context is written in.
@@ -157,6 +234,8 @@ public final class Suggester: @unchecked Sendable {
     }
     return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
+
+  static let vowels: Set<UInt8> = Set("aeiou".utf8)
 
   func prior(_ f: Int) -> Double { frequencyWeight * (Double(f) / 255 - 1) }
 
@@ -179,6 +258,13 @@ public final class Suggester: @unchecked Sendable {
           if !r.isEmpty { next.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + cost, edits: s.edits)) }
         }
         guard s.edits < maxEdits else { continue }
+        let kids = lex.children(s.prefix, in: s.range)
+        // another letter than the touch's key or its neighbours
+        let hitVowel = Self.vowels.contains(h)
+        for (x, r) in kids where !options.contains(where: { $0.0 == x }) {
+          let cost = hitVowel && Self.vowels.contains(x) ? vowelSubstitutionPenalty : substitutionPenalty
+          if cost < .infinity { next.append(State(lex: s.lex, range: r, prefix: s.prefix + [x], cost: s.cost + cost, edits: s.edits + 1)) }
+        }
         // this touch was a mistake: skip it
         next.append(State(lex: s.lex, range: s.range, prefix: s.prefix, cost: s.cost + editPenalty, edits: s.edits + 1))
         // two letters swapped ("becuase"): take the next one first, then this one
@@ -190,9 +276,9 @@ public final class Suggester: @unchecked Sendable {
         }
         // a letter was missed before this touch
         if s.prefix.count >= 1 {
-          for x in UInt8(97)...UInt8(122) {
+          for (x, xr) in kids {
             let p = s.prefix + [x, h]
-            let r = lex.prefixRange(p, in: s.range)
+            let r = lex.prefixRange(p, in: xr)
             // a doubled letter typed once ("helo", "tomorow") is the commonest miss, so it costs half
             let cost = x == s.prefix.last ? editPenalty * 0.5 : editPenalty
             if !r.isEmpty { next.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + cost, edits: s.edits + 1)) }
