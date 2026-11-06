@@ -231,7 +231,8 @@ import SwiftUI
       dictionary.reload()  // the keyboard may have added words since
       var cleanup: Duration?
       if Settings.shared.cleanupEnabled, recommendation.cleanup == .appleIntelligence {
-        if id == recording { publish(.cleaningUp) }
+        // only from .transcribing: a session cooled down meanwhile (.needsApp) or a newer recording keeps its state
+        if id == recording, state == .transcribing { publish(.cleaningUp) }
         let t0 = ContinuousClock.now
         text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms)
         cleanup = ContinuousClock.now - t0
