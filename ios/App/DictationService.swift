@@ -211,21 +211,38 @@ import SwiftUI
     _ samples: [Float], id: Int, request: String, language: String, live: LiveTranscription?, stoppedAt: ContinuousClock.Instant
   ) async {
     // only the latest recording owns the state: a reset session may already be listening again
-    defer { if id == recording, state == .transcribing { publish(recorder.running ? .idle : .needsApp) } }
+    defer { if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if engineState != .ready { await prepareModel() }
     do {
       let raw: String
-      if let live { raw = try await live.finish(samples, stoppedAt: stoppedAt) } else { raw = try await engine.transcribe(samples, language: language) }
+      var pieces = 0
+      if let live {
+        let result = try await live.finish(samples, stoppedAt: stoppedAt)
+        raw = result.text
+        pieces = result.report.piecesWhileRecording
+      } else {
+        raw = try await engine.transcribe(samples, language: language)
+      }
+      let speech = ContinuousClock.now - stoppedAt
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
       let heard = text
       dictionary.reload()  // the keyboard may have added words since
-      if Settings.shared.cleanupEnabled { text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms) }
+      var cleanup: Duration?
+      if Settings.shared.cleanupEnabled, recommendation.cleanup == .appleIntelligence {
+        if id == recording { publish(.cleaningUp) }
+        let t0 = ContinuousClock.now
+        text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms)
+        cleanup = ContinuousClock.now - t0
+      }
       text = dictionary.applyReplacements(text)
       lastText = text
-      try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language))
-      dictationLog.log("text ready \((ContinuousClock.now - stoppedAt) / .milliseconds(1), format: .fixed(precision: 0), privacy: .public) ms after Stop")
+      let timings = DictationTimings(
+        audio: Double(samples.count) / 16_000, speech: speech.seconds, cleanup: cleanup?.seconds,
+        total: (ContinuousClock.now - stoppedAt).seconds, piecesWhileRecording: pieces)
+      try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language, timings: timings))
+      dictationLog.log("text ready \(timings.summary, privacy: .public)")
       guard id == recording else { return }  // kept in History, but not typed into whatever field is open now
       defaults.set(text, forKey: DictationChannel.resultKey)
       defaults.set(request, forKey: DictationChannel.resultIdKey)
@@ -240,4 +257,8 @@ import SwiftUI
     defaults.set(s.rawValue, forKey: DictationChannel.stateKey)
     DictationChannel.post(DictationChannel.changed)
   }
+}
+
+extension Duration {
+  var seconds: Double { Double(components.seconds) + Double(components.attoseconds) / 1e18 }
 }

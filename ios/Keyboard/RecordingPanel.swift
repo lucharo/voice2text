@@ -135,7 +135,7 @@ final class RecordingPanel: UIView {
       let s = Int(Date().timeIntervalSince(started))
       status.text = String(format: "%d:%02d", s / 60, s % 60)
     } else {
-      status.text = "Transcribing…"
+      status.text = state.waitingLabel
     }
     setNeedsLayout()
   }

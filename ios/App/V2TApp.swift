@@ -331,6 +331,7 @@ struct HistoryView: View {
         VStack(alignment: .leading, spacing: 4) {
           Text(d.text).textSelection(.enabled)
           if let heard = d.heard { Text("Heard: \(heard)").font(.footnote).foregroundStyle(.secondary) }
+          if let t = d.timings { Text(t.summary).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
           Text(d.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
         }
         .swipeActions { Button("Delete", role: .destructive) { try? history.delete(d.id) } }

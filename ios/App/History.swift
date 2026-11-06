@@ -8,6 +8,30 @@ struct Dictation: Codable, Equatable, Identifiable, Sendable {
   var heard: String? = nil
   var date: Date
   var language: String
+  /// How long it took, kept since #123; nil for dictations saved before that.
+  var timings: DictationTimings? = nil
+}
+
+/// How long one dictation took after Done, in seconds (#123).
+struct DictationTimings: Codable, Equatable, Sendable {
+  /// Length of the recording.
+  var audio: Double
+  /// From Done to the transcript (only the last piece, when the rest was transcribed while talking).
+  var speech: Double
+  /// Apple Intelligence's cleanup; nil when cleanup did not run.
+  var cleanup: Double?
+  /// From Done to the text being sent to the keyboard, dictionary included.
+  var total: Double
+  /// Pieces transcribed while recording (#112).
+  var piecesWhileRecording: Int = 0
+
+  /// One line for History: "Ready in 1.4 s · speech 0.1 s, cleanup 1.2 s · 45 s spoken".
+  var summary: String {
+    func s(_ x: Double) -> String { x < 10 ? String(format: "%.1f s", x) : String(format: "%.0f s", x) }
+    var parts = ["speech \(s(speech))"]
+    if let cleanup { parts.append("cleanup \(s(cleanup))") }
+    return "Ready in \(s(total)) · \(parts.joined(separator: ", ")) · \(s(audio)) spoken"
+  }
 }
 
 /// Past dictations, newest first, saved as one JSON file. A missing or unreadable file starts an empty
