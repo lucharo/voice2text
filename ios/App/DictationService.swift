@@ -291,7 +291,11 @@ import SwiftUI
     // only the latest recording owns the state: a reset session may already be listening again
     defer { if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
-    if engineState != .ready {
+    if let preparing {
+      // a download or repair the user started (Download, Try again) is under way: wait for it, so the
+      // recording, held in memory only, is transcribed once it finishes instead of being dropped
+      await preparing.value
+    } else if engineState != .ready {
       // load a model that is on the device, but never download one behind the user's back
       guard store.isOnDevice else { lastText = "Couldn't transcribe: the speech model is not on this \(recommendation.deviceName)."; return }
       await prepareModel(allowDownload: false)
