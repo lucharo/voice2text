@@ -48,7 +48,7 @@ xcodebuild -exportArchive -archivePath /tmp/V2T.xcarchive -exportOptionsPlist to
 | Keyboard engines | `Packages/V2TKeyboardCore` (`V2TKeyboardCore`) | Layouts, word lists, autocorrect and suggestions, swipe decoding, the typing rules. No UIKit; tested on the Mac. |
 | Cleanup guard | `Packages/V2TKeyboardCore` (`V2TCleanup`) | The Mac app's cleanup prompt and `keep_spoken_words` guard, ported to Swift and checked against the Python output (`tools/cleanup_golden.py`). |
 | Keyboard | `Keyboard/` | The keyboard extension: keys drawn with Core Animation, touch handling, previews, long-press accents, swipe trail, held delete, space-bar cursor, the suggestion bar and the mic. |
-| App | `App/` | Setup, the one-time model download, the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
+| App | `App/` | Setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
 | Shared | `Shared/` | Settings and the dictionary in the App Group, and the keyboard-to-app dictation channel. |
 
 ### Dictation from the keyboard
@@ -70,6 +70,14 @@ iOS gives keyboards no microphone, so the app records:
    moment near its 12 s mark (the Mac app's rule), so when you tap the mic again only the last piece is left. A
    dictation under 14.9 s is transcribed whole, as before (#112). Each dictation logs its timing under category
    `dictation`: how long speech took after Stop, and how many pieces were transcribed while you talked.
+
+### What stays on the iPhone
+
+- The speech model downloads only when you tap Download in the app (size in the table below). Storage in the app
+  shows the space it takes, with its Neural Engine copy, and deletes it. Without the model, the keyboard's mic
+  opens v2t on its download screen instead of recording.
+- History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
+  saved: the app holds it in memory while it transcribes, then drops it.
 
 ### Which model this iPhone gets
 

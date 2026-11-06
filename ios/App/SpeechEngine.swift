@@ -25,15 +25,19 @@ actor SpeechEngine {
   private var nemotronLanguage: NemotronUnifiedLanguage?
   private var parakeet: AsrManager?
   private(set) var state: State = .notDownloaded
+  /// Bumped by unload(): work that awaited across it finds the number changed and drops its result.
+  private var generation = 0
 
   init(speech: Recommendation.Speech) {
     self.speech = speech
     ModelRegistry.revisionOverrides = Self.pins
   }
 
-  /// Downloads (first launch only) and loads the model. `progress` reports `.downloading` only while files
-  /// actually download; a model already on the phone goes straight to `.loading`.
-  func prepare(language: String, progress: @escaping @Sendable (State) -> Void) async throws {
+  /// Loads the model, downloading what is missing only when `allowDownload` (the user tapped Download or Try
+  /// again). Otherwise FluidAudio runs offline: nothing is fetched, and a damaged copy is reported, never
+  /// deleted and downloaded again. `progress` reports `.downloading` only while files actually download.
+  func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
+    ModelHub.offlineMode = !allowDownload  // preparations never overlap: DictationService runs one at a time
     state = .loading
     let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
@@ -57,15 +61,49 @@ actor SpeechEngine {
     }
   }
 
+  /// Drops the loaded model, before its files are deleted.
+  func unload() {
+    generation += 1  // a language reload already under way must not attach its model afterwards
+    nemotron = nil
+    nemotronLanguage = nil
+    parakeet = nil
+    state = .notDownloaded
+  }
+
+  /// Whether `folder` holds every file the model loads (FluidAudio's own lists at the pinned 55f65d9).
+  static func isComplete(_ speech: Recommendation.Speech) -> @Sendable (URL) -> Bool {
+    switch speech {
+    case .nemotron:
+      let family = UnifiedConfig(family: .nemotronMultilingual(.en)).family
+      let names = [family.offlineEncoderFile(precision: .int8), family.decoderFile, family.jointDecisionFile, family.vocab]
+      return { ModelStore.hasAll(names, in: $0) }
+    case .parakeet:
+      // modelsExist only checks that the paths exist; also reject half-downloaded bundles
+      return { AsrModels.modelsExist(at: $0, version: .v3, encoderPrecision: .int8V2) && ModelStore.allBundlesLoadReady(in: $0) }
+    }
+  }
+
+  /// Where FluidAudio keeps this model's downloaded files (its default under Application Support).
+  static func modelFolder(for speech: Recommendation.Speech) -> URL {
+    switch speech {
+    case .nemotron: MLModelConfigurationUtils.defaultModelsDirectory(for: UnifiedConfig(family: .nemotronMultilingual(.en)).family.repo)
+    case .parakeet: AsrModels.defaultCacheDirectory(for: .v3)
+    }
+  }
+
   /// 16 kHz mono samples to text.
   func transcribe(_ samples: [Float], language: String) async throws -> String {
     switch speech {
     case .nemotron:
+      guard state == .ready else { throw EngineError.notReady }  // unloaded (deleted): never reload from files
       let lang = Self.nemotronLanguage(language)
       if lang != nemotronLanguage {
-        // the language prompt is fixed per manager: reload with the new one (files are already local)
+        let started = generation
+        // the language prompt is fixed per manager: reload with the new one from the local files, offline
+        ModelHub.offlineMode = true
         let m = UnifiedAsrManager(config: UnifiedConfig(family: .nemotronMultilingual(lang)), encoderPrecision: .int8)
         try await m.loadModels(to: nil, configuration: nil, progressHandler: nil)
+        guard started == generation else { throw EngineError.notReady }  // unloaded meanwhile
         nemotron = m
         nemotronLanguage = lang
       }

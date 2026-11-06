@@ -62,9 +62,9 @@ import XCTest
   }
 
   func testACachedModelNeverShowsAsDownloading() {
-    let ready = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch
-    app.launch()  // the first launch on a fresh Simulator downloads the model; wait for that
-    XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
+    let ready = modelReady(app)
+    app.launch()
+    downloadModelIfNeeded(app)  // a fresh Simulator has no model until Download is tapped
     app.terminate()
     app.launch()
     // sample the model row from launch until ready: it may say Preparing, never Downloading

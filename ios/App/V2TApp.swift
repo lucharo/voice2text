@@ -30,7 +30,7 @@ import V2TKeyboardCore
         .onOpenURL { url in
           if url.scheme == "v2t", url.host == "dictate" { dictation.handleKeyboardLaunch() }
         }
-        .task { await dictation.prepareModel() }
+        .task { await dictation.loadModelIfOnDevice() }  // downloads only when the user taps Download (#124)
     }
   }
 }
@@ -78,6 +78,7 @@ struct HomeView: View {
           NavigationLink("History (\(history.items.count))") { HistoryView() }
         }
         Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
+        Section("Storage") { StorageRows() }
         Section("Keyboard") { NavigationLink("Languages and typing") { KeyboardSettingsView() } }
       }
       .navigationTitle("v2t")
@@ -90,6 +91,7 @@ struct HomeView: View {
       guard phase == .active else { return }
       keyboardSeen = Settings.shared.keyboardFullAccessSeen
       dictation.refreshRecommendation()
+      dictation.refreshModelStorage()
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
@@ -130,7 +132,11 @@ struct ModelRow: View {
           Text(e).font(.footnote).foregroundStyle(.red)
           Button("Try again") { Task { await dictation.prepareModel() } }
         case .ready: Text("Ready. Transcription runs on this \(dictation.recommendation.deviceName), offline.").font(.footnote).foregroundStyle(.secondary)
-        case .notDownloaded: Button("Download") { Task { await dictation.prepareModel() } }
+        case .notDownloaded:
+          Text("Not on this \(dictation.recommendation.deviceName) yet. The keyboard's mic needs it; typing works without it.")
+            .font(.footnote).foregroundStyle(.secondary)
+          Button("Download (\(dictation.recommendation.downloadMB) MB)") { Task { await dictation.prepareModel() } }
+            .accessibilityIdentifier("v2t.model.download")
         }
       }
     }
@@ -187,6 +193,8 @@ struct CleanupRow: View {
 }
 
 struct RecommendationCard: View {
+  /// The FAQ answer on the iPhone models we measured and why this one ships.
+  static let evaluation = URL(string: "https://v2t.luischav.es/faq/#what-would-v2t-on-an-iphone-use")!
   let rec: Recommendation
   @AppStorage("cleanupEnabled", store: Settings.shared.defaults) private var cleanup = true
   var body: some View {
@@ -195,6 +203,9 @@ struct RecommendationCard: View {
       Label(rec.cleanup == .appleIntelligence && !cleanup ? "Cleanup: off (turned off above)" : rec.cleanupName, systemImage: "sparkles").font(.subheadline)
       Text(rec.reason).font(.footnote).foregroundStyle(.secondary)
       if !rec.measured { Text("Untested on this \(rec.deviceName) model.").font(.footnote).foregroundStyle(.orange) }
+      // one model that just works, picked from our tests, rather than a choice to make; the tests are public
+      Link("How we chose this model", destination: Self.evaluation).font(.footnote)
+        .accessibilityIdentifier("v2t.model.evaluation")
     }
     .padding(.vertical, 4)
   }
@@ -237,10 +248,82 @@ struct MicrophoneLabel: View {
   }
 }
 
+/// What v2t keeps on the device, with a button to remove each: the speech model, and the dictation history.
+struct StorageRows: View {
+  @EnvironmentObject var dictation: DictationService
+  @EnvironmentObject var history: History
+  @State private var confirmModel = false
+  @State private var confirmHistory = false
+
+  static func size(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      LabeledContent("Speech model", value: dictation.modelBytes == 0 ? "Not downloaded"
+        : dictation.modelOnDevice ? Self.size(dictation.modelBytes) : "\(Self.size(dictation.modelBytes)), incomplete")
+        .accessibilityIdentifier("v2t.storage.model")
+      Button("Delete speech model", role: .destructive) { confirmModel = true }
+        .disabled(!dictation.canDeleteModel)
+        .accessibilityIdentifier("v2t.storage.deleteModel")
+        .confirmationDialog("Delete the speech model?", isPresented: $confirmModel, titleVisibility: .visible) {
+          Button("Delete", role: .destructive) { Task { await dictation.deleteModel() } }
+        } message: {
+          Text("Dictation stops working until you download it again (\(dictation.recommendation.downloadMB) MB).")
+        }
+    }
+    VStack(alignment: .leading, spacing: 4) {
+      LabeledContent("Dictations", value: !history.hasFiles ? "None" : "\(history.items.count) · \(Self.size(history.bytes))")
+        .accessibilityIdentifier("v2t.storage.history")
+      Text("History keeps the text only. Audio is never saved: v2t holds it in memory while it transcribes, then drops it.")
+        .font(.footnote).foregroundStyle(.secondary)
+      Button("Clear History", role: .destructive) { confirmHistory = true }
+        .disabled(!history.hasFiles)
+        .accessibilityIdentifier("v2t.storage.clearHistory")
+        .confirmationDialog("Delete all \(history.items.count) dictations?", isPresented: $confirmHistory, titleVisibility: .visible) {
+          Button("Delete all", role: .destructive) { dictation.clearHistory() }
+        }
+    }
+    if let e = dictation.storageError { Text(e).font(.footnote).foregroundStyle(.red) }
+  }
+}
+
 /// Shown when the keyboard's mic opened v2t: recording has started; the user goes back to keep talking.
 struct KeyboardHandoffView: View {
   @EnvironmentObject var dictation: DictationService
+  /// The mic opened v2t with no speech model on the device: this screen offers the download instead of recording.
+  @State private var neededModel = false
   var body: some View {
+    Group { if neededModel { modelNeeded } else { handoff } }
+      .onAppear { neededModel = !dictation.canDictate }
+      // the model can fail to load after this screen appeared (damaged files): stop telling the user to keep
+      // talking, and show Try again instead
+      .onChange(of: dictation.engineState) { _, state in
+        guard case .failed = state, !neededModel else { return }
+        if dictation.state == .listening { dictation.stop() }
+        neededModel = true
+      }
+  }
+
+  private var modelNeeded: some View {
+    VStack(spacing: 24) {
+      Spacer()
+      Image(systemName: dictation.engineState == .ready ? "checkmark.circle.fill" : "arrow.down.circle")
+        .font(.system(size: 64)).foregroundStyle(dictation.engineState == .ready ? .green : .accentColor)
+      Text(dictation.engineState == .ready ? "Speech model ready"
+           : dictation.modelOnDevice ? "The speech model didn't load" : "Download the speech model").font(.largeTitle.bold())
+        .multilineTextAlignment(.center)
+      Text(dictation.engineState == .ready
+        ? "Go back to your app and tap the mic again."
+        : "v2t turns speech into text on this \(dictation.recommendation.deviceName), so the keyboard's mic needs the speech model first.")
+        .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
+      if dictation.engineState != .ready { ModelRow().padding(.horizontal, 32) }
+      Spacer()
+      Button("Close") { dictation.cameFromKeyboard = false }.padding(.bottom, 32)
+    }
+    .accessibilityIdentifier("v2t.handoff.modelNeeded")
+  }
+
+  private var handoff: some View {
     VStack(spacing: 24) {
       Spacer()
       Image(systemName: dictation.state == .listening ? "waveform" : "mic.fill")
@@ -267,8 +350,11 @@ struct KeyboardHandoffView: View {
       .padding(.bottom, 32)
     }
     // no session (it timed out or was turned off, or the microphone never started): the screen's "keyboard
-    // records in place" does not hold, so close it, also when it opens that way
-    .onChange(of: dictation.state, initial: true) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
+    // records in place" does not hold, so close it, also when it opens that way. Not when the model is what is
+    // missing: then this cover switches to the download (or Try again) screen instead.
+    .onChange(of: dictation.state, initial: true) { _, state in
+      if state == .needsApp, dictation.canDictate { dictation.cameFromKeyboard = false }
+    }
   }
 }
 

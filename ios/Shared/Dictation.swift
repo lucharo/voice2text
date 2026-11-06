@@ -55,6 +55,9 @@ enum DictationChannel {
     return Microphone(name: name)
   }
 
+  /// True while the speech model is not on the device: the mic key then opens the app, which offers the download.
+  static let modelMissingKey = "dictation.modelMissing"
+
   /// The microphone level while listening, newest last, each 0...1, written by the app 20 times a second for
   /// the keyboard's waveform. A file in the App Group rather than defaults, which are not meant for that rate.
   static var levelsFile: URL? {

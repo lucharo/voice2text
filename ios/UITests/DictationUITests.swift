@@ -16,9 +16,8 @@ import XCTest
     app.launchEnvironment["V2T_LAYOUT"] = "en"
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = Self.fixture
     app.launch()
-    // the speech model downloads once (627 MB) and loads; allow for a slow network
-    let ready = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch
-    XCTAssertTrue(ready.waitForExistence(timeout: 1200), "model never became ready")
+    downloadModelIfNeeded(app)
+    let ready = modelReady(app)
     shot("11-model-ready")
 
     // a replacement the dictation must pass through: "simulator" is in the fixture clip

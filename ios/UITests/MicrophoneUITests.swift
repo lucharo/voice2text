@@ -16,6 +16,7 @@ import XCTest
       allowFullAccess()
       app.launch()
     }
+    downloadModelIfNeeded(app)  // without the model the mic opens the download screen instead of recording
     let warm = app.switches["v2t.warm"].firstMatch
     reveal(warm, in: app)
     XCTAssertTrue(warm.waitForExistence(timeout: 10))

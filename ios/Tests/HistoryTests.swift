@@ -47,4 +47,57 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: file.path()))
     #expect(try String(contentsOf: file.appendingPathExtension("unreadable"), encoding: .utf8) == "not json")
   }
+
+  @Test func clearDeletesEveryDictationAndTheFile() throws {
+    let history = History(file: file)
+    try history.add(dictation("one", 1_000))
+    try history.add(dictation("two", 2_000))
+
+    try history.clear()
+
+    #expect(history.items == [])
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    #expect(History(file: file).items == [])
+  }
+
+  /// A file that cannot be removed leaves the list as it is on disk, so Clear History can be tried again.
+  @Test func aFailedClearKeepsEveryDictation() throws {
+    let history = History(file: file)
+    let one = dictation("one", 1_000)
+    try history.add(one)
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+    #expect(throws: (any Error).self) { try history.clear() }
+
+    #expect(history.items == [one])
+  }
+
+  @Test func bytesIsZeroWithoutAFileAndGrowsWithDictations() throws {
+    let history = History(file: file)
+    #expect(history.bytes == 0)
+
+    try history.add(dictation("a sentence someone said", 1_000))
+
+    #expect(history.bytes > 0)
+  }
+
+  /// A history that once failed to decode is kept beside the file; it holds dictation text too, so Clear
+  /// History removes it, and Storage counts it.
+  @Test func clearAlsoRemovesAnUnreadableEarlierHistory() throws {
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data("not json".utf8).write(to: file)
+    let history = History(file: file)
+    let unreadable = file.appendingPathExtension("unreadable")
+    #expect(FileManager.default.fileExists(atPath: unreadable.path))
+    #expect(history.items == [])
+    #expect(history.hasFiles)
+    #expect(history.bytes > 0)
+
+    try history.clear()
+
+    #expect(FileManager.default.fileExists(atPath: unreadable.path) == false)
+    #expect(history.hasFiles == false)
+    #expect(history.bytes == 0)
+  }
 }

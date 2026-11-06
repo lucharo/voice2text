@@ -13,6 +13,7 @@ import XCTest
     XCTAssertTrue(FileManager.default.fileExists(atPath: DictationUITests.fixture), "run ios/setup.sh to make \(DictationUITests.fixture)")
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = DictationUITests.fixture
     app.launch()
+    downloadModelIfNeeded(app)  // without the model the keyboard's mic opens the download screen instead (#124)
     app.open(URL(string: "v2t://dictate")!)
     XCTAssertTrue(app.staticTexts["Listening"].waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertTrue(app.buttons["Stop and stay here"].exists)
@@ -31,6 +32,7 @@ import XCTest
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = DictationUITests.fixture
     app.launchEnvironment["V2T_FIXTURE_MIC_FAILS"] = "1"
     app.launch()
+    downloadModelIfNeeded(app)  // without the model the mic opens the download screen before trying the microphone
     app.open(URL(string: "v2t://dictate")!)
     XCTAssertFalse(app.staticTexts["Mic is ready"].waitForExistence(timeout: 5), "handoff stayed up with no session")
     XCTAssertFalse(app.staticTexts["Listening"].exists)
