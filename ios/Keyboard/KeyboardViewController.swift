@@ -306,12 +306,15 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
   }
 
-  /// The panel's category names follow the layout language, and the full iPad keyboard's has a hide key.
+  /// The panel's category names follow the layout language, the full iPad keyboard's has a hide key, and it
+  /// has a globe wherever the keys have one.
   private func syncEmojiPanel() {
     guard let p = emojiPanel else { return }
     if p.language != language { p.language = language }
     let pad = keyboardView.layout.form.isPad
     if pad != (p.onDismiss != nil) { p.onDismiss = pad ? { [weak self] in self?.dismissKeyboard() } : nil }
+    let globe = keyboardView.layout.nextKeyboardKey
+    if globe != (p.onNextKeyboard != nil) { p.onNextKeyboard = globe ? { [weak self] in self?.advanceToNextInputMode() } : nil }
   }
 
   private func makeEmojiPanel() -> EmojiPanel {

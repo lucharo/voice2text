@@ -62,6 +62,9 @@ import XCTest
     XCTAssertLessThan(key("globe").frame.maxX, key("emoji").frame.minX)
     XCTAssertLessThan(key("emoji").frame.maxX, key("space").frame.minX)
     shot("54-keyboard-globe-and-emoji")
+    key("emoji").tap()  // the panel covers the keys' globe, so it has its own
+    XCTAssertTrue(app.buttons["emoji.globe"].waitForExistence(timeout: 3))
+    app.buttons["emoji.abc"].tap()
     key("globe").tap()
     XCTAssertTrue(key("letters-q").waitForNonExistence(timeout: 5), "the globe did not hand over to the next keyboard")
   }
@@ -84,6 +87,7 @@ import XCTest
     XCTAssertTrue(emoji("🏁").waitForExistence(timeout: 3))  // the first flag
     shot("52-emoji-flags")
 
+    XCTAssertFalse(app.buttons["emoji.globe"].exists, "iOS draws the globe below the keyboard here")
     app.buttons["emoji.delete"].tap()
     waitForText("Hi")
     app.buttons["emoji.abc"].tap()

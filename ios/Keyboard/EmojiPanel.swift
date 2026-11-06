@@ -19,6 +19,9 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   var onLetters: (() -> Void)?
   /// iPad only, as Apple's iPad emoji keyboard: hides the keyboard.
   var onDismiss: (() -> Void)? { didSet { dismiss.isHidden = onDismiss == nil; setNeedsLayout() } }
+  /// Where iOS draws no globe below the keyboard, the panel covers the keyboard's only globe, so it has one too,
+  /// after ABC (Apple's emoji keyboard does the same).
+  var onNextKeyboard: (() -> Void)? { didSet { globe.isHidden = onNextKeyboard == nil; setNeedsLayout() } }
   var language: KeyboardLanguage = .english { didSet { updateHeader(force: true) } }
 
   private let categories: [EmojiCategory]
@@ -39,6 +42,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private let letters = UIButton(type: .system)
   private let delete = DeleteButton(type: .system)
   private let dismiss = UIButton(type: .system)
+  private let globe = UIButton(type: .system)
   private var categoryButtons: [UIButton] = []
   private let picker = TonePicker()
   private var deleteTimer: Timer?
@@ -91,6 +95,14 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     letters.accessibilityLabel = "letters"
     letters.addAction(UIAction { [weak self] _ in self?.onLetters?() }, for: .touchUpInside)
     addSubview(letters)
+
+    globe.setImage(UIImage(systemName: "globe", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)), for: .normal)
+    globe.tintColor = .label
+    globe.accessibilityIdentifier = "emoji.globe"
+    globe.accessibilityLabel = "next keyboard"
+    globe.isHidden = true
+    globe.addAction(UIAction { [weak self] _ in self?.onNextKeyboard?() }, for: .touchUpInside)
+    addSubview(globe)
 
     for (i, id) in sectionIDs.enumerated() {
       let b = UIButton(type: .system)
@@ -154,7 +166,8 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     letters.frame = CGRect(x: 4, y: barY, width: side, height: Self.barHeight)
     delete.frame = CGRect(x: w - 4 - side, y: barY, width: side, height: Self.barHeight)
     dismiss.frame = CGRect(x: delete.frame.minX - side, y: barY, width: side, height: Self.barHeight)
-    let left = letters.frame.maxX, right = dismiss.isHidden ? delete.frame.minX : dismiss.frame.minX
+    globe.frame = CGRect(x: letters.frame.maxX, y: barY, width: 44, height: Self.barHeight)
+    let left = globe.isHidden ? letters.frame.maxX : globe.frame.maxX, right = dismiss.isHidden ? delete.frame.minX : dismiss.frame.minX
     let step = (right - left) / CGFloat(categoryButtons.count)
     for (i, b) in categoryButtons.enumerated() {
       let d = min(30, step - 2)
