@@ -272,12 +272,12 @@ struct StorageRows: View {
         }
     }
     VStack(alignment: .leading, spacing: 4) {
-      LabeledContent("Dictations", value: history.items.isEmpty ? "None" : "\(history.items.count) · \(Self.size(history.bytes))")
+      LabeledContent("Dictations", value: !history.hasFiles ? "None" : "\(history.items.count) · \(Self.size(history.bytes))")
         .accessibilityIdentifier("v2t.storage.history")
       Text("History keeps the text only. Audio is never saved: v2t holds it in memory while it transcribes, then drops it.")
         .font(.footnote).foregroundStyle(.secondary)
       Button("Clear History", role: .destructive) { confirmHistory = true }
-        .disabled(history.items.isEmpty)
+        .disabled(!history.hasFiles)
         .accessibilityIdentifier("v2t.storage.clearHistory")
         .confirmationDialog("Delete all \(history.items.count) dictations?", isPresented: $confirmHistory, titleVisibility: .visible) {
           Button("Delete all", role: .destructive) { dictation.clearHistory() }

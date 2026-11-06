@@ -32,6 +32,7 @@ import XCTest
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = DictationUITests.fixture
     app.launchEnvironment["V2T_FIXTURE_MIC_FAILS"] = "1"
     app.launch()
+    downloadModelIfNeeded(app)  // without the model the mic opens the download screen before trying the microphone
     app.open(URL(string: "v2t://dictate")!)
     XCTAssertFalse(app.staticTexts["Mic is ready"].waitForExistence(timeout: 5), "handoff stayed up with no session")
     XCTAssertFalse(app.staticTexts["Listening"].exists)

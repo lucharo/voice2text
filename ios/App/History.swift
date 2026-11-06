@@ -62,15 +62,24 @@ struct DictationTimings: Codable, Equatable, Sendable {
 
   /// Deletes every dictation and the file that held them.
   func clear() throws {
-    // the file first: if it cannot be removed, the list stays as it is on disk and Clear can be tried again
-    if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+    // the files first: if one cannot be removed, the list stays as it is on disk and Clear can be tried again
+    for f in files where FileManager.default.fileExists(atPath: f.path) { try FileManager.default.removeItem(at: f) }
     items = []
+    objectWillChange.send()  // Storage re-reads bytes and hasFiles
   }
 
-  /// The bytes the history file takes; dictations are kept as text only, never audio.
+  /// The history file and, if it once failed to decode, the copy kept beside it: both hold dictation text.
+  private var files: [URL] { [file, file.appendingPathExtension("unreadable")] }
+
+  /// Something to clear: dictations, or an unreadable earlier history still on disk.
+  var hasFiles: Bool { !items.isEmpty || files.contains { FileManager.default.fileExists(atPath: $0.path) } }
+
+  /// The bytes the history files take; dictations are kept as text only, never audio.
   var bytes: Int64 {
-    let v = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
-    return Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
+    files.reduce(0) { total, f in
+      let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+      return total + Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
+    }
   }
 
   private func save() throws {

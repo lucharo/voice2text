@@ -81,4 +81,23 @@ import Testing
 
     #expect(history.bytes > 0)
   }
+
+  /// A history that once failed to decode is kept beside the file; it holds dictation text too, so Clear
+  /// History removes it, and Storage counts it.
+  @Test func clearAlsoRemovesAnUnreadableEarlierHistory() throws {
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data("not json".utf8).write(to: file)
+    let history = History(file: file)
+    let unreadable = file.appendingPathExtension("unreadable")
+    #expect(FileManager.default.fileExists(atPath: unreadable.path))
+    #expect(history.items == [])
+    #expect(history.hasFiles)
+    #expect(history.bytes > 0)
+
+    try history.clear()
+
+    #expect(FileManager.default.fileExists(atPath: unreadable.path) == false)
+    #expect(history.hasFiles == false)
+    #expect(history.bytes == 0)
+  }
 }
