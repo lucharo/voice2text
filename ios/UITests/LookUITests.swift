@@ -12,12 +12,10 @@ import XCTest
   /// (XCUIDevice.appearance left the keyboard light); it only names the screenshots.
   var appearance: String { ProcessInfo.processInfo.environment["V2T_APPEARANCE"] ?? "light" }
 
-  /// Opens v2t's keyboard in the Try it field, with the mic key drawn in `micStyle` (V2T_MIC_STYLE: A, B, C or
-  /// C-warm; unset draws the default).
-  func showKeyboard(micStyle: String? = nil) {
+  /// Opens v2t's keyboard in the Try it field.
+  func showKeyboard() {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = "en"
-    if let micStyle { app.launchEnvironment["V2T_MIC_STYLE"] = micStyle } else { app.launchEnvironment.removeValue(forKey: "V2T_MIC_STYLE") }
     app.launch()
     // the setup list changes height as the model row goes from Preparing to Ready; tapping the field before
     // then can land on the row that moved under it
@@ -47,20 +45,11 @@ import XCTest
     shot("look-\(appearance)-suggestions")
   }
 
-  /// One screenshot per mic-key style, for Luis to pick from.
-  func testMicKeyStyles() {
-    for style in ["A", "B", "C", "C-warm"] {
-      showKeyboard(micStyle: style)
-      XCTAssertEqual(key("mic").label, "dictate")
-      shot("mic-\(style)-\(appearance)")
-      app.terminate()
-    }
-  }
-
   /// A keyboard never sees taps outside itself, so the bar's chevron is how the user hides it.
   func testTheBarsChevronHidesTheKeyboard() throws {
     try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "the iPad hides its keyboard with a bottom-row key instead")
     showKeyboard()
+    XCTAssertEqual(key("mic").label, "dictate")
     XCTAssertEqual(key("space").label, "space")  // the "v2t" in its corner is not read out
     let chevron = app.buttons["v2t.dismiss"]
     XCTAssertTrue(chevron.waitForExistence(timeout: 3))

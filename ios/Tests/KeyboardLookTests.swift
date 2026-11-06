@@ -2,58 +2,48 @@ import Testing
 import UIKit
 import V2TKeyboardCore
 
-/// The mic key's styles and the space bar's "v2t", checked on the real key area (KeyboardView) rendered
+/// The red mic key and the space bar's "v2t", checked on the real key area (KeyboardView) rendered
 /// off-screen at the iPhone width.
 @MainActor struct KeyboardLookTests {
   let layout = KeyboardLayout(width: 402)
   var mic: Key { layout.keys.first { $0.action == .mic }! }
   var space: Key { layout.keys.first { $0.action == .space }! }
 
-  /// Red pixels (Apple's record red, light or dark) inside `rect` of the rendered keys.
-  func redPixels(style: MicKeyStyle, warm: Bool, in rect: CGRect) -> Int {
+  /// Counts the pixels inside `rect` of the rendered keys that are Apple's record red and that are white.
+  func colours(in rect: CGRect, style: UIUserInterfaceStyle) -> (red: Int, white: Int) {
     let v = KeyboardView(layout: layout)
-    v.micStyle = style
-    v.micWarm = warm
+    v.overrideUserInterfaceStyle = style
     v.frame = CGRect(x: 0, y: 0, width: layout.width, height: layout.height)
     v.backgroundColor = Palette.background
     let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
+    format.scale = 3  // the waveform's bars are about a point wide: at 1x they only blend into the red
     let image = UIGraphicsImageRenderer(size: v.bounds.size, format: format).image { v.layer.render(in: $0.cgContext) }
     let cg = image.cgImage!
     let data = [UInt8](cg.dataProvider!.data! as Data)  // a copy, so no pointer outlives the CFData
-    var n = 0
-    for y in Int(rect.minY)..<Int(rect.maxY) {
-      for x in Int(rect.minX)..<Int(rect.maxX) {
+    var red = 0, white = 0
+    for y in Int(rect.minY * 3)..<Int(rect.maxY * 3) {
+      for x in Int(rect.minX * 3)..<Int(rect.maxX * 3) {
         let i = y * cg.bytesPerRow + x * cg.bitsPerPixel / 8
         // BGRA in the renderer's format
         let b = Int(data[i]), g = Int(data[i + 1]), r = Int(data[i + 2])
-        if r > 200, g < 100, b < 100 { n += 1 }
+        if r > 200, g < 100, b < 100 { red += 1 }
+        if r > 240, g > 240, b > 240 { white += 1 }
       }
     }
-    return n
+    return (red, white)
   }
 
-  @Test func eachMicStyleColoursTheKeyOrItsWaveform() {
-    let glyph = mic.frame.insetBy(dx: mic.frame.width * 0.3, dy: mic.frame.height * 0.3)  // the waveform only
-    let edge = CGRect(x: mic.frame.minX + 3, y: mic.frame.midY, width: 4, height: 1)  // key fill, left of the waveform
-    var seen: [String: [Bool]] = [:]
-    for style in MicKeyStyle.allCases {
-      for warm in [false, true] {
-        seen["\(style.rawValue) warm=\(warm)"] = [redPixels(style: style, warm: warm, in: edge) > 0,
-                                                  redPixels(style: style, warm: warm, in: glyph) > 0]
-      }
-    }
-    // [red key fill, red waveform]; B's waveform is white on red, so its centre still has red between bars
-    #expect(seen == [
-      "A warm=false": [false, true], "A warm=true": [false, true],
-      "B warm=false": [true, true], "B warm=true": [true, true],
-      "C warm=false": [false, false], "C warm=true": [false, true],
-    ])
+  @Test(arguments: [UIUserInterfaceStyle.light, .dark])
+  func theMicKeyIsRedWithAWhiteWaveform(style: UIUserInterfaceStyle) {
+    let fill = CGRect(x: mic.frame.minX + 3, y: mic.frame.midY, width: 4, height: 1)  // left of the waveform
+    let glyph = mic.frame.insetBy(dx: mic.frame.width * 0.3, dy: mic.frame.height * 0.3)
+    #expect(colours(in: fill, style: style).red == 4 * 3 * 3)
+    #expect(colours(in: glyph, style: style).white > 100)
   }
 
   @Test func noOtherKeyTurnsRed() {
     let others = CGRect(x: 0, y: 0, width: layout.width, height: mic.frame.minY - 1)  // every row above the mic's
-    #expect(redPixels(style: .redKey, warm: true, in: others) == 0)
+    #expect(colours(in: others, style: .light).red == 0)
   }
 
   @Test func theSpaceBarCarriesV2tInItsBottomRightCornerAndIsStillReadAsSpace() throws {
