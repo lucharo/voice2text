@@ -57,6 +57,43 @@ and "observed" items rest on widely reported behaviour rather than a specificati
 | 16 | Smart quotes and dashes | [7]: a property of the text field, which UIKit applies "based on the keyboard type". Not checked here: whether UIKit converts text a custom keyboard inserts is unverified | none |
 | 17 | Spanish: missing accents restored (cancion → canción), real words without accents stay (como) | Observed | `es-accents`, `es-rare-variant` |
 
+## Results
+
+Before #114, 20 of the 31 checks passed; now all 31 do. The 11 that failed:
+
+| Check | Before | Now |
+| --- | --- | --- |
+| `curly-apostrophe`, `plural-possessive` | "don’t" was rewritten "don't"; "parents'" lost its apostrophe | Kept as typed |
+| `capitalised-mid-sentence` | Names were corrected into words ("Susan" → "Usan" in Spanish) | Only a known name can replace them ("Britian" → "Britain") |
+| `cant-wont`, `whats`, `es-rare-variant`, `i-contractions` | Any word in the lists stayed, so "cant", "whats", "ano", "i'm" did | A rare word becomes its much commoner apostrophe or accent spelling; i' takes the capital |
+| `url`, `email`, `handle-hashtag` | Each part of an address or handle was corrected | Left as typed |
+| `text-replacement` | No text replacements | The user's replacements and contact names come from the system (UILexicon) |
+
+On misspellings people made (`RealTypoEval`, Wikipedia's lists, release build:
+`swift test -c release -Xswiftc -enable-testing --filter RealTypoEval`):
+
+| Set | Fixed | Wrong word | Meant word in the bar |
+| --- | --- | --- | --- |
+| English, 4,122 misspellings, before | 83.6% | 13.1% | 88.1% |
+| English, now | 89.6% | 8.9% | 93.4% |
+| Spanish, 15,701 misspellings, before | 89.0% | 10.0% | 91.2% |
+| Spanish, now | 91.1% | 8.2% | 93.7% |
+
+Typing 1,043 correct Tatoeba sentences per language, autocorrect changed 8 English and 220 Spanish words before,
+2 and 141 now. No Spanish misspelling corpus of real typing errors was found; the Spanish Wikipedia list is
+the spelling bots' list, so it leans to missing accents.
+
+Still different from Apple's keyboard, or unmeasured:
+
+- **Real fingers.** The misspellings were typed on physical keyboards, so the taps sit at the key centres. How
+  autocorrect does with touches on a phone is unmeasured.
+- **Names at the start of a sentence** are still corrected when the word list lacks them ("Tom" → "Ton" with
+  only Spanish on); a capitalised typo cannot be told from a name there.
+- **Learning.** v2t learns a word after one rejection; it does not learn words you type often without
+  rejecting a correction.
+- **Smart quotes and dashes** are left to the host field; unverified.
+- **Corrections after punctuation** cannot be reverted with delete, only after a space.
+
 ## Where Gboard and SwiftKey differ
 
 - **Space can insert a prediction.** SwiftKey's space bar inserts the middle prediction when autocorrect is on,
