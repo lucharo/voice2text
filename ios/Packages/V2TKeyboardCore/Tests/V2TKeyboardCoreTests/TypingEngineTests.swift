@@ -370,6 +370,16 @@ struct TypingEngineTests {
     #expect(p.text == "I don’t ")
   }
 
+  /// A real word typed with a curly apostrophe shows once in the bar, not also as its straight spelling.
+  @Test func aCurlyWordShowsOnceInTheBar() throws {
+    let (e, _) = try engine("I ")
+    type("don", e)
+    e.character("’", now: 50)
+    type("t", e, start: 60)
+    let bar = e.suggestions().map(\.word)
+    #expect(bar.contains("don’t") && bar.count == Set(bar).count, "\(bar)")
+  }
+
   /// An address mark after a corrected word's plus sign ("teh+_tag") puts the word back too.
   @Test func anAddressMarkAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")

@@ -223,7 +223,8 @@ public final class TypingEngine {
     let all = suggester.suggestions(for: composing, context: context, limit: 3).map {
       curly ? Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) : $0
     }
-    let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed }
+    // the word as typed once ("don’t" typed and the list's "don't" read the same once spelled alike)
+    let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed && !typed.map(\.word).contains($0.word) }
     if let r = pendingReplacement {
       // a text replacement takes the middle slot, beside the shortcut as typed
       return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r }.prefix(1)
