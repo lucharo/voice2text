@@ -147,6 +147,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     heightConstraint?.constant = SuggestionBar.height + layout.height
     keysHeightConstraint?.constant = layout.height
     if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
+    syncEmojiPanel()  // the layout language or the keyboard's form may have changed under an open panel
     if page == .letters {
       engine.replaceLayout(with: Suggester(lexicons: engine.suggester.lexicons, layout: layout))
       decoders = engine.suggester.lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
@@ -293,8 +294,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     if on {
       let p = emojiPanel ?? makeEmojiPanel()
       emojiPanel = p
-      p.language = language
-      p.onDismiss = keyboardView.layout.form.isPad ? { [weak self] in self?.dismissKeyboard() } : nil
+      syncEmojiPanel()
       view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
       p.show()
     } else {
@@ -304,6 +304,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView.accessibilityElementsHidden = on
     bar.accessibilityElementsHidden = on
     UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
+  }
+
+  /// The panel's category names follow the layout language, and the full iPad keyboard's has a hide key.
+  private func syncEmojiPanel() {
+    guard let p = emojiPanel else { return }
+    if p.language != language { p.language = language }
+    let pad = keyboardView.layout.form.isPad
+    if pad != (p.onDismiss != nil) { p.onDismiss = pad ? { [weak self] in self?.dismissKeyboard() } : nil }
   }
 
   private func makeEmojiPanel() -> EmojiPanel {

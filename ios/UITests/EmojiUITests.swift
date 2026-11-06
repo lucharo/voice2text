@@ -24,7 +24,7 @@ import XCTest
       let intro = app.buttons["Continue"]
       if intro.exists { intro.tap(); continue }
       let globe = app.buttons["Next keyboard"]
-      if globe.exists { globe.tap() }
+      if globe.exists { globe.tap() } else { field.tap() }  // no keyboard came up at all (seen after a reinstall)
     }
     XCTAssertTrue(key("letters-q").waitForExistence(timeout: 10), app.debugDescription)
   }

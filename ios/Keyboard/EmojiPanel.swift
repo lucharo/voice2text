@@ -48,6 +48,10 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private var current = -1
   /// The emoji under a long press: its skin tones are on offer, or (with none) it is typed on release.
   private var pressed: (item: Emoji?, text: String)?
+  /// Where the long press began, and whether the finger has since slid far enough to choose another tone:
+  /// until then the tone the picker opened on stays chosen, so a tremor does not pick one.
+  private var pressStartX: CGFloat = 0
+  private var slid = false
 
   /// Section 0 is the recents; the others follow `categories`.
   private var sectionIDs: [String] { ["recents"] + categories.map(\.id) }
@@ -324,6 +328,8 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
       guard let ip = grid.indexPathForItem(at: g.location(in: grid)), let cell = grid.cellForItem(at: ip) else { return }
       let shown = text(at: ip), it = item(at: ip)
       pressed = (it, shown)
+      pressStartX = g.location(in: self).x
+      slid = false
       guard let it, !it.skinTones.isEmpty else { return }
       let options = [it.base] + it.skinTones
       let font = emojiFont.font(size: emojiSize)
@@ -334,7 +340,10 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
       if renew { renewSoon() }
       bringSubviewToFront(picker)
     case .changed:
-      if !picker.isHidden { picker.choose(at: g.location(in: picker).x) }
+      guard !picker.isHidden else { return }
+      if !slid, abs(g.location(in: self).x - pressStartX) < 10 { return }
+      slid = true
+      picker.choose(at: g.location(in: picker).x)
     case .ended:
       defer { pressed = nil; picker.hide() }
       guard let p = pressed else { return }
