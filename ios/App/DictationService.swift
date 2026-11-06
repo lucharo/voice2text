@@ -135,6 +135,13 @@ import SwiftUI
     publish(.needsApp)
   }
 
+  /// The microphone choice changed (in the app, so in the foreground): a warm, idle session restarts with it.
+  func applyMicrophoneChoice() {
+    guard recorder.running, state == .idle else { return }
+    recorder.coolDown()
+    warmUp()
+  }
+
   /// The "keep the mic ready" setting changed: a session already on runs for the new length from now.
   func applyWarmSetting() {
     if recorder.running { extendWarmth() }

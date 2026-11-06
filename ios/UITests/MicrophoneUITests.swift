@@ -28,6 +28,10 @@ import XCTest
     XCTAssertTrue(isOn(), "mic-ready switch never turned on")
     // the app names the input beside the switch
     XCTAssertTrue(app.staticTexts["Recording from Test clip"].waitForExistence(timeout: 5), app.debugDescription)
+    // the microphone choice sits under the switch, on this iPhone's microphone unless changed
+    let choice = app.descendants(matching: .any)["v2t.microphoneChoice"].firstMatch
+    reveal(choice, in: app)
+    XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
     shot("20-app-microphone")
 
     let field = app.textFields["v2t.try"]
