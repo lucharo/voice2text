@@ -229,8 +229,10 @@ struct MicrophoneRow: View {
 struct MicrophoneLabel: View {
   let mic: Microphone
   var body: some View {
-    Label("Recording from \(mic.name)", systemImage: "mic.fill")
+    // the icon inside the text: as a Label in the switch's row it drew on a line of its own
+    Text("\(Image(systemName: "mic.fill")) Recording from \(mic.name)")
       .font(.footnote).foregroundStyle(.secondary)
+      .accessibilityLabel("Recording from \(mic.name)")
       .accessibilityIdentifier("v2t.microphone")
   }
 }
