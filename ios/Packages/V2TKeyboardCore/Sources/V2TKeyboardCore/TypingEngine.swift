@@ -149,7 +149,9 @@ public final class TypingEngine {
     if let c = lastCorrection, before.hasSuffix(c.replacement + " ") {
       proxy.deleteBackward()
       revertOffer = c.original
-      if c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
+      // a text replacement is the user's own text: reopened, it is not a word to autocorrect again
+      let replaced = replacements[Self.shortcutKey(c.original)] == c.replacement
+      if !replaced, c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
         composing = c.replacement.map { TypedKey($0) }
       } else {
         revertPhrase = c.replacement
@@ -291,6 +293,7 @@ public final class TypingEngine {
   public func insertFinished(_ text: String) {
     revertOffer = nil
     commitWord()
+    lastCorrection = nil  // the text after it is not ours to revert
     spaceIfNeeded()
     proxy.insertText(text)
     composing = []

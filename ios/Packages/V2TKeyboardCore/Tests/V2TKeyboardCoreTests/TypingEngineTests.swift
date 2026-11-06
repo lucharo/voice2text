@@ -316,6 +316,27 @@ struct TypingEngineTests {
     #expect(e.revertOffer == nil && p.text == "ok a way ")
   }
 
+  /// A one-word replacement reopened by delete is still the user's text: space leaves it as it is.
+  @Test func aReopenedOneWordReplacementIsNotAutocorrected() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["qq": "teh"]
+    type("qq ", e)
+    e.delete()
+    type(" ", e, start: 20)
+    #expect(p.text == "ok teh ")
+  }
+
+  /// Dictated text after a correction is not offered for revert, even when it ends the same way.
+  @Test func dictatedTextCannotBeReverted() throws {
+    let (e, p) = try engine("ok ")
+    e.replacements = ["lt": "local tax"]
+    type("lt", e)
+    e.insertFinished("local tax")
+    type(" ", e, start: 20)
+    e.delete()
+    #expect(e.revertOffer == nil && p.text == "ok local tax local tax")
+  }
+
   /// A rejected shortcut stays rejected whichever apostrophe it is typed with.
   @Test func aRejectedShortcutStaysRejectedWithEitherApostrophe() throws {
     let (e, p) = try engine("ok ")
