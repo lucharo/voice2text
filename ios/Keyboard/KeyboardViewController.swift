@@ -147,13 +147,20 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// The user's text replacements and contact names, as Apple's keyboard uses them (UILexicon). Asked for
   /// each time the keyboard appears, so a replacement changed in Settings meanwhile applies.
   private func loadSystemLexicon() {
-    requestSupplementaryLexicon { [weak self] lexicon in
-      guard let self else { return }
-      let (replacements, words) = TypingEngine.systemLexicon(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
-      engine.replacements = replacements
-      systemWords = words
-      engine.learned = userWords()
-      refresh()
+    // iOS calls this on its XPC reply queue, not the main thread: a main-actor closure here crashes the keyboard
+    // the moment it opens (Swift's isolation check), so everything happens in a hop to main
+    requestSupplementaryLexicon { @Sendable [weak self] lexicon in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          guard let self else { return }
+          let entries = lexicon.entries.map { (input: $0.userInput, text: $0.documentText) }
+          let (replacements, words) = TypingEngine.systemLexicon(entries)
+          self.engine.replacements = replacements
+          self.systemWords = words
+          self.engine.learned = self.userWords()
+          self.refresh()
+        }
+      }
     }
   }
 
