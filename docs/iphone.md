@@ -63,7 +63,7 @@ section shows what your device got and why, and says so when your iPhone model i
 
 ## Dictate
 
-Tap the red v2t mic key (on the iPhone, to the left of return).
+Tap the v2t mic key, the one with the red waveform (on the iPhone, to the left of return).
 
 When no microphone session is on, the v2t app itself opens, because iOS gives keyboards no
 microphone. It is already listening: go back to your app (tap ◀ at the top left, or swipe right
@@ -94,8 +94,8 @@ While you talk, a waveform, a timer and the name of the microphone in use cover 
 
 <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
-  ![The v2t keyboard: suggestion bar with the hide chevron at its right end, letter keys, and a bottom row of 123, globe, emoji, space with v2t in its corner, the red mic key and return](images/iphone/keyboard.png){ width="320" }
-  <figcaption>The red mic key, left of return. The Simulator draws no iOS globe below the keys, so v2t shows its own here.</figcaption>
+  ![The v2t keyboard: suggestion bar with the hide chevron at its right end, letter keys, and a bottom row of 123, globe, emoji, space with v2t in its corner, the mic key with its red waveform, and return](images/iphone/keyboard.png){ width="320" }
+  <figcaption>The mic key, with its red waveform, left of return. The Simulator draws no iOS globe below the keys, so v2t shows its own here.</figcaption>
 </figure>
 <figure markdown>
   ![The v2t keyboard while recording: a waveform, a timer and the microphone's name cover the keys, with Cancel and Done buttons at the bottom](images/iphone/recording.png){ width="320" }
