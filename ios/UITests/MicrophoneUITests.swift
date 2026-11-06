@@ -51,6 +51,9 @@ import XCTest
     let mic = app.staticTexts["v2t.recording.mic"]
     XCTAssertTrue(mic.waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertEqual(mic.label, "Microphone: Test clip")
+    // no microphone change mid-dictation: it could only apply by restarting the session
+    XCTAssertTrue(choice.exists, app.debugDescription)
+    XCTAssertFalse(choice.isEnabled, "the microphone picker stays enabled while recording")
     // V2T_HOLD_SECONDS keeps the waveform up longer, for a screen recording of it
     let hold = Double(ProcessInfo.processInfo.environment["V2T_HOLD_SECONDS"] ?? "") ?? 2
     RunLoop.current.run(until: Date().addingTimeInterval(hold))

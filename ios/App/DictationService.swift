@@ -136,6 +136,7 @@ import SwiftUI
   }
 
   /// The microphone choice changed (in the app, so in the foreground): a warm, idle session restarts with it.
+  /// The picker is disabled while listening or transcribing; with no session, the next warm-up uses it.
   func applyMicrophoneChoice() {
     guard recorder.running, state == .idle else { return }
     recorder.coolDown()
