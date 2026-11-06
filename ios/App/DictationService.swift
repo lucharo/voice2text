@@ -220,6 +220,7 @@ import SwiftUI
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
       let heard = text
+      dictionary.reload()  // the keyboard may have added words since
       if Settings.shared.cleanupEnabled { text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms) }
       text = dictionary.applyReplacements(text)
       lastText = text

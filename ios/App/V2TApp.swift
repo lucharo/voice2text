@@ -259,7 +259,7 @@ struct DictionaryView: View {
             .accessibilityIdentifier("v2t.dict.addTerm")
         }
       } header: { Text("Spell exactly") } footer: {
-        Text("Names, products or jargon the recogniser gets wrong. Cleanup spells them as written here, and the keyboard never autocorrects them.")
+        Text("Names, products or jargon the recogniser gets wrong. Cleanup spells them as written here, and the keyboard never autocorrects them. A word you keep on the keyboard over its correction is added here.")
       }
 
       Section {
@@ -287,6 +287,7 @@ struct DictionaryView: View {
       Section { NavigationLink("Edit as text") { DictionaryTextView() } }
     }
     .navigationTitle("Dictionary")
+    .onAppear { dictionary.reload() }
     .alert("Couldn't add that", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK", role: .cancel) {}
     } message: { Text(error ?? "") }
@@ -314,7 +315,7 @@ struct DictionaryTextView: View {
       .font(.body.monospaced())
       .padding(.horizontal, 8)
       .navigationTitle("Dictionary file")
-      .onAppear { draft = dictionary.text }
+      .onAppear { dictionary.reload(); draft = dictionary.text }
       .onDisappear { try? dictionary.save(draft) }
   }
 }

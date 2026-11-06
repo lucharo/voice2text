@@ -34,6 +34,19 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: d.file).items.map(\.line) == ["Claude", "Fluide", "v two t => v2t"])
   }
 
+  /// The app holds one copy for its lifetime while the keyboard adds terms to the same file: an edit in the
+  /// app keeps the keyboard's term, and a reload shows it.
+  @Test func anEditKeepsTermsAnotherCopyAdded() throws {
+    let app = try dictionary("Claude\n")
+    let keyboard = PersonalDictionary(file: app.file)
+    try keyboard.addTerm("marimo")
+    try app.addTerm("Fluide")
+    #expect(app.terms == ["Claude", "marimo", "Fluide"])
+    try keyboard.addTerm("Kian")
+    app.reload()
+    #expect(app.terms == ["Claude", "marimo", "Fluide", "Kian"])
+  }
+
   @Test func addingRefusesEmptyArrowsAndDuplicates() throws {
     let d = try dictionary("Claude\nai => AI\n")
     #expect(throws: PersonalDictionary.EntryError.empty) { try d.addTerm("  ") }

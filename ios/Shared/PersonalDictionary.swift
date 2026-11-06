@@ -25,6 +25,11 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Settings.group)?.appending(path: "dictionary.txt")
   }
 
+  /// Reads the file again: the keyboard adds words the user keeps, so a copy loaded earlier may be stale.
+  func reload() {
+    if let t = try? String(contentsOf: file, encoding: .utf8), t != text { text = t }
+  }
+
   func save(_ newText: String) throws {
     text = newText
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -75,6 +80,7 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   }
 
   func addTerm(_ term: String) throws {
+    reload()
     let t = term.trimmingCharacters(in: .whitespaces)
     guard !t.isEmpty else { throw EntryError.empty }
     guard !t.contains("=>"), !t.hasPrefix("#") else { throw EntryError.arrow }
@@ -83,6 +89,7 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   }
 
   func addReplacement(heard: String, written: String) throws {
+    reload()
     let h = heard.trimmingCharacters(in: .whitespaces), w = written.trimmingCharacters(in: .whitespaces)
     guard !h.isEmpty, !w.isEmpty else { throw EntryError.empty }
     guard !h.contains("=>"), !w.contains("=>"), !h.hasPrefix("#") else { throw EntryError.arrow }
@@ -92,6 +99,7 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
 
   /// Removes the first line stored exactly as `line` (an `Item.line`), keeping every other line and comment.
   func remove(_ line: String) throws {
+    reload()
     var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
     guard let i = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == line }) else { return }
     lines.remove(at: i)

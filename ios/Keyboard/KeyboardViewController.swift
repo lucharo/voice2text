@@ -40,6 +40,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
     engine.learned = userWords()
     engine.onLearn = { Settings.shared.learn($0) }
+    // a word you keep that no word list knows ("marimo") becomes a v2t dictionary term, for dictation too
+    engine.onNewWord = { try? PersonalDictionary().addTerm($0) }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
     // no background of our own: the system's keyboard glass shows through around and behind the keys, as it
