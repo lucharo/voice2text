@@ -1,3 +1,4 @@
+import CoreText
 import UIKit
 import V2TKeyboardCore
 
@@ -6,8 +7,9 @@ import V2TKeyboardCore
 /// recently used first), the category's name above it, and a bar below with ABC, a button per category and
 /// delete. A long press on an emoji with skin tones offers them; the tone picked is shown from then on.
 ///
-/// Memory: one reused cell per visible emoji, each a UILabel drawn by the system emoji font; no images are
-/// kept. The data (about 37 KB of text) is read once, when the panel first opens.
+/// Memory: one reused cell per visible emoji, each a UILabel; no images are kept. The emoji font keeps every
+/// emoji it has drawn decoded, so the panel draws with a private copy of it that it renews (`EmojiFont`).
+/// The data (about 37 KB of text) is read when the panel opens; the keyboard drops the panel when it closes.
 final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
   static let headerHeight: CGFloat = 28
   static let barHeight: CGFloat = 44
@@ -41,6 +43,8 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private let picker = TonePicker()
   private var deleteTimer: Timer?
   private var emojiSize: CGFloat = 30
+  private let emojiFont = EmojiFont()
+  private var renewing = false
   private var current = -1
   /// The emoji under a long press: its skin tones are on offer, or (with none) it is typed on release.
   private var pressed: (item: Emoji?, text: String)?
@@ -181,7 +185,18 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
 
   func collectionView(_ collectionView: UICollectionView, cellForItemAt ip: IndexPath) -> UICollectionViewCell {
     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: EmojiCell.reuse, for: ip) as! EmojiCell
-    cell.show(text(at: ip), size: emojiSize)
+    let e = text(at: ip)
+    cell.show(e, font: emojiFont.font(size: emojiSize))
+    if emojiFont.note(e), !renewing {
+      // after the cells on screen are drawn, swap the font for a fresh one and redraw them with it
+      renewing = true
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        emojiFont.renew()
+        grid.reloadData()
+        renewing = false
+      }
+    }
     return cell
   }
 
@@ -346,15 +361,62 @@ final class EmojiCell: UICollectionViewCell {
     label.frame = contentView.bounds
   }
 
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    label.text = nil
+    label.font = .systemFont(ofSize: 17)  // a cell waiting for reuse must not keep an old emoji font alive
+  }
+
   override var isHighlighted: Bool {
     didSet { contentView.backgroundColor = isHighlighted ? UIColor.label.withAlphaComponent(0.12) : nil }
   }
 
-  func show(_ emoji: String, size: CGFloat) {
+  func show(_ emoji: String, font: UIFont) {
+    label.font = font
     label.text = emoji
-    if label.font.pointSize != size { label.font = .systemFont(ofSize: size) }
     accessibilityLabel = emoji  // VoiceOver reads an emoji by its name
     accessibilityIdentifier = "emoji.\(emoji)"
+  }
+}
+
+/// The font the grid draws emoji with. Apple's emoji font keeps the decoded 160 px bitmap of every emoji it
+/// has drawn for as long as the font lives, and the system's copy lives as long as the keyboard: in the
+/// Simulator each distinct emoji cost about 45 KB, so scrolling through all 1,906 grew the keyboard from 60 MB
+/// to 166 MB. A private copy, made from the same font file, gives that memory back when it is released (98 MB
+/// back to 41 MB in the same measurement), so the grid swaps in a fresh copy after `limit` distinct emoji.
+/// Falls back to the system font if the file cannot be read.
+final class EmojiFont {
+  /// About 14 MB of decoded emoji at most, and far more than one screen of emoji, so a swap redraws one
+  /// screen at most once per few screens scrolled.
+  static let limit = 300
+  private var graphicsFont: CGFont?
+  private var sized: [CGFloat: UIFont] = [:]
+  private var drawn = Set<String>()
+
+  init() { renew() }
+
+  func font(size: CGFloat) -> UIFont {
+    if let f = sized[size] { return f }
+    let f: UIFont = graphicsFont.map { CTFontCreateWithGraphicsFont($0, size, nil, nil) as UIFont } ?? .systemFont(ofSize: size)
+    sized[size] = f
+    return f
+  }
+
+  /// Notes that `emoji` was drawn; true once more than `limit` distinct emoji have been drawn with this copy.
+  func note(_ emoji: String) -> Bool {
+    guard graphicsFont != nil else { return false }
+    drawn.insert(emoji)
+    return drawn.count > Self.limit
+  }
+
+  /// Drops this copy (and every emoji decoded in it) for a fresh one.
+  func renew() {
+    sized = [:]
+    drawn = []
+    let system = CTFontCreateWithName("AppleColorEmoji" as CFString, 17, nil)
+    guard let url = CTFontCopyAttribute(system, kCTFontURLAttribute) as? URL,
+          let provider = CGDataProvider(url: url as CFURL) else { graphicsFont = nil; return }
+    graphicsFont = CGFont(provider)
   }
 }
 

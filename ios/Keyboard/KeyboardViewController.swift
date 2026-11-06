@@ -26,7 +26,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// True while the engine edits the document, so our own edits don't trigger a resync.
   private var engineEditing = false
   private lazy var dictation = DictationClient(controller: self)
-  /// Made the first time the emoji key is tapped.
+  /// Made when the emoji key is tapped, dropped when the panel closes.
   private var emojiPanel: EmojiPanel?
 
   override func viewDidLoad() {
@@ -287,19 +287,22 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   // MARK: emoji
 
-  /// Covers the bar and the keys with the emoji panel, or takes it away (ABC).
+  /// Covers the bar and the keys with the emoji panel, or takes it away (ABC). The panel is dropped when it
+  /// closes, with the emoji it has drawn: a keyboard's memory is tight.
   private func showEmoji(_ on: Bool) {
-    if on, emojiPanel == nil { emojiPanel = makeEmojiPanel() }
-    guard let p = emojiPanel else { return }
     if on {
+      let p = emojiPanel ?? makeEmojiPanel()
+      emojiPanel = p
       p.language = language
       p.onDismiss = keyboardView.layout.form.isPad ? { [weak self] in self?.dismissKeyboard() } : nil
       p.show()
+    } else {
+      emojiPanel?.removeFromSuperview()
+      emojiPanel = nil
     }
-    p.isHidden = !on
     keyboardView.accessibilityElementsHidden = on
     bar.accessibilityElementsHidden = on
-    UIAccessibility.post(notification: .screenChanged, argument: on ? p : nil)
+    UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
   }
 
   private func makeEmojiPanel() -> EmojiPanel {
