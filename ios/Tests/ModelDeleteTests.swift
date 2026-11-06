@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import V2T
 
-/// An AudioSource that records nothing and counts how the session is started and stopped.
-final class SpyAudio: AudioSource, @unchecked Sendable {
+/// An AudioSource that records nothing (named apart from #127's SpyAudio, so both test files build together).
+final class SilentAudio: AudioSource, @unchecked Sendable {
   private(set) var running = false
   private(set) var calls: [String] = []
   func warmUp() throws { running = true; calls.append("warmUp") }
@@ -13,7 +13,7 @@ final class SpyAudio: AudioSource, @unchecked Sendable {
   func end() -> [Float] { [Float](repeating: 0, count: 100) }
   func captured(from offset: Int) -> [Float] { [] }
   var level: Float { 0 }
-  var microphone: Microphone? { running ? Microphone(name: "Spy") : nil }
+  var microphone: Microphone? { nil }
 }
 
 /// Deleting the speech model never pulls it from under a dictation that is still being transcribed.
@@ -27,7 +27,7 @@ final class SpyAudio: AudioSource, @unchecked Sendable {
     try Data(repeating: 1, count: 1_000).write(to: model.appending(path: "vocab.json"))
     let store = ModelStore(modelFolder: model, folders: [dir.appending(path: "Models")]) { ModelStore.hasAll(["vocab.json"], in: $0) }
     return DictationService(recommendation: .current, history: History(file: dir.appending(path: "h.json")),
-                            dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: SpyAudio(), store: store)
+                            dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: SilentAudio(), store: store)
   }
 
   /// Stop, then the mic session stopped while that dictation is still being transcribed: Delete waits for it.
