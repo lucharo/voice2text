@@ -247,8 +247,17 @@ struct KeyboardHandoffView: View {
         .font(.system(size: 64)).foregroundStyle(.red).symbolEffect(.variableColor, isActive: dictation.state == .listening)
       Text(dictation.state == .listening ? "Listening" : "Mic is ready").font(.largeTitle.bold())
       if let mic = dictation.microphone { MicrophoneLabel(mic: mic) }
-      Text("Go back to your app and keep talking: tap ◀ at the top left, or swipe right along the bottom edge. Tap the mic on the v2t keyboard when you're done.")
-        .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
+      // three short lines rather than one paragraph, and ◀ held to its words, so no line starts or ends on it
+      VStack(spacing: 10) {
+        Text(dictation.state == .listening ? "Go back to your app and keep talking." : "Go back to your app.")
+          .font(.title3.weight(.medium))
+        Group {
+          Text("Tap\u{00A0}◀\u{00A0}at the top left, or swipe right along the bottom edge.")
+          Text(dictation.state == .listening ? "Then tap Done on the v2t keyboard." : "The keyboard's mic now records without coming here.")
+        }
+        .foregroundStyle(.secondary)
+      }
+      .multilineTextAlignment(.center).padding(.horizontal, 32)
       Image(systemName: "arrow.right").font(.title).foregroundStyle(.secondary)
       Spacer()
       Button(dictation.state == .listening ? "Stop and stay here" : "Close") {
@@ -257,6 +266,9 @@ struct KeyboardHandoffView: View {
       }
       .padding(.bottom, 32)
     }
+    // no session (it timed out or was turned off, or the microphone never started): the screen's "keyboard
+    // records in place" does not hold, so close it, also when it opens that way
+    .onChange(of: dictation.state, initial: true) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
   }
 }
 

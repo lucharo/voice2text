@@ -28,6 +28,7 @@ Hold **Fn**, say something, let go. The text lands in whatever app has focus.
 - **[Getting started](getting-started.md)**: install, permissions, the menu app, a first dictation.
 - **[How it works](how-it-works.md)**: what happens while you hold the key, and why.
 - **[Guide](guide.md)**: files, cleanup modes, history and the dictionary.
+- **[iPhone and iPad](iphone.md)**: the v2t keyboard and app, in internal TestFlight testing.
 - **[Reference](reference/cli.md)**: every command and every config key.
 
 </div>

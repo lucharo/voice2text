@@ -34,3 +34,59 @@ Earnings22 numbers on model cards. Why the room microphone reads so much higher:
   30% quicker with the same errors to within 0.1 point. The grid and its scripts are in
   [`utils/asr_grid`](https://github.com/lucharo/voice2text/tree/main/utils/asr_grid);
   `plot_models.py` draws this chart.
+
+## On the iPhone
+
+The [iPhone and iPad app](iphone.md) has three parts that can each go wrong on their own: the speech
+model, the cleanup, and the keyboard. Each was measured separately, and none of it on an iPad.
+
+### Transcription
+
+On one iPhone 16 Pro, in a separate benchmark app rather than v2t itself (October 2026,
+[#85](https://github.com/lucharo/voice2text/issues/85)): 150 clips per set, plugged in, scored the
+Open ASR Leaderboard's way. Words wrong, the wait for the text after you stop, and how long the model
+took to load the first time:
+
+| Model (who gets it) | LibriSpeech clean | LibriSpeech other | FLEURS Spanish | Wait after you stop (median) | First load |
+|---|--:|--:|--:|--:|--:|
+| Nemotron-Labs Unified ASR 0.6B, int8 (devices that can run Apple Intelligence) | 1.7% | 3.4% | 3.4% | 105 ms | 18 s |
+| Parakeet TDT 0.6B v3 (the rest) | 1.9% | 3.9% | 4.1% | 103 ms | 24 s |
+
+The Parakeet row was measured on the iPhone 16 Pro too; the older iPhones that get it have not been
+tested. v2t's own timings on a phone have not been measured, and cleanup adds its time on top.
+
+### Cleanup
+
+Apple Intelligence on the same iPhone 16 Pro, again in the benchmark app, over 600 clips (October
+2026, [#67](https://github.com/lucharo/voice2text/issues/67)), cleaning the Parakeet v3 transcripts of
+v2t's Mac cleanup benchmark. Cleanup is there for punctuation, so the question is whether it changes
+the words you said. Words wrong:
+
+| | LibriSpeech clean | LibriSpeech other | AMI meetings | Earnings calls | Per clip (median) |
+|---|--:|--:|--:|--:|--:|
+| Transcript before cleanup | 1.9% | 4.2% | 33.3% | 10.8% | |
+| Apple Intelligence, as v2t runs it | 1.9% | 4.3% | 34.1% | 10.8% | 1.17 s |
+| Apple Intelligence without v2t's guard | 4.0% | 4.8% | 37.6% | 11.2% | 1.17 s |
+
+v2t's guard puts back any word the model dropped or changed, except fillers, repeats, numbers written
+as digits and dictionary spellings. Apple Intelligence refused none of the 600. Devices without Apple
+Intelligence get no cleanup; no cleanup model for them has been built.
+
+### Keyboard
+
+Apple gives other keyboards none of its swipe or autocorrect engines, so v2t has its own. Their
+accuracy so far comes from simulated touches, not fingers:
+
+- **Swiping whole messages** with finger-like traces on the iPhone layout, the right word came first
+  98.3% of the time in English and 89.7% in Spanish; with a sloppier finger, 89.6% and 84.6%.
+- **Autocorrect** is checked against what Apple's keyboard does and against Wikipedia's lists of
+  common misspellings, typed at the centre of each key; the results are in the
+  [autocorrect rows of ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md#how-close-it-is-to-apples-keyboard).
+- **The typing rules** (capitals, double-space full stop, undoing an autocorrect) are checked by unit tests on the Mac and by UI
+  tests that drive the keyboard in the iPhone Simulator.
+- **On a real iPhone 17 Pro** (TestFlight build 1), swiping "hey how is it going" typed "GRU how is it
+  govt". Build 3 changed the ranking that caused it; that has not been re-measured on a phone.
+
+Keystroke latency and the keyboard's memory have not been measured on a phone. The full table, with
+how each number was produced, is in
+[ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md#how-close-it-is-to-apples-keyboard).

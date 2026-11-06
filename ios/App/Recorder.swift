@@ -135,7 +135,12 @@ final class FixtureAudio: AudioSource, @unchecked Sendable {
     samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(buf.frameLength)))
   }
   private var began: Date?
-  func warmUp() throws { running = true }
+  /// V2T_FIXTURE_MIC_FAILS: the microphone refuses to start, as when another app holds it.
+  private let fails = ProcessInfo.processInfo.environment["V2T_FIXTURE_MIC_FAILS"] != nil
+  func warmUp() throws {
+    if fails { throw NSError(domain: "FixtureAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "microphone unavailable (test)"]) }
+    running = true
+  }
   /// A fixed name, so a UI test can check the keyboard shows the input without depending on the Mac's.
   var microphone: Microphone? { running ? Microphone(name: "Test clip") : nil }
   func coolDown() { running = false }
