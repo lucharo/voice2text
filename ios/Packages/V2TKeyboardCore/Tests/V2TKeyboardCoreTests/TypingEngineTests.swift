@@ -380,6 +380,17 @@ struct TypingEngineTests {
     #expect(bar.contains("don’t") && bar.count == Set(bar).count, "\(bar)")
   }
 
+  /// Delete after a correction that kept a curly apostrophe offers it back with the same apostrophe, once.
+  @Test func theRevertBarKeepsTheTypedApostrophe() throws {
+    let (e, _) = try engine("I ")
+    type("do", e)
+    e.character("’", now: 50)
+    type("nt ", e, start: 60)
+    e.delete()
+    let bar = e.suggestions().map(\.word)
+    #expect(bar.first == "do’nt" && !bar.contains("don't") && bar.count == Set(bar).count, "\(bar)")
+  }
+
   /// An address mark after a corrected word's plus sign ("teh+_tag") puts the word back too.
   @Test func anAddressMarkAfterAPlusUndoesItsCorrection() throws {
     let (e, p) = try engine("mail ")

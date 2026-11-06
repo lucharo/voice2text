@@ -208,7 +208,7 @@ public final class TypingEngine {
   /// the next one.
   public func suggestions() -> [Suggestion] {
     if let r = revertOffer {
-      return [Suggestion(word: r, kind: .typed, score: 0)] + suggester.suggestions(for: composing, context: context, limit: 2).filter { $0.word != r }
+      return [Suggestion(word: r, kind: .typed, score: 0)] + typedApostrophes(suggester.suggestions(for: composing, context: context, limit: 3)).filter { $0.word != r }.prefix(2)
     }
     if let s = lastSwipe {
       return Self.bestInMiddle(s.alternatives.prefix(3).map { Suggestion(word: $0, kind: .correction, score: 0) })
@@ -218,11 +218,7 @@ public final class TypingEngine {
       guard before.last.map(Self.isGap) ?? true else { return [] }
       return Self.bestInMiddle(suggester.predictions(context: context).map { Suggestion(word: styled($0.word), kind: $0.kind, score: $0.score) })
     }
-    // the bar spells apostrophes as typed ("i’m": I’m), so a tap matches what space would write
-    let curly = composing.contains { $0.character == "’" }
-    let all = suggester.suggestions(for: composing, context: context, limit: 3).map {
-      curly ? Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) : $0
-    }
+    let all = typedApostrophes(suggester.suggestions(for: composing, context: context, limit: 3))
     // the word as typed once ("don’t" typed and the list's "don't" read the same once spelled alike)
     let typed = all.filter { $0.kind == .typed }, rest = all.filter { $0.kind != .typed && !typed.map(\.word).contains($0.word) }
     if let r = pendingReplacement {
@@ -230,6 +226,15 @@ public final class TypingEngine {
       return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r }.prefix(1)
     }
     return typed + rest
+  }
+
+  /// Suggestions spelled with the apostrophe the user typed ("i’m": I’m), so a tap writes what space would,
+  /// and without the repeats that spelling makes ("don’t" and the list's "don't").
+  func typedApostrophes(_ list: [Suggestion]) -> [Suggestion] {
+    guard composing.contains(where: { $0.character == "’" }) else { return list }
+    var seen = Set<String>()
+    return list.map { Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) }
+      .filter { seen.insert($0.word).inserted }
   }
 
   /// A whole word as the shift state writes it: caps lock and all-capitals fields write it in capitals, a
