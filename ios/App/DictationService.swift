@@ -99,7 +99,17 @@ import SwiftUI
   func refreshModelStorage() {
     modelOnDevice = store.isOnDevice
     modelBytes = store.bytes
-    defaults.set(!modelOnDevice, forKey: DictationChannel.modelMissingKey)
+    defaults.set(!canDictate, forKey: DictationChannel.modelMissingKey)
+  }
+
+  /// Dictation can record: the model is on the device and did not fail to load (damaged files fail offline;
+  /// only the user's Try again may repair them). Otherwise the keyboard's mic opens v2t on that screen.
+  var canDictate: Bool { Self.canDictate(modelOnDevice: modelOnDevice, engine: engineState) }
+
+  static func canDictate(modelOnDevice: Bool, engine: SpeechEngine.State) -> Bool {
+    guard modelOnDevice else { return false }
+    if case .failed = engine { return false }
+    return true
   }
 
   /// At launch: loads the model if it is on the device, offline; never starts a download (#124).
@@ -226,14 +236,14 @@ import SwiftUI
   /// user can swipe back and keep talking.
   func handleKeyboardLaunch() {
     cameFromKeyboard = true
-    guard modelOnDevice else { return }  // the hand-off screen offers the download instead
+    guard canDictate else { return }  // the hand-off screen offers the download, or Try again
     if !recorder.running { warmUp() }
     start()
   }
 
   func start() {
     guard state == .idle || state == .needsApp else { return }
-    guard modelOnDevice, !deletingModel else { return }  // nothing to transcribe with: the keyboard opens the app instead
+    guard canDictate, !deletingModel else { return }  // nothing to transcribe with: the keyboard opens the app instead
     if !recorder.running { warmUp() }
     guard recorder.running else { return }
     recording += 1

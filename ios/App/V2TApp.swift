@@ -294,7 +294,7 @@ struct KeyboardHandoffView: View {
   @State private var neededModel = false
   var body: some View {
     Group { if neededModel { modelNeeded } else { handoff } }
-      .onAppear { neededModel = !dictation.modelOnDevice }
+      .onAppear { neededModel = !dictation.canDictate }
   }
 
   private var modelNeeded: some View {
@@ -302,7 +302,8 @@ struct KeyboardHandoffView: View {
       Spacer()
       Image(systemName: dictation.engineState == .ready ? "checkmark.circle.fill" : "arrow.down.circle")
         .font(.system(size: 64)).foregroundStyle(dictation.engineState == .ready ? .green : .accentColor)
-      Text(dictation.engineState == .ready ? "Speech model ready" : "Download the speech model").font(.largeTitle.bold())
+      Text(dictation.engineState == .ready ? "Speech model ready"
+           : dictation.modelOnDevice ? "The speech model didn't load" : "Download the speech model").font(.largeTitle.bold())
         .multilineTextAlignment(.center)
       Text(dictation.engineState == .ready
         ? "Go back to your app and tap the mic again."

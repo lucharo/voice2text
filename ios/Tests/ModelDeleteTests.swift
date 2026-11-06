@@ -59,4 +59,14 @@ final class SilentAudio: AudioSource, @unchecked Sendable {
     #expect(dictation.modelBytes == 0)
     #expect(Settings.shared.defaults.bool(forKey: DictationChannel.modelMissingKey))
   }
+
+  /// A model whose files are there but failed to load (damaged weights) cannot dictate either: the keyboard's
+  /// mic then opens v2t on Try again rather than recording audio that cannot be transcribed.
+  @Test func dictationNeedsAModelThatIsThereAndDidNotFailToLoad() {
+    let cases: [(Bool, SpeechEngine.State)] = [
+      (true, .ready), (true, .loading), (true, .notDownloaded), (true, .failed("damaged")), (false, .ready), (false, .notDownloaded),
+    ]
+
+    #expect(cases.map { DictationService.canDictate(modelOnDevice: $0.0, engine: $0.1) } == [true, true, true, false, false, false])
+  }
 }
