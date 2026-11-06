@@ -295,6 +295,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       emojiPanel = p
       p.language = language
       p.onDismiss = keyboardView.layout.form.isPad ? { [weak self] in self?.dismissKeyboard() } : nil
+      view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
       p.show()
     } else {
       emojiPanel?.removeFromSuperview()

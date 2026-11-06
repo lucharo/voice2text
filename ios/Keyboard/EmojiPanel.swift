@@ -142,6 +142,8 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     if grid.frame != gridFrame {
       grid.frame = gridFrame
       sizeCells()
+      grid.layoutIfNeeded()
+      updateHeader(force: true)  // a panel shown before its first layout named the wrong section
     }
     let barY = h - Self.barHeight, side: CGFloat = 52
     letters.frame = CGRect(x: 4, y: barY, width: side, height: Self.barHeight)
