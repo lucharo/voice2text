@@ -11,6 +11,7 @@ private final class FakeSource: AudioSource, @unchecked Sendable {
   func begin() {}
   func end() -> [Float] { samples }
   var level: Float { 0 }
+  var microphone: Microphone? { nil }
   func captured(from offset: Int) -> [Float] { offset < samples.count ? Array(samples[offset...]) : [] }
 }
 
