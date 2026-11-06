@@ -131,4 +131,47 @@ import XCTest
     XCTAssertTrue(emoji("👋🏽").isHittable)
     shot("53-emoji-recents")
   }
+
+  /// Search: the keys come back and type into the field; a result goes into the document; back returns to
+  /// the panel.
+  func testSearchTypesIntoTheFieldAndInsertsAResult() {
+    launch(globe: "0")
+    key("emoji").tap()
+    XCTAssertEqual(app.buttons["emoji.search.open"].label, "Search Emoji")  // titled from the start
+    app.buttons["emoji.search.open"].tap()
+    XCTAssertTrue(key("letters-p").waitForExistence(timeout: 3))
+    for ch in "pizz" { key("letters-\(ch)").tap() }
+    XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "pizz")
+    XCTAssertFalse(text.contains("piz"), "search typed into the document: \(text)")  // an empty field reads as its placeholder
+    let pizza = app.buttons["emoji.result.🍕"]
+    XCTAssertTrue(pizza.waitForExistence(timeout: 3))
+    shot("56-emoji-search")
+    pizza.tap()
+    waitForText("🍕")
+    key("delete").tap()  // deletes in the field, not the document
+    XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "piz")
+    XCTAssertEqual(text, "🍕")
+    key("shift").tap()  // search's own shift: a capital in the field, matched case-insensitively
+    key("letters-z").tap()
+    XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "pizZ")
+    XCTAssertTrue(app.buttons["emoji.result.🍕"].waitForExistence(timeout: 3))
+    app.buttons["emoji.search.back"].tap()
+    XCTAssertTrue(app.descendants(matching: .any)["v2t.emoji"].waitForExistence(timeout: 3))
+    app.buttons["emoji.abc"].tap()
+    key("letters-a").tap()
+    waitForText("🍕a")  // lowercase: the shift tapped in search did not reach the document's shift
+  }
+
+  /// The bar offers 🍕 after "pizza" in its last slot; tapping it replaces the word.
+  func testTheBarOffersTheWordsEmoji() {
+    launch(globe: "0")
+    for ch in "pizza" { key("letters-\(ch)").tap() }
+    let slot = app.buttons["v2t.suggestion.2"]
+    let deadline = Date().addingTimeInterval(3)
+    while slot.label != "🍕", Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    XCTAssertEqual(slot.label, "🍕")
+    shot("57-bar-emoji")
+    slot.tap()
+    waitForText("🍕 ")
+  }
 }

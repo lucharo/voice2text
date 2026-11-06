@@ -30,6 +30,17 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var emojiPanel: EmojiPanel?
   /// Contact names and no-shortcut phrases from the system's supplementary lexicon.
   private var systemWords = Set<String>()
+  /// Open while the user searches emoji: the keys type into it instead of the document.
+  private var emojiSearch: EmojiSearchBar? { didSet { searchShift = false } }
+  /// Emoji search's own one-tap shift.
+  private var searchShift = false
+  /// The emoji keywords by language, memory-mapped: the bar's emoji and emoji search.
+  private let emojiIndexes: [String: EmojiIndex] = Dictionary(uniqueKeysWithValues: KeyboardLanguage.allCases.compactMap { l in
+    Bundle.main.url(forResource: "emoji-keywords-\(l.rawValue)", withExtension: "txt").flatMap { try? EmojiIndex(contentsOf: $0) }.map { (l.rawValue, $0) }
+  })
+  private var barHeightConstraint: NSLayoutConstraint?
+  /// The suggestion bar's height, taller while emoji search uses its place.
+  private var barHeight: CGFloat { emojiSearch == nil ? SuggestionBar.height : EmojiSearchBar.height }
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -42,6 +53,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.onLearn = { Settings.shared.learn($0) }
     // a word you keep that no word list knows ("marimo") becomes a v2t dictionary term, for dictation too
     engine.onNewWord = { try? PersonalDictionary().addTerm($0) }
+    engine.emojiIndexes = emojiIndexes
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
     // no background of our own: the system's keyboard glass shows through around and behind the keys, as it
@@ -52,7 +64,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView = KeyboardView(layout: layout)
     keyboardView.delegate = self
     keyboardView.clipsToBounds = false
-    bar.onPick = { [weak self] word in self?.edit { $0.pick(word) } }
+    bar.onPick = { [weak self] word in
+      guard let self else { return }
+      let emoji = engine.emojiSuggestion == word
+      edit { $0.pick(word) }
+      if emoji { EmojiStore.record(word) }  // the bar's emoji joins the panel's recents
+    }
     bar.onDismiss = { [weak self] in self?.dismissKeyboard() }
     bar.showsDismiss = !layout.form.isPad
     panel.onStop = { [weak self] in self?.dictation.toggle() }
@@ -75,6 +92,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let h = view.heightAnchor.constraint(equalToConstant: SuggestionBar.height + layout.height)
     h.priority = .defaultHigh
     heightConstraint = h
+    barHeightConstraint = bar.heightAnchor.constraint(equalToConstant: SuggestionBar.height)
     let kh = keyboardView.heightAnchor.constraint(equalToConstant: layout.height)
     keysHeightConstraint = kh
     NSLayoutConstraint.activate([
@@ -82,7 +100,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       bar.topAnchor.constraint(equalTo: view.topAnchor),
       bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      bar.heightAnchor.constraint(equalToConstant: SuggestionBar.height),
+      barHeightConstraint!,
       keyboardView.topAnchor.constraint(equalTo: bar.bottomAnchor),
       keyboardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       keyboardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -182,7 +200,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let layout = makeLayout(width: view.bounds.width, page: page)
     keyboardView.setLayout(layout)
     bar.showsDismiss = !layout.form.isPad
-    heightConstraint?.constant = SuggestionBar.height + layout.height
+    heightConstraint?.constant = barHeight + layout.height
     keysHeightConstraint?.constant = layout.height
     if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
     syncEmojiPanel()  // the layout language or the keyboard's form may have changed under an open panel
@@ -257,8 +275,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   private func refresh() {
-    keyboardView.shift = engine.shift
-    keyboardView.shiftManual = engine.shiftManual
+    // search has its own shift, off unless tapped, and types the shifted mark only (EmojiIndex folds case)
+    keyboardView.shift = emojiSearch == nil ? engine.shift : (searchShift ? .on : .off)
+    keyboardView.shiftManual = emojiSearch == nil ? engine.shiftManual : true
     bar.show(engine.suggestions(), pending: engine.pendingAutocorrection)
   }
 
@@ -270,12 +289,26 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, typed text: String, at point: CGPoint?) {
+    if let s = emojiSearch {
+      s.type(text)
+      if searchShift { searchShift = false; refresh() }
+      return
+    }
     edit { $0.character(text, at: point, now: CACurrentMediaTime()) }
     // after a sentence-ending mark on the numbers page, go back to letters as Apple does
     if v.layout.page != .letters, text == " " || text == "'" { relayout(page: .letters) }
   }
 
   func keyboardView(_ v: KeyboardView, action: KeyAction) {
+    if let s = emojiSearch {
+      switch action {
+      case .space: s.type(" "); return
+      case .returnKey, .emoji: endEmojiSearch(); return
+      case .shift: searchShift.toggle(); refresh(); return  // its own shift: "!" on the full iPad keyboard
+      case .mic, .tab, .capsLock: return  // and the document's shift is left alone
+      default: break  // pages, the globe and hide work as usual
+      }
+    }
     switch action {
     case .space:
       edit { $0.space(now: CACurrentMediaTime()) }
@@ -294,10 +327,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardViewDelete(_ v: KeyboardView, wholeWord: Bool) {
+    if let s = emojiSearch { s.deleteBackward(); return }
     edit { wholeWord ? $0.deleteWord() : $0.delete() }
   }
 
   func keyboardView(_ v: KeyboardView, moveCursor by: Int) {
+    guard emojiSearch == nil else { return }  // the space-bar trackpad must not move the document's cursor
     inputEpoch += 1
     engineEditing = true
     textDocumentProxy.adjustTextPosition(byCharacterOffset: by)
@@ -307,6 +342,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
+    guard emojiSearch == nil else { return }  // search takes taps only
     var decoder = MultiSwipeDecoder(decoders)
     decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()
@@ -363,6 +399,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
     p.onEmoji = { [weak self] e in self?.edit("emoji") { $0.emoji(e) } }
     p.onDelete = { [weak self] in self?.edit { $0.delete() } }
+    p.onSearch = { [weak self] in self?.startEmojiSearch() }
     p.onLetters = { [weak self] in
       guard let self else { return }
       showEmoji(false)
@@ -377,6 +414,51 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       p.trailingAnchor.constraint(equalTo: view.trailingAnchor),
     ])
     return p
+  }
+
+  /// Emoji search: the keys come back with the search field and its results in the bar's place.
+  private func startEmojiSearch() {
+    guard emojiSearch == nil else { return }
+    // the suggestion languages' keywords, the layout language's first
+    let langs = [language] + Settings.shared.suggestionLanguages.filter { $0 != language }
+    let s = EmojiSearchBar(indexes: langs.compactMap { emojiIndexes[$0.rawValue] }, recents: { EmojiStore.load().recents })
+    s.onPick = { [weak self] e in
+      self?.edit("emoji") { $0.emoji(e) }
+      EmojiStore.record(e)
+    }
+    s.onClose = { [weak self] in self?.endEmojiSearch() }
+    s.translatesAutoresizingMaskIntoConstraints = false
+    emojiSearch = s
+    view.insertSubview(s, belowSubview: keyboardView)  // key previews still draw over it, as over the bar
+    NSLayoutConstraint.activate([
+      s.topAnchor.constraint(equalTo: bar.topAnchor),
+      s.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+      s.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      s.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+    ])
+    emojiPanel?.isHidden = true
+    bar.isHidden = true
+    keyboardView.isHidden = false  // the keys come back to type the search
+    if keyboardView.layout.page != .letters { relayout(page: .letters) }
+    resizeBar()
+    keyboardView.accessibilityElementsHidden = false
+    UIAccessibility.post(notification: .screenChanged, argument: s)
+  }
+
+  /// Back to the emoji panel.
+  private func endEmojiSearch() {
+    guard let s = emojiSearch else { return }
+    s.removeFromSuperview()
+    emojiSearch = nil
+    bar.isHidden = false
+    resizeBar()
+    showEmoji(true)
+  }
+
+  private func resizeBar() {
+    barHeightConstraint?.constant = barHeight
+    heightConstraint?.constant = barHeight + keyboardView.layout.height
+    refresh()
   }
 
   // MARK: dictation
@@ -402,12 +484,15 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func setPanel(visible: Bool) {
     if !visible { panel.hide() }
     let wasModal = panel.accessibilityViewIsModal
-    keyboardView.accessibilityElementsHidden = visible || emojiPanel != nil  // the emoji panel may cover them too
+    // the emoji panel covers the keys and the bar; emoji search brings the keys back, in place of the bar
+    let emoji = emojiPanel != nil && emojiSearch == nil
+    keyboardView.accessibilityElementsHidden = visible || emoji
     bar.accessibilityElementsHidden = visible || emojiPanel != nil
     // the panel is clear like the rest of the keyboard, so the keys and bar it replaces are hidden
-    keyboardView.isHidden = visible || emojiPanel != nil
+    keyboardView.isHidden = visible || emoji
     bar.isHidden = visible || emojiPanel != nil
-    emojiPanel?.isHidden = visible  // the clear recording panel would show the emoji grid through it
+    emojiPanel?.isHidden = visible || emojiSearch != nil  // the clear recording panel would show the emoji grid through it
+    emojiSearch?.isHidden = visible
     panel.accessibilityViewIsModal = visible
     if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }

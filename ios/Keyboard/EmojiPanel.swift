@@ -17,12 +17,25 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   var onEmoji: ((String) -> Void)?
   var onDelete: (() -> Void)?
   var onLetters: (() -> Void)?
+  /// Opens emoji search (EmojiSearchBar), from the field at the top right, as on Apple's emoji keyboard.
+  var onSearch: (() -> Void)?
   /// iPad only, as Apple's iPad emoji keyboard: hides the keyboard.
   var onDismiss: (() -> Void)? { didSet { dismiss.isHidden = onDismiss == nil; setNeedsLayout() } }
   /// Where iOS draws no globe below the keyboard, the panel covers the keyboard's only globe, so it has one too,
   /// after ABC (Apple's emoji keyboard does the same).
   var onNextKeyboard: (() -> Void)? { didSet { globe.isHidden = onNextKeyboard == nil; setNeedsLayout() } }
-  var language: KeyboardLanguage = .english { didSet { updateHeader(force: true) } }
+  var language: KeyboardLanguage = .english {
+    didSet {
+      updateHeader(force: true)
+      titleSearch()
+    }
+  }
+
+  private func titleSearch() {
+    var t = AttributedString(language == .spanish ? "Buscar emoji" : "Search Emoji")
+    t.font = .systemFont(ofSize: 13)
+    search.configuration?.attributedTitle = t
+  }
 
   private let categories: [EmojiCategory]
   private var history: EmojiHistory
@@ -37,6 +50,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   }()
 
   private let header = UILabel()
+  private let search = UIButton(type: .system)
   private let flow = UICollectionViewFlowLayout()
   private let grid: UICollectionView
   private let letters = UIButton(type: .system)
@@ -75,6 +89,19 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     header.textColor = .secondaryLabel
     header.accessibilityIdentifier = "emoji.header"
     addSubview(header)
+
+    var cfg = UIButton.Configuration.plain()
+    cfg.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+    cfg.imagePadding = 4
+    cfg.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 10)
+    cfg.baseForegroundColor = .secondaryLabel
+    search.configuration = cfg
+    search.backgroundColor = Palette.key
+    search.layer.cornerRadius = 11
+    search.accessibilityIdentifier = "emoji.search.open"
+    search.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
+    addSubview(search)
+    titleSearch()  // didSet does not run for the initial language
 
     grid.backgroundColor = .clear
     grid.showsHorizontalScrollIndicator = false
@@ -142,6 +169,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
 
   /// Opens at the recently used emoji (the first category while there are none), with the recents as of now.
   func show() {
+    history = EmojiStore.load()  // emoji search may have used some since the panel was made
     recents = history.recents
     grid.reloadData()
     grid.layoutIfNeeded()
@@ -154,7 +182,9 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   override func layoutSubviews() {
     super.layoutSubviews()
     let w = bounds.width, h = bounds.height
-    header.frame = CGRect(x: 14, y: 6, width: w - 28, height: Self.headerHeight - 6)
+    let sw = min(170, search.intrinsicContentSize.width)
+    search.frame = CGRect(x: w - 10 - sw, y: 4, width: sw, height: 22)
+    header.frame = CGRect(x: 14, y: 6, width: search.frame.minX - 22, height: Self.headerHeight - 6)
     let gridFrame = CGRect(x: 0, y: Self.headerHeight, width: w, height: max(0, h - Self.headerHeight - Self.barHeight))
     if grid.frame != gridFrame {
       grid.frame = gridFrame
@@ -549,6 +579,13 @@ enum EmojiStore {
   static func load() -> EmojiHistory {
     let d = UserDefaults.standard
     return EmojiHistory(recents: d.stringArray(forKey: recentsKey) ?? [], tones: d.dictionary(forKey: tonesKey) as? [String: String] ?? [:])
+  }
+
+  /// `emoji` was used outside the panel (search, the suggestion bar).
+  static func record(_ emoji: String) {
+    var h = load()
+    h.use(emoji, from: nil)
+    save(h)
   }
 
   static func save(_ h: EmojiHistory) {

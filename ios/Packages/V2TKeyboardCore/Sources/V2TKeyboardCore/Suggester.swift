@@ -13,7 +13,7 @@ public struct TypedKey: Equatable, Sendable {
 }
 
 public struct Suggestion: Equatable, Sendable {
-  public enum Kind: Sendable { case typed, correction, completion, prediction }
+  public enum Kind: Sendable { case typed, correction, completion, prediction, emoji }
   public let word: String
   public let kind: Kind
   public let score: Double
