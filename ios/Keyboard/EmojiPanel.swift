@@ -171,6 +171,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     let side = floor(gh / CGFloat(rows))
     flow.itemSize = CGSize(width: side + (isPad ? 10 : 5), height: side)
     emojiSize = round(side * 0.76)
+    emojiFont.limit = EmojiFont.limit(viewport: grid.bounds.size, cell: flow.itemSize)
     flow.invalidateLayout()
     grid.reloadData()
   }
@@ -407,9 +408,15 @@ final class EmojiCell: UICollectionViewCell {
 /// back to 41 MB in the same measurement), so the grid swaps in a fresh copy after `limit` distinct emoji.
 /// Falls back to the system font if the file cannot be read.
 final class EmojiFont {
-  /// About 5 MB of decoded emoji at most, and about two screens of emoji (an iPhone shows about 55), so a
-  /// fling swaps the font every couple of screens.
-  static let limit = 120
+  /// Distinct emoji drawn before the swap: at least 120 (about 5 MB decoded, two iPhone screens), and always
+  /// more than two screens of the grid, so the redraw after a swap can never trigger the next swap.
+  var limit = 120
+
+  static func limit(viewport: CGSize, cell: CGSize) -> Int {
+    guard cell.width > 0, cell.height > 0 else { return 120 }
+    let rows = Int(viewport.height / cell.height), columns = Int((viewport.width / cell.width).rounded(.up)) + 1
+    return max(120, 2 * rows * columns + 6)  // + 6: an open skin-tone picker
+  }
   private var graphicsFont: CGFont?
   private var sized: [CGFloat: UIFont] = [:]
   private var drawn = Set<String>()
@@ -427,7 +434,7 @@ final class EmojiFont {
   func note(_ emoji: String) -> Bool {
     guard graphicsFont != nil else { return false }
     drawn.insert(emoji)
-    return drawn.count > Self.limit
+    return drawn.count > limit
   }
 
   /// Drops this copy (and every emoji decoded in it) for a fresh one.
