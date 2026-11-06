@@ -14,6 +14,15 @@ extension XCTestCase {
     for label in route {
       let row = settings.staticTexts[label].firstMatch
       for _ in 0..<6 where !row.waitForExistence(timeout: 1) { settings.swipeUp(velocity: .slow) }  // rows load as they scroll in
+      // a fresh Simulator has not added the keyboard yet: add it as a user would, from Add New Keyboard
+      let add = settings.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Add New Keyboard'")).firstMatch
+      if label == "v2t", !row.exists, add.exists {
+        add.tap()
+        let thirdParty = settings.staticTexts["v2t"].firstMatch
+        for _ in 0..<6 where !thirdParty.waitForExistence(timeout: 2) { settings.swipeUp(velocity: .slow) }
+        thirdParty.tap()
+        sleep(2)
+      }
       XCTAssertTrue(row.waitForExistence(timeout: 10), "no \(label) in Settings")
       let cell = settings.cells.containing(.staticText, identifier: label).firstMatch
       (cell.exists ? cell : row).tap()
