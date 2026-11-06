@@ -40,14 +40,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
     engine.learned = userWords()
     engine.onLearn = { Settings.shared.learn($0) }
-    // the user's text replacements and contact names, as Apple's keyboard uses them (UILexicon)
-    requestSupplementaryLexicon { [weak self] lexicon in
-      guard let self else { return }
-      let (replacements, words) = TypingEngine.systemLexicon(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
-      engine.replacements = replacements
-      systemWords = words
-      engine.learned = userWords()
-    }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
 
     // no background of our own: the system's keyboard glass shows through around and behind the keys, as it
@@ -152,7 +144,21 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   /// The app may have changed the layout language, the suggestion languages or the learned words.
+  /// The user's text replacements and contact names, as Apple's keyboard uses them (UILexicon). Asked for
+  /// each time the keyboard appears, so a replacement changed in Settings meanwhile applies.
+  private func loadSystemLexicon() {
+    requestSupplementaryLexicon { [weak self] lexicon in
+      guard let self else { return }
+      let (replacements, words) = TypingEngine.systemLexicon(lexicon.entries.map { (input: $0.userInput, text: $0.documentText) })
+      engine.replacements = replacements
+      systemWords = words
+      engine.learned = userWords()
+      refresh()
+    }
+  }
+
   private func reloadSettings() {
+    loadSystemLexicon()
     let settings = Settings.shared
     engine.learned = userWords()
     let wanted = settings.suggestionLanguages.map(\.rawValue)
