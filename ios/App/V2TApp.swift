@@ -237,6 +237,7 @@ struct KeyboardHandoffView: View {
 /// Mac app; "Edit as text" opens the file itself.
 struct DictionaryView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
+  @Environment(\.scenePhase) private var scenePhase
   @State private var term = ""
   @State private var heard = ""
   @State private var written = ""
@@ -288,6 +289,8 @@ struct DictionaryView: View {
     }
     .navigationTitle("Dictionary")
     .onAppear { dictionary.reload() }
+    // back from another app, where the keyboard may have added a word (the text editor keeps its own draft)
+    .onChange(of: scenePhase) { _, phase in if phase == .active { dictionary.reload() } }
     .alert("Couldn't add that", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK", role: .cancel) {}
     } message: { Text(error ?? "") }
