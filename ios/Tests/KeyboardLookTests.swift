@@ -20,7 +20,7 @@ import V2TKeyboardCore
     format.scale = 1
     let image = UIGraphicsImageRenderer(size: v.bounds.size, format: format).image { v.layer.render(in: $0.cgContext) }
     let cg = image.cgImage!
-    let data = CFDataGetBytePtr(cg.dataProvider!.data)!
+    let data = [UInt8](cg.dataProvider!.data! as Data)  // a copy, so no pointer outlives the CFData
     var n = 0
     for y in Int(rect.minY)..<Int(rect.maxY) {
       for x in Int(rect.minX)..<Int(rect.maxX) {

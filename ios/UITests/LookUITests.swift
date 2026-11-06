@@ -58,7 +58,8 @@ import XCTest
   }
 
   /// A keyboard never sees taps outside itself, so the bar's chevron is how the user hides it.
-  func testTheBarsChevronHidesTheKeyboard() {
+  func testTheBarsChevronHidesTheKeyboard() throws {
+    try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "the iPad hides its keyboard with a bottom-row key instead")
     showKeyboard()
     XCTAssertEqual(key("space").label, "space")  // the "v2t" in its corner is not read out
     let chevron = app.buttons["v2t.dismiss"]
