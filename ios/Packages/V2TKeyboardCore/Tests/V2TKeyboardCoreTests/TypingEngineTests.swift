@@ -502,6 +502,17 @@ struct TypingEngineTests {
     #expect(e.learned.contains("rock'n'rol"))
   }
 
+  /// Tapping "i'm" as typed over its "I'm" correction keeps it lowercase and learns it.
+  @Test func tappingLowercaseIMKeepsIt() throws {
+    let (e, p) = try engine("and ")
+    type("i", e)
+    e.character("'", now: 50)
+    type("m", e, start: 60)
+    #expect(e.pendingAutocorrection == "I'm" && e.suggestions().first?.word == "i'm")
+    e.pick("i'm")
+    #expect(p.text == "and i'm " && e.learned.contains("i'm"))
+  }
+
   /// "i’m" takes the capital and keeps the curly apostrophe typed.
   @Test func iContractionsKeepTheirApostrophe() throws {
     let (e, p) = try engine("and ")

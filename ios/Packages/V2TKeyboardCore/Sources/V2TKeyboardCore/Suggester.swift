@@ -107,7 +107,8 @@ public final class Suggester: @unchecked Sendable {
         let f = lex.frequency(i)
         if f > 0 || lex.word(i).lowercased() == literal.lowercased() {
           let w = lex.word(i)
-          let kind: Suggestion.Kind = w.lowercased() == literal.lowercased() ? .typed : .correction
+          // the word as typed only when the bar would write it exactly so ("i'm" is not "I'm")
+          let kind: Suggestion.Kind = Self.applyCase(of: literal, to: w) == literal ? .typed : .correction
           offer(w, kind, -s.cost + prior(f) + lang + (bonus[i] ?? 0))
         }
         i += 1
@@ -126,7 +127,7 @@ public final class Suggester: @unchecked Sendable {
     // ties by word: a dictionary's order changes from one launch to the next
     var out = scored.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }
     // the literal word keeps a slot even when it is not a word, so it can always be chosen as typed
-    if !out.prefix(limit).contains(where: { $0.word.lowercased() == literal.lowercased() }) {
+    if !out.prefix(limit).contains(where: { $0.word == literal }) {
       out.insert(Suggestion(word: literal, kind: .typed, score: -.infinity), at: min(out.count, limit - 1))
     }
     return Array(out.prefix(limit))
