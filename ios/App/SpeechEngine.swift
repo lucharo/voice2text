@@ -25,6 +25,8 @@ actor SpeechEngine {
   private var nemotronLanguage: NemotronUnifiedLanguage?
   private var parakeet: AsrManager?
   private(set) var state: State = .notDownloaded
+  /// Bumped by unload(): work that awaited across it finds the number changed and drops its result.
+  private var generation = 0
 
   init(speech: Recommendation.Speech) {
     self.speech = speech
@@ -61,6 +63,7 @@ actor SpeechEngine {
 
   /// Drops the loaded model, before its files are deleted.
   func unload() {
+    generation += 1  // a language reload already under way must not attach its model afterwards
     nemotron = nil
     nemotronLanguage = nil
     parakeet = nil
@@ -92,12 +95,15 @@ actor SpeechEngine {
   func transcribe(_ samples: [Float], language: String) async throws -> String {
     switch speech {
     case .nemotron:
+      guard state == .ready else { throw EngineError.notReady }  // unloaded (deleted): never reload from files
       let lang = Self.nemotronLanguage(language)
       if lang != nemotronLanguage {
+        let started = generation
         // the language prompt is fixed per manager: reload with the new one from the local files, offline
         ModelHub.offlineMode = true
         let m = UnifiedAsrManager(config: UnifiedConfig(family: .nemotronMultilingual(lang)), encoderPrecision: .int8)
         try await m.loadModels(to: nil, configuration: nil, progressHandler: nil)
+        guard started == generation else { throw EngineError.notReady }  // unloaded meanwhile
         nemotron = m
         nemotronLanguage = lang
       }
