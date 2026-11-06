@@ -52,7 +52,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView = KeyboardView(layout: layout)
     keyboardView.delegate = self
     keyboardView.clipsToBounds = false
-    keyboardView.micStyle = Settings.shared.previewMicStyle.flatMap { MicKeyStyle(rawValue: String($0.prefix(1))) } ?? .standard
     bar.onPick = { [weak self] word in self?.edit { $0.pick(word) } }
     bar.onDismiss = { [weak self] in self?.dismissKeyboard() }
     bar.showsDismiss = !layout.form.isPad
@@ -389,7 +388,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
   private func showDictation(_ state: DictationState) {
     let active = state == .listening || state == .transcribing
-    keyboardView.micWarm = state == .idle || active || Settings.shared.previewMicStyle == "C-warm"
     if !active { cancelled = false }
     guard (active && !cancelled) || panel.preview else { setPanel(visible: false); return }
     view.layoutIfNeeded()

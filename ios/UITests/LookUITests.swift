@@ -12,21 +12,21 @@ import XCTest
   /// (XCUIDevice.appearance left the keyboard light); it only names the screenshots.
   var appearance: String { ProcessInfo.processInfo.environment["V2T_APPEARANCE"] ?? "light" }
 
-  /// Opens v2t's keyboard in the Try it field, with the mic key drawn in `micStyle` (V2T_MIC_STYLE: A, B, C or
-  /// C-warm; unset draws the default).
-  func showKeyboard(micStyle: String? = nil) {
+  /// Opens v2t's keyboard in the Try it field.
+  func showKeyboard() {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = "en"
-    if let micStyle { app.launchEnvironment["V2T_MIC_STYLE"] = micStyle } else { app.launchEnvironment.removeValue(forKey: "V2T_MIC_STYLE") }
     app.launch()
     // the setup list changes height as the model row goes from Preparing to Ready; tapping the field before
     // then can land on the row that moved under it
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     field.tap()
-    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
-      let globe = app.buttons["Next keyboard"]
-      if globe.exists { globe.tap() }
+    // the simulator may start on Apple's keyboard: switch with its globe once that has slid in and can be tapped
+    // (tapping it mid-slide fails, which under load used to leave Apple's keyboard up)
+    for _ in 0..<8 where !key("letters-q").waitForExistence(timeout: 3) {
+      let globe = app.buttons["Next keyboard"].firstMatch
+      if globe.exists, globe.isHittable { globe.tap() } else { sleep(2) }
     }
     XCTAssertTrue(key("letters-q").waitForExistence(timeout: 10), app.debugDescription)
     onScreen(key("letters-q"))
@@ -47,20 +47,25 @@ import XCTest
     shot("look-\(appearance)-suggestions")
   }
 
-  /// One screenshot per mic-key style, for Luis to pick from.
-  func testMicKeyStyles() {
-    for style in ["A", "B", "C", "C-warm"] {
-      showKeyboard(micStyle: style)
-      XCTAssertEqual(key("mic").label, "dictate")
-      shot("mic-\(style)-\(appearance)")
-      app.terminate()
-    }
+  /// The emoji panel sits on the same glass as the keys, with the keys and bar hidden under it.
+  func testEmojiPanelOnTheGlass() {
+    showKeyboard()
+    key("emoji").tap()
+    XCTAssertTrue(app.descendants(matching: .any)["v2t.emoji"].waitForExistence(timeout: 3))
+    expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: key("letters-q"))
+    waitForExpectations(timeout: 3)  // hidden from accessibility as well as from view
+    app.buttons["emoji.category.smileys"].tap()
+    sleep(1)
+    shot("emoji-\(appearance)")
+    app.buttons["emoji.abc"].tap()
+    onScreen(key("letters-q"))
   }
 
   /// A keyboard never sees taps outside itself, so the bar's chevron is how the user hides it.
   func testTheBarsChevronHidesTheKeyboard() throws {
     try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "the iPad hides its keyboard with a bottom-row key instead")
     showKeyboard()
+    XCTAssertEqual(key("mic").label, "dictate")
     XCTAssertEqual(key("space").label, "space")  // the "v2t" in its corner is not read out
     let chevron = app.buttons["v2t.dismiss"]
     XCTAssertTrue(chevron.waitForExistence(timeout: 3))
