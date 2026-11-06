@@ -51,7 +51,12 @@ import XCTest
     let mic = app.staticTexts["v2t.recording.mic"]
     XCTAssertTrue(mic.waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertEqual(mic.label, "Microphone: Test clip")
-    // no microphone change mid-dictation: it could only apply by restarting the session
+    // no microphone change mid-dictation: it could only apply by restarting the session. The list drops rows
+    // scrolled out of view, so bring the picker back above the keyboard first.
+    // drag in the visible part of the list, above the keyboard (a plain swipeUp lands on the keyboard)
+    let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+    let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08))
+    for _ in 0..<5 where !(choice.exists && choice.isHittable) { from.press(forDuration: 0.05, thenDragTo: to) }
     XCTAssertTrue(choice.exists, app.debugDescription)
     XCTAssertFalse(choice.isEnabled, "the microphone picker stays enabled while recording")
     // V2T_HOLD_SECONDS keeps the waveform up longer, for a screen recording of it
