@@ -19,7 +19,11 @@ enum TimingsCSV {
   }
 }
 
+/// `wordEdits` off the caller's actor, as a child task, so cancelling the caller stops it too.
+nonisolated func wordEditsInBackground(_ a: String, _ b: String) async -> Int { wordEdits(a, b) }
+
 /// Word-level edit distance between two texts, case and punctuation ignored: how many words cleanup changed.
+/// Quadratic in words; returns early (with a partial count) once the current task is cancelled.
 func wordEdits(_ a: String, _ b: String) -> Int {
   func words(_ s: String) -> [String] {
     s.lowercased().split(whereSeparator: { $0.isWhitespace }).map { $0.filter { $0.isLetter || $0.isNumber } }.filter { !$0.isEmpty }
@@ -27,6 +31,7 @@ func wordEdits(_ a: String, _ b: String) -> Int {
   let x = words(a), y = words(b)
   var prev = Array(0...y.count)
   for (i, w) in x.enumerated() {
+    if Task.isCancelled { break }
     var cur = [i + 1]
     for (j, v) in y.enumerated() { cur.append(min(prev[j + 1] + 1, cur[j] + 1, prev[j] + (w == v ? 0 : 1))) }
     prev = cur
@@ -120,6 +125,7 @@ struct CompareCleanupView: View {
             Text(row.map { String(format: "%@ %.2f s, %d changed", $0.mode, $0.seconds, $0.wordsChanged) }.joined(separator: " · "))
               .font(.caption).monospacedDigit()
               .accessibilityLabel("Dictation \(i + 1)")
+              .accessibilityValue(row.map { "\($0.mode), \(String(format: "%.1f", $0.seconds)) seconds, \($0.wordsChanged) words changed" }.joined(separator: "; "))
           }
         }
       }
@@ -143,7 +149,8 @@ struct CompareCleanupView: View {
         let seconds = (ContinuousClock.now - t0).seconds
         if Task.isCancelled { return }
         // quadratic in words: off the main actor, so a long dictation cannot stall the app
-        let changed = await Task.detached(priority: .utility) { wordEdits(heard, out) }.value
+        let changed = await wordEditsInBackground(heard, out)
+        if Task.isCancelled { return }  // a count cut short by cancelling is never shown
         row.append(CleanupRun(audio: d.timings?.audio, mode: mode == .strict ? "thorough" : "casual", seconds: seconds,
                               words: heard.split(separator: " ").count, wordsChanged: changed))
       }
