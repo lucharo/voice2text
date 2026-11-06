@@ -350,8 +350,11 @@ struct KeyboardHandoffView: View {
       .padding(.bottom, 32)
     }
     // no session (it timed out or was turned off, or the microphone never started): the screen's "keyboard
-    // records in place" does not hold, so close it, also when it opens that way
-    .onChange(of: dictation.state, initial: true) { _, state in if state == .needsApp { dictation.cameFromKeyboard = false } }
+    // records in place" does not hold, so close it, also when it opens that way. Not when the model is what is
+    // missing: then this cover switches to the download (or Try again) screen instead.
+    .onChange(of: dictation.state, initial: true) { _, state in
+      if state == .needsApp, dictation.canDictate { dictation.cameFromKeyboard = false }
+    }
   }
 }
 
