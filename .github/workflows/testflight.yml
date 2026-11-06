@@ -11,7 +11,7 @@ name: testflight
 
 on:
   push:
-    branches: [main, claude/testflight-ci-github-actions-74680e]  # TEMPORARY canary
+    branches: [main]
     paths:
       - "ios/**"
       - "!ios/**/*.md"
