@@ -305,12 +305,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       syncEmojiPanel()
       view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
       p.show()
+      p.isHidden = !panel.isHidden  // a recording already on screen stays on top until it ends
     } else {
       emojiPanel?.removeFromSuperview()
       emojiPanel = nil
     }
     keyboardView.accessibilityElementsHidden = on
     bar.accessibilityElementsHidden = on
+    // the panel is clear like the rest of the keyboard, so the keys and bar it covers are hidden
+    keyboardView.isHidden = on || !panel.isHidden
+    bar.isHidden = on || !panel.isHidden
     UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
   }
 
@@ -373,6 +377,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // the panel is clear like the rest of the keyboard, so the keys and bar it replaces are hidden
     keyboardView.isHidden = visible || emojiPanel != nil
     bar.isHidden = visible || emojiPanel != nil
+    emojiPanel?.isHidden = visible  // the clear recording panel would show the emoji grid through it
     panel.accessibilityViewIsModal = visible
     if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
   }
