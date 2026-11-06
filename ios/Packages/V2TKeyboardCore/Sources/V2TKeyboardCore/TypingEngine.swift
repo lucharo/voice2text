@@ -100,7 +100,7 @@ public final class TypingEngine {
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
     // "teh+_tag": an address mark after the plus, so the word goes back as typed
     // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too
-    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark == "+" { undoCorrectionBeforeMark() }
+    if "@_+/:#\\=".contains(s) || s == "." && ["+", "="].contains(correctionThenMark) { undoCorrectionBeforeMark() }
     // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
     let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
@@ -112,7 +112,7 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    correctionThenMark = corrected && [".", "+", ":"].contains(s) ? s : nil
+    correctionThenMark = corrected && [".", "+", ":", "="].contains(s) ? s : nil
     if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
@@ -233,8 +233,10 @@ public final class TypingEngine {
   /// and without the repeats that spelling makes ("don’t" and the list's "don't").
   func typedApostrophes(_ list: [Suggestion]) -> [Suggestion] {
     guard composing.contains(where: { $0.character == "’" }) else { return list }
-    var seen = Set<String>()
-    return list.map { Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) }
+    // the word as typed stays exactly as typed ("rock'n’roll"), and goes first so a repeat of it is dropped
+    var seen = Set(list.filter { $0.kind == .typed }.map(\.word))
+    return list.filter { $0.kind == .typed } + list.filter { $0.kind != .typed }
+      .map { Suggestion(word: $0.word.replacingOccurrences(of: "'", with: "’"), kind: $0.kind, score: $0.score) }
       .filter { seen.insert($0.word).inserted }
   }
 

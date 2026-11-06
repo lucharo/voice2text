@@ -476,6 +476,32 @@ struct TypingEngineTests {
     #expect(e.revertOffer == nil && p.text == "ok V2T" && !e.learned.contains("v2t"))
   }
 
+  /// An equals sign after a corrected word, then more address: the word goes back ("teh=tag@").
+  @Test func anEqualsSignInAnAddressKeepsTheWord() throws {
+    let (e, p) = try engine("mail ")
+    type("teh", e)
+    e.character("=", now: 50)
+    type("tag", e, start: 60)
+    e.character("@", now: 70)
+    type("example", e, start: 80)
+    e.character(".", now: 90)
+    type("com ", e, start: 100)
+    #expect(p.text == "mail teh=tag@example.com ")
+  }
+
+  /// The bar's word as typed keeps both apostrophes exactly as typed, and tapping it learns it.
+  @Test func theTypedSlotKeepsMixedApostrophes() throws {
+    let (e, _) = try engine("I like ")
+    type("rock", e)
+    e.character("'", now: 50)
+    type("n", e, start: 60)
+    e.character("’", now: 70)
+    type("rol", e, start: 80)
+    #expect(e.suggestions().first?.word == "rock'n’rol")
+    e.pick("rock'n’rol")
+    #expect(e.learned.contains("rock'n'rol"))
+  }
+
   /// "i’m" takes the capital and keeps the curly apostrophe typed.
   @Test func iContractionsKeepTheirApostrophe() throws {
     let (e, p) = try engine("and ")
