@@ -5,9 +5,6 @@ name: testflight
 # Actions tab to upload main without a change. Runs in the `testflight`
 # environment, which only main may deploy to, so a pull request never sees the
 # signing secrets. One-time setup: scripts/ci-testflight-secrets.sh.
-#
-# A re-run keeps the run number, so Apple refuses it if the first attempt
-# uploaded; start a new run instead.
 
 on:
   push:
@@ -46,11 +43,6 @@ jobs:
       - name: Test the keyboard engines
         working-directory: ios/Packages/V2TKeyboardCore
         run: swift test -c release -Xswiftc -enable-testing  # QualityEval takes 6 minutes in debug, 36 s here
-      - name: Pick the build number
-        id: build
-        # Apple refuses a repeated number, and project.yml's stays low for local
-        # uploads, so CI counts from 100 upwards with no version-bump commits.
-        run: echo "number=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_OUTPUT"
       - name: Import the Apple Distribution identity into a throwaway keychain
         env:
           APPLE_DISTRIBUTION_P12: ${{ secrets.APPLE_DISTRIBUTION_P12 }}
@@ -72,6 +64,12 @@ jobs:
         run: |
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+      - name: Pick the build number
+        id: build
+        working-directory: ios
+        # One above the last upload, by hand or from here, with no version-bump
+        # commits. The concurrency group means the last run's build is listed by now.
+        run: echo "number=$(uv run --quiet tools/asc.py next-build)" >> "$GITHUB_OUTPUT"
       - name: Install the App Store profiles
         working-directory: ios
         run: uv run --quiet tools/asc.py profiles "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"

@@ -6,6 +6,7 @@
 """The App Store Connect calls .github/workflows/testflight.yml needs. Reads ASC_KEY_PATH, ASC_KEY_ID and
 ASC_ISSUER_ID from the environment.
 
+    uv run tools/asc.py next-build         print one above the latest uploaded build number
     uv run tools/asc.py profiles <dir>     install the profiles ExportOptions-manual.plist names into <dir>
     uv run tools/asc.py wait <build>       wait until Apple has finished processing a build, fail if it refused it
 
@@ -44,6 +45,11 @@ def get(path: str, **params: str) -> list[dict]:
         return json.load(response)["data"]
 
 
+def next_build() -> None:
+    latest = get("builds", **{"filter[app]": APP_ID, "sort": "-uploadedDate", "limit": "1"})
+    print(int(latest[0]["attributes"]["version"]) + 1)
+
+
 def install_profiles(directory: Path) -> None:
     names = plistlib.loads(EXPORT_OPTIONS.read_bytes())["provisioningProfiles"].values()
     directory.mkdir(parents=True, exist_ok=True)
@@ -63,7 +69,7 @@ def wait_for_build(build: str) -> None:
     while time.monotonic() < deadline:
         try:
             found = get("builds", **{"filter[app]": APP_ID, "filter[version]": build})
-        except OSError as error:  # a blip here must not fail a build that uploaded: its number cannot be reused
+        except OSError as error:  # a blip here must not fail a build that uploaded
             print(f"build {build}: {error}, retrying", flush=True)
             time.sleep(POLL_SECONDS)
             continue
@@ -81,6 +87,8 @@ def wait_for_build(build: str) -> None:
 
 if __name__ == "__main__":
     match sys.argv[1:]:
+        case ["next-build"]:
+            next_build()
         case ["profiles", directory]:
             install_profiles(Path(directory))
         case ["wait", build]:

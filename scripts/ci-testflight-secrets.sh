@@ -39,6 +39,9 @@ blocks() {
 security export -k "$keychain" -t identities -f pkcs12 -P "$P12_PASSWORD" -o "$work/all.p12"
 pem -nokeys -clcerts > "$work/certs.pem"
 pem -nocerts -nodes > "$work/keys.pem"
+# After a renewal the old certificate has the same name, and it would be picked just as readily.
+matches="$(grep -cF "friendlyName: $identity" "$work/certs.pem" || true)"
+(( matches == 1 )) || { echo "$matches certificates named \"$identity\": delete the old one from the keychain" >&2; exit 1; }
 local_key="$(awk -v name="friendlyName: $identity" '
   /friendlyName/ { hit = index($0, name) }
   hit && /localKeyID/ { sub(/^ *localKeyID: */, ""); print; exit }
