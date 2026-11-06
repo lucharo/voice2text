@@ -22,9 +22,11 @@ import XCTest
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     field.tap()
-    for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
-      let globe = app.buttons["Next keyboard"]
-      if globe.exists { globe.tap() }
+    // the simulator may start on Apple's keyboard: switch with its globe once that has slid in and can be tapped
+    // (tapping it mid-slide fails, which under load used to leave Apple's keyboard up)
+    for _ in 0..<8 where !key("letters-q").waitForExistence(timeout: 3) {
+      let globe = app.buttons["Next keyboard"].firstMatch
+      if globe.exists, globe.isHittable { globe.tap() } else { sleep(2) }
     }
     XCTAssertTrue(key("letters-q").waitForExistence(timeout: 10), app.debugDescription)
     onScreen(key("letters-q"))
