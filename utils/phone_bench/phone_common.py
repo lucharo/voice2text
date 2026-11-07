@@ -47,6 +47,8 @@ def load_job(path: Path) -> dict:
             errs.append(f"{k} must be an integer >= {lo}")
     if "inputs" in job and (job["set"] != "cleanup" or not _safe(job["inputs"])):
         errs.append("inputs is a file name (letters, digits, . _ -) for the cleanup set")
+    elif "inputs" in job and (job["inputs"] == "job.json" or job["inputs"].startswith(f"{job['name']}.")):
+        errs.append("inputs may not be job.json or one of the job's own result files (<name>.*)")
     if job.get("order", "abba") not in ORDERS:
         errs.append(f"order must be one of {ORDERS}")
     ids = [a.get("id") for a in job["arms"]]

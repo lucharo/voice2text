@@ -253,8 +253,15 @@ METRICS = {  # name: (lower is better, how to compute on a resample)
 }
 
 
+def group(item_id: str) -> str:
+    """What resamples together: an Earnings22 clip, or a dictation with both recognisers' pieces and whole
+    file, whose cleanups are not independent evidence."""
+    return item_id if item_id.startswith("e22/") else item_id.rsplit("/", 1)[-1]
+
+
 def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -> tuple[float, float, float]:
-    """Difference b - a over the items both have, with a 95% paired bootstrap interval."""
+    """Difference b - a over the items both have, with a 95% paired bootstrap interval that resamples
+    whole groups (see group)."""
     ids = sorted(set(a) & set(b))
     if metric in ("wer", "fmt"):
         ids = [i for i in ids if i.startswith("e22/")]
@@ -264,10 +271,14 @@ def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -
         ids = [i for i in ids if "extra_ends" in a[i] and "extra_ends" in b[i]]
     f = METRICS[metric]
     point = f([b[i] for i in ids]) - f([a[i] for i in ids])
+    groups: dict[str, list[str]] = {}
+    for i in ids:
+        groups.setdefault(group(i), []).append(i)
+    keys = sorted(groups)
     rng = random.Random(seed)
     diffs = []
     for _ in range(BOOT):
-        pick = [ids[rng.randrange(len(ids))] for _ in ids]
+        pick = [i for _ in keys for i in groups[keys[rng.randrange(len(keys))]]]
         diffs.append(f([b[i] for i in pick]) - f([a[i] for i in pick]))
     diffs.sort()
     return point, diffs[int(0.025 * BOOT)], diffs[int(0.975 * BOOT) - 1]
@@ -389,11 +400,18 @@ def state_path(tag: str) -> Path:
 
 def loop(args) -> None:
     st = json.loads(state_path(args.tag).read_text()) if state_path(args.tag).exists() else {"best": TODAY, "tried": [], "generations": [], "spent": 0}
-    extra = json.loads(Path(args.propose).read_text()) if args.propose else []
+    # proposals wait in the state until they run, so none is lost to the per-job limit or a restart
+    st.setdefault("pending", [])
+    st["pending"] += json.loads(Path(args.propose).read_text()) if args.propose else []
     while st["spent"] < args.budget:
         g = len(st["generations"])
-        todo = extra + neighbours(st["best"], set(st["tried"]))
-        extra = []
+        # today's prompt and the current best run in every job anyway, so neither counts as a new candidate
+        skip = set(st["tried"]) | {cand_id(TODAY), cand_id(st["best"])}
+        todo, seen = [], set()
+        for c in st["pending"] + neighbours(st["best"], skip):
+            if cand_id(c) not in skip and cand_id(c) not in seen:
+                todo.append(c)
+                seen.add(cand_id(c))
         if not todo:
             print("every one-knob change of the best has been run: the search has converged")
             break
@@ -419,6 +437,8 @@ def loop(args) -> None:
         if accepted:
             st["best"] = min(accepted, key=lambda x: x[0])[1]
             print(f"  new best: {describe(st['best'])}")
+        done = set(st["tried"]) | {cand_id(TODAY), cand_id(st["best"])}
+        st["pending"] = [c for c in st["pending"] if cand_id(c) not in done]
         state_path(args.tag).write_text(json.dumps(st, indent=1))
     print(f"best after {st['spent']} candidates: {describe(st['best'])}")
 
@@ -428,7 +448,8 @@ def heldout(args) -> None:
     cands = [TODAY] + ([st["best"]] if st["best"] != TODAY else [])
     if len(cands) == 1:
         print("the search kept today's prompt; the held-out run still measures it once")
-    name = f"ps-{args.tag}-heldout"
+    # named by the pair, so a later search with a new best runs both again in one job
+    name = f"ps-{args.tag}-heldout-{cand_id(cands[-1])}"
     run_generation(name, "heldout", cands, args.engine, args.block)
     scored = score_generation(name, cands)
     print_table(name, cands, scored)

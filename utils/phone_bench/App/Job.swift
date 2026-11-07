@@ -1,4 +1,5 @@
 // A batch job the app works through by itself, resuming from its result files after any relaunch.
+import CryptoKit
 import Foundation
 import MLX
 
@@ -17,6 +18,19 @@ struct JobSpec: Codable {
   static let order = ["abba", "alternate", "sequential"]
 
   func resultFile(_ arm: ArmSpec) -> String { "\(name).\(arm.id).jsonl" }
+
+  /// The arm's signature plus digests of the files it reads from Documents (the job's inputs, its prompt
+  /// file), so a file edited under the same name stops a resume instead of mixing two runs in one file.
+  func signature(_ arm: ArmSpec) -> String {
+    func digest(_ path: String) -> String {
+      guard let d = try? Data(contentsOf: documents.appendingPathComponent(path)) else { return "missing" }
+      return SHA256.hash(data: d).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+    var s = arm.signature
+    if let i = inputs { s += "|inputs=\(digest(i))" }
+    if let p = arm.options?["prompt"] { s += "|prompt=\(digest("prompts/\(p)"))" }
+    return s
+  }
   var logFile: String { "\(name).log.jsonl" }
 
   /// The items every arm processes, in order, each with a key unique across rounds.
@@ -51,6 +65,9 @@ struct JobSpec: Codable {
       throw BenchError("inputs and prompt files are names in Documents (and Documents/prompts): letters, digits, . _ -")
     }
     guard inputs == nil || set == .cleanup else { throw BenchError("inputs is for the cleanup set") }
+    if let i = inputs, i == "job.json" || i.hasPrefix("\(name).") {
+      throw BenchError("inputs may not be job.json or one of the job's own result files (<name>.*)")
+    }
     for a in arms {
       guard let s = runtimeSet[a.runtime] else { throw BenchError("arm \(a.id): unknown runtime \(a.runtime)") }
       guard s == set else { throw BenchError("arm \(a.id): runtime \(a.runtime) runs on the \(s.rawValue) set, not \(set.rawValue)") }
@@ -111,8 +128,8 @@ final class JobRunner: @unchecked Sendable {
     var failed = Set<Int>()  // arms that cannot run this launch (changed config, failed load); a relaunch tries again
     for (a, arm) in spec.arms.enumerated() {
       // checked up front, so a finished arm with a changed config is refused too, not reported as done
-      if let prev = files[a].lastStart?["signature"] as? String, prev != arm.signature {
-        let msg = "arm \(arm.id) was \(prev) in earlier rows and is \(arm.signature) now; give the job a new name"
+      if let prev = files[a].lastStart?["signature"] as? String, prev != spec.signature(arm) {
+        let msg = "arm \(arm.id) was \(prev) in earlier rows and is \(spec.signature(arm)) now; give the job a new name"
         files[a].emit(["event": "error", "arm": arm.id, "stage": "resume", "msg": msg])
         log.emit(["event": "arm_failed", "arm": arm.id, "msg": msg])
         failed.insert(a)
@@ -126,7 +143,7 @@ final class JobRunner: @unchecked Sendable {
         if let l = loaded { unload(l.arm, index: l.index) }
         loaded = nil
         report("loading \(spec.id)", total: items.count)
-        out.emit(["event": "start", "arm": spec.id, "runtime": spec.runtime, "model": spec.model ?? "", "signature": spec.signature, "mb": footprintMB(),
+        out.emit(["event": "start", "arm": spec.id, "runtime": spec.runtime, "model": spec.model ?? "", "signature": self.spec.signature(spec), "mb": footprintMB(),
                   "thermal": pi.thermalState.rawValue, "lowPower": pi.isLowPowerModeEnabled])
         let t0 = ContinuousClock.now
         do {

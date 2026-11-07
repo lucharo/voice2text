@@ -238,14 +238,16 @@ def _memory_cell(runs: list[dict]) -> str:
 
 def models(args) -> None:
     """One markdown table over every model run with --cleanup, on the clips they all share."""
-    names = sorted(p.name for p in MODELS.iterdir() if (p / "config.json").exists()) if MODELS.exists() else []
-    if not names:
-        raise SystemExit(f"nothing under {MODELS}: run with --cleanup first")
     system = args.systems[0]
+    names = sorted(p.name for p in MODELS.iterdir() if any(p.glob(f"*/{system}.jsonl"))) if MODELS.exists() else []
+    if not names:
+        raise SystemExit(f"no {system} results under {MODELS}: run with --cleanup first")
     data = {n: {s: {r["id"]: r for r in grid.read_jsonl(MODELS / n / s / f"{system}.jsonl")} for s in SETS} for n in names}
     shared = {s: set.intersection(*(set(data[n][s]) for n in names)) for s in SETS}
     refs = {s: {c["id"]: c["text"] for c in grid.read_jsonl(grid.SETS / f"{s}.jsonl")} for s in SETS}
     sets = [s for s in SETS if shared[s]]
+    if not sets:
+        raise SystemExit(f"the models under {MODELS} share no clips on any set: run them on the same --sets")
     head = ["model"] + [f"{s} WER (model / guarded)" for s in sets]
     if "earnings22" in sets:
         head.append("e22 formatted, guarded")

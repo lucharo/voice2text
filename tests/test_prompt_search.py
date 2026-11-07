@@ -135,6 +135,53 @@ class Verdict(unittest.TestCase):
         self.assertFalse(ps.verdict(items(), items(fmt_err=3, s=0.8))[0])
 
 
+class Bootstrap(unittest.TestCase):
+    def test_a_dictation_resamples_as_one_group(self):
+        # one dictation, its rows for two recognisers moving opposite ways: a single group, so every
+        # resample is the whole set and the interval collapses to the point
+        row = {"heard_n": 10, "ends": 1, "seconds": []}
+        a = {f"whole/{r}/d1": {**row, "heard_err": 0} for r in ("n", "p")}
+        b = {"whole/n/d1": {**row, "heard_err": 2}, "whole/p/d1": {**row, "heard_err": 0}}
+
+        point, lo, hi = ps.paired(a, b, "heard")
+
+        self.assertEqual((point, lo, hi), (10.0, 10.0, 10.0))
+        self.assertEqual([ps.group(i) for i in ("e22/x1", "pieces/n/d1", "whole/p/d1")], ["e22/x1", "d1", "d1"])
+
+
+class Loop(unittest.TestCase):
+    BEST = {**ps.TODAY, "join": True}
+    PROPOSALS = [{**ps.TODAY, "custom": f"Rules {i}."} for i in range(5)] + [ps.TODAY]
+
+    def run_loop(self, budget, per_gen):
+        runs = []
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            (out / "search-t.json").write_text(json.dumps(
+                {"best": self.BEST, "tried": [ps.cand_id(self.BEST)], "generations": [], "spent": 1}))
+            (out / "p.json").write_text(json.dumps(self.PROPOSALS))
+            args = mock.Mock(tag="t", budget=budget, per_gen=per_gen, engine="phone", block=5, propose=str(out / "p.json"))
+            with (mock.patch.object(ps, "OUT", out),
+                  mock.patch.object(ps, "run_generation", lambda name, split, cands, *_: runs.append(cands)),
+                  mock.patch.object(ps, "score_generation", lambda name, cands: {ps.cand_id(c): items() for c in cands}),
+                  mock.patch("builtins.print")):
+                ps.loop(args)
+            return runs, json.loads((out / "search-t.json").read_text())
+
+    def test_proposals_the_job_had_no_room_for_wait_for_the_next(self):
+        runs, st = self.run_loop(budget=5, per_gen=4)
+
+        self.assertEqual(runs, [[ps.TODAY, self.BEST] + self.PROPOSALS[:4]])
+        self.assertEqual(st["pending"], [self.PROPOSALS[4]])
+
+    def test_the_baselines_are_never_new_candidates(self):
+        # today's prompt is both a proposal and a neighbour of the best; it runs once, as a baseline
+        runs, st = self.run_loop(budget=7, per_gen=6)
+
+        self.assertEqual(runs, [[ps.TODAY, self.BEST] + self.PROPOSALS[:5] + [{**self.BEST, "examples": 2}]])
+        self.assertEqual(st["pending"], [])
+
+
 class Neighbours(unittest.TestCase):
     def test_every_one_knob_change_not_yet_run(self):
         tried = {ps.cand_id({**ps.TODAY, "join": True})}

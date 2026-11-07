@@ -109,6 +109,14 @@ class PromptJobs(unittest.TestCase):
             "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
         ])
 
+    def test_inputs_may_not_be_a_file_the_job_writes(self):
+        msgs = []
+        for name in ("job.json", "ps.a.jsonl", "ps.log.jsonl"):
+            with self.assertRaises(SystemExit) as e:
+                self.load({**self.AFM, "inputs": name})
+            msgs.append(str(e.exception).split(": ", 1)[1])
+        self.assertEqual(msgs, ["inputs may not be job.json or one of the job's own result files (<name>.*)"] * 3)
+
     def test_items_are_counted_from_the_inputs_beside_the_job(self):
         (Path(self.dir.name) / "in.jsonl").write_text("".join(json.dumps({"id": str(i), "chunks": ["x"]}) + "\n" for i in range(7)))
 
