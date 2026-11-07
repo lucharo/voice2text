@@ -174,13 +174,6 @@ public struct EmojiHistory: Equatable, Sendable {
     }
   }
 
-  /// Makes `tone` the default (nil: yellow) and forgets the tones picked for single emoji, so every emoji
-  /// with skin tones shows it from now on.
-  public mutating func setDefault(_ tone: SkinTone?) {
-    defaultTone = tone
-    tones = [:]
-  }
-
   /// What the panel shows for `item`: the tone last picked for it, else the default tone, else its base form.
   public func shown(_ item: Emoji) -> String { tones[item.base] ?? item.variant(defaultTone) }
 
@@ -315,9 +308,8 @@ public struct EmojiIndex: @unchecked Sendable {
   }
 }
 
-/// The default skin tone as stored: the tone (nil is yellow) and when it was chosen. The keyboard keeps a copy
-/// in its own defaults, which need no Full Access, and the app in the App Group, which the keyboard reads
-/// always but writes only with Full Access; the newer of the two wins.
+/// The default skin tone as the app's keyboard settings store it in the App Group: the tone (nil is yellow)
+/// and when it was chosen, so the keyboard knows to drop per-emoji tones picked before it.
 public struct StoredSkinTone: Equatable, Sendable {
   public static let toneKey = "emojiSkinTone", dateKey = "emojiSkinToneDate"
   public var tone: SkinTone?
@@ -338,10 +330,5 @@ public struct StoredSkinTone: Equatable, Sendable {
   public func save(to defaults: UserDefaults) {
     defaults.set(tone?.rawValue ?? 0, forKey: Self.toneKey)
     defaults.set(date, forKey: Self.dateKey)
-  }
-
-  /// The newer of the copies found.
-  public static func newest(_ copies: [StoredSkinTone?]) -> StoredSkinTone? {
-    copies.compactMap { $0 }.max { $0.date < $1.date }
   }
 }

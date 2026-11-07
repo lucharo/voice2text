@@ -7,8 +7,8 @@ import V2TKeyboardCore
 /// recently used first), the category's name above it, and a bar below with ABC, a button per category and
 /// delete. A long press on an emoji with skin tones offers them; the tone picked is shown from then on. An
 /// emoji of two people (handshake, holding hands, kiss, couple) opens a picker with a tone for each person,
-/// as Apple's has since iOS 13.2 to 15.4. A tone picked can become the default for every emoji (`OfferBar`),
-/// which Apple's keyboard lacks and Gboard has; the app's keyboard settings set it too.
+/// as Apple's has since iOS 13.2 to 15.4. Every emoji with tones shows the default skin tone from the app's
+/// keyboard settings until a tone is picked for it (Apple's keyboard has no default; the panel asks nothing).
 ///
 /// Memory: one reused cell per visible emoji, each a UILabel; no images are kept. The emoji font keeps every
 /// emoji it has drawn decoded, so the panel draws with a private copy of it that it renews (`EmojiFont`).
@@ -62,7 +62,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   private let pairPicker = PairPicker()
   /// Under an open pair picker, over everything else: a touch anywhere else closes the picker.
   private let catcher = UIControl()
-  private let offer = OfferBar()
   private var deleteTimer: Timer?
   private var emojiSize: CGFloat = 30
   private let emojiFont = EmojiFont()
@@ -177,9 +176,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     pairPicker.isHidden = true
     pairPicker.onPick = { [weak self] e in self?.pickedPair(e) }
     addSubview(pairPicker)
-    offer.isHidden = true
-    offer.onAnswer = { [weak self] yes in self?.answerOffer(yes) }
-    addSubview(offer)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -188,7 +184,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   /// meanwhile, so the cells take it, where the grid is.
   func reload() {
     closePickers()
-    hideOffer()
     history = EmojiStore.load()
     grid.reloadData()
   }
@@ -196,7 +191,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   /// Opens at the recently used emoji (the first category while there are none), with the recents as of now.
   func show() {
     history = EmojiStore.load()  // emoji search or the app's settings may have changed it since the panel was made
-    hideOffer()
     recents = history.recents
     grid.reloadData()
     grid.layoutIfNeeded()
@@ -212,7 +206,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     let sw = min(170, search.intrinsicContentSize.width)
     search.frame = CGRect(x: w - 10 - sw, y: 4, width: sw, height: 22)
     header.frame = CGRect(x: 14, y: 6, width: search.frame.minX - 22, height: Self.headerHeight - 6)
-    offer.frame = CGRect(x: 8, y: 2, width: w - 16, height: Self.headerHeight - 2)
     catcher.frame = bounds
     let gridFrame = CGRect(x: 0, y: Self.headerHeight, width: w, height: max(0, h - Self.headerHeight - Self.barHeight))
     if grid.frame != gridFrame {
@@ -298,35 +291,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     history.use(emoji, from: item)
     EmojiStore.save(history)
     onEmoji?(emoji)
-  }
-
-  // MARK: default tone
-
-  /// After a tone is picked in a picker: offers it as the default for every emoji, unless it already is,
-  /// the user said no before, or the two people have different tones.
-  private func offerDefault(after emoji: String, from item: Emoji) {
-    guard EmojiStore.offersDefault, let t = item.tones(of: emoji), t.count <= 1, t.first != history.defaultTone else { return }
-    offer.show(emoji, tone: t.first, language: language)
-    header.isHidden = true
-    search.isHidden = true
-  }
-
-  private func hideOffer() {
-    offer.isHidden = true
-    header.isHidden = false
-    search.isHidden = false
-  }
-
-  private func answerOffer(_ yes: Bool) {
-    if yes {
-      EmojiStore.setDefault(offer.tone, in: &history)
-      // every category's cell takes the new tone at once; the recents keep the tones they were typed in
-      grid.reloadData()
-      UIAccessibility.post(notification: .announcement, argument: offer.done)
-    } else {
-      EmojiStore.offersDefault = false  // asked once; the app's keyboard settings still change it
-    }
-    hideOffer()
   }
 
   // MARK: categories
@@ -466,7 +430,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
       let chosen = picker.chosen
       insert(chosen, from: p.item)
       showPicked(p.item)
-      if let it = p.item { offerDefault(after: chosen, from: it) }
     default:
       pressed = nil
       picker.hide()
@@ -508,7 +471,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     closePickers()
     insert(emoji, from: it)
     showPicked(it)
-    if let it { offerDefault(after: emoji, from: it) }
   }
 
   private func closePairPicker() {
@@ -523,7 +485,6 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     closePairPicker()
     insert(emoji, from: it)
     showPicked(it)
-    offerDefault(after: emoji, from: it)
   }
 }
 
@@ -844,62 +805,12 @@ final class PickCell: UILabel {
   }
 }
 
-/// Over the panel's header, after a skin tone is picked: "Use 👍🏽's skin tone for every emoji?" Yes makes it
-/// the default; No stops the question for good (the app's keyboard settings still set the default).
-final class OfferBar: UIView {
-  var onAnswer: ((Bool) -> Void)?
-  private(set) var tone: SkinTone?
-  /// What VoiceOver announces after yes.
-  private(set) var done = ""
-  private let label = UILabel()
-  private let yes = UIButton(type: .system)
-  private let no = UIButton(type: .system)
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    accessibilityIdentifier = "emoji.offer"
-    label.font = .systemFont(ofSize: 13)
-    label.adjustsFontSizeToFitWidth = true
-    label.minimumScaleFactor = 0.8
-    label.accessibilityIdentifier = "emoji.offer.text"
-    addSubview(label)
-    for (b, id, answer) in [(yes, "emoji.offer.yes", true), (no, "emoji.offer.no", false)] {
-      b.titleLabel?.font = .systemFont(ofSize: 13, weight: answer ? .semibold : .regular)
-      b.accessibilityIdentifier = id
-      b.addAction(UIAction { [weak self] _ in self?.onAnswer?(answer) }, for: .touchUpInside)
-      addSubview(b)
-    }
-  }
-
-  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-  func show(_ emoji: String, tone: SkinTone?, language: KeyboardLanguage) {
-    self.tone = tone
-    let es = language == .spanish
-    label.text = es ? "¿Usar el tono de \(emoji) en todos los emoji?" : "Use \(emoji)’s skin tone for every emoji?"
-    yes.setTitle(es ? "Usar" : "Use", for: .normal)
-    no.setTitle(es ? "No, gracias" : "No thanks", for: .normal)
-    done = es ? "Tono de piel por defecto cambiado" : "Default skin tone changed"
-    isHidden = false
-    setNeedsLayout()
-  }
-
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    let h = bounds.height
-    let nw = no.intrinsicContentSize.width + 12, yw = yes.intrinsicContentSize.width + 12
-    no.frame = CGRect(x: bounds.width - nw, y: 0, width: nw, height: h)
-    yes.frame = CGRect(x: no.frame.minX - yw, y: 0, width: yw, height: h)
-    label.frame = CGRect(x: 6, y: 0, width: yes.frame.minX - 8, height: h)
-  }
-}
-
 /// The emoji data, read from the keyboard's bundle, and the user's history, kept in the keyboard's own
 /// defaults (no Full Access needed).
 enum EmojiStore {
   static let recentsKey = "emoji.recents", tonesKey = "emoji.tones"
   /// When the default skin tone the per-emoji tones were last cleared for was chosen.
-  static let toneAppliedKey = "emoji.toneApplied", offerKey = "emoji.offerDefaultTone"
+  static let toneAppliedKey = "emoji.toneApplied"
   /// Settings.group, which this file cannot name: it is compiled into the app's unit tests too.
   static let appGroup = "group.es.luischav.v2t"
 
@@ -909,11 +820,12 @@ enum EmojiStore {
     return EmojiData.parse(text)
   }
 
-  /// The history with the default skin tone: the newer of the keyboard's copy and the app's. A default
-  /// newer than the per-emoji tones replaces them, as choosing it in the panel does.
+  /// The history with the default skin tone, which the app's keyboard settings keep in the App Group (the
+  /// keyboard reads it with or without Full Access). A default chosen after the per-emoji tones replaces
+  /// them, so it reaches every emoji.
   static func load() -> EmojiHistory {
     let d = UserDefaults.standard
-    let stored = StoredSkinTone.newest([StoredSkinTone(d), UserDefaults(suiteName: appGroup).flatMap(StoredSkinTone.init)])
+    let stored = UserDefaults(suiteName: appGroup).flatMap(StoredSkinTone.init)
     var tones = d.dictionary(forKey: tonesKey) as? [String: String] ?? [:]
     if let stored, stored.date > d.double(forKey: toneAppliedKey) {
       tones = [:]
@@ -921,22 +833,6 @@ enum EmojiStore {
       d.set(stored.date, forKey: toneAppliedKey)
     }
     return EmojiHistory(recents: d.stringArray(forKey: recentsKey) ?? [], tones: tones, defaultTone: stored?.tone)
-  }
-
-  /// Makes `tone` the default in `h` and in both copies (the App Group's only lands with Full Access).
-  static func setDefault(_ tone: SkinTone?, in h: inout EmojiHistory) {
-    h.setDefault(tone)
-    let s = StoredSkinTone(tone: tone, date: Date().timeIntervalSince1970)
-    s.save(to: .standard)
-    if let g = UserDefaults(suiteName: appGroup) { s.save(to: g) }
-    UserDefaults.standard.set(s.date, forKey: toneAppliedKey)
-    save(h)
-  }
-
-  /// Whether a picked tone is offered as the default; off once the user says no.
-  static var offersDefault: Bool {
-    get { UserDefaults.standard.object(forKey: offerKey) as? Bool ?? true }
-    set { UserDefaults.standard.set(newValue, forKey: offerKey) }
   }
 
   /// `emojis` (base forms, from search or the keywords) in the tone the panel would show each in.

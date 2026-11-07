@@ -37,8 +37,8 @@ final class Settings: @unchecked Sendable {
     defaults.set(Array(w).sorted(), forKey: "learnedWords")
   }
 
-  /// The emoji keyboard's default skin tone, nil for yellow. The keyboard keeps its own copy too (a tone it
-  /// offers after one is picked, without Full Access); the newer of the two applies (StoredSkinTone).
+  /// The emoji keyboard's default skin tone, nil for yellow: every emoji with tones shows it until a tone is
+  /// picked for that emoji in the keyboard (StoredSkinTone).
   var emojiSkinTone: SkinTone? {
     get { StoredSkinTone(defaults)?.tone }
     set { StoredSkinTone(tone: newValue, date: Date().timeIntervalSince1970).save(to: defaults) }

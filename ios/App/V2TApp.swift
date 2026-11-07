@@ -495,8 +495,8 @@ struct KeyboardSettingsView: View {
         Text("Until I turn it off").tag(0)
       }
       Section {
-        // written on every pick, the one already shown too: the keyboard may hold a newer tone of its own,
-        // picked there without Full Access, which this screen cannot see
+        // written on every pick, the one already shown too: picking it again resets the tones picked for
+        // single emoji in the keyboard since
         Picker("Emoji skin tone", selection: Binding(get: { skinTone }, set: {
           skinTone = $0
           Settings.shared.emojiSkinTone = SkinTone(rawValue: $0)

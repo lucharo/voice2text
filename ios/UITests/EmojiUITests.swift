@@ -202,33 +202,27 @@ import XCTest
 
   // MARK: skin tones (#141)
 
-  /// A long press let go without sliding leaves the tones up; a tap types one. A tone picked in a picker is
-  /// offered as the default for every emoji; Use shows every emoji with tones in it, in the grid, in search
-  /// and in the suggestion bar.
-  func testAPickedToneCanBecomeTheDefaultForEveryEmoji() throws {
-    launch(globe: "0", skinTone: 0)  // yellow, newer than any tone an earlier run left in the keyboard
+  /// The default skin tone from the app's keyboard settings shows in every emoji with tones: the grid, search
+  /// and the suggestion bar. A long press let go without sliding leaves the tones up; a tap types one, which
+  /// that emoji keeps over the default while the others stay in it.
+  func testTheAppsDefaultToneShowsInEveryEmoji() throws {
+    launch(globe: "0", skinTone: 4)  // medium-dark, newer than any tone an earlier run left in the keyboard
     key("emoji").tap()
     let wave = try XCTUnwrap(scrollToEmoji(Self.waves), "👋 never scrolled into view")
-    XCTAssertEqual(wave.identifier, "emoji.👋", "the app's yellow did not reach the keyboard")
-    wave.press(forDuration: 0.8)
-    let tones = app.descendants(matching: .any)["emoji.tones"]
-    XCTAssertTrue(tones.waitForExistence(timeout: 3), "the tones closed when the finger lifted")
-    shot("60-emoji-tone-picker")
-    app.descendants(matching: .any)["emoji.tone.4"].tap()  // 👋🏾
-    waitForText("👋🏾")
-    let offer = app.staticTexts["emoji.offer.text"]
-    XCTAssertTrue(offer.waitForExistence(timeout: 3))
-    XCTAssertEqual(offer.label, "Use 👋🏾’s skin tone for every emoji?")
-    shot("61-emoji-tone-offer")
-    app.buttons["emoji.offer.yes"].tap()
-    XCTAssertTrue(app.staticTexts["emoji.header"].waitForExistence(timeout: 3))
-    XCTAssertTrue(emoji("🤚🏾").waitForExistence(timeout: 3), "🤚 did not take the default tone")
-    XCTAssertFalse(emoji("🤚").exists)
+    XCTAssertEqual(wave.identifier, "emoji.👋🏾", "the app's default tone did not reach the keyboard")
+    XCTAssertTrue(emoji("🤚🏾").exists, "🤚 is not in the default tone")
     shot("62-emoji-default-tone-grid")
+    wave.press(forDuration: 0.8)
+    XCTAssertTrue(app.descendants(matching: .any)["emoji.tones"].waitForExistence(timeout: 3), "the tones closed when the finger lifted")
+    shot("60-emoji-tone-picker")
+    app.descendants(matching: .any)["emoji.tone.1"].tap()  // 👋🏻
+    waitForText("👋🏻")
+    XCTAssertTrue(emoji("👋🏻").waitForExistence(timeout: 3), "👋 did not keep the tone picked for it")
+    XCTAssertTrue(emoji("🤚🏾").exists, "picking 👋's tone changed 🤚")
 
     app.buttons["emoji.search.open"].tap()
     for ch in "thumb" { key("letters-\(ch)").tap() }
-    XCTAssertTrue(app.buttons["emoji.result.👍🏾"].waitForExistence(timeout: 3), "search offered the yellow 👍")
+    XCTAssertTrue(app.buttons["emoji.result.👍🏾"].waitForExistence(timeout: 3), "search offered another tone of 👍")
     app.buttons["emoji.search.back"].tap()
     app.buttons["emoji.abc"].tap()
     for ch in " clap" { ch == " " ? key("space").tap() : key("letters-\(ch)").tap() }

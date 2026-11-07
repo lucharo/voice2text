@@ -158,9 +158,7 @@ struct EmojiTests {
 
   @Test func aDefaultToneShowsEveryEmojiWithTonesInItUntilOneIsPickedForIt() {
     let thumbs = Emoji(base: "👍", skinTones: ["👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]), wave = Emoji(base: "👋", skinTones: ["👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"])
-    var h = EmojiHistory(tones: ["👋": "👋🏿"])
-    h.setDefault(.medium)
-    #expect(h.tones == [:])  // a new default applies to every emoji, even those given a tone before
+    var h = EmojiHistory(defaultTone: .medium)
     #expect(h.shown(thumbs) == "👍🏽")
     #expect(h.shown(wave) == "👋🏽")
     #expect(h.shown(Emoji(base: "😀")) == "😀")
@@ -170,8 +168,7 @@ struct EmojiTests {
     #expect(h.tones == ["👍": "👍"])
     #expect(h.shown(thumbs) == "👍")
     #expect(h.shown(wave) == "👋🏽")
-    h.setDefault(nil)
-    #expect(h.shown(thumbs) == "👍" && h.shown(wave) == "👋")
+    #expect(EmojiHistory(tones: h.tones).shown(wave) == "👋")  // no default: yellow
   }
 
   @Test func twoPeopleRememberTheirMixedTonesAndShareARecentsSlot() {
@@ -370,17 +367,17 @@ struct EmojiSuggestionTests {
   }
 }
 
-/// The default skin tone's two copies, the keyboard's and the app's.
+/// The default skin tone as the app stores it.
 struct StoredSkinToneTests {
-  @Test func theNewerCopyWinsAndYellowIsKeptAsAChoice() throws {
-    let a = try #require(UserDefaults(suiteName: "v2t.test.tone.a")), b = try #require(UserDefaults(suiteName: "v2t.test.tone.b"))
-    for d in [a, b] { d.removeObject(forKey: StoredSkinTone.toneKey); d.removeObject(forKey: StoredSkinTone.dateKey) }
-    #expect(StoredSkinTone(a) == nil)
-    StoredSkinTone(tone: .mediumDark, date: 10).save(to: a)
-    StoredSkinTone(tone: nil, date: 20).save(to: b)  // yellow, chosen later in the app
-    #expect(StoredSkinTone(a) == StoredSkinTone(tone: .mediumDark, date: 10))
-    #expect(StoredSkinTone.newest([StoredSkinTone(a), StoredSkinTone(b)]) == StoredSkinTone(tone: nil, date: 20))
-    #expect(StoredSkinTone.newest([StoredSkinTone(a), nil]) == StoredSkinTone(tone: .mediumDark, date: 10))
+  @Test func aStoredToneReadsBackAndYellowIsKeptAsAChoice() throws {
+    let d = try #require(UserDefaults(suiteName: "v2t.test.tone"))
+    d.removeObject(forKey: StoredSkinTone.toneKey)
+    d.removeObject(forKey: StoredSkinTone.dateKey)
+    #expect(StoredSkinTone(d) == nil)
+    StoredSkinTone(tone: .mediumDark, date: 10).save(to: d)
+    #expect(StoredSkinTone(d) == StoredSkinTone(tone: .mediumDark, date: 10))
+    StoredSkinTone(tone: nil, date: 20).save(to: d)  // yellow, chosen later
+    #expect(StoredSkinTone(d) == StoredSkinTone(tone: nil, date: 20))
     #expect(SkinTone.medium.modifier == "\u{1F3FD}")
   }
 }
