@@ -124,6 +124,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.resync()
     refresh()
     emojiPanel?.reload()  // the default skin tone may have changed in the app meanwhile
+    emojiSearch?.refresh()
     dictation.attach()
     if let p = Settings.shared.previewRecording {
       panel.preview = true

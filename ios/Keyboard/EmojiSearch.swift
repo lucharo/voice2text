@@ -82,6 +82,15 @@ final class EmojiSearchBar: UIView {
     update()
   }
 
+  /// The keyboard came back with search open: the default skin tone may have changed in the app meanwhile,
+  /// so the results are drawn again in the current tones, keeping the query and where the row is scrolled.
+  func refresh() {
+    let x = results.contentOffset.x
+    update()
+    layoutIfNeeded()
+    results.contentOffset.x = min(x, max(0, results.contentSize.width - results.bounds.width))
+  }
+
   // MARK: drawing
 
   override func layoutSubviews() {
