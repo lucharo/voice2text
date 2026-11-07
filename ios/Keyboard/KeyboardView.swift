@@ -35,7 +35,7 @@ final class KeyboardView: UIView {
   /// What the view shows for one finger: its key's balloon or pressed look, timers, long-press alternatives
   /// and the trackpad. Whether the finger taps or swipes, and in what order taps type, is the arbiter's.
   @MainActor private final class Track {
-    var key: Key
+    let key: Key
     var alternatives: [String] = []
     var chosen = 0
     var trackpad = false
@@ -314,8 +314,7 @@ final class KeyboardView: UIView {
       guard let track = tracks[id] else { continue }
       let p = touch.location(in: self)
       let samples = (event?.coalescedTouches(for: touch) ?? [touch]).map { ($0.location(in: self), $0.timestamp) }
-      let events = arbiter.moved(id, samples, canSwipe: canSwipe, keyAt: layout.key(at:))
-      apply(events)
+      apply(arbiter.moved(id, samples))
       if track.trackpad {
         let step: CGFloat = 9
         let dx = p.x - track.lastTrackX
@@ -385,11 +384,6 @@ final class KeyboardView: UIView {
       case .swiped(let trace, _):
         clearTrail()
         delegate?.keyboardView(self, swiped: trace)
-      case .pressed(let key, let id):
-        guard let track = tracks[id] else { continue }
-        track.key = key
-        delegate?.keyboardViewKeyDown(self)
-        if key.action == .space { setPressed(key, true) } else { press(track, id) }
       }
     }
   }
