@@ -9,6 +9,12 @@ import XCTest
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = layout
     app.launch()
+    // a fresh Simulator clone has not added the keyboard yet: add it once, as MicrophoneUITests does
+    if !app.staticTexts["Done: the v2t keyboard is on."].waitForExistence(timeout: 5) {
+      app.terminate()
+      allowFullAccess()
+      app.launch()
+    }
     // the setup list changes height as the model row goes from Preparing to Ready; tapping Try it before then
     // can land on the row that moved under it
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
