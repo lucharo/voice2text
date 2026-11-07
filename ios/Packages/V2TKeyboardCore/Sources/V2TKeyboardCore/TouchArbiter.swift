@@ -125,7 +125,8 @@ public struct TouchArbiter<ID: Hashable> {
   @discardableResult public mutating func hold(_ id: ID, types: Bool) -> Bool {
     guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].mode == .tap || tracks[i].mode == .press
     else { return false }
-    if tracks[i].canSwipe, tracks[i].travelled { return false }
+    // a letter key's, whether or not it may still swipe (the page may have changed under it)
+    if tracks[i].key.startsSwipe, tracks[i].travelled { return false }
     tracks[i].mode = .held
     tracks[i].holdTypes = types
     return true

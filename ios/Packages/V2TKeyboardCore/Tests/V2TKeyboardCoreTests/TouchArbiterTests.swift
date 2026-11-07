@@ -186,6 +186,17 @@ struct TouchArbiterTests {
     #expect(arbiter.ended(0, at: t.center, time: 0.5).isEmpty)
   }
 
+  @Test func aLongSlideStillCannotOpenAlternativesAfterThePageChanges() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let e = key("e")
+    arbiter.began(0, key: e, at: e.center, time: 0, canSwipe: true)
+    arbiter.began(1, key: key("t"), at: key("t").center, time: 0.01, canSwipe: true)  // a second finger: no swipe
+    _ = arbiter.moved(0, [(CGPoint(x: e.center.x + layout.unitWidth, y: e.center.y), 0.2)])
+    arbiter.stopSwipes()
+    let held = arbiter.hold(0, types: true)
+    #expect(!held)
+  }
+
   @Test func aTapRightAfterReturnStaysATap() {
     var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
     let ret = layout.keys.first { $0.action == .returnKey }!, t = key("t")
