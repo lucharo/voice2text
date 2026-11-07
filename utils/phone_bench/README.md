@@ -145,7 +145,7 @@ that decides when a candidate replaces the best.
 cd ../..                                                         # repo root
 .venv/bin/python utils/phone_bench/prompt_search.py build         # inputs, splits, the dictionary, once
 .venv/bin/python utils/phone_bench/prompt_search.py raw           # the scores with no cleanup
-.venv/bin/python utils/phone_bench/prompt_search.py loop --budget 18   # three jobs of six candidates
+.venv/bin/python utils/phone_bench/prompt_search.py loop --budget 12   # three jobs of four new candidates
 .venv/bin/python utils/phone_bench/prompt_search.py heldout       # the best against today's, held out
 .venv/bin/python utils/phone_bench/prompt_search.py report
 ```

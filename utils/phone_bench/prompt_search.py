@@ -5,7 +5,7 @@ The inner harness runs candidate prompts over fixed raw transcripts and scores t
 proposes the next candidates from the scores and keeps a held-out split it never looks at until the end.
 
     .venv/bin/python utils/phone_bench/prompt_search.py build          # inputs and splits, once
-    .venv/bin/python utils/phone_bench/prompt_search.py loop --budget 18   # on the iPhone (phone_push/sync)
+    .venv/bin/python utils/phone_bench/prompt_search.py loop --budget 12   # on the iPhone (phone_push/sync)
     .venv/bin/python utils/phone_bench/prompt_search.py heldout       # best against today's, held-out split
     .venv/bin/python utils/phone_bench/prompt_search.py report
 
@@ -16,15 +16,17 @@ slot, /tmp/v2t-night/xbuild.sh, for that).
 Inputs (all raw text the phone produced or would get; no reference is ever Wispr Flow's text, whose
 terms allow scoring against it but not tuning on it, #122):
 - `e22/<id>`: Earnings22, Parakeet v3 transcripts with real references, for words and formatted WER.
-- `pieces/<recogniser>/<id>`: real dictations (15-120 s) transcribed in pieces while recording by the
-  phone's Nemotron and Parakeet (~/.v2t/eval/piece-bench, #112/#116), against the same recogniser's
-  whole-file transcript: a cut can add a full stop and a capital, and cleanup can repair it.
+- `pieces/<recogniser>/<id>` and `whole/<recogniser>/<id>`: real dictations (15-120 s) transcribed by the
+  phone's Nemotron and Parakeet in pieces while recording and as one file (~/.v2t/eval/piece-bench,
+  #112/#116): a cut can add a full stop and a capital, and cleanup can repair it. Both versions are
+  cleaned, so a candidate that splits long sentences everywhere is not taken for one that adds breaks
+  at cuts.
 
 Every candidate's chunks get the app's guards here, as ios/App/Cleaner.swift applies them: the casual
 length guard, then keep_spoken_words. Scores per candidate: words (WER after normalisation on e22 against
 the references; on dictations, how many normalised words cleanup changed against what was heard),
-formatted WER on e22, outputs over 1.3x their input (answers), guard reverts, net extra sentence ends
-against the whole-file transcript, and seconds per chunk.
+formatted WER on e22, outputs over 1.3x their input (answers), guard reverts, extra sentence ends (the
+cleaned pieces against the same candidate's cleaned whole file, net per dictation), and seconds per chunk.
 
 A candidate replaces the current best only on paired evidence from the same job (same phone, same hour):
 not worse on either words score, and better on formatted WER or on extra sentence ends without the other
@@ -139,8 +141,10 @@ def build(args) -> None:
         for r in grid.read_jsonl(PIECES / f"wispr.{rec}.jsonl"):
             if 14.9 < r["duration_s"] <= args.max_seconds and r["pieces"].strip():
                 items.append((f"pieces/{rec}/{r['id']}", r["pieces"]))
-                meta.append({"id": f"pieces/{rec}/{r['id']}", "kind": "pieces", "whole": r["whole"], "group": r["id"],
+                meta.append({"id": f"pieces/{rec}/{r['id']}", "kind": "pieces", "group": r["id"],
                              "cuts": r["pieces_while_recording"] + r["pieces_at_finish"] - 1})
+                items.append((f"whole/{rec}/{r['id']}", r["whole"]))
+                meta.append({"id": f"whole/{rec}/{r['id']}", "kind": "whole", "group": r["id"]})
     # split by group (an Earnings22 clip, or a dictation with both recognisers), stable under reordering
     for m in meta:
         m["split"] = "heldout" if int(hashlib.sha256(m["group"].encode()).hexdigest(), 16) % 2 else "search"
@@ -204,9 +208,22 @@ def per_item(row: dict, m: dict, vocabulary) -> dict:
         out["wer_err"], out["wer_n"] = grid.edits(norm(ref), norm(clean)), len(norm(ref))
         out["fmt_err"], out["fmt_n"] = grid.edits(_TOKEN.findall(ref), _TOKEN.findall(clean)), len(_TOKEN.findall(ref))
     else:
-        out["extra_ends"] = sentence_ends(clean) - sentence_ends(m["whole"])
-        out["cuts"] = m["cuts"]
+        out["ends"] = sentence_ends(clean)
+        if m["kind"] == "pieces":
+            out["cuts"] = m["cuts"]
     return out
+
+
+def pair_cuts(scored: dict[str, dict]) -> dict[str, dict]:
+    """Gives each dictation in pieces its extra sentence ends: how many more its cleaned text has than the
+    same candidate's cleaned whole-file text of that dictation. Cleanup may well split a long run-on
+    sentence, in both; only the ends the cuts left behind count. A piece whose whole-file twin has no
+    result yet gets none."""
+    for iid, it in scored.items():
+        twin = scored.get(iid.replace("pieces/", "whole/", 1)) if iid.startswith("pieces/") else None
+        if twin is not None:
+            it["extra_ends"] = it["ends"] - twin["ends"]
+    return scored
 
 
 def totals(items: list[dict]) -> dict:
@@ -214,12 +231,13 @@ def totals(items: list[dict]) -> dict:
     s = lambda k: sum(i.get(k, 0) for i in items)  # noqa: E731
     e22 = [i for i in items if "fmt_n" in i]
     pieces = [i for i in items if "extra_ends" in i]
+    dictations = [i for i in items if "ends" in i]
     secs = sorted(x for i in items for x in i["seconds"])
     return {
         "wer": 100 * s("wer_err") / max(s("wer_n"), 1),
         "fmt": 100 * s("fmt_err") / max(s("fmt_n"), 1),
-        "heard": 100 * sum(i["heard_err"] for i in pieces) / max(sum(i["heard_n"] for i in pieces), 1),
-        "extra_ends": s("extra_ends"), "cuts": s("cuts"),
+        "heard": 100 * sum(i["heard_err"] for i in dictations) / max(sum(i["heard_n"] for i in dictations), 1),
+        "extra_ends": s("extra_ends"), "cuts": sum(i["cuts"] for i in pieces),
         "answers": s("answers"), "reverts": s("reverts"), "chunks": s("chunks"), "errors": s("errors"),
         "s_p50": statistics.median(secs) if secs else None, "s_p90": secs[int(0.9 * len(secs)) - 1] if secs else None,
         "s_mean": statistics.fmean(secs) if secs else None, "n_e22": len(e22), "n_pieces": len(pieces),
@@ -240,8 +258,10 @@ def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -
     ids = sorted(set(a) & set(b))
     if metric in ("wer", "fmt"):
         ids = [i for i in ids if i.startswith("e22/")]
-    elif metric in ("heard", "extra_ends"):
-        ids = [i for i in ids if i.startswith("pieces/")]
+    elif metric == "heard":
+        ids = [i for i in ids if not i.startswith("e22/")]
+    elif metric == "extra_ends":
+        ids = [i for i in ids if "extra_ends" in a[i] and "extra_ends" in b[i]]
     f = METRICS[metric]
     point = f([b[i] for i in ids]) - f([a[i] for i in ids])
     rng = random.Random(seed)
@@ -346,7 +366,7 @@ def score_generation(name: str, cands: list[dict]) -> dict[str, dict[str, dict]]
     scored = {}
     for c in cands:
         rows = [r for r in grid.read_jsonl(results_dir(name) / f"{name}.{cand_id(c)}.jsonl") if r.get("event") == "clean"]
-        scored[cand_id(c)] = {r["id"]: per_item(r, meta[r["id"]], vocabulary) for r in rows if "chunk_in" in r}
+        scored[cand_id(c)] = pair_cuts({r["id"]: per_item(r, meta[r["id"]], vocabulary) for r in rows if "chunk_in" in r})
     return scored
 
 
@@ -390,8 +410,8 @@ def loop(args) -> None:
             ok, ev = verdict(scored[best_id], scored[cand_id(c)])
             print(f"  {describe(c):40} {'ACCEPT' if ok else 'keep best'}  " +
                   "  ".join(f"{m} {p:+.2f} [{lo:+.2f},{hi:+.2f}]" for m, (p, lo, hi) in ev.items()), flush=True)
-            if ok:
-                accepted.append((ev["fmt"][0] + ev["extra_ends"][0] / max(totals(list(scored[best_id].values()))["cuts"], 1), c))
+            if ok:  # among several, the lowest formatted WER, then the fewest extra sentence ends
+                accepted.append(((ev["fmt"][0], ev["extra_ends"][0]), c))
         st["tried"] += [cand_id(c) for c in fresh]
         st["spent"] += len(fresh)
         st["generations"].append({"name": name, "candidates": cands, "best_before": st["best"],
@@ -436,8 +456,9 @@ def raw_baseline(args) -> None:
     meta, vocabulary = load_meta(), json.loads((OUT / "vocabulary.json").read_text())
     for split in ("search", "heldout"):
         rows = grid.read_jsonl(OUT / f"inputs-{split}.jsonl")
-        items = [per_item({"chunk_in": r["chunks"], "chunk_out": r["chunks"]}, meta[r["id"]], vocabulary) for r in rows]
-        t = totals(items)
+        items = pair_cuts({r["id"]: per_item({"chunk_in": r["chunks"], "chunk_out": r["chunks"]}, meta[r["id"]], vocabulary)
+                           for r in rows})
+        t = totals(list(items.values()))
         print(f"{split}: no cleanup: e22 WER {t['wer']:.2f}, formatted {t['fmt']:.2f}, extra sentence ends {t['extra_ends']} over {t['cuts']} cuts")
 
 
@@ -452,8 +473,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("command", choices=("build", "loop", "heldout", "report", "raw"))
     p.add_argument("--engine", default="phone", help="phone (default) or mlx:<model> for a dry run on the Mac")
-    p.add_argument("--budget", type=int, default=18, help="new candidates to run in all (default 18)")
-    p.add_argument("--per-gen", type=int, default=6, help="new candidates per phone job (default 6)")
+    p.add_argument("--budget", type=int, default=12, help="new candidates to run in all (default 12)")
+    p.add_argument("--per-gen", type=int, default=4, help="new candidates per phone job (default 4)")
     p.add_argument("--block", type=int, default=25, help="items an arm runs before the next takes over")
     p.add_argument("--tag", default="afm", help="names the jobs: ps-<tag>-g<N>")
     p.add_argument("--propose", help="a JSON list of extra candidates to run first, e.g. an agent's: knob settings as "

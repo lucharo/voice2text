@@ -1,7 +1,10 @@
 """The scoring and the decision rule of the iPhone cleanup prompt search (#126)."""
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "utils/phone_bench"))
 import prompt_search as ps
@@ -51,14 +54,20 @@ class Guards(unittest.TestCase):
 
 
 class Items(unittest.TestCase):
-    def test_a_cut_full_stop_counts_against_the_whole_file_text(self):
-        meta = {"kind": "pieces", "whole": "I went home and then I slept.", "cuts": 1}
-        row = {"chunk_in": ["I went home. And then I slept."], "chunk_out": ["I went home. And then I slept."],
-               "chunk_s": [1.0]}
-        repaired = {**row, "chunk_out": ["I went home, and then I slept."]}
+    def test_a_cut_full_stop_counts_against_the_same_candidates_whole_file_text(self):
+        def item(kind, out):
+            return ps.per_item({"chunk_in": [out], "chunk_out": [out], "chunk_s": [1.0]},
+                               {"kind": kind, "cuts": 1}, [])
 
-        self.assertEqual(ps.per_item(row, meta, [])["extra_ends"], 1)
-        self.assertEqual(ps.per_item(repaired, meta, [])["extra_ends"], 0)
+        scored = ps.pair_cuts({
+            # the cut left "home. And"; cleanup also split the run-on sentence, in both versions
+            "pieces/n/1": item("pieces", "I went home. And then I slept. It rained all night."),
+            "whole/n/1": item("whole", "I went home and then I slept. It rained all night."),
+            "pieces/n/2": item("pieces", "No twin yet."),
+        })
+
+        self.assertEqual({k: v.get("extra_ends") for k, v in scored.items()},
+                         {"pieces/n/1": 1, "whole/n/1": None, "pieces/n/2": None})
 
     def test_e22_scores_words_and_formatting_against_the_reference(self):
         meta = {"kind": "e22", "ref": "Revenue grew 5%."}
@@ -70,13 +79,37 @@ class Items(unittest.TestCase):
                          {"wer_err": 0, "wer_n": 3, "fmt_err": 0, "fmt_n": 5})
 
 
+class ScoreGeneration(unittest.TestCase):
+    def test_a_job_s_rows_are_scored_with_the_guards_and_paired_by_dictation(self):
+        with tempfile.TemporaryDirectory() as d:
+            out, res = Path(d) / "ps", Path(d) / "jobs"
+            (res / "g0").mkdir(parents=True)
+            out.mkdir()
+            (out / "vocabulary.json").write_text("[]")
+            (out / "meta.jsonl").write_text("".join(json.dumps(m) + "\n" for m in [
+                {"id": "pieces/n/1", "kind": "pieces", "cuts": 1}, {"id": "whole/n/1", "kind": "whole"}]))
+            rows = [{"event": "start"},
+                    {"event": "clean", "id": "pieces/n/1", "chunk_in": ["i went home. and slept"],
+                     "chunk_out": ["I went home. And slept."], "chunk_s": [1.0]},
+                    {"event": "clean", "id": "whole/n/1", "chunk_in": ["i went home and slept"],
+                     "chunk_out": ["I went home and slept."], "chunk_s": [1.0]}]
+            (res / "g0" / f"g0.{ps.cand_id(ps.TODAY)}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+            with mock.patch.object(ps, "OUT", out), mock.patch.dict(ps.RESULTS, {"root": res}):
+                scored = ps.score_generation("g0", [ps.TODAY])
+
+        self.assertEqual(scored[ps.cand_id(ps.TODAY)]["pieces/n/1"]["extra_ends"], 1)
+
+
 def items(n_e22=40, n_pieces=40, fmt_err=2, extra=1, heard_err=0, wer_err=0, s=1.0):
     """Per-item numbers for a candidate: n Earnings22 items and n dictations, all alike."""
     out = {f"e22/{i}": {"wer_err": wer_err, "wer_n": 10, "fmt_err": fmt_err, "fmt_n": 12, "heard_err": 0,
                         "heard_n": 10, "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s]}
            for i in range(n_e22)}
-    out |= {f"pieces/n/{i}": {"heard_err": heard_err, "heard_n": 20, "extra_ends": extra, "cuts": 2, "chunks": 1,
-                              "reverts": 0, "answers": 0, "errors": 0, "seconds": [s]} for i in range(n_pieces)}
+    out |= {f"pieces/n/{i}": {"heard_err": heard_err, "heard_n": 20, "ends": 3 + extra, "extra_ends": extra, "cuts": 2,
+                              "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s]} for i in range(n_pieces)}
+    out |= {f"whole/n/{i}": {"heard_err": 0, "heard_n": 20, "ends": 3, "chunks": 1, "reverts": 0, "answers": 0,
+                             "errors": 0, "seconds": [s]} for i in range(n_pieces)}
     return out
 
 
