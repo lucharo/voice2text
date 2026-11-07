@@ -633,7 +633,9 @@ def cleanup_messages(
 MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3.5-2B-4bit"
 MLX_CLEANUP_FAST = "mlx-community/Qwen3.5-0.8B-4bit"  # 96% kept, fastest
 MLX_CLEANUP_QUALITY = "mlx-community/Qwen3.5-4B-4bit"  # non-thinking by default
-OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
+# Ollama's library dropped the bare `qwen3:4b-instruct-2507` tag (pull: "file does not
+# exist", 2026-11-07); this one names the same weights.
+OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507-q4_K_M"
 
 
 # Long dictations go through the model in sentence-aligned chunks of about this
@@ -1194,7 +1196,8 @@ _LABELS = {
     "Qwen3.5-0.8B-4bit": "Qwen3.5-0.8B",
     "Qwen3.5-2B-4bit": "Qwen3.5-2B",
     "Qwen3.5-4B-4bit": "Qwen3.5-4B",
-    "qwen3:4b-instruct-2507": "qwen3:4b",
+    "qwen3:4b-instruct-2507": "qwen3:4b",  # the tag Ollama's library no longer serves
+    "qwen3:4b-instruct-2507-q4_K_M": "qwen3:4b",
 }
 
 

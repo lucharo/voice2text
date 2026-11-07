@@ -3360,8 +3360,8 @@ class V2TSmokeTests(unittest.TestCase):
         })
 
     def test_cleanup_picker_offers_off_the_mlx_sizes_and_ollama_once_pulled(self):
-        for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507"),
-                             (("qwen3:4b-instruct-2507",), "2.5 GB, downloaded")):
+        for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507-q4_K_M"),
+                             (("qwen3:4b-instruct-2507-q4_K_M",), "2.5 GB, downloaded")):
             with self.subTest(pulled=pulled):
                 rows = self._pickers(config.Config(), cached={backends.MLX_CLEANUP_DEFAULT},
                                      ollama=pulled)["cleanup"]

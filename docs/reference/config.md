@@ -58,7 +58,7 @@ url = "http://localhost:11434"
 | `transcription.preview_language` | `auto`, `en`, `es`, `fr`, `de`, … | The language Nemotron is told to expect; `auto` lets it tell. One of its 25 European languages |
 | `cleanup.enabled` | `true`, `false` | Run the cleanup model at all |
 | `cleanup.engine` | `mlx`, `ollama` | In-process MLX, or a running Ollama |
-| `cleanup.model` | repo id or Ollama tag | Blank means `Qwen3.5-2B-4bit` or `qwen3:4b-instruct-2507` |
+| `cleanup.model` | repo id or Ollama tag | Blank means `Qwen3.5-2B-4bit` or `qwen3:4b-instruct-2507-q4_K_M` |
 | `cleanup.mode` | `casual`, `strict` | See [casual or strict](../guide.md#casual-or-strict-cleanup) |
 | `hotkey.key` | `fn`, `cmd_r`, `cmd_l`, `alt_r`, `alt_l`, `ctrl_r`, `ctrl_l` | The push-to-talk key |
 | `audio.sample_rate` | Hz | Recording rate |
@@ -87,7 +87,7 @@ Already running [Ollama](https://ollama.com)? `v2t setup` offers to switch when 
 ```toml
 [cleanup]
 engine = "ollama"
-model = "qwen3:4b-instruct-2507"
+model = "qwen3:4b-instruct-2507-q4_K_M"
 ```
 
-Then `ollama pull qwen3:4b-instruct-2507`.
+Then `ollama pull qwen3:4b-instruct-2507-q4_K_M`.
