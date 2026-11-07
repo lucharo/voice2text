@@ -6,6 +6,7 @@ macOS-only at runtime (native pasteboard, System Events paste, global hotkey).
 from __future__ import annotations
 
 import collections
+import ctypes
 import json
 import os
 import queue
@@ -236,6 +237,43 @@ def level_warning(levels: dict, audio_s: float, device: str | None) -> str:
     )
 
 
+class _PropertyAddress(ctypes.Structure):
+    _fields_ = [("selector", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("element", ctypes.c_uint32)]
+
+
+_core_audio = None
+
+
+def _default_input_id() -> int | None:
+    """CoreAudio's default input device right now, read live (PortAudio's own view
+    is the snapshot taken at its last init); None when it cannot be read.
+    A few milliseconds, against a PortAudio re-init and a cold open."""
+    global _core_audio
+    try:
+        if _core_audio is None:
+            library = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+            get = library.AudioObjectGetPropertyData
+            get.argtypes = [
+                ctypes.c_uint32,
+                ctypes.POINTER(_PropertyAddress),
+                ctypes.c_uint32,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_uint32),
+                ctypes.c_void_p,
+            ]
+            get.restype = ctypes.c_int32
+            _core_audio = get
+        # kAudioHardwarePropertyDefaultInputDevice on kAudioObjectSystemObject (1)
+        address = _PropertyAddress(
+            int.from_bytes(b"dIn ", "big"), int.from_bytes(b"glob", "big"), 0
+        )
+        device, size = ctypes.c_uint32(0), ctypes.c_uint32(4)
+        status = _core_audio(1, ctypes.byref(address), 0, None, ctypes.byref(size), ctypes.byref(device))
+    except (OSError, AttributeError):  # not macOS
+        return None
+    return device.value if status == 0 and device.value else None
+
+
 def _default_input_name() -> str | None:
     """The input device a recording started now would use."""
     try:
@@ -386,6 +424,13 @@ class VoiceToText:
         self.latched = False  # hands-free recording after a double-tap
         self.trigger = "hold"  # hold | latched: how the current recording started
         self.input_device: str | None = None  # device the current recording uses
+        self.open_phases: tuple[float, float, float] | None = None  # last open: devices, open, start
+        self.devices_input_id: int | None = None  # CoreAudio's default input at PortAudio's last init
+        # After a tap the stream stays open, taking no frames, until a second tap could
+        # no longer come (DOUBLE_TAP_S), so a double tap opens the microphone once.
+        self.parked = False
+        self.park_seq = 0
+        self.park_timer: threading.Timer | None = None
         self.warning = ""  # about the last dictation, shown until the next one
         self.shown = False  # the recording is past the hold threshold and visible
         self.chorded = False  # the hotkey was part of a shortcut, not a dictation
@@ -489,6 +534,7 @@ class VoiceToText:
         The callers run on the hotkey listener's event tap, which must never
         block: a stop takes ~0.1 s even when healthy, and can deadlock.
         """
+        self._end_park()
         if self.stream is None:
             return
         stream, self.stream = self.stream, None
@@ -506,6 +552,35 @@ class VoiceToText:
         self.mic_closer = threading.Thread(target=close, name="v2t-mic-close", daemon=True)
         self.mic_closed_at = time.perf_counter()
         self.mic_closer.start()
+
+    def _park_stream(self, at: float | None) -> None:
+        """Keep the open stream after a tap, taking no frames, until DOUBLE_TAP_S after
+        the release at `at`: a second tap then records at once instead of opening the
+        microphone again. Its close goes through the key queue, behind a second press
+        that is already waiting there."""
+        self._end_park()
+        self.parked = True
+        self.park_seq += 1
+        seq = self.park_seq
+        if at is None:
+            self.park_timer = threading.Timer(self.DOUBLE_TAP_S, lambda: self._expire_park(seq))
+        else:
+            wait = max(0.0, self.DOUBLE_TAP_S - (time.perf_counter() - at))
+            self.park_timer = threading.Timer(wait, lambda: self.key_events.put(("unpark", seq, None)))
+        self.park_timer.daemon = True
+        self.park_timer.start()
+
+    def _end_park(self) -> None:
+        if self.park_timer is not None:
+            self.park_timer.cancel()
+            self.park_timer = None
+        self.parked = False
+
+    def _expire_park(self, seq: int) -> None:
+        """No second tap came: close the stream the first tap left open."""
+        with self.lifecycle_lock:
+            if self.parked and seq == self.park_seq:
+                self._close_stream()
 
     def _await_mic_closed(self, timeout: float) -> bool:
         """Wait up to `timeout` for the last stop; False while it is still running."""
@@ -567,6 +642,7 @@ class VoiceToText:
                 or not self.jobs.empty()
                 or not self.key_events.empty()
                 or self.hotkey_pending  # one taken off the queue, not yet handled
+                or self.parked  # its close is still to be queued
                 or time.perf_counter() - self.last_tap_at < self.DOUBLE_TAP_S
             ):
                 return False
@@ -626,15 +702,28 @@ class VoiceToText:
         headset, a Bluetooth profile switch during a call, or changing the
         input in System Settings leaves that snapshot pointing at a stale or
         missing device, and every open then fails with a PaMacCore
-        ``Invalid Property Value`` until the process restarts. No stream is
-        open here, so a re-init costs a few milliseconds.
+        ``Invalid Property Value`` until the process restarts (#14). No stream
+        is open here. Only `_open_stream` calls it, when `_devices_current` says
+        the snapshot is stale and after an open that failed.
         """
+        self.devices_input_id = None  # a failed re-init is retried next time
+        current = _default_input_id()
         try:
             sd._terminate()
         except Exception as error:
             # Already torn down by an earlier failed refresh; still re-init.
             logger.warning(f"Could not release audio devices: {error}")
         sd._initialize()
+        self.devices_input_id = current
+
+    def _devices_current(self) -> bool:
+        """Whether PortAudio's snapshot was taken with the default input CoreAudio
+        reports now. Re-initialising PortAudio before every open (#14) made each
+        open a cold one, and a double tap opened the microphone three times; a few
+        milliseconds on a fresh process, seconds in an engine whose memory macOS
+        had paged out (7 Nov: 0.68 s, 2.19 s and 1.77 s for one double tap)."""
+        current = _default_input_id()
+        return current is not None and current == self.devices_input_id
 
     def start_recording(self, show: bool = True, resume=None):
         """Open the microphone; with `show` the recording is also made visible.
@@ -652,30 +741,64 @@ class VoiceToText:
             finally:
                 self.starting = False
 
+    def _open_stream(self, refresh: bool) -> tuple[float, float, float]:
+        """Open and start a new input stream; (devices, open, start) seconds."""
+        began = time.perf_counter()
+        if refresh:
+            self._refresh_audio_devices()
+            self.input_device = _default_input_name()
+        elif self.input_device is None:
+            self.input_device = _default_input_name()
+        refreshed_at = time.perf_counter()
+        self.stream = sd.InputStream(
+            samplerate=self.cfg.sample_rate,
+            channels=1,
+            dtype="float32",
+            callback=self.audio_callback,
+        )
+        created_at = time.perf_counter()
+        self.recording = True
+        self.stream.start()
+        return (refreshed_at - began, created_at - refreshed_at, time.perf_counter() - created_at)
+
     def _open_microphone(self, show: bool, resume) -> None:
         with self.lifecycle_lock:
+            reuse = self.parked
             # Re-initialising PortAudio while the last stop still runs would hang too.
-            if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
+            if not reuse and not self._await_mic_closed(MIC_REOPEN_WAIT_S):
                 logger.warning("Microphone still stopping; not recording")
                 return
             self.frames = list(resume[0]) if resume else []
             self.shown = False
             self.record_start = time.perf_counter() - (resume[1] if resume else 0)
             try:
-                opened_at = time.perf_counter()
-                self._refresh_audio_devices()
-                self.input_device = _default_input_name()
-                self.stream = sd.InputStream(
-                    samplerate=self.cfg.sample_rate,
-                    channels=1,
-                    dtype="float32",
-                    callback=self.audio_callback,
-                )
-                self.recording = True
-                self.stream.start()
-                took = time.perf_counter() - opened_at
-                if took > SLOW_KEY_S:
-                    logger.info(f"Opening the microphone ({self.input_device}) took {took:.2f}s")
+                if reuse:  # the first tap of a double tap left it open: take frames again
+                    self._end_park()
+                    self.open_phases = None
+                    with self.frames_lock:
+                        self.recording = True
+                else:
+                    opened_at = time.perf_counter()
+                    refresh = not self._devices_current()
+                    try:
+                        self.open_phases = self._open_stream(refresh)
+                    except Exception as error:
+                        if refresh:
+                            raise
+                        # the default input is the same device, but its format or the
+                        # snapshot went stale anyway (a Bluetooth profile switch): re-read
+                        logger.warning(f"Could not open the microphone ({error}); re-reading audio devices")
+                        self.recording = False
+                        self._close_stream()
+                        if not self._await_mic_closed(MIC_REOPEN_WAIT_S):
+                            raise
+                        self.open_phases = self._open_stream(True)
+                    took = time.perf_counter() - opened_at
+                    if took > SLOW_KEY_S:
+                        logger.info(
+                            f"Opening the microphone ({self.input_device}) took {took:.2f}s "
+                            "(devices %.2fs, open %.2fs, start %.2fs)" % self.open_phases
+                        )
             except Exception as error:
                 self.recording = False
                 self._close_stream()
@@ -1364,6 +1487,8 @@ class VoiceToText:
                         self.esc_waiting -= 1
             elif kind == "undo":
                 self.request_undo()
+            elif kind == "unpark":
+                self._expire_park(key)
             elif kind == "hold":
                 if key == self.press_seq:  # still the press that started this timer
                     self._show_recording()
@@ -1445,15 +1570,20 @@ class VoiceToText:
             self._show_recording()
             self.stop_recording()
             return
-        self.cancel_recording()
         if now - self.last_tap_at < self.DOUBLE_TAP_S:
             self.last_tap_at = 0.0
             self.trigger = "latched"
-            self.start_recording()
+            if self.recording:
+                # the second press is already recording: keep its stream and audio
+                self._cancel_hold_timer()
+                self._show_recording()
+            else:  # its microphone did not open: try once more
+                self.start_recording()
             self.latched = self.recording
             if self.latched:
                 logger.info("Recording hands-free — tap the hotkey again to stop")
         else:
+            self.cancel_recording(park=True, at=at)
             self.last_tap_at = now
 
     def consume_escape(self, released: bool) -> bool:
@@ -1468,8 +1598,9 @@ class VoiceToText:
             self.hold_timer.cancel()
             self.hold_timer = None
 
-    def cancel_recording(self):
-        """Drop an in-progress recording without transcribing it."""
+    def cancel_recording(self, park: bool = False, at: float | None = None):
+        """Drop an in-progress recording without transcribing it. With `park` (a tap,
+        released at `at`) the stream stays open for a second tap (_park_stream)."""
         with self.lifecycle_lock:
             self._cancel_hold_timer()
             if not self.recording:
@@ -1479,7 +1610,10 @@ class VoiceToText:
             if self.live is not None:
                 live, self.live = self.live, None
                 live.cancel()
-            self._close_stream()
+            if park:
+                self._park_stream(at)
+            else:
+                self._close_stream()
             self._restore_media()
             self._set_state("cancelled" if self.cancelled_audio else "idle")
             if self.cancelled_audio:

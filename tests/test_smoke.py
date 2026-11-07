@@ -429,6 +429,91 @@ class V2TSmokeTests(unittest.TestCase):
         initialize.assert_called_once()
         self.assertTrue(voice.recording)
 
+    def _opener(self, default_inputs, streams):
+        """An engine whose CoreAudio default input reads `default_inputs` in turn and
+        whose InputStream returns (or raises) `streams` in turn; PortAudio's re-init
+        is recorded in `calls`."""
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        calls = mock.Mock()
+        for name, patch in (
+            ("_terminate", mock.patch.object(app.sd, "_terminate", calls.terminate)),
+            ("_initialize", mock.patch.object(app.sd, "_initialize", calls.initialize)),
+            ("InputStream", mock.patch.object(app.sd, "InputStream", calls.open, create=True)),
+            ("ids", mock.patch.object(app, "_default_input_id", side_effect=default_inputs)),
+            ("run", mock.patch.object(app.subprocess, "run")),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        calls.open.side_effect = streams
+        return voice, calls
+
+    def _open_twice(self, voice):
+        voice.start_recording(show=False)
+        voice.cancel_recording()  # a chord: closes, no stream kept
+        voice.start_recording(show=False)
+
+    def test_the_same_default_input_opens_without_reinitialising_audio(self):
+        voice, calls = self._opener([89, 89, 89], [mock.Mock(), mock.Mock()])
+
+        self._open_twice(voice)
+
+        self.assertEqual(
+            [name for name, _, _ in calls.mock_calls if name in ("terminate", "initialize", "open")],
+            ["terminate", "initialize", "open", "open"],
+        )
+        self.assertTrue(voice.recording)
+
+    def test_a_changed_default_input_reinitialises_audio_before_opening(self):
+        # first open: read for the check, read again at the re-init; second open: changed
+        voice, calls = self._opener([89, 89, 90, 90], [mock.Mock(), mock.Mock()])
+
+        self._open_twice(voice)
+
+        self.assertEqual(
+            [name for name, _, _ in calls.mock_calls if name in ("terminate", "initialize", "open")],
+            ["terminate", "initialize", "open", "terminate", "initialize", "open"],
+        )
+        self.assertEqual(voice.devices_input_id, 90)
+
+    def test_an_unreadable_default_input_reinitialises_audio_every_time(self):
+        voice, calls = self._opener([None] * 4, [mock.Mock(), mock.Mock()])
+
+        self._open_twice(voice)
+
+        self.assertEqual(calls.terminate.call_count, 2)
+        self.assertTrue(voice.recording)
+
+    def test_a_failed_open_reinitialises_audio_and_retries_once(self):
+        retried = mock.Mock()
+        voice, calls = self._opener(
+            [89] * 6, [mock.Mock(), RuntimeError("Invalid Property Value"), retried]
+        )
+
+        self._open_twice(voice)
+
+        self.assertEqual(
+            [name for name, _, _ in calls.mock_calls if name in ("terminate", "initialize", "open")],
+            ["terminate", "initialize", "open", "open", "terminate", "initialize", "open"],
+        )
+        self.assertTrue(voice.recording)
+        self.assertIs(voice.stream, retried)
+        retried.start.assert_called_once()
+
+    def test_a_retry_that_fails_too_reports_the_microphone_unavailable(self):
+        voice, calls = self._opener(
+            [89] * 6, [mock.Mock(), RuntimeError("Invalid Property Value"), RuntimeError("still gone")]
+        )
+
+        self._open_twice(voice)
+
+        self.assertEqual(calls.open.call_count, 3)
+        self.assertFalse(voice.recording)
+        self.assertIsNone(voice.stream)
+        self.assertEqual(config.read_status()["state"], "error")
+        self.assertIn("still gone", config.read_status()["error"])
+
     def test_recording_cannot_restart_before_processing_begins(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.recording = True
@@ -666,6 +751,7 @@ class V2TSmokeTests(unittest.TestCase):
             ("queued", lambda: voice.jobs.put(("frames", 1.0)), lambda: voice.jobs.get_nowait()),
             ("undo window", lambda: setattr(voice, "cancelled_audio", ("frames", 1.0)), lambda: setattr(voice, "cancelled_audio", None)),
             ("double tap", lambda: setattr(voice, "last_tap_at", app.time.perf_counter()), lambda: setattr(voice, "last_tap_at", 0.0)),
+            ("stream kept after a tap", lambda: setattr(voice, "parked", True), lambda: setattr(voice, "parked", False)),
         ):
             arrange()
             busy[name] = voice._begin_reload()
@@ -679,7 +765,18 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(
             (unrequested, busy, idle),
-            (False, {"recording": False, "processing": False, "queued": False, "undo window": False, "double tap": False}, True),
+            (
+                False,
+                {
+                    "recording": False,
+                    "processing": False,
+                    "queued": False,
+                    "undo window": False,
+                    "double tap": False,
+                    "stream kept after a tap": False,
+                },
+                True,
+            ),
         )
         input_stream.assert_not_called()
         execv.assert_called_once_with(sys.executable, sys.orig_argv)
@@ -5350,6 +5447,82 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.processing)
         _frames, duration = voice.jobs.get_nowait()
         self.assertGreater(duration, 9.0)
+
+    def test_a_double_tap_opens_the_microphone_once_and_keeps_the_second_press_audio(self):
+        voice, _tap = self._tapper()
+        opened = app.sd.InputStream  # the _tapper's mock
+        clock = app.time.perf_counter
+        said = np.full((16, 1), 0.25, dtype=np.float32)
+
+        clock.return_value = 100.0
+        voice.on_press("HOTKEY")
+        clock.return_value = 100.1
+        voice.on_release("HOTKEY")
+        clock.return_value = 100.3
+        voice.on_press("HOTKEY")
+        voice.audio_callback(said, len(said), None, None)  # spoken during the second tap
+        clock.return_value = 100.4
+        voice.on_release("HOTKEY")
+
+        self.assertEqual(opened.call_count, 1)
+        self.assertTrue(voice.latched)
+        self.assertEqual(config.read_status()["state"], "recording")
+        clock.return_value = 105.0
+        voice.on_press("HOTKEY")
+        voice.on_release("HOTKEY")
+        frames, duration = voice.jobs.get_nowait()
+        np.testing.assert_array_equal(np.concatenate(frames), said)
+        self.assertAlmostEqual(duration, 4.7)  # from the second press
+
+    def test_a_lone_tap_keeps_the_microphone_only_until_a_second_tap_could_come(self):
+        voice, _tap = self._tapper()
+        stream = app.sd.InputStream.return_value
+        clock = app.time.perf_counter
+        clock.return_value = 100.0
+        voice.on_press("HOTKEY")
+        clock.return_value = 100.1
+        voice.on_release("HOTKEY")
+
+        kept = (voice.parked, voice.stream is stream, stream.stop.called)
+        voice.audio_callback(np.ones((8, 1), dtype=np.float32), 8, None, None)
+        voice.park_timer.fire()
+        self.assertTrue(voice._await_mic_closed(5))
+
+        self.assertEqual(kept, (True, True, False))
+        self.assertEqual(voice.frames, [], "no audio taken while the stream waits")
+        self.assertFalse(voice.parked)
+        self.assertIsNone(voice.stream)
+        stream.stop.assert_called_once()
+        stream.close.assert_called_once()
+
+    def test_a_queued_second_press_wins_over_the_kept_streams_close(self):
+        voice, _tap = self._tapper()
+        opened = app.sd.InputStream
+        clock = app.time.perf_counter
+
+        def drain():
+            while not voice.key_events.empty():
+                voice._handle_key_event(*voice.key_events.get_nowait())
+
+        clock.return_value = 100.0
+        voice.key_down("HOTKEY")
+        clock.return_value = 100.1
+        voice.key_up("HOTKEY")
+        drain()
+        # the second tap is queued while the first press's microphone was slow, so the
+        # kept stream's close, due DOUBLE_TAP_S after the first release, comes after it
+        clock.return_value = 100.3
+        voice.key_down("HOTKEY")
+        clock.return_value = 100.45
+        voice.key_up("HOTKEY")
+        clock.return_value = 100.6
+        voice.park_timer.fire()
+        drain()
+
+        self.assertEqual(opened.call_count, 1)
+        self.assertTrue(voice.latched)
+        self.assertTrue(voice.recording)
+        opened.return_value.stop.assert_not_called()
 
     def test_two_taps_far_apart_do_not_latch(self):
         voice, tap = self._tapper()
