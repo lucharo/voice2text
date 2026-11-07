@@ -44,10 +44,8 @@ section shows what your device got and why, says so when your iPhone model is un
 
 ## Set up
 
-1. Install v2t from TestFlight and open it. Under **Speech model**, tap **Download** (627 or 630 MB,
-   depending on the model your device gets). Typing works without it; the mic needs it. After the
-   download the row shows "Preparing for the Neural Engine…" and then **Ready**. From then on,
-   transcription works offline.
+1. Install v2t from TestFlight, open it and tap **Download** next to **Speech model** (about 630 MB,
+   once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
 2. Tap **Add the v2t keyboard**. It opens Settings: go to **v2t** › **Keyboards** and turn on
    **v2t**. (General › Keyboard › Keyboards › Add New Keyboard does the same.)
 3. On the same page, turn on **Allow Full Access** and confirm. The keyboard needs Full Access to ask
@@ -59,7 +57,7 @@ section shows what your device got and why, says so when your iPhone model is un
    session is now on, so your first dictation records without the trip to the app described below.
 
 <figure markdown>
-  ![The v2t app's setup list: the keyboard on, Full Access allowed, and the speech model row saying Not on this iPhone yet, with a Download (627 MB) button](images/iphone/setup.png){ width="340" }
+  ![The v2t app's setup list: the keyboard on, Full Access allowed, and the speech model row saying Needed for the mic, with a Download button at its right](images/iphone/setup.png){ width="340" }
   <figcaption>The keyboard is set up; the speech model still needs its download. All screenshots on this page come from the iPhone Simulator, 6 November 2026.</figcaption>
 </figure>
 
@@ -142,13 +140,11 @@ flowchart LR
   delete. Each entry also keeps how long the dictation took; the stopwatch menu copies those timings
   and opens **Compare cleanup**.
 - **Speech language**: English, Español, or Detect.
-- **Storage** shows how much space the speech model and your dictations take. History keeps the text
-  only: v2t never saves audio, it holds it in memory while it transcribes, then drops it. **Clear
-  History** deletes every dictation. **Delete speech model** frees the model's space, its Neural
-  Engine copy included, and dictation stops until you download it again. Both ask first.
+- **Storage** shows the space the speech model and your dictations take, with **Delete speech
+  model** and **Clear History**. Audio is never saved; History keeps text only.
 
 <figure markdown>
-  ![The This iPhone card with its How we chose this model link, then Storage: the speech model at 1.85 GB with Delete speech model, and Dictations with the line that History keeps the text only and audio is never saved](images/iphone/storage.png){ width="340" }
+  ![The This iPhone card with its How we chose this model link, then Storage: the speech model at 1.85 GB with Delete speech model, and Dictations with the line Text only. Audio is never saved.](images/iphone/storage.png){ width="340" }
   <figcaption>The device card and Storage (Clear History sits just below). Sizes are the Simulator's; a phone's may differ.</figcaption>
 </figure>
 
@@ -210,7 +206,7 @@ tap **Stop microphone session**.
 or was deleted. Tap **Download**, then go back to your app and tap the mic again.
 
 <figure markdown>
-  ![v2t's Download the speech model screen: the keyboard's mic needs the speech model first, with a Download (627 MB) button](images/iphone/no-model.png){ width="300" }
+  ![v2t's Download the speech model screen: the keyboard's mic needs the speech model first, with a Download button](images/iphone/no-model.png){ width="300" }
   <figcaption>What the mic opens when the speech model isn't on the device.</figcaption>
 </figure>
 

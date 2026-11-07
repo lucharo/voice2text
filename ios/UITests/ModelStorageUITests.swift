@@ -32,7 +32,7 @@ import XCTest
     let delete = app.buttons["v2t.storage.deleteModel"]
     reveal(delete, in: app)
     XCTAssertTrue(delete.waitForExistence(timeout: 5) && delete.isEnabled, app.debugDescription)
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'History keeps the text only'")).firstMatch.exists)
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == 'Text only. Audio is never saved.'")).firstMatch.exists)
     // the card above Storage links to how the model was chosen (one model, no choice to make)
     XCTAssertTrue(app.descendants(matching: .any)["v2t.model.evaluation"].exists, app.debugDescription)
     shot("30-storage-with-model")
