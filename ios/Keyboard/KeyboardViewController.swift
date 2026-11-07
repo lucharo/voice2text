@@ -42,8 +42,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// search offers an emoji, so they come in the tone the user picked.
   private lazy var tonedEmoji: [String: Emoji] = EmojiData.toned(EmojiStore.categories())
   private var barHeightConstraint: NSLayoutConstraint?
-  /// The suggestion bar's height, taller while emoji search uses its place.
-  private var barHeight: CGFloat { emojiSearch == nil ? SuggestionBar.height : EmojiSearchBar.height }
+  /// The suggestion bar's height, taller while emoji search uses its place, and by the search field's row while
+  /// the emoji panel covers it.
+  private var barHeight: CGFloat {
+    if emojiSearch != nil { return EmojiSearchBar.height }
+    return emojiPanel == nil ? SuggestionBar.height : SuggestionBar.height + EmojiPanel.searchHeight
+  }
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -380,12 +384,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       let p = emojiPanel ?? makeEmojiPanel()
       emojiPanel = p
       syncEmojiPanel()
+      resizeBar()  // the keyboard grows by the panel's search row
       view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
       p.show()
       p.isHidden = !panel.isHidden  // a recording already on screen stays on top until it ends
     } else {
       emojiPanel?.removeFromSuperview()
       emojiPanel = nil
+      resizeBar()
     }
     keyboardView.accessibilityElementsHidden = on
     bar.accessibilityElementsHidden = on

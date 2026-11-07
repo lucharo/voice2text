@@ -4,8 +4,9 @@ import V2TKeyboardCore
 
 /// v2t's emoji keyboard, drawn over the suggestion bar and the keys. iOS lets no third-party keyboard open
 /// Apple's emoji keyboard, so this follows its look: a grid that scrolls sideways through the categories (the
-/// recently used first), the category's name above it, and a bar below with ABC, a button per category and
-/// delete. A long press on an emoji with skin tones offers them; the tone picked is shown from then on. An
+/// recently used first), a search field across the top as on Apple's iOS 27 emoji keyboard (a tap brings the
+/// letter keys back to type the query, `EmojiSearchBar`), the category's name above the grid, and a bar below
+/// with ABC, a button per category and delete. A long press on an emoji with skin tones offers them; the tone picked is shown from then on. An
 /// emoji of two people (handshake, holding hands, kiss, couple) opens a picker with a tone for each person,
 /// as Apple's has since iOS 13.2 to 15.4. Every emoji with tones shows the default skin tone from the app's
 /// keyboard settings until a tone is picked for it (Apple's keyboard has no default; the panel asks nothing).
@@ -14,7 +15,10 @@ import V2TKeyboardCore
 /// emoji it has drawn decoded, so the panel draws with a private copy of it that it renews (`EmojiFont`).
 /// The data (about 37 KB of text) is read when the panel opens; the keyboard drops the panel when it closes.
 final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
-  static let headerHeight: CGFloat = 28
+  /// The search field's row across the top. The keyboard grows by it while the panel shows, as Apple's emoji
+  /// keyboard is taller than its letters (277 pt against 245 pt on the iOS 27.1 Simulator).
+  static let searchHeight: CGFloat = 42
+  static let headerHeight: CGFloat = 22
   static let barHeight: CGFloat = 44
 
   var onEmoji: ((String) -> Void)?
@@ -36,7 +40,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
 
   private func titleSearch() {
     var t = AttributedString(language == .spanish ? "Buscar emoji" : "Search Emoji")
-    t.font = .systemFont(ofSize: 13)
+    t.font = .systemFont(ofSize: 17)
     search.configuration?.attributedTitle = t
   }
 
@@ -97,13 +101,15 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
     addSubview(header)
 
     var cfg = UIButton.Configuration.plain()
-    cfg.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium))
-    cfg.imagePadding = 4
-    cfg.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 10)
+    // drawn as EmojiSearchBar's field, so opening search looks like the field taking the keys
+    cfg.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium))
+    cfg.imagePadding = 6
+    cfg.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10)
     cfg.baseForegroundColor = .secondaryLabel
     search.configuration = cfg
+    search.contentHorizontalAlignment = .leading
     search.backgroundColor = Palette.key
-    search.layer.cornerRadius = 11
+    search.layer.cornerRadius = 10
     search.accessibilityIdentifier = "emoji.search.open"
     search.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
     addSubview(search)
@@ -203,11 +209,11 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   override func layoutSubviews() {
     super.layoutSubviews()
     let w = bounds.width, h = bounds.height
-    let sw = min(170, search.intrinsicContentSize.width)
-    search.frame = CGRect(x: w - 10 - sw, y: 4, width: sw, height: 22)
-    header.frame = CGRect(x: 14, y: 6, width: search.frame.minX - 22, height: Self.headerHeight - 6)
+    search.frame = CGRect(x: 8, y: 6, width: w - 16, height: Self.searchHeight - 6)
+    header.frame = CGRect(x: 14, y: Self.searchHeight + 2, width: w - 28, height: Self.headerHeight - 2)
     catcher.frame = bounds
-    let gridFrame = CGRect(x: 0, y: Self.headerHeight, width: w, height: max(0, h - Self.headerHeight - Self.barHeight))
+    let top = Self.searchHeight + Self.headerHeight
+    let gridFrame = CGRect(x: 0, y: top, width: w, height: max(0, h - top - Self.barHeight))
     if grid.frame != gridFrame {
       grid.frame = gridFrame
       sizeCells()
