@@ -134,7 +134,15 @@ class Release(unittest.TestCase):
         out = self.run_release(fake)
 
         self.assertEqual(fake.writes, [])
-        self.assertIn("nothing to do: version 1.0 is already WAITING_FOR_REVIEW", out)
+        self.assertIn("nothing to do: version 1.0 is already WAITING_FOR_REVIEW with build 113", out)
+
+    def test_rerun_of_a_released_first_version_needs_no_build_or_message(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {}, attached={"v1": build("b113", "113")})
+
+        out = self.run_release(fake)
+
+        self.assertEqual(fake.writes, [])
+        self.assertIn("nothing to do: version 1.0 is already READY_FOR_SALE with build 113", out)
 
     def test_pinned_build_differing_from_the_one_in_review_stops(self):
         fake = FakeConnect([version("v1", "1.0", "IN_REVIEW")],
@@ -242,6 +250,19 @@ class Release(unittest.TestCase):
         self.assertIn("would attach build 113", out)
         self.assertIn("would open a review submission", out)
 
+    def test_dry_run_of_an_update_reports_the_missing_message_and_still_checks_the_listing(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE"), version("v2", "1.1", "PREPARE_FOR_SUBMISSION")],
+                           {"1.1": [build("b120", "120")]})
+        fake.screenshots = {"APP_IPHONE_67": 3}
+
+        with self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1", dry_run=True)
+
+        self.assertEqual(str(stop.exception), "missing before App Review can take it:\n"
+                         "  - What's New: the tag's message, which a dry run does not have\n"
+                         "  - iPad 13-inch screenshots (en-GB)")
+        self.assertEqual(fake.writes, [])
+
     def test_dry_run_fails_listing_the_missing_screenshots(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
         fake.screenshots = {"APP_IPHONE_67": 3}
@@ -252,6 +273,33 @@ class Release(unittest.TestCase):
         self.assertEqual(str(stop.exception),
                          "missing before App Review can take it:\n  - iPad 13-inch screenshots (en-GB)")
         self.assertEqual(fake.writes, [])
+
+
+class WaitForBuild(unittest.TestCase):
+    def wait(self, responses: list) -> str:
+        def fake_call(method, path, params=None, body=None):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return {"data": response}
+
+        out = io.StringIO()
+        with mock.patch.object(asc, "call", fake_call), mock.patch.object(asc.time, "sleep"), redirect_stdout(out):
+            asc.wait_for_build("113")
+        return out.getvalue()
+
+    def test_server_error_is_retried_until_the_build_is_valid(self):
+        out = self.wait([asc.ApiError("GET", "builds", 503, "{}"), [build("b113", "113")]])
+
+        self.assertIn("build 113: GET builds: HTTP 503", out)
+        self.assertIn("build 113 is processed and ready for TestFlight", out)
+
+    def test_refused_key_fails_at_once(self):
+        responses = [asc.ApiError("GET", "builds", 401, "{}"), [build("b113", "113")]]
+
+        with self.assertRaises(asc.ApiError):
+            self.wait(responses)
+        self.assertEqual(len(responses), 1)
 
 
 if __name__ == "__main__":
