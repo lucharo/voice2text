@@ -41,10 +41,12 @@ class FakeConnect:
         self.category = {"id": "PRODUCTIVITY"}
         self.failing = {}  # {path: HTTP status} for GETs that fail with an empty body
         self.writes = []
+        self.bodies = {}  # {(method, path): the last body written there}
 
     def __call__(self, method, path, params=None, body=None):
         if method != "GET":
             self.writes.append((method, path))
+            self.bodies[(method, path)] = body
             if path == "reviewSubmissions":
                 return {"data": {"id": "new-sub", "attributes": {"state": "READY_FOR_REVIEW"}}}
             if path == "appStoreVersions":
@@ -121,6 +123,26 @@ class Release(unittest.TestCase):
             ("POST", "reviewSubmissionItems"),
             ("PATCH", "reviewSubmissions/new-sub"),
         ])
+
+    def test_unpinned_tag_attaches_the_newest_build_and_submits_it(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")],
+                           {"1.0": [build("b113", "113"), build("b112", "112")]})
+
+        self.run_release(fake)
+
+        self.assertEqual(fake.bodies[("PATCH", "appStoreVersions/v1/relationships/build")],
+                         {"data": {"type": "builds", "id": "b113"}})
+        self.assertEqual(fake.bodies[("PATCH", "reviewSubmissions/new-sub")],
+                         {"data": {"type": "reviewSubmissions", "id": "new-sub", "attributes": {"submitted": True}}})
+
+    def test_pinned_tag_attaches_the_older_build_it_names(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")],
+                           {"1.0": [build("b113", "113"), build("b112", "112")]})
+
+        self.run_release(fake, tag="ios-v1.0-112")
+
+        self.assertEqual(fake.bodies[("PATCH", "appStoreVersions/v1/relationships/build")],
+                         {"data": {"type": "builds", "id": "b112"}})
 
     def test_manual_release_type_is_switched_to_after_approval(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION", release="MANUAL")],
