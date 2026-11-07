@@ -213,6 +213,14 @@ struct EmojiTests {
     #expect(h.tones == ["👍": "👍🏽"])
   }
 
+  /// A numbers field opens the keys on numbers, but not while emoji search types its query in letters (#138).
+  @Test func aNumbersFieldLeavesEmojiSearchOnLetters() {
+    #expect(KeyboardPage.forField(numeric: true, current: .letters, emojiSearch: false) == .numbers)
+    #expect(KeyboardPage.forField(numeric: true, current: .letters, emojiSearch: true) == nil)
+    #expect(KeyboardPage.forField(numeric: true, current: .symbols, emojiSearch: false) == nil)  // the user's own page stays
+    #expect(KeyboardPage.forField(numeric: false, current: .letters, emojiSearch: false) == nil)
+  }
+
   // MARK: typing
 
   func engine(_ start: String = "") throws -> (TypingEngine, FakeProxy) {
