@@ -15,6 +15,20 @@ SETS = {"mlx": "cleanup", "anemll": "cleanup", "afm": "cleanup", "parakeet-corem
 ORDERS = ("abba", "alternate", "sequential")
 
 
+def _safe(name) -> bool:
+    """A name the app accepts as a file name in Documents."""
+    return isinstance(name, str) and bool(re.fullmatch(r"[A-Za-z0-9._-]+", name)) and bool(name.strip("."))
+
+
+def job_files(job: dict, path: Path) -> list[tuple[Path, str]]:
+    """Files a job reads from Documents besides models, as (file on this Mac, Documents path): its `inputs`
+    and the arms' prompt files, which sit next to the job file (prompts/ under it)."""
+    files = [(path.parent / job["inputs"], job["inputs"])] if "inputs" in job else []
+    files += [(path.parent / "prompts" / p, f"prompts/{p}") for p in sorted({a["options"]["prompt"] for a in job["arms"]
+                                                                           if "prompt" in a.get("options", {})})]
+    return files
+
+
 def load_job(path: Path) -> dict:
     """Reads and checks a job file with the same rules the app applies, so a bad job fails on the Mac."""
     job = json.loads(Path(path).read_text())
@@ -31,6 +45,10 @@ def load_job(path: Path) -> dict:
     for k, lo in (("offset", 0), ("limit", 0), ("rounds", 1)):
         if k in job and (not isinstance(job[k], int) or job[k] < lo):
             errs.append(f"{k} must be an integer >= {lo}")
+    if "inputs" in job and (job["set"] != "cleanup" or not _safe(job["inputs"])):
+        errs.append("inputs is a file name (letters, digits, . _ -) for the cleanup set")
+    elif "inputs" in job and (job["inputs"] == "job.json" or job["inputs"].startswith(f"{job['name']}.")):
+        errs.append("inputs may not be job.json or one of the job's own result files (<name>.*)")
     if job.get("order", "abba") not in ORDERS:
         errs.append(f"order must be one of {ORDERS}")
     ids = [a.get("id") for a in job["arms"]]
@@ -38,7 +56,7 @@ def load_job(path: Path) -> dict:
         errs.append("arms need unique ids")
     if "log" in ids:
         errs.append("arm id log is reserved for the job log")
-    if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._-]+", x) and x.strip(".") for x in [job["name"], *ids]):
+    if not all(_safe(x) for x in [job["name"], *ids]):
         errs.append("job name and arm ids may use only letters, digits, . _ -")
     for a in job["arms"]:
         rt = a.get("runtime")
@@ -48,6 +66,8 @@ def load_job(path: Path) -> dict:
             errs.append(f"arm {a['id']}: runtime {rt} runs on the {SETS[rt]} set, not {job['set']}")
         elif RUNTIMES[rt] and not a.get("model"):
             errs.append(f"arm {a['id']}: runtime {rt} needs a model")
+        elif "prompt" in a.get("options", {}) and (rt != "afm" or not _safe(a["options"]["prompt"])):
+            errs.append(f"arm {a['id']}: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime")
     if errs:
         raise SystemExit(f"{path}: " + "; ".join(errs))
     return job
@@ -58,9 +78,13 @@ def result_files(job: dict) -> list[str]:
     return [f"{job['name']}.log.jsonl"] + [f"{job['name']}.{a['id']}.jsonl" for a in job["arms"]]
 
 
-def item_count(job: dict, res: Path = HERE / "Res") -> int | None:
-    """Items per arm (all rounds), counted from the staged resources; None if they are not staged here."""
-    f = res / ("cleanup/inputs.jsonl" if job["set"] == "cleanup" else "clips/manifest.tsv")
+def item_count(job: dict, res: Path = HERE / "Res", job_path: Path | None = None) -> int | None:
+    """Items per arm (all rounds), counted from the staged resources (or the job's `inputs` next to its file);
+    None if they are not here."""
+    if "inputs" in job:
+        f = (job_path or Path(".")).parent / job["inputs"]
+    else:
+        f = res / ("cleanup/inputs.jsonl" if job["set"] == "cleanup" else "clips/manifest.tsv")
     if not f.exists():
         return None
     with f.open() as fh:

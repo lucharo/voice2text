@@ -3360,8 +3360,8 @@ class V2TSmokeTests(unittest.TestCase):
         })
 
     def test_cleanup_picker_offers_off_the_mlx_sizes_and_ollama_once_pulled(self):
-        for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507"),
-                             (("qwen3:4b-instruct-2507",), "2.5 GB, downloaded")):
+        for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507-q4_K_M"),
+                             (("qwen3:4b-instruct-2507-q4_K_M",), "2.5 GB, downloaded")):
             with self.subTest(pulled=pulled):
                 rows = self._pickers(config.Config(), cached={backends.MLX_CLEANUP_DEFAULT},
                                      ollama=pulled)["cleanup"]
@@ -4283,12 +4283,30 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_run(["--casual", "--strict"])
 
+    def _patch_release_cache(self) -> mock.Mock:
+        """MLX's cache release, which needs mlx (absent on Linux CI)."""
+        patcher = mock.patch.object(backends, "release_cache")
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def test_mlx_cleanup_hands_back_its_buffers_after_each_call_even_a_failed_one(self):
+        cleaner = self._mlx_cleaner(["Hello there."])
+
+        cleaner.cleanup("hello there", "casual")
+        self.release.assert_called_once_with()
+        cleaner._decode = mock.Mock(side_effect=RuntimeError("metal"))
+        with self.assertRaises(RuntimeError):
+            cleaner.cleanup("hello there", "casual")
+
+        self.assertEqual(self.release.call_count, 2)
+
     def _mlx_cleaner(self, replies):
         """An MLXCleanup with the model mocked: each call decodes the next reply.
 
         Tokens are words here: the tokenizer splits and joins on spaces.
         """
         cleaner = object.__new__(backends.MLXCleanup)
+        self.release = self._patch_release_cache()
         cleaner.model = object()
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
@@ -5374,6 +5392,7 @@ class V2TSmokeTests(unittest.TestCase):
 
     def test_mlx_cleanup_sends_the_chat_messages_in_non_thinking_mode(self):
         cleaner = object.__new__(backends.MLXCleanup)
+        self._patch_release_cache()
         cleaner.model = object()
         cleaner.tokenizer = mock.Mock()
         cleaner.tokenizer.apply_chat_template.return_value = "prompt"
@@ -5547,7 +5566,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "model": "m",
                 "messages": backends.cleanup_messages("hello there", "casual"),
                 "stream": True,
-                "options": {"temperature": 0, "num_predict": 68},
+                "options": {"temperature": 0, "num_predict": 68, "num_ctx": 4096},
             },
         )
 

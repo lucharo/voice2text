@@ -12,7 +12,7 @@ Absolute numbers reflect the machine they ran on. **Compare models within a file
 ```bash
 just bench                 # both tables, default models
 just bench --cleanup       # cleanup only (default models use MLX)
-just bench --cleanup --cleanup-models ollama:qwen3:4b-instruct-2507  # Ollama/Linux
+just bench --cleanup --cleanup-models ollama:qwen3:4b-instruct-2507-q4_K_M  # Ollama/Linux
 just bench --stt           # STT only (needs Apple Silicon / MLX)
 just bench --repeat 5      # more runs per cell
 ```
@@ -28,7 +28,7 @@ just bench --stt-models \
 just bench --cleanup-models \
   mlx:mlx-community/Qwen3.5-2B-4bit \
   mlx:mlx-community/Qwen3.5-4B-4bit \
-  ollama:qwen3:4b-instruct-2507
+  ollama:qwen3:4b-instruct-2507-q4_K_M
 ```
 
 Cleanup models are `engine:model` specs (`mlx:…` or `ollama:…`); a model that isn't
@@ -47,7 +47,7 @@ to the grid.
 | cleanup (fast) | `mlx:mlx-community/Qwen3.5-0.8B-4bit` | half the time of the 2B, 96% of words kept |
 | cleanup (previous default) | `mlx:mlx-community/Qwen2.5-1.5B-Instruct-4bit` | 92% of words kept |
 | cleanup (quality alt) | `mlx:mlx-community/Qwen3.5-4B-4bit` | non-thinking by default; better instruction following, ~2.3 GB |
-| cleanup (ollama) | `ollama:qwen3:4b-instruct-2507` | if you already run Ollama |
+| cleanup (ollama) | `ollama:qwen3:4b-instruct-2507-q4_K_M` | if you already run Ollama |
 
 > **Use a non-thinking model.** Hybrid Qwen3 tags emit `<think>…</think>` blocks that
 > add latency and pollute the output; Qwen2.5-Instruct, the `-instruct-2507` tags and the

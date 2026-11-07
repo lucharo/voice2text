@@ -633,7 +633,9 @@ def cleanup_messages(
 MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3.5-2B-4bit"
 MLX_CLEANUP_FAST = "mlx-community/Qwen3.5-0.8B-4bit"  # 96% kept, fastest
 MLX_CLEANUP_QUALITY = "mlx-community/Qwen3.5-4B-4bit"  # non-thinking by default
-OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507"
+# Ollama's library dropped the bare `qwen3:4b-instruct-2507` tag (pull: "file does not
+# exist", 2026-11-07); this one names the same weights.
+OLLAMA_CLEANUP_DEFAULT = "qwen3:4b-instruct-2507-q4_K_M"
 
 
 # Long dictations go through the model in sentence-aligned chunks of about this
@@ -1056,6 +1058,16 @@ class MLXCleanup(_ChunkedCleanup):
         )
         self.last_stats = {}
 
+    def cleanup(self, text: str, mode: str = "casual"):
+        # Hand back the buffers generation freed, so the idle worker holds the model and not its
+        # scratch: after 60 cleanups Qwen3.5-2B's process footprint was 5.2 GB, 1.7 GB once released
+        # (#129, 2026-11-07). The next cleanup was 1% slower (0.090 against 0.088 s median over 120
+        # interleaved transcripts), the cost of reallocating.
+        try:
+            return super().cleanup(text, mode)
+        finally:
+            release_cache()
+
     def _prompt(self, chunk: str, mode: str) -> list[int]:
         # enable_thinking=False keeps hybrid Qwen3-family templates in
         # non-thinking mode; templates without the switch ignore it.
@@ -1114,6 +1126,12 @@ class MLXCleanup(_ChunkedCleanup):
         return self._prefix_tokens, self._prefix_cache
 
 
+# Ollama sizes its KV cache by the context, 32k tokens by default in 0.40: qwen3:4b's runner held
+# 5.0 GB, and 2.9 GB at 4096 with the same text on 20 transcripts (#129, 2026-11-07). A chunk's
+# prompt is about 925 tokens with a 114-term dictionary, plus at most 304 generated.
+OLLAMA_NUM_CTX = 4096
+
+
 class OllamaCleanup(_ChunkedCleanup):
     """Cleanup via a running Ollama server — for people who already use it."""
 
@@ -1134,7 +1152,7 @@ class OllamaCleanup(_ChunkedCleanup):
                     "model": self.model_id,
                     "messages": self._messages(chunk, mode),
                     "stream": True,
-                    "options": {"temperature": 0, "num_predict": max_tokens},
+                    "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": OLLAMA_NUM_CTX},
                 }
             ).encode(),
             headers={"Content-Type": "application/json"},
@@ -1194,7 +1212,8 @@ _LABELS = {
     "Qwen3.5-0.8B-4bit": "Qwen3.5-0.8B",
     "Qwen3.5-2B-4bit": "Qwen3.5-2B",
     "Qwen3.5-4B-4bit": "Qwen3.5-4B",
-    "qwen3:4b-instruct-2507": "qwen3:4b",
+    "qwen3:4b-instruct-2507": "qwen3:4b",  # the tag Ollama's library no longer serves
+    "qwen3:4b-instruct-2507-q4_K_M": "qwen3:4b",
 }
 
 

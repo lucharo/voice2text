@@ -300,7 +300,7 @@ preview_language = "auto"  # nemotron's language: auto | en | es | fr | de | ...
 [cleanup]
 enabled = true
 engine = "mlx"         # mlx (in-process via mlx-lm, default) | ollama
-model = ""             # blank = engine default (Qwen3.5-2B-4bit / qwen3:4b-instruct-2507)
+model = ""             # blank = engine default (Qwen3.5-2B-4bit / qwen3:4b-instruct-2507-q4_K_M)
 mode = "casual"        # casual (punctuation + fillers only, default) | strict (restructures)
 
 [hotkey]

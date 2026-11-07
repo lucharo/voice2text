@@ -58,6 +58,71 @@ class LoadJob(unittest.TestCase):
         self.assertEqual(msgs, ["job name and arm ids may use only letters, digits, . _ -"] * 3)
 
 
+class PromptJobs(unittest.TestCase):
+    """A cleanup job may read its items and AFM prompt files from Documents (#126)."""
+
+    AFM = {"name": "ps", "set": "cleanup", "block": 5, "inputs": "in.jsonl", "arms": [
+        {"id": "a", "runtime": "afm", "options": {"prompt": "p1.json"}},
+        {"id": "b", "runtime": "afm", "options": {"prompt": "p2.json"}},
+        {"id": "c", "runtime": "afm", "options": {"prompt": "p1.json"}}]}
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "job.json"
+
+    def load(self, job: dict) -> dict:
+        self.path.write_text(json.dumps(job))
+        return pc.load_job(self.path)
+
+    def test_inputs_and_prompt_files_are_pushed_once_each(self):
+        job = self.load(self.AFM)
+
+        files = pc.job_files(job, self.path)
+
+        d = Path(self.dir.name)
+        self.assertEqual(files, [(d / "in.jsonl", "in.jsonl"), (d / "prompts/p1.json", "prompts/p1.json"),
+                                 (d / "prompts/p2.json", "prompts/p2.json")])
+
+    def test_a_job_without_them_pushes_nothing_extra(self):
+        self.assertEqual(pc.job_files(self.load(JOB), self.path), [])
+
+    def test_bad_inputs_and_prompts_are_refused(self):
+        bad = {**self.AFM, "set": "speech", "arms": [
+            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+        with self.assertRaises(SystemExit) as e:
+            self.load(bad)
+        self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
+            "inputs is a file name (letters, digits, . _ -) for the cleanup set",
+            "arm a: runtime mlx runs on the cleanup set, not speech",
+            "arm b: runtime afm runs on the cleanup set, not speech",
+        ])
+        bad = {**self.AFM, "inputs": "x/in.jsonl", "arms": [
+            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+        with self.assertRaises(SystemExit) as e:
+            self.load(bad)
+        self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
+            "inputs is a file name (letters, digits, . _ -) for the cleanup set",
+            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+        ])
+
+    def test_inputs_may_not_be_a_file_the_job_writes(self):
+        msgs = []
+        for name in ("job.json", "ps.a.jsonl", "ps.log.jsonl"):
+            with self.assertRaises(SystemExit) as e:
+                self.load({**self.AFM, "inputs": name})
+            msgs.append(str(e.exception).split(": ", 1)[1])
+        self.assertEqual(msgs, ["inputs may not be job.json or one of the job's own result files (<name>.*)"] * 3)
+
+    def test_items_are_counted_from_the_inputs_beside_the_job(self):
+        (Path(self.dir.name) / "in.jsonl").write_text("".join(json.dumps({"id": str(i), "chunks": ["x"]}) + "\n" for i in range(7)))
+
+        self.assertEqual(pc.item_count({**self.AFM, "limit": 5}, job_path=self.path), 5)
+
+
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
         with tempfile.TemporaryDirectory() as d:
@@ -139,6 +204,24 @@ class Progress(unittest.TestCase):
             "block": {"arm": "a", "block": 1, "i": 2, "of": 10},
             "app_state": "background"})
 
+    def test_a_launch_stopped_by_an_arm_that_cannot_load_is_reported(self):
+        write(self.out / "j.log.jsonl", [
+            {"event": "start", "items": 1, "t": 1},
+            {"event": "arm_failed", "arm": "a", "msg": "Apple Foundation Models unavailable", "t": 2},
+            {"event": "stopped", "failed": ["a"], "t": 3}])
+
+        s = phone_sync.progress(JOB, self.out, 4)
+
+        self.assertEqual(s["stopped"], ["Apple Foundation Models unavailable", "stopped, failed arms: ['a']"])
+        self.assertIn("STOPPED: Apple Foundation Models unavailable", phone_sync.line(s, "usb", 4))
+
+    def test_a_stop_before_the_latest_launch_is_forgotten(self):
+        write(self.out / "j.log.jsonl", [
+            {"event": "start", "items": 1, "t": 1}, {"event": "stopped", "failed": ["a"], "t": 2},
+            {"event": "start", "items": 1, "t": 3}])
+
+        self.assertNotIn("stopped", phone_sync.progress(JOB, self.out, 4))
+
     def test_end_after_the_latest_start_marks_the_job_ended(self):
         write(self.out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "end", "t": 2}])
         self.assertTrue(phone_sync.progress(JOB, self.out, 3)["ended"])
@@ -176,6 +259,17 @@ class Finished(unittest.TestCase):
             with mock.patch.object(pc, "reach", return_value=None), mock.patch("builtins.print"):
                 second = phone_sync.sync_once(JOB, out, "udid", None)
             self.assertEqual([phone_sync.finished(first), phone_sync.finished(second)], [False, False])
+
+    def test_only_a_stop_read_from_the_phone_this_poll_ends_the_watch(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            write(out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "stopped", "failed": ["a"], "t": 2}])
+            got = []
+            for link, copy in (("wired", "unchanged"), (None, None), ("wired", "copy failed")):
+                with mock.patch.object(pc, "reach", return_value=link), \
+                     mock.patch.object(pc, "copy_from", return_value=copy), mock.patch("builtins.print"):
+                    got.append(phone_sync.sync_once(JOB, out, "udid", None)["stopped_now"])
+            self.assertEqual(got, [True, False, False])
 
 
 if __name__ == "__main__":

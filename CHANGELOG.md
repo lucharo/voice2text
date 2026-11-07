@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.20
+
+- **The cleanup model leaves less behind in memory.** MLX kept the scratch buffers each cleanup had used, so v2t's engine grew by a few gigabytes after the first dictations and held them while idle: with Qwen3.5-2B, 5.2 GB after 60 cleanups. They are now handed back after every cleanup (1.7 GB in the same test), which made the next cleanup about 1% slower, 2 ms at the median (#129).
+- **Ollama cleanup uses less memory, and its default model can be pulled again.** v2t now asks Ollama for a 4,096-token context instead of Ollama's default (32,768 tokens in Ollama 0.40), which took qwen3:4b's runner from 5.0 to 2.9 GB, with the same text on 20 transcripts. Ollama's library no longer serves the `qwen3:4b-instruct-2507` tag, so the default and `v2t setup`'s hint are now `qwen3:4b-instruct-2507-q4_K_M`, the same weights. A copy pulled under the old name still works when `config.toml` names it; with the model left blank, pull the new tag (#129).
+
 ## 0.5.19
 
 - **With Command as the hotkey, a double tap then a shortcut is typing.** During a slow microphone start, double-tapping Command to dictate hands-free and then pressing Cmd+F and Esc let the Esc through to the app and the recording carried on. v2t now works out that the second tap starts hands-free, so the F is typed and Esc stops the dictation (#104).

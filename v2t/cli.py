@@ -652,7 +652,7 @@ def _setup() -> int:
     )
     print(f"\nwrote {path}")
     if cleanup_enabled and engine == "ollama":
-        print("next: ollama pull qwen3:4b-instruct-2507")
+        print("next: ollama pull qwen3:4b-instruct-2507-q4_K_M")
     package = {"whisper": "'voice2text[whisper]'", "qwen3-asr": "'voice2text[qwen]'"}.get(
         backend, "voice2text"
     )
