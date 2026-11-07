@@ -64,8 +64,9 @@ def _ollama_runner_mb() -> float | None:
     since about 0.40 a llama-server under Ollama's lib folder)."""
     pids = subprocess.run(["pgrep", "-f", "ollama runner|lib/ollama/llama-server"],
                           capture_output=True, text=True).stdout.split()
-    sizes = [_footprint_mb(int(p)) for p in pids]
-    return round(sum(s for s in sizes if s), 1) if any(sizes) else None
+    # llama.cpp maps its weights, so they show in RSS but not all in the footprint: take the larger
+    sizes = [max(_footprint_mb(int(p)) or 0, _rss_mb(int(p)) or 0) for p in pids]
+    return round(sum(sizes), 1) if any(sizes) else None
 
 
 def _machine() -> dict:
