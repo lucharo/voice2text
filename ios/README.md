@@ -29,6 +29,9 @@ by hand from the Actions tab. `scripts/ci-testflight-secrets.sh` loads its secre
 certificate or the App Store Connect key is renewed. Profiles come from App Store Connect on each run, so a renewed
 profile with the same name needs no change.
 
+Pushing an `ios-v<version>` tag submits that version's newest TestFlight build for App Store review
+([appstore.yml](../.github/workflows/appstore.yml); [Maintainers](../docs/maintainers/index.md#iphone-app) has the details).
+
 To upload from a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
 "v2t App Store" and "v2t keyboard App Store" profiles (App Store Connect API `GET /v1/profiles`, `profileContent`,
 into `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`), raise `CURRENT_PROJECT_VERSION` in `project.yml` above the last upload and rerun `./setup.sh`, then:
