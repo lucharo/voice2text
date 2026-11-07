@@ -4,6 +4,7 @@ import V2TKeyboardCore
 /// Emoji search, as on Apple's emoji keyboard: a field above the letter keys and a row of results. The
 /// keyboard types into the field instead of the document while it is open (KeyboardViewController routes the
 /// keys here); a result goes into the document. With nothing typed, the row shows the recently used emoji.
+/// Results come in the skin tone the panel shows each emoji in (the one picked for it, or the default).
 final class EmojiSearchBar: UIView {
   /// The suggestion bar's place, made taller for the field and the results.
   static let height: CGFloat = 92
@@ -14,6 +15,8 @@ final class EmojiSearchBar: UIView {
 
   private let indexes: [EmojiIndex]
   private let recents: () -> [String]
+  /// The results (base forms) in the tones the emoji panel shows them in.
+  private let tone: ([String]) -> [String]
   private let back = UIButton(type: .system)
   private let field = UIView()
   private let glass = UIImageView(image: UIImage(systemName: "magnifyingglass"))
@@ -25,9 +28,10 @@ final class EmojiSearchBar: UIView {
   /// Its own copy of the emoji font, let go of with the bar (see EmojiFont).
   private let emojiFont = EmojiFont()
 
-  init(indexes: [EmojiIndex], recents: @escaping () -> [String]) {
+  init(indexes: [EmojiIndex], recents: @escaping () -> [String], tone: @escaping ([String]) -> [String]) {
     self.indexes = indexes
     self.recents = recents
+    self.tone = tone
     super.init(frame: .zero)
     backgroundColor = .clear  // the keyboard's glass, as behind the suggestion bar it replaces
     accessibilityIdentifier = "emoji.search"
@@ -101,7 +105,7 @@ final class EmojiSearchBar: UIView {
     text.textColor = query.isEmpty ? .secondaryLabel : .label
     field.accessibilityValue = query
     field.accessibilityLabel = "Search Emoji"
-    let found = query.trimmingCharacters(in: .whitespaces).isEmpty ? recents() : EmojiIndex.search(query, in: indexes)
+    let found = query.trimmingCharacters(in: .whitespaces).isEmpty ? recents() : tone(EmojiIndex.search(query, in: indexes))
     buttons.forEach { $0.removeFromSuperview() }
     if found.contains(where: { emojiFont.note($0) }) { emojiFont.renew() }  // a fresh copy every so many emoji
     let font = emojiFont.font(size: 30)
