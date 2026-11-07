@@ -55,7 +55,7 @@ struct TouchArbiterTests {
       case .up(let f, let ms):
         apply(arbiter.ended(f, at: at[f]!.0, time: ms / 1000))
       case .hold(let f):
-        arbiter.hold(f)
+        arbiter.hold(f, types: true)
       }
     }
     return out
@@ -122,15 +122,48 @@ struct TouchArbiterTests {
     let t = key("t"), e = key("e")
     arbiter.began(0, key: t, at: t.center, time: 0, canSwipe: true)
     arbiter.began(1, key: e, at: e.center, time: 0.05, canSwipe: true)
-    let held = arbiter.hold(1)
+    let held = arbiter.hold(1, types: true)
     #expect(held)
     #expect(arbiter.ended(1, at: e.center, time: 0.6) == [.tapped(t, at: t.center, touch: 0)])
     #expect(arbiter.ended(0, at: t.center, time: 0.7).isEmpty)  // already typed
     #expect(arbiter.isEmpty)
   }
 
+  @Test func touchesHandedOverTogetherTypeInLandingOrder() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let t = key("t"), y = key("y")
+    // UIKit's touch set has no order: "y" registered first though "t" landed first
+    arbiter.began(1, key: y, at: y.center, time: 0.06, canSwipe: true)
+    arbiter.began(0, key: t, at: t.center, time: 0, canSwipe: true)
+    #expect(arbiter.ended(1, at: y.center, time: 0.1) == [.tapped(t, at: t.center, touch: 0), .tapped(y, at: y.center, touch: 1)])
+  }
+
+  @Test func aSlideWaitingOutTheDelayCannotOpenAlternatives() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let a = key("a"), e = key("e")
+    arbiter.began(0, key: a, at: a.center, time: 0, canSwipe: true)
+    _ = arbiter.ended(0, at: a.center, time: 0.08)
+    arbiter.began(1, key: e, at: e.center, time: 0.2, canSwipe: true)
+    // 0.82 key widths by the 0.42 s long-press timer: not yet a swipe after typing, but no long press either
+    let p = CGPoint(x: e.center.x - 0.82 * layout.unitWidth, y: e.center.y)
+    _ = arbiter.moved(1, [(p, 0.62)])
+    let held = arbiter.hold(1, types: true)
+    #expect(!held && arbiter.mode(of: 1) == .tap)
+  }
+
+  @Test func aTapRightAfterAnAccentStaysATap() {
+    // "e" held for an accent, then a quick tap that rolls 0.8 key widths: still typing, so not a swipe
+    #expect(run([.down(0, "e", 0), .hold(0), .up(0, 600), .down(1, "t", 700), .slide(1, 0.8, 0, 760), .up(1, 770)]) == "t")
+  }
+
   @Test func theSpaceBarTrackpadTypesNoSpace() {
-    #expect(run([.down(0, " ", 0), .hold(0), .slide(0, 5, 0, 900), .slide(0, -2, 0, 1200), .up(0, 1210)]) == "")
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let space = key(" ")
+    arbiter.began(0, key: space, at: space.center, time: 0, canSwipe: false)
+    let held = arbiter.hold(0, types: false)
+    #expect(held)
+    _ = arbiter.moved(0, [(CGPoint(x: space.center.x + 5 * layout.unitWidth, y: space.center.y), 0.9)])
+    #expect(arbiter.ended(0, at: space.center, time: 1.2).isEmpty)
   }
 
   @Test func aRolledOverTapCannotBeHeldAfterwards() {
@@ -140,7 +173,7 @@ struct TouchArbiterTests {
     arbiter.began(1, key: y, at: y.center, time: 0.05, canSwipe: true)
     _ = arbiter.ended(1, at: y.center, time: 0.1)
     #expect(arbiter.mode(of: 0) == .spent)
-    let held = arbiter.hold(0)
+    let held = arbiter.hold(0, types: true)
     #expect(!held)  // its long-press timer firing late opens nothing
   }
 
