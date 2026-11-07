@@ -49,6 +49,8 @@ public struct TouchArbiter<ID: Hashable> {
     var canSwipe: Bool
     /// Held for long-press alternatives, which type when the finger lifts (the trackpad types nothing).
     var holdTypes = false
+    /// Went a swipe's distance from where it landed at some point: never a long press after that.
+    var travelled = false
   }
 
   /// One key's width, the unit of every distance.
@@ -85,6 +87,8 @@ public struct TouchArbiter<ID: Hashable> {
     guard let i = tracks.firstIndex(where: { $0.id == id }) else { return events }
     for (p, t) in samples {
       tracks[i].points.append(p)
+      let start = tracks[i].start
+      if hypot(p.x - start.x, p.y - start.y) > Self.swipeDistance * unitWidth { tracks[i].travelled = true }
       if tracks[i].mode == .tap, tracks[i].canSwipe, startsSwipe(tracks[i], at: p, time: t) {
         tracks[i].mode = .swiping
         events.append(.swipeStarted(touch: id))
@@ -117,10 +121,7 @@ public struct TouchArbiter<ID: Hashable> {
   @discardableResult public mutating func hold(_ id: ID, types: Bool) -> Bool {
     guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].mode == .tap || tracks[i].mode == .press
     else { return false }
-    let t = tracks[i]
-    if t.canSwipe, let p = t.points.last, hypot(p.x - t.start.x, p.y - t.start.y) > Self.swipeDistance * unitWidth {
-      return false
-    }
+    if tracks[i].canSwipe, tracks[i].travelled { return false }
     tracks[i].mode = .held
     tracks[i].holdTypes = types
     return true
