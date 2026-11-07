@@ -35,8 +35,11 @@ import grid
 PC = grid.EVAL / "cleanup-eval" / "librispeech-pc"
 FILLERS = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
 MARKS = (",", ".", "?", "!", ":", ";")
-_WORD = re.compile(r"[\w'’]+(?:[-.][\w'’]+)*")
-_TOKEN = re.compile(r"[\w'’]+(?:[-.][\w'’]+)*|[^\w\s]")
+# a grouped number (1,000.5) is one word, so its comma is not punctuation; an apostrophe belongs to a word
+# only inside it (it's), so quotes around a word stay outside
+_WORD_RE = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\w+(?:['’]\w+)*(?:[-.]\w+(?:['’]\w+)*)*"
+_WORD = re.compile(_WORD_RE)
+_TOKEN = re.compile(_WORD_RE + r"|[^\w\s]")
 
 
 def _bare(w: str) -> str:
@@ -133,6 +136,9 @@ def main() -> None:
             continue
         data = {n: {r["id"]: r for r in grid.read_jsonl(root / n / set_name / f"{system}.jsonl")} for n in names}
         ids = sorted(set(ref).intersection(*(set(d) for d in data.values())))
+        if not ids:
+            print(f"\n{set_name}: no clip has a reference and a row from every model ({', '.join(names)})")
+            continue
         print(f"\n{set_name}: {len(ids)} clips against {'Wispr Flow' if set_name == cb.WISPR else 'the reference'}")
         print("| output | " + " | ".join(cols) + " |")
         print("|---|" + "--:|" * len(cols))

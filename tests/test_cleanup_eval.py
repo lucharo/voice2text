@@ -26,6 +26,17 @@ class Compare(unittest.TestCase):
         self.assertEqual((got["digits_ref"], got["digits_hit"]), (3, 1))
 
 
+    def test_a_grouped_number_is_one_number_and_its_comma_no_punctuation(self):
+        got = ce.compare("We sold 1,000 units, mostly.", "We sold 1 000 units, mostly.")
+
+        self.assertEqual((got["digits_ref"], got["digits_hit"], got["tp,"], got["fp,"]), (1, 0, 1, 0))
+
+    def test_quotes_stay_outside_the_word_so_its_capital_counts(self):
+        got = ce.compare("'Hello,' she said.", "'hello,' she said.")
+
+        self.assertEqual((got["matched"], got["cap_fn"], got["tp,"]), (3, 1, 1))
+
+
 class Leftovers(unittest.TestCase):
     def test_fillers_and_repeats_are_counted_before_and_after(self):
         got = ce.leftovers("um um the the plan uh is is fine", "The plan is is fine")
