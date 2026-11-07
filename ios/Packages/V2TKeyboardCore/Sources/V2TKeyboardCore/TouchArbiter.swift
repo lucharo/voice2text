@@ -46,7 +46,7 @@ public struct TouchArbiter<ID: Hashable> {
     let began: TimeInterval
     var points: [CGPoint]
     var mode: Mode
-    let canSwipe: Bool
+    var canSwipe: Bool
     /// Held for long-press alternatives, which type when the finger lifts (the trackpad types nothing).
     var holdTypes = false
   }
@@ -104,6 +104,11 @@ public struct TouchArbiter<ID: Hashable> {
     let distance = base + (Self.fastTypingDistance * unitWidth - base) * decay
     let (from, to) = Self.fastTypingTime
     return travelled > distance && elapsed >= to + (from - to) * decay
+  }
+
+  /// The keys left the letters page: fingers still down tap rather than swipe.
+  public mutating func stopSwipes() {
+    for i in tracks.indices { tracks[i].canSwipe = false }
   }
 
   /// The view took this finger over: long-press alternatives showed (`types`: they type on lift), or the

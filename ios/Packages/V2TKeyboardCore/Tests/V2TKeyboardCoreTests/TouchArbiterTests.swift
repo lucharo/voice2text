@@ -156,6 +156,15 @@ struct TouchArbiterTests {
     #expect(run([.down(0, "e", 0), .hold(0), .up(0, 600), .down(1, "t", 700), .slide(1, 0.8, 0, 760), .up(1, 770)]) == "t")
   }
 
+  @Test func aFingerDownWhenThePageChangesTapsRatherThanSwipes() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let t = key("t")
+    arbiter.began(0, key: t, at: t.center, time: 0, canSwipe: true)
+    arbiter.stopSwipes()  // 123 released under another finger
+    let events = arbiter.moved(0, [(CGPoint(x: t.center.x + 3 * layout.unitWidth, y: t.center.y), 0.3)])
+    #expect(events.isEmpty && arbiter.mode(of: 0) == .tap)
+  }
+
   @Test func theSpaceBarTrackpadTypesNoSpace() {
     var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
     let space = key(" ")
