@@ -47,6 +47,8 @@ public struct TouchArbiter<ID: Hashable> {
     var points: [CGPoint]
     var mode: Mode
     let canSwipe: Bool
+    /// Held for long-press alternatives, which type when the finger lifts (the trackpad types nothing).
+    var holdTypes = false
   }
 
   /// One key's width, the unit of every distance.
@@ -71,8 +73,10 @@ public struct TouchArbiter<ID: Hashable> {
   public mutating func began(_ id: ID, key: Key, at p: CGPoint, time: TimeInterval, canSwipe: Bool) {
     tracks.removeAll { $0.id == id }
     let releasable = key.isCharacter || key.action == .space
-    tracks.append(Track(id: id, key: key, start: p, began: time, points: [p], mode: releasable ? .tap : .press,
-                        canSwipe: canSwipe))
+    // kept in landing order, which rollover types in, even when UIKit hands over two touches at once
+    let at = tracks.firstIndex { $0.began > time } ?? tracks.endIndex
+    tracks.insert(Track(id: id, key: key, start: p, began: time, points: [p], mode: releasable ? .tap : .press,
+                        canSwipe: canSwipe), at: at)
   }
 
   /// The finger moved through these samples, oldest first.
@@ -102,12 +106,18 @@ public struct TouchArbiter<ID: Hashable> {
     return travelled > distance && elapsed >= to + (from - to) * decay
   }
 
-  /// The view took this finger over (alternatives showed, or the space bar became a trackpad). False when
-  /// rollover has already typed it.
-  @discardableResult public mutating func hold(_ id: ID) -> Bool {
+  /// The view took this finger over: long-press alternatives showed (`types`: they type on lift), or the
+  /// space bar became a trackpad. False when rollover has already typed it, or when a letter finger has
+  /// travelled a swipe's distance and is only waiting out the after-typing delay.
+  @discardableResult public mutating func hold(_ id: ID, types: Bool) -> Bool {
     guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].mode == .tap || tracks[i].mode == .press
     else { return false }
+    let t = tracks[i]
+    if t.canSwipe, let p = t.points.last, hypot(p.x - t.start.x, p.y - t.start.y) > Self.swipeDistance * unitWidth {
+      return false
+    }
     tracks[i].mode = .held
+    tracks[i].holdTypes = types
     return true
   }
 
@@ -126,7 +136,8 @@ public struct TouchArbiter<ID: Hashable> {
       events.append(.tapped(track.key, at: p, touch: id))
       if track.mode == .tap { lastTap = time }
     case .swiping: events.append(.swiped(track.points + [p], touch: id))
-    case .held, .spent: break
+    case .held: if track.holdTypes { lastTap = time }  // the view types the alternative
+    case .spent: break
     }
     tracks.removeAll { $0.id == id }
     return events

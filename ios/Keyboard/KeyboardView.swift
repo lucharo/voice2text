@@ -260,7 +260,7 @@ final class KeyboardView: UIView {
   // MARK: touches
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-    for touch in touches {
+    for touch in touches.sorted(by: { $0.timestamp < $1.timestamp }) {
       let p = touch.location(in: self)
       guard let key = layout.key(at: p) else { continue }
       let id = ObjectIdentifier(touch)
@@ -281,7 +281,7 @@ final class KeyboardView: UIView {
         setPressed(key, true)
         track.timer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self, weak track] _ in
           MainActor.assumeIsolated {
-            guard let self, let track, self.arbiter.hold(id) else { return }
+            guard let self, let track, self.arbiter.hold(id, types: false) else { return }
             track.trackpad = true
             track.lastTrackX = self.arbiter.points(of: id).last?.x ?? p.x
             self.setTrackpad(true)
@@ -302,7 +302,7 @@ final class KeyboardView: UIView {
     guard key.longPress(shift: shift, manual: shiftManual).count > 1 else { return }
     track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
       MainActor.assumeIsolated {
-        guard let self, let track, self.arbiter.hold(id) else { return }
+        guard let self, let track, self.arbiter.hold(id, types: true) else { return }
         self.showAlternatives(track, for: id)
       }
     }
