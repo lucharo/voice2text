@@ -451,6 +451,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   }
 
   private func closePickers() {
+    pressed = nil  // a press still held when another touch closes its picker types nothing on release
     if pickerSticks {
       pickerSticks = false
       stickyItem = nil
