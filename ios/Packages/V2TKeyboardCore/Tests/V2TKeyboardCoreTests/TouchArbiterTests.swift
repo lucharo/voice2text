@@ -151,6 +151,17 @@ struct TouchArbiterTests {
     #expect(!held && arbiter.mode(of: 1) == .tap)
   }
 
+  @Test func aSlideOutAndBackCannotOpenAlternativesEither() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let a = key("a"), e = key("e")
+    arbiter.began(0, key: a, at: a.center, time: 0, canSwipe: true)
+    _ = arbiter.ended(0, at: a.center, time: 0.08)
+    arbiter.began(1, key: e, at: e.center, time: 0.2, canSwipe: true)
+    _ = arbiter.moved(1, [(CGPoint(x: e.center.x - 1.2 * layout.unitWidth, y: e.center.y), 0.4), (e.center, 0.61)])
+    let held = arbiter.hold(1, types: true)
+    #expect(!held)
+  }
+
   @Test func aTapRightAfterAnAccentStaysATap() {
     // "e" held for an accent, then a quick tap that rolls 0.8 key widths: still typing, so not a swipe
     #expect(run([.down(0, "e", 0), .hold(0), .up(0, 600), .down(1, "t", 700), .slide(1, 0.8, 0, 760), .up(1, 770)]) == "t")

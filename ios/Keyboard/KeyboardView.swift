@@ -327,7 +327,7 @@ final class KeyboardView: UIView {
         continue
       }
       if !track.alternatives.isEmpty {
-        updateAlternativeChoice(track, x: p.x)
+        updateAlternativeChoice(track, x: p.x, for: id)
         continue
       }
       if arbiter.mode(of: id) == .swiping { drawTrail(arbiter.points(of: id)) }
@@ -356,9 +356,10 @@ final class KeyboardView: UIView {
     apply(arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp))
     if track.trackpad { setTrackpad(false); return }
     if !track.alternatives.isEmpty {
-      // older fingers typed just above may have used up an automatic capital: the accent follows the shift now
-      let alts = track.key.longPress(shift: shift, manual: shiftManual)
-      delegate?.keyboardView(self, typed: alts.indices.contains(track.chosen) ? alts[track.chosen] : track.alternatives[track.chosen], at: nil)
+      // older fingers typed just above may have used up an automatic capital: a letter follows the shift now
+      let a = track.alternatives[track.chosen]
+      let letter = a.lowercased() != a.uppercased()
+      delegate?.keyboardView(self, typed: letter ? (shift == .off ? a.lowercased() : a.uppercased()) : a, at: nil)
     }
   }
 
@@ -438,7 +439,8 @@ final class KeyboardView: UIView {
     CATransaction.commit()
   }
 
-  private func updateAlternativeChoice(_ track: Track, x: CGFloat) {
+  private func updateAlternativeChoice(_ track: Track, x: CGFloat, for id: ObjectIdentifier) {
+    previewOwner = id  // another finger's balloon may have taken the overlay over meanwhile
     let i = preview.alternativeIndex(at: x, count: track.alternatives.count)
     guard i != track.chosen else { return }
     track.chosen = i
