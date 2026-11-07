@@ -356,10 +356,12 @@ final class KeyboardView: UIView {
     apply(arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp))
     if track.trackpad { setTrackpad(false); return }
     if !track.alternatives.isEmpty {
-      // older fingers typed just above may have used up an automatic capital: a letter follows the shift now
-      let a = track.alternatives[track.chosen]
-      let letter = a.lowercased() != a.uppercased()
-      delegate?.keyboardView(self, typed: letter ? (shift == .off ? a.lowercased() : a.uppercased()) : a, at: nil)
+      // older fingers typed just above may have used up an automatic capital. A letter key's menu is the same
+      // letters in either case ("ß" shows as "SS"), so re-read it at today's shift; other keys' shifted menus
+      // hold other marks, so the one chosen stays
+      let now = track.key.longPress(shift: shift, manual: shiftManual)
+      let pick = track.key.startsSwipe && now.count == track.alternatives.count ? now[track.chosen] : track.alternatives[track.chosen]
+      delegate?.keyboardView(self, typed: pick, at: nil)
     }
   }
 
