@@ -89,6 +89,28 @@ import XCTest
     shot("05-after-swipe")
   }
 
+  /// Holding a letter opens its accents, and holding space turns it into a trackpad (#140 moved both onto
+  /// the touch arbiter).
+  func testLongPressAccentAndSpaceTrackpad() {
+    launch()
+    showKeyboard()
+    type("a")
+    // hold e, then slide one key right: the row is e, è, é…
+    let e = key("letters-e")
+    let from = e.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    from.press(forDuration: 0.8, thenDragTo: from.withOffset(CGVector(dx: e.frame.width, dy: 0)), withVelocity: 80, thenHoldForDuration: 0.2)
+    XCTAssertEqual(text, "Aè")
+    // hold space, slide left past the start, then type: the letter lands first (capitalised or not, as the
+    // start of the field may ask)
+    let space = key("space").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    space.press(forDuration: 0.7, thenDragTo: space.withOffset(CGVector(dx: -60, dy: 0)), withVelocity: 80, thenHoldForDuration: 0.2)
+    type("x")
+    let settled = Date().addingTimeInterval(3)
+    while text.lowercased() != "xaè", Date() < settled { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    XCTAssertEqual(text.lowercased(), "xaè")
+    shot("08-accent-and-trackpad")
+  }
+
   func testSpanishLayoutRestoresAccentsAndEnye() {
     launch(layout: "es")
     showKeyboard()
