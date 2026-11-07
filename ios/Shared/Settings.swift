@@ -37,6 +37,13 @@ final class Settings: @unchecked Sendable {
     defaults.set(Array(w).sorted(), forKey: "learnedWords")
   }
 
+  /// The emoji keyboard's default skin tone, nil for yellow. The keyboard keeps its own copy too (a tone it
+  /// offers after one is picked, without Full Access); the newer of the two applies (StoredSkinTone).
+  var emojiSkinTone: SkinTone? {
+    get { StoredSkinTone(defaults)?.tone }
+    set { StoredSkinTone(tone: newValue, date: Date().timeIntervalSince1970).save(to: defaults) }
+  }
+
   /// Minutes the mic stays warm after the last dictation (0 = until turned off).
   var warmMinutes: Int {
     get { defaults.object(forKey: "warmMinutes") as? Int ?? 15 }
