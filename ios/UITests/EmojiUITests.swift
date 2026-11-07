@@ -10,9 +10,10 @@ import XCTest
   var field: XCUIElement { app.textFields["v2t.try"] }
   var text: String { field.value as? String ?? "" }
 
-  func launch(globe: String? = nil) {
+  func launch(globe: String? = nil, skinTone: Int? = nil) {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = "en"
+    if let skinTone { app.launchEnvironment["V2T_SKIN_TONE"] = String(skinTone) }
     if let globe { app.launchEnvironment["V2T_PREVIEW_GLOBE"] = globe }
     app.launch()
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
@@ -96,6 +97,26 @@ import XCTest
     waitForText("Hi ")
   }
 
+  /// Scrolls the grid until one of `variants` (an emoji in any of its tones) is near the middle, where a
+  /// whole picker fits, and returns it.
+  func scrollToEmoji(_ variants: [String]) -> XCUIElement? {
+    app.buttons["emoji.category.smileys"].tap()
+    let width = app.windows.firstMatch.frame.width, y = app.buttons["emoji.abc"].frame.minY - 80
+    func find() -> XCUIElement? {
+      let all = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", variants.map { "emoji.\($0)" }))
+      return (0..<all.count).map { all.element(boundBy: $0) }.first { $0.frame.midX > 100 && $0.frame.midX < width - 150 }
+    }
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    for _ in 0..<40 where find() == nil {
+      // drag the grid 150 pt at a time and hold, so it does not fling past
+      origin.withOffset(CGVector(dx: width - 40, dy: y))
+        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: width - 190, dy: y)), withVelocity: .slow, thenHoldForDuration: 0.2)
+    }
+    return find()
+  }
+
+  static let waves = ["👋", "👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"]
+
   /// A long press on 👋 offers its skin tones; sliding to the fourth (medium) types 👋🏽, which then leads the
   /// recents and stands in for 👋 in its category.
   func testLongPressPicksASkinToneThatIsRemembered() {
@@ -177,5 +198,56 @@ import XCTest
     shot("57-bar-emoji")
     slot.tap()
     waitForText("🍕 ")
+  }
+
+  // MARK: skin tones (#141)
+
+  /// The default skin tone from the app's keyboard settings shows in every emoji with tones: the grid, search
+  /// and the suggestion bar. A long press let go without sliding leaves the tones up; a tap types one, which
+  /// that emoji keeps over the default while the others stay in it.
+  func testTheAppsDefaultToneShowsInEveryEmoji() throws {
+    launch(globe: "0", skinTone: 4)  // medium-dark, newer than any tone an earlier run left in the keyboard
+    key("emoji").tap()
+    let wave = try XCTUnwrap(scrollToEmoji(Self.waves), "👋 never scrolled into view")
+    XCTAssertEqual(wave.identifier, "emoji.👋🏾", "the app's default tone did not reach the keyboard")
+    XCTAssertTrue(emoji("🤚🏾").exists, "🤚 is not in the default tone")
+    shot("62-emoji-default-tone-grid")
+    wave.press(forDuration: 0.8)
+    XCTAssertTrue(app.descendants(matching: .any)["emoji.tones"].waitForExistence(timeout: 3), "the tones closed when the finger lifted")
+    shot("60-emoji-tone-picker")
+    app.descendants(matching: .any)["emoji.tone.1"].tap()  // 👋🏻
+    waitForText("👋🏻")
+    XCTAssertTrue(emoji("👋🏻").waitForExistence(timeout: 3), "👋 did not keep the tone picked for it")
+    XCTAssertTrue(emoji("🤚🏾").exists, "picking 👋's tone changed 🤚")
+
+    app.buttons["emoji.search.open"].tap()
+    for ch in "thumb" { key("letters-\(ch)").tap() }
+    XCTAssertTrue(app.buttons["emoji.result.👍🏾"].waitForExistence(timeout: 3), "search offered another tone of 👍")
+    app.buttons["emoji.search.back"].tap()
+    app.buttons["emoji.abc"].tap()
+    for ch in " clap" { ch == " " ? key("space").tap() : key("letters-\(ch)").tap() }
+    let slot = app.buttons["v2t.suggestion.2"]
+    let deadline = Date().addingTimeInterval(3)
+    while slot.label != "👏🏾", Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    XCTAssertEqual(slot.label, "👏🏾", "the bar offered another tone of 👏")
+  }
+
+  /// A long press on 🤝 opens the two-person picker, which stays up: a tone for each hand, then the preview
+  /// types the pair, which the grid shows from then on.
+  func testTwoPeopleGetAToneEach() throws {
+    launch(globe: "0", skinTone: 0)
+    key("emoji").tap()
+    let hands = try XCTUnwrap(scrollToEmoji(["🤝"]), "🤝 never scrolled into view")
+    hands.press(forDuration: 0.8)
+    XCTAssertTrue(app.descendants(matching: .any)["emoji.pair"].waitForExistence(timeout: 3))
+    app.descendants(matching: .any)["emoji.pair.0.1"].tap()
+    app.descendants(matching: .any)["emoji.pair.1.5"].tap()
+    let preview = app.descendants(matching: .any)["emoji.pair.preview"]
+    XCTAssertEqual(preview.label, "🫱🏻\u{200D}🫲🏿")
+    shot("63-emoji-pair-picker")
+    preview.tap()
+    waitForText("🫱🏻\u{200D}🫲🏿")
+    XCTAssertFalse(app.descendants(matching: .any)["emoji.pair"].exists)
+    XCTAssertTrue(emoji("🫱🏻\u{200D}🫲🏿").waitForExistence(timeout: 3), "the grid still shows the yellow 🤝")
   }
 }

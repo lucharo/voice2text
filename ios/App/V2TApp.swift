@@ -18,6 +18,8 @@ import V2TKeyboardCore
     if env["V2T_RESET_DICTIONARY"] == "1" { try? PersonalDictionary().save(PersonalDictionary.header) }
     Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
     Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
+    // UI tests start the emoji keyboard from a known skin tone (0 yellow); the keyboard's own tones give way to it
+    if let t = env["V2T_SKIN_TONE"].flatMap(Int.init) { Settings.shared.emojiSkinTone = SkinTone(rawValue: t) }
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
@@ -477,6 +479,8 @@ struct KeyboardSettingsView: View {
   @State private var layout = Settings.shared.layoutLanguage
   @State private var bilingual = Settings.shared.suggestionLanguages.count > 1
   @State private var warm = Settings.shared.warmMinutes
+  /// 0 is yellow, 1 to 5 the skin tones.
+  @State private var skinTone = Settings.shared.emojiSkinTone?.rawValue ?? 0
   var body: some View {
     Form {
       Picker("Layout", selection: $layout) {
@@ -489,6 +493,20 @@ struct KeyboardSettingsView: View {
         Text("15 minutes").tag(15)
         Text("1 hour").tag(60)
         Text("Until I turn it off").tag(0)
+      }
+      Section {
+        // written on every pick, the one already shown too: picking it again resets the tones picked for
+        // single emoji in the keyboard since
+        Picker("Emoji skin tone", selection: Binding(get: { skinTone }, set: {
+          skinTone = $0
+          Settings.shared.emojiSkinTone = SkinTone(rawValue: $0)
+        })) {
+          Text("👋 Yellow").tag(0)
+          ForEach(SkinTone.allCases, id: \.rawValue) { t in Text("👋" + t.modifier).tag(t.rawValue) }
+        }
+        .accessibilityIdentifier("settings.skinTone")
+      } footer: {
+        Text("Every emoji with skin tones shows this tone until you pick another for it: touch and hold an emoji in the v2t keyboard. iOS keeps the Apple keyboard's skin tones to itself, so v2t cannot follow them.")
       }
     }
     .navigationTitle("Keyboard")

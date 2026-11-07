@@ -17,11 +17,14 @@ Emoji 16.0 is the newest version every iOS this app supports draws (iOS 18.4 add
 
 Format: UTF-8 text. Lines starting with "#" are comments. "@<category>" starts a category, in the order of
 Apple's emoji keyboard; each following line holds one emoji, its skin-tone variants after it separated by
-commas (light, medium-light, medium, medium-dark, dark). Only fully-qualified emoji are kept, in Unicode's
+commas (light, medium-light, medium, medium-dark, dark), and for an emoji of two people (handshake, holding
+hands, kiss, couple with heart) a "|" and the pattern of its mixed-tone form, "*" standing for each person's
+skin tone in order ("🤝,…,🤝🏿|🫱*‍🫲*": 🫱🏻‍🫲🏿 is light then dark). Only fully-qualified emoji are kept, in Unicode's
 (CLDR) order. Unicode's "Smileys & Emotion" and "People & Body" groups share Apple's "Smileys & People"
 category, Activities comes before Travel & Places as on Apple's keyboard, and the Component group (bare skin
-tones and hair styles) is left out. A variant is kept when every skin tone in it is the same one; mixed-tone
-pairs ("handshake: light skin tone, dark skin tone") are left out, as they need Apple's two-tone picker.
+tones and hair styles) is left out. A variant is kept when every skin tone in it is the same one; the 20
+mixed-tone forms of a two-person emoji ("handshake: light skin tone, dark skin tone") become its pattern, for
+the keyboard's two-tone picker, after checking that the pattern gives every one of them.
 
 Keywords format: UTF-8 text, "#" comment lines, then one line per keyword: the keyword folded (lowercase,
 accents and ñ taken off, as v2t's letter keys type it), a tab, and the emoji it names (base forms, as in
@@ -34,6 +37,7 @@ Each file holds one language's keywords.
 """
 import hashlib
 import json
+import re
 import sys
 import unicodedata
 import urllib.request
@@ -133,9 +137,20 @@ def keywords(cats: dict[str, list[list[str]]], lang: str) -> list[str]:
             for k in sorted(index, key=lambda k: k.encode("utf-8"))]
 
 
+TONE_NAME = r"(?:light|medium-light|medium|medium-dark|dark) skin tone"
+
+
+def base_name(name: str) -> str:
+    """An emoji's CLDR name without its skin tones: "kiss: woman, man, light skin tone, dark skin tone" is
+    "kiss: woman, man". The person-person couples are named without their people ("kiss")."""
+    name = re.sub(r"[:,] " + TONE_NAME, "", name)
+    return name.removesuffix(": person, person")
+
+
 def parse(text: str) -> dict[str, list[list[str]]]:
-    """Category -> emoji in order, each as [base, *same-tone variants]."""
+    """Category -> emoji in order, each as [base, *same-tone variants] and, for two people, then "|<pattern>"."""
     entries: list[tuple[str, str]] = []  # (category, emoji), fully-qualified only
+    names: dict[str, str] = {}  # emoji -> its CLDR name, from the comment
     group = None
     for line in text.splitlines():
         if line.startswith("# group:"):
@@ -143,23 +158,30 @@ def parse(text: str) -> dict[str, list[list[str]]]:
             continue
         if not line or line.startswith("#"):
             continue
-        fields, _, _ = line.partition("#")
+        fields, _, comment = line.partition("#")
         codes, _, status = fields.partition(";")
         if status.strip() != "fully-qualified" or group not in CATEGORIES:
             continue
-        entries.append((CATEGORIES[group], "".join(chr(int(c, 16)) for c in codes.split())))
+        e = "".join(chr(int(c, 16)) for c in codes.split())
+        entries.append((CATEGORIES[group], e))
+        names[e] = comment.strip().split(" ", 2)[2]  # "<emoji> E14.0 <name>"
 
     def key(e: str) -> str:  # the emoji with its skin tones and presentation selectors taken out
         return "".join(ch for ch in e if ch not in TONES and ch != "\ufe0f")
 
     out: dict[str, list[list[str]]] = {c: [] for c in ORDER}
     by_key: dict[str, list[str]] = {}
+    by_name: dict[str, list[str]] = {}
+    mixed: dict[str, list[str]] = {}  # base name -> its mixed-tone forms
     for cat, e in entries:
         tones = {ch for ch in e if ch in TONES}
-        if not tones:
+        if len(tones) == 2:
+            mixed.setdefault(base_name(names[e]), []).append(e)
+        elif not tones:
             item = [e]
             out[cat].append(item)
             by_key.setdefault(key(e), item)
+            by_name.setdefault(names[e], item)
         elif len(tones) == 1 and (base := by_key.get(key(e))) is not None:
             tone = TONES.index(tones.pop())
             if len(base) - 1 == tone:  # the first variant of each tone, in tone order
@@ -168,6 +190,15 @@ def parse(text: str) -> dict[str, list[list[str]]]:
         for item in items:
             if len(item) not in (1, 6):
                 sys.exit(f"{item[0]}: {len(item) - 1} skin tones, expected 0 or 5")
+    for name, forms in mixed.items():
+        item = by_name.get(name)
+        if item is None or len(item) != 6:
+            sys.exit(f"{name}: mixed skin tones but no emoji with five tones of that name")
+        pattern = "".join("*" if ch in TONES else ch for ch in forms[0])
+        made = {pattern.replace("*", TONES[a], 1).replace("*", TONES[b], 1) for a in range(5) for b in range(5) if a != b}
+        if made != set(forms):
+            sys.exit(f"{name}: the pattern {pattern} does not give its {len(forms)} mixed-tone forms")
+        item.append("|" + pattern)
     return out
 
 
@@ -180,11 +211,13 @@ def main() -> None:
     ]
     for cat in ORDER:
         lines.append(f"@{cat}")
-        lines += [",".join(item) for item in cats[cat]]
+        lines += [",".join(i for i in item if not i.startswith("|")) + "".join(i for i in item if i.startswith("|"))
+                  for item in cats[cat]]
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     total = sum(len(v) for v in cats.values())
     toned = sum(1 for v in cats.values() for i in v if len(i) > 1)
-    print(f"{OUT}: {total} emoji, {toned} with skin tones")
+    pairs = sum(1 for v in cats.values() for i in v if i[-1].startswith("|"))
+    print(f"{OUT}: {total} emoji, {toned} with skin tones, {pairs} of two people with mixed tones")
     for lang in LANGS:
         kw = keywords(cats, lang)
         head = [
