@@ -5520,6 +5520,17 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice._await_mic_closed(5))
         first.close.assert_called_once()
 
+    def test_a_double_tap_opens_once_when_the_default_input_cannot_be_read_between_taps(self):
+        voice, tap = self._tapper()
+        # read at the first open's check and its re-init, then unreadable at the second tap
+        app._default_input_id.side_effect = [89, 89, None]
+
+        tap(at=100.0, held=0.1)
+        tap(at=100.3, held=0.1)
+
+        self.assertTrue(voice.latched)
+        self.assertEqual(app.sd.InputStream.call_count, 1)
+
     def test_a_lone_tap_keeps_the_microphone_only_until_a_second_tap_could_come(self):
         voice, _tap = self._tapper()
         stream = app.sd.InputStream.return_value
