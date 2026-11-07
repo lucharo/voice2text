@@ -134,6 +134,9 @@ def sync_once(job: dict, out: Path, udid: str, relaunch_after: float | None) -> 
     stale = now - s["last_row"]["t"] if "last_row" in s else None
     # relaunch only on fresh evidence, and only if the phone would resume this job rather than a newer one
     fresh = link and all(v in ("copied", "unchanged") for v in pulled.values())
+    # a stop counts only when this poll read the phone's own log: an old local copy may hold a stop that a
+    # relaunch on the phone has since put behind it
+    s["stopped_now"] = bool(s.get("stopped") and fresh and not s["diverged"])
     if fresh and relaunch_after and not s["ended"] and stale is not None and stale > relaunch_after * 60:
         current = phone_job_name(udid)
         s["relaunched"] = pc.launch(udid) if current == job["name"] else f"no: the phone's job is {current}"
@@ -159,7 +162,7 @@ def main() -> int:
     udid = pc.pick_device(a.device)
     while True:
         s = sync_once(job, out, udid, a.relaunch_after)
-        if s.get("stopped"):
+        if s.get("stopped_now"):
             return 1  # waiting longer cannot help: the line above says why
         if not a.watch or finished(s):
             return 0

@@ -260,6 +260,17 @@ class Finished(unittest.TestCase):
                 second = phone_sync.sync_once(JOB, out, "udid", None)
             self.assertEqual([phone_sync.finished(first), phone_sync.finished(second)], [False, False])
 
+    def test_only_a_stop_read_from_the_phone_this_poll_ends_the_watch(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            write(out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "stopped", "failed": ["a"], "t": 2}])
+            got = []
+            for link, copy in (("wired", "unchanged"), (None, None), ("wired", "copy failed")):
+                with mock.patch.object(pc, "reach", return_value=link), \
+                     mock.patch.object(pc, "copy_from", return_value=copy), mock.patch("builtins.print"):
+                    got.append(phone_sync.sync_once(JOB, out, "udid", None)["stopped_now"])
+            self.assertEqual(got, [True, False, False])
+
 
 if __name__ == "__main__":
     unittest.main()
