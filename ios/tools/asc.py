@@ -240,6 +240,9 @@ class Release:
         build = self.pick_build()
         versions = get(f"apps/{APP_ID}/appStoreVersions", **{"filter[platform]": "IOS", "limit": "50"})
         first_release = not any(state_of(v) in RELEASED for v in versions)
+        if not first_release and not self.whats_new:  # before any change, so a bad tag leaves nothing half done
+            sys.exit("an update needs \"What's New\" text: tag with a message, e.g. "
+                     f"git tag -a ios-v{self.version_string} -m \"Fixes the mic key after a call\"")
         version = self.app_store_version(versions)
 
         if version is None:  # dry run, and the version does not exist yet
@@ -275,9 +278,6 @@ class Release:
         localizations = get(f"appStoreVersions/{version['id']}/appStoreVersionLocalizations")
         if first_release:
             print("  first release: Apple shows no \"What's New\" for it, so none is set")
-        elif not self.whats_new:
-            sys.exit("an update needs \"What's New\" text: tag with a message, e.g. "
-                     f"git tag -a ios-v{self.version_string} -m \"Fixes the mic key after a call\"")
         else:
             for localization in localizations:
                 if (localization["attributes"].get("whatsNew") or "").strip() != self.whats_new:
