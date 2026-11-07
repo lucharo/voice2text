@@ -176,6 +176,27 @@ struct TouchArbiterTests {
     #expect(events.isEmpty && arbiter.mode(of: 0) == .tap)
   }
 
+  @Test func aSwipeUnderWayWhenThePageChangesIsDropped() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let t = key("t")
+    arbiter.began(0, key: t, at: t.center, time: 0, canSwipe: true)
+    _ = arbiter.moved(0, [(CGPoint(x: t.center.x + 3 * layout.unitWidth, y: t.center.y), 0.3)])
+    #expect(arbiter.mode(of: 0) == .swiping)
+    arbiter.stopSwipes()
+    #expect(arbiter.ended(0, at: t.center, time: 0.5).isEmpty)
+  }
+
+  @Test func aTapRightAfterReturnStaysATap() {
+    var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
+    let ret = layout.keys.first { $0.action == .returnKey }!, t = key("t")
+    arbiter.began(0, key: ret, at: ret.center, time: 0, canSwipe: false)
+    _ = arbiter.ended(0, at: ret.center, time: 0.08)
+    arbiter.began(1, key: t, at: t.center, time: 0.15, canSwipe: true)
+    let events = arbiter.moved(1, [(CGPoint(x: t.center.x + 0.8 * layout.unitWidth, y: t.center.y), 0.2)])
+    #expect(events.isEmpty)
+    #expect(arbiter.ended(1, at: t.center, time: 0.21) == [.tapped(t, at: t.center, touch: 1)])
+  }
+
   @Test func theSpaceBarTrackpadTypesNoSpace() {
     var arbiter = TouchArbiter<Int>(unitWidth: layout.unitWidth)
     let space = key(" ")

@@ -71,7 +71,7 @@ final class KeyboardView: UIView {
   func setLayout(_ l: KeyboardLayout) {
     layout = l
     arbiter.unitWidth = l.unitWidth
-    if l.page != .letters { arbiter.stopSwipes() }  // a finger still down from the letters page taps
+    if l.page != .letters { arbiter.stopSwipes(); clearTrail() }  // a finger still down from the letters page taps
     rebuild()
   }
 
@@ -453,10 +453,17 @@ final class KeyboardView: UIView {
   }
 
   private func updateAlternativeChoice(_ track: Track, x: CGFloat, for id: ObjectIdentifier) {
+    // another finger's balloon or menu may have taken the overlay over meanwhile: draw this menu back
+    // first, so the choice is read from its own cells (#145)
+    if previewOwner != id {
+      previewOwner = id
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      preview.showAlternatives(track.alternatives, chosen: track.chosen, over: track.key.frame, in: bounds, traits: traitCollection)
+      CATransaction.commit()
+    }
     let i = preview.alternativeIndex(at: x, count: track.alternatives.count)
-    // another finger's balloon may have taken the overlay over meanwhile: draw the accents back (#145)
-    guard i != track.chosen || previewOwner != id else { return }
-    previewOwner = id
+    guard i != track.chosen else { return }
     track.chosen = i
     CATransaction.begin()
     CATransaction.setDisableActions(true)
