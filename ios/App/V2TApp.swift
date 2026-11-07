@@ -495,7 +495,12 @@ struct KeyboardSettingsView: View {
         Text("Until I turn it off").tag(0)
       }
       Section {
-        Picker("Emoji skin tone", selection: $skinTone) {
+        // written on every pick, the one already shown too: the keyboard may hold a newer tone of its own,
+        // picked there without Full Access, which this screen cannot see
+        Picker("Emoji skin tone", selection: Binding(get: { skinTone }, set: {
+          skinTone = $0
+          Settings.shared.emojiSkinTone = SkinTone(rawValue: $0)
+        })) {
           Text("👋 Yellow").tag(0)
           ForEach(SkinTone.allCases, id: \.rawValue) { t in Text("👋" + t.modifier).tag(t.rawValue) }
         }
@@ -505,7 +510,6 @@ struct KeyboardSettingsView: View {
       }
     }
     .navigationTitle("Keyboard")
-    .onChange(of: skinTone) { Settings.shared.emojiSkinTone = SkinTone(rawValue: skinTone) }
     .onChange(of: layout) { Settings.shared.layoutLanguage = layout; saveLanguages() }
     .onChange(of: bilingual) { saveLanguages() }
     .onChange(of: warm) {

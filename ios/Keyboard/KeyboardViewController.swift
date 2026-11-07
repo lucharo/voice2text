@@ -72,7 +72,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       guard let self else { return }
       let emoji = engine.emojiSuggestion == word
       edit { $0.pick(word) }
-      if emoji { EmojiStore.record(word) }  // the bar's emoji joins the panel's recents
+      if emoji { EmojiStore.record(word, toned: tonedEmoji) }  // the bar's emoji joins the panel's recents
     }
     bar.onDismiss = { [weak self] in self?.dismissKeyboard() }
     bar.showsDismiss = !layout.form.isPad
@@ -123,6 +123,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     applyTraits()
     engine.resync()
     refresh()
+    emojiPanel?.reload()  // the default skin tone may have changed in the app meanwhile
     dictation.attach()
     if let p = Settings.shared.previewRecording {
       panel.preview = true
@@ -433,8 +434,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let s = EmojiSearchBar(indexes: langs.compactMap { emojiIndexes[$0.rawValue] }, recents: { EmojiStore.load().recents },
                            tone: { [weak self] list in self.map { EmojiStore.shown(list, toned: $0.tonedEmoji) } ?? list })
     s.onPick = { [weak self] e in
-      self?.edit("emoji") { $0.emoji(e) }
-      EmojiStore.record(e)
+      guard let self else { return }
+      edit("emoji") { $0.emoji(e) }
+      EmojiStore.record(e, toned: tonedEmoji)
     }
     s.onClose = { [weak self] in self?.endEmojiSearch() }
     s.translatesAutoresizingMaskIntoConstraints = false
