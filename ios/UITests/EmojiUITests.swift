@@ -261,7 +261,8 @@ import XCTest
   // MARK: emoji search in a numbers field (#138)
 
   /// In a numbers-and-punctuation field the keys open on numbers. Emoji search brings the letters, and they
-  /// stay after a result goes into the field: that change used to send the keys back to numbers mid-query.
+  /// stay when the app then changes the field's text (this one adds a "#" after each change): that change
+  /// used to send the keys back to numbers mid-query.
   func testEmojiSearchKeepsItsLettersInANumbersField() {
     app.launchEnvironment["V2T_TRY_KEYBOARD"] = "numbers"
     launch(globe: "0", firstKey: "numbers-1")
@@ -273,8 +274,7 @@ import XCTest
     let pizza = app.buttons["emoji.result.🍕"]
     XCTAssertTrue(pizza.waitForExistence(timeout: 3))
     pizza.tap()
-    waitForText("🍕")
-    RunLoop.current.run(until: Date().addingTimeInterval(1))  // the field's change reaches the keyboard after the insert
+    waitForText("🍕#")  // the app's own change, which iOS reports to the keyboard
     XCTAssertTrue(key("letters-a").exists, "the keys went back to numbers while search was open")
     key("letters-a").tap()
     XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "pizza")
