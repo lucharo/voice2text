@@ -38,7 +38,7 @@ MARKS = (",", ".", "?", "!", ":", ";")
 # a grouped number (1,000.5) is one word, so its comma is not punctuation; an apostrophe belongs to a word
 # only inside it (it's), so quotes around a word stay outside
 # a number keeps its sign and a leading decimal point (-5, .5) unless it follows a word (3-5)
-_WORD_RE = (r"(?<!\w)[-+−]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+)(?![\w'’])"
+_WORD_RE = (r"(?<!\w)[-+−]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+)(?!\w|['’]\w)"
             r"|\w+(?:['’]\w+)*(?:[-.]\w+(?:['’]\w+)*)*")
 _WORD = re.compile(_WORD_RE)
 _TOKEN = re.compile(_WORD_RE + r"|[^\w\s]")

@@ -38,6 +38,12 @@ class Compare(unittest.TestCase):
 
         self.assertEqual([(c["digits_ref"], c["digits_hit"]) for c in (flipped, point, ranged)], [(1, 0), (1, 0), (2, 2)])
 
+    def test_a_quoted_number_is_still_one_number(self):
+        signed = ce.compare("Value '-5'.", "Value '5'.")
+        grouped = ce.compare("Sold '1,000' units.", "Sold '1,000' units.")
+
+        self.assertEqual([(c["digits_ref"], c["digits_hit"], c["fp,"]) for c in (signed, grouped)], [(1, 0, 0), (1, 1, 0)])
+
     def test_quotes_stay_outside_the_word_so_its_capital_counts(self):
         got = ce.compare("'Hello,' she said.", "'hello,' she said.")
 
