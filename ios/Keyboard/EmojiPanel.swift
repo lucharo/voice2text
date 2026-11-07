@@ -443,11 +443,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
   }
 
   private func openPairPicker(_ item: Emoji, shown: String, over cell: CGRect) {
-    let font = emojiFont.font(size: emojiSize)
-    var renew = false
-    for o in [item.base] + item.skinTones + item.people(.light) + item.people(.dark) where emojiFont.note(o) { renew = true }
-    pairPicker.show(item, shown: shown, over: cell, in: bounds, font: font, traits: traitCollection)
-    if renew { renewSoon() }
+    pairPicker.show(item, shown: shown, over: cell, in: bounds, size: emojiSize, traits: traitCollection)
     catcher.isHidden = false
     bringSubviewToFront(catcher)
     bringSubviewToFront(pairPicker)
@@ -541,7 +537,7 @@ final class EmojiFont {
   static func limit(viewport: CGSize, cell: CGSize) -> Int {
     guard cell.width > 0, cell.height > 0 else { return 120 }
     let rows = Int(viewport.height / cell.height), columns = Int((viewport.width / cell.width).rounded(.up)) + 1
-    return max(120, 2 * rows * columns + PairPicker.glyphs)  // and an open skin-tone picker
+    return max(120, 2 * rows * columns + 6)  // + 6: an open skin-tone picker (the pair picker has its own font)
   }
   private var graphicsFont: CGFont?
   private var sized: [CGFloat: UIFont] = [:]
@@ -665,13 +661,11 @@ final class TonePicker: UIView {
 /// long press ends; a touch elsewhere closes it. Apple's exact layout is not documented (it was first shown
 /// in iOS 13.2, "skin tones are selected for the left and right people one at a time"), so this one is v2t's.
 final class PairPicker: UIView {
-  /// Distinct emoji an open picker draws: the yellow one, the pair, and five tones of each person; with the
-  /// pair's 5 same-tone forms, which a tap can show.
-  static let glyphs = 14
 
   var onPick: ((String) -> Void)?
   private(set) var item: Emoji?
   private var first: SkinTone?, second: SkinTone?
+  private var emojiFont: EmojiFont?
   private var yellow = PickCell(), preview = PickCell()
   private var rows: [[PickCell]] = []
 
@@ -688,9 +682,14 @@ final class PairPicker: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-  func show(_ item: Emoji, shown: String, over cell: CGRect, in bounds: CGRect, font: UIFont, traits: UITraitCollection) {
+  func show(_ item: Emoji, shown: String, over cell: CGRect, in bounds: CGRect, size: CGFloat, traits: UITraitCollection) {
     hide()
     self.item = item
+    // its own copy of the emoji font, let go of on hide: tapping through the tones draws up to 32 distinct
+    // emoji (each person in five tones, the pairs it previews), which the grid's copy never counts
+    let emojiFont = EmojiFont()
+    self.emojiFont = emojiFont
+    let font = emojiFont.font(size: size)
     let t = item.tones(of: shown) ?? []
     first = t.first
     second = t.last
@@ -728,6 +727,7 @@ final class PairPicker: UIView {
     rows = []
     yellow = PickCell()  // new empty cells, so the old ones' emoji font goes too
     preview = PickCell()
+    emojiFont = nil
     item = nil
   }
 
