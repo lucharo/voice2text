@@ -530,6 +530,26 @@ struct TypingEngineTests {
     #expect(q.text == "I saw the! Ok")
   }
 
+  /// Two marks after a corrected word, then more address: still an address, so the word goes back
+  /// ("teh+!tag@", #136); two sentence marks then a space still end a sentence corrected ("teh?! ").
+  @Test func twoMarksAfterACorrectionWaitForWhatFollows() throws {
+    for marks in ["+!", "!#", "+=", "?!"] {
+      let (e, p) = try engine("mail ")
+      type("teh", e)
+      for (i, m) in marks.enumerated() { e.character(String(m), now: 50 + Double(i)) }
+      type("tag", e, start: 60)
+      e.character("@", now: 70)
+      type("example.com ", e, start: 80)
+      #expect(p.text == "mail teh\(marks)tag@example.com ", "\(marks)")
+    }
+    let (f, q) = try engine("I saw ")
+    type("teh", f)
+    f.character("?", now: 50)
+    f.character("!", now: 51)
+    type(" ok", f, start: 60)
+    #expect(q.text == "I saw the?! Ok")
+  }
+
   /// A contraction typed onto a reopened replacement ("we" + "'re") is one word, not a new shortcut.
   @Test func aContractionOnAReopenedReplacementIsOneWord() throws {
     let (e, p) = try engine("ok ")
