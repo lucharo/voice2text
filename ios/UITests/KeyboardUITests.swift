@@ -8,6 +8,7 @@ import XCTest
   func launch(layout: String = "en") {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = layout
+    app.launchEnvironment["V2T_RESET_DICTIONARY"] = "1"
     app.launch()
     // a fresh Simulator clone has not added the keyboard yet: add it once, as MicrophoneUITests does
     if !app.staticTexts["Done: the v2t keyboard is on."].waitForExistence(timeout: 5) {

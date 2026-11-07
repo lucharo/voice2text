@@ -369,7 +369,18 @@ final class KeyboardView: UIView {
   private func release(_ track: Track, _ id: ObjectIdentifier) {
     track.timer?.invalidate()
     track.timer = nil
-    if previewOwner == id { hidePreview() }
+    if previewOwner == id {
+      hidePreview()
+      // a finger still holding an accent menu gets it back (#145)
+      if let other = tracks.first(where: { $0.key != id && !$0.value.alternatives.isEmpty }) {
+        let held = other.value
+        previewOwner = other.key
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        preview.showAlternatives(held.alternatives, chosen: held.chosen, over: held.key.frame, in: bounds, traits: traitCollection)
+        CATransaction.commit()
+      }
+    }
     setPressed(track.key, false)
   }
 
@@ -442,9 +453,10 @@ final class KeyboardView: UIView {
   }
 
   private func updateAlternativeChoice(_ track: Track, x: CGFloat, for id: ObjectIdentifier) {
-    previewOwner = id  // another finger's balloon may have taken the overlay over meanwhile
     let i = preview.alternativeIndex(at: x, count: track.alternatives.count)
-    guard i != track.chosen else { return }
+    // another finger's balloon may have taken the overlay over meanwhile: draw the accents back (#145)
+    guard i != track.chosen || previewOwner != id else { return }
+    previewOwner = id
     track.chosen = i
     CATransaction.begin()
     CATransaction.setDisableActions(true)
