@@ -1,0 +1,36 @@
+name: appstore-probe
+# TEMPORARY (removed before review): runs the read-only dry run from this branch.
+on:
+  push:
+    branches: [pi/v2t-appstore]
+    paths: [".github/workflows/appstore-probe.yml", "ios/tools/asc.py"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testflight
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+      - name: Status
+        working-directory: ios
+        run: uv run --quiet tools/asc.py status
+      - name: Dry run
+        working-directory: ios
+        run: uv run --quiet tools/asc.py release ios-v1.0 --dry-run
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
