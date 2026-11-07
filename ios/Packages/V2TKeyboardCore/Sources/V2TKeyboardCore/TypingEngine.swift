@@ -53,8 +53,9 @@ public final class TypingEngine {
   public private(set) var lastCorrection: (original: String, replacement: String)? {
     didSet { if lastCorrection == nil { correctionThenMark = nil } }
   }
-  /// The full stop, plus sign or colon typed straight after an autocorrect: a letter or an address mark next
-  /// means the word was part of an address ("exmaple.com", "teh+tag@", "https://"), so it is undone.
+  /// The address marks typed straight after an autocorrect ("." or "+", "+!" as more follow): a letter or an
+  /// address mark next means the word was part of an address ("exmaple.com", "teh+!tag@", "https://"), so it
+  /// is undone; a space keeps it ("teh?! ").
   private var correctionThenMark: String?
   /// Set after a delete removed the space after an autocorrect: the bar offers `original` to revert to.
   public private(set) var revertOffer: String? { didSet { if revertOffer == nil { revertPhrase = nil } } }
@@ -109,8 +110,9 @@ public final class TypingEngine {
     let closesSentence = [".", "!", "?"].contains(s)
     let attaches = closesSentence || [",", ";", ":", ")", "”", "»", "…"].contains(s)
     // "teh+_tag": an address mark after the plus, so the word goes back as typed
-    // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too
-    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark != nil && correctionThenMark != "." { undoCorrectionBeforeMark() }
+    // a full stop after a corrected word's plus sign ("teh+.tag") is inside an email tag too; after full
+    // stops only ("teh..."), it is an ellipsis still waiting for what follows
+    if "@_+/:#\\=".contains(s) || s == "." && correctionThenMark?.contains(where: { $0 != "." }) == true { undoCorrectionBeforeMark() }
     // before "@" or "_" the word is an email address or a handle ("jhon@", "jhon_doe"): left as typed
     let corrected = ["@", "_"].contains(s) ? { composing = []; return false }() : commitWord()
     if attaches, autoSpace, before.hasSuffix(" ") {
@@ -122,8 +124,10 @@ public final class TypingEngine {
       autoSpace = false
     }
     lastSwipe = nil
-    // marks an email address can hold straight after a word ("teh!tag@", "teh#tag@"): a letter next undoes it
-    correctionThenMark = corrected && Self.addressMarks.contains(s) ? s : nil
+    // marks an email address can hold straight after a word ("teh!tag@", "teh#tag@"): a letter next undoes it.
+    // They add up until something else decides: "teh+!tag@" is an address, "teh?! " a sentence (#136)
+    let mark = Self.addressMarks.contains(s)
+    if corrected { correctionThenMark = mark ? s : nil } else if mark, let m = correctionThenMark { correctionThenMark = m + s } else { correctionThenMark = nil }
     if correctionThenMark == nil { lastCorrection = nil }
     revertOffer = nil
     refreshShift()
@@ -143,6 +147,7 @@ public final class TypingEngine {
       return
     }
     lastSwipe = nil
+    correctionThenMark = nil  // a space after "the?!" ends the sentence: the correction stays
     if autoSpace { autoSpace = false; refreshShift(); return }  // the space is already there
     commitWord()
     proxy.insertText(" ")
