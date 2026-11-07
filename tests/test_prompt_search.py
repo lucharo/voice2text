@@ -15,10 +15,10 @@ class Render(unittest.TestCase):
     def test_todays_candidate_is_the_prompt_the_app_sends(self):
         prompt = ps.render(ps.TODAY, ["Claude", "roborev"])
 
-        # ios/App/Cleaner.swift: messages(...)[0] as instructions, "Dictation: …\nCleaned:", max(64, 3 x words)
+        # ios/App/Cleaner.swift: messages(...)[0] as instructions, CleanupPrompt.appleFrame, max(64, 3 x words)
         self.assertEqual(prompt, {
             "instructions": backends.cleanup_messages("x", "casual", ["Claude", "roborev"])[0]["content"],
-            "frame": "Dictation: {text}\nCleaned:", "cap": 3, "min_cap": 64, "chunk_words": 120})
+            "frame": 'Dictation:\n"""\n{text}\n"""\nCleaned:', "cap": 3, "min_cap": 64, "chunk_words": 120})
 
     def test_knobs_change_only_their_part(self):
         today = ps.render(ps.TODAY, [])["instructions"]

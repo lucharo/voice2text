@@ -2,6 +2,10 @@ import Testing
 @testable import V2TCleanup
 
 @Suite struct KeepSpokenWordsTests {
+  @Test func appleModelGetsTheChunkInAQuotedBlock() {
+    #expect(CleanupPrompt.appleFrame("so um the plan is fine") == "Dictation:\n\"\"\"\nso um the plan is fine\n\"\"\"\nCleaned:")
+  }
+
   @Test func fillersRepeatsNumbersAndDictionaryFixesStayOut() {
     let result = keepSpokenWords(
       raw: "uh PR three five nine is is done by clot", clean: "PR #359 is done by Claude.", vocabulary: ["Claude"])

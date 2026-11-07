@@ -86,6 +86,15 @@ public enum CleanupPrompt {
     }
   }
 
+  /// How Apple's on-device model is handed one chunk: labelled as dictation and fenced in a quoted block, so
+  /// it cleans the text instead of answering it. On an iPhone 16 Pro the fence left 22 fewer stray full
+  /// stops at piece cuts than "Dictation: <chunk>\nCleaned:" over 364 held-out items (78 against 56, 488
+  /// cuts), with no answers instead of 5 and 8 guard reverts instead of 19; spoken words and formatted WER
+  /// showed no difference (#126).
+  public static func appleFrame(_ chunk: String) -> String {
+    "Dictation:\n\"\"\"\n\(chunk)\n\"\"\"\nCleaned:"
+  }
+
   /// Chat messages for one cleanup call: system prompt, examples, then the text. `vocabulary` is the
   /// user's dictionary (names, products, jargon), appended to the system prompt.
   public static func messages(
