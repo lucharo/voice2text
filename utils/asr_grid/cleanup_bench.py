@@ -60,8 +60,10 @@ def _rss_mb(pid: int) -> float | None:
 
 
 def _ollama_runner_mb() -> float | None:
-    """Ollama keeps the model in its runner process, not in v2t's worker."""
-    pids = subprocess.run(["pgrep", "-f", "ollama runner"], capture_output=True, text=True).stdout.split()
+    """Ollama keeps the model in its runner process, not in v2t's worker (`ollama runner`, or
+    since about 0.40 a llama-server under Ollama's lib folder)."""
+    pids = subprocess.run(["pgrep", "-f", "ollama runner|lib/ollama/llama-server"],
+                          capture_output=True, text=True).stdout.split()
     sizes = [_footprint_mb(int(p)) for p in pids]
     return round(sum(s for s in sizes if s), 1) if any(sizes) else None
 
