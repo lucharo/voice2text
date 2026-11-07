@@ -38,6 +38,8 @@ class FakeConnect:
         self.items = items or {}  # {submission id: [App Store version ids]}
         self.whats_new = whats_new
         self.screenshots = {"APP_IPHONE_67": 3, "APP_IPAD_PRO_3GEN_129": 2}
+        self.category = {"id": "PRODUCTIVITY"}
+        self.failing = {}  # {path: HTTP status} for GETs that fail with an empty body
         self.writes = []
 
     def __call__(self, method, path, params=None, body=None):
@@ -50,6 +52,8 @@ class FakeConnect:
                                         "PREPARE_FOR_SUBMISSION")}
             return {}
         params = params or {}
+        if path in self.failing:
+            raise asc.ApiError(method, path, self.failing[path], "")
         if path == "builds":
             found = self.builds.get(params["filter[preReleaseVersion.version]"], [])
             if "filter[version]" in params:
@@ -79,7 +83,7 @@ class FakeConnect:
         if path == "appInfos/info/appInfoLocalizations":
             return {"data": [{"attributes": {"locale": "en-GB", "name": "v2t", "privacyPolicyUrl": "p"}}]}
         if path == "appInfos/info/primaryCategory":
-            return {"data": {"id": "PRODUCTIVITY"}}
+            return {"data": self.category}
         if path == "appInfos/info/ageRatingDeclaration":
             return {"data": {"attributes": {"gambling": False, "kidsAgeBand": None}}}
         if path in (f"apps/{APP}/appPriceSchedule", f"apps/{APP}/appAvailabilityV2"):
@@ -262,6 +266,25 @@ class Release(unittest.TestCase):
                          "  - What's New: the tag's message, which a dry run does not have\n"
                          "  - iPad 13-inch screenshots (en-GB)")
         self.assertEqual(fake.writes, [])
+
+    def test_dry_run_without_a_draft_version_still_checks_the_app_wide_listing(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {"1.1": [build("b120", "120")]})
+        fake.category = None
+
+        with self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1", whats_new="New", dry_run=True)
+
+        self.assertEqual(str(stop.exception), "missing before App Review can take it:\n  - primary category")
+        self.assertEqual(fake.writes, [])
+
+    def test_unreadable_price_is_reported_not_a_crash(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
+        fake.failing = {f"apps/{APP}/appPriceSchedule": 503}
+
+        with self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, dry_run=True)
+
+        self.assertEqual(str(stop.exception), "missing before App Review can take it:\n  - price (HTTP 503)")
 
     def test_dry_run_fails_listing_the_missing_screenshots(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})

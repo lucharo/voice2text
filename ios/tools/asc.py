@@ -70,6 +70,7 @@ class ApiError(Exception):
         for e in errors:  # a refused review submission lists every missing item here
             for detail in (e.get("meta") or {}).get("associatedErrors", {}).values():
                 lines += [f"  - {d.get('code')}: {d.get('detail') or d.get('title')}" for d in detail]
+        self.detail = lines[0] if errors else f"HTTP {status}"
         super().__init__(f"{method} {path}: HTTP {status}\n" + "\n".join(lines))
 
 
@@ -259,8 +260,8 @@ class Release:
         version = self.app_store_version(versions)
 
         if version is None:  # dry run, and the version does not exist yet
-            print("  (dry run: nothing more to check until the version exists)")
-            self.report(missing + ["App Store version record (created by the real run)"])
+            print("  (dry run: the version's own listing is checked once the real run creates it)")
+            self.report(missing + self.check_app())
             return
 
         state = state_of(version)
@@ -381,6 +382,19 @@ class Release:
             missing += [f"App Review {field}" for field in ("contactFirstName", "contactLastName", "contactPhone",
                                                              "contactEmail") if not review["attributes"].get(field)]
 
+        return missing + self.check_app()
+
+    def check_app(self) -> list[str]:
+        """The app-wide part of the listing, shared by every version."""
+        missing = []
+
+        def read(path: str, **params: str):
+            try:
+                return get(path, **params)
+            except ApiError as error:
+                missing.append(f"could not read {path}: HTTP {error.status}")
+                return None
+
         app = read(f"apps/{APP_ID}")
         if app and not app["attributes"].get("contentRightsDeclaration"):
             missing.append("content rights declaration")
@@ -407,7 +421,7 @@ class Release:
             try:
                 get(path)
             except ApiError as error:
-                missing.append(f"{what} ({str(error).splitlines()[1] if error.status != 404 else 'not set'})")
+                missing.append(f"{what} ({error.detail if error.status != 404 else 'not set'})")
         return missing
 
     def report(self, missing: list[str]) -> None:
