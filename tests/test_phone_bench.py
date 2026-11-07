@@ -58,6 +58,63 @@ class LoadJob(unittest.TestCase):
         self.assertEqual(msgs, ["job name and arm ids may use only letters, digits, . _ -"] * 3)
 
 
+class PromptJobs(unittest.TestCase):
+    """A cleanup job may read its items and AFM prompt files from Documents (#126)."""
+
+    AFM = {"name": "ps", "set": "cleanup", "block": 5, "inputs": "in.jsonl", "arms": [
+        {"id": "a", "runtime": "afm", "options": {"prompt": "p1.json"}},
+        {"id": "b", "runtime": "afm", "options": {"prompt": "p2.json"}},
+        {"id": "c", "runtime": "afm", "options": {"prompt": "p1.json"}}]}
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "job.json"
+
+    def load(self, job: dict) -> dict:
+        self.path.write_text(json.dumps(job))
+        return pc.load_job(self.path)
+
+    def test_inputs_and_prompt_files_are_pushed_once_each(self):
+        job = self.load(self.AFM)
+
+        files = pc.job_files(job, self.path)
+
+        d = Path(self.dir.name)
+        self.assertEqual(files, [(d / "in.jsonl", "in.jsonl"), (d / "prompts/p1.json", "prompts/p1.json"),
+                                 (d / "prompts/p2.json", "prompts/p2.json")])
+
+    def test_a_job_without_them_pushes_nothing_extra(self):
+        self.assertEqual(pc.job_files(self.load(JOB), self.path), [])
+
+    def test_bad_inputs_and_prompts_are_refused(self):
+        bad = {**self.AFM, "set": "speech", "arms": [
+            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+        with self.assertRaises(SystemExit) as e:
+            self.load(bad)
+        self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
+            "inputs is a file name (letters, digits, . _ -) for the cleanup set",
+            "arm a: runtime mlx runs on the cleanup set, not speech",
+            "arm b: runtime afm runs on the cleanup set, not speech",
+        ])
+        bad = {**self.AFM, "inputs": "x/in.jsonl", "arms": [
+            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+        with self.assertRaises(SystemExit) as e:
+            self.load(bad)
+        self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
+            "inputs is a file name (letters, digits, . _ -) for the cleanup set",
+            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+        ])
+
+    def test_items_are_counted_from_the_inputs_beside_the_job(self):
+        (Path(self.dir.name) / "in.jsonl").write_text("".join(json.dumps({"id": str(i), "chunks": ["x"]}) + "\n" for i in range(7)))
+
+        self.assertEqual(pc.item_count({**self.AFM, "limit": 5}, job_path=self.path), 5)
+
+
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
         with tempfile.TemporaryDirectory() as d:
