@@ -501,6 +501,24 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertIs(voice.stream, retried)
         retried.start.assert_called_once()
 
+    def test_a_slow_open_is_logged_whatever_the_microphone_is_called(self):
+        voice, _calls = self._opener([89, 89], [mock.Mock()])
+        logged = []
+        sink = app.logger.add(logged.append, format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+
+        with (
+            mock.patch.object(app, "_default_input_name", return_value="Desk Mic (100%)"),
+            mock.patch.object(app, "SLOW_KEY_S", -1.0),  # every open counts as slow
+        ):
+            voice.start_recording(show=False)
+
+        self.assertTrue(voice.recording)
+        self.assertEqual(
+            [line.split(" took ")[0] for line in logged if "Opening the microphone" in line],
+            ["Opening the microphone (Desk Mic (100%))"],
+        )
+
     def test_a_retry_that_fails_too_reports_the_microphone_unavailable(self):
         voice, calls = self._opener(
             [89] * 6, [mock.Mock(), RuntimeError("Invalid Property Value"), RuntimeError("still gone")]

@@ -795,9 +795,10 @@ class VoiceToText:
                         self.open_phases = self._open_stream(True)
                     took = time.perf_counter() - opened_at
                     if took > SLOW_KEY_S:
+                        devices, opening, starting = self.open_phases
                         logger.info(
                             f"Opening the microphone ({self.input_device}) took {took:.2f}s "
-                            "(devices %.2fs, open %.2fs, start %.2fs)" % self.open_phases
+                            f"(devices {devices:.2f}s, open {opening:.2f}s, start {starting:.2f}s)"
                         )
             except Exception as error:
                 self.recording = False
