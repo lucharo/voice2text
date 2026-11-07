@@ -49,14 +49,14 @@ jobs:
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
       - name: Read What's New from the tag's message
-        if: github.event_name == 'push'
         run: |
-          # checkout keeps only the commit, so fetch the tag object itself to read its message
-          git fetch --force --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
-          if [ "$(git cat-file -t "$TAG")" = tag ]; then
+          # checkout keeps only the commit, so fetch the tag object itself to read its message. A dry run may
+          # name a tag not pushed yet: then there is no message, and the dry run lists What's New as missing.
+          if git fetch --force --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null &&
+             [ "$(git cat-file -t "$TAG")" = tag ]; then
             git for-each-ref --format='%(contents:subject)%0a%0a%(contents:body)' "refs/tags/$TAG" > "$RUNNER_TEMP/whats-new.txt"
           else
-            : > "$RUNNER_TEMP/whats-new.txt"  # a lightweight tag: no message, which only the first release may have
+            : > "$RUNNER_TEMP/whats-new.txt"  # a lightweight or unpushed tag: no message, which only the first release may have
           fi
           cat "$RUNNER_TEMP/whats-new.txt"
       - name: Submit for review
@@ -66,7 +66,9 @@ jobs:
       - name: Dry run
         if: github.event_name == 'workflow_dispatch'
         working-directory: ios
-        run: uv run --quiet tools/asc.py status && uv run --quiet tools/asc.py release "$TAG" --dry-run
+        run: |
+          uv run --quiet tools/asc.py status
+          uv run --quiet tools/asc.py release "$TAG" --whats-new "$RUNNER_TEMP/whats-new.txt" --dry-run
       - name: Remove the key
         if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"
