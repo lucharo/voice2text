@@ -71,6 +71,7 @@ final class KeyboardView: UIView {
   func setLayout(_ l: KeyboardLayout) {
     layout = l
     arbiter.unitWidth = l.unitWidth
+    if l.page != .letters { arbiter.stopSwipes() }  // a finger still down from the letters page taps
     rebuild()
   }
 
@@ -355,7 +356,9 @@ final class KeyboardView: UIView {
     apply(arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp))
     if track.trackpad { setTrackpad(false); return }
     if !track.alternatives.isEmpty {
-      delegate?.keyboardView(self, typed: track.alternatives[track.chosen], at: nil)
+      // older fingers typed just above may have used up an automatic capital: the accent follows the shift now
+      let alts = track.key.longPress(shift: shift, manual: shiftManual)
+      delegate?.keyboardView(self, typed: alts.indices.contains(track.chosen) ? alts[track.chosen] : track.alternatives[track.chosen], at: nil)
     }
   }
 
