@@ -53,6 +53,10 @@ def progress(job: dict, out: Path, now: float, total: int | None = None) -> dict
     want = total * len(job["arms"]) if total is not None else None
     s = {"job": job["name"], "at": now, "done": done, "total": want, "arms": arms,
          "ended": any(r.get("event") == "end" for r in log[log.index(starts[-1]):]) if starts else False}
+    # an arm that could not load (Apple Intelligence off, a missing model) stops the launch for good
+    stopped = [r for r in log[log.index(starts[-1]):] if r.get("event") in ("stopped", "arm_failed")] if starts else []
+    if stopped and not s["ended"] and any(r.get("event") == "stopped" for r in stopped):
+        s["stopped"] = [r.get("msg") or f"stopped, failed arms: {r.get('failed')}" for r in stopped]
     if done_t:
         done_t.sort()
         recent = [t for t in done_t if t >= done_t[-1] - RATE_WINDOW]
@@ -77,6 +81,8 @@ def line(s: dict, link: str | None, now: float) -> str:
     parts.append(" ".join(f"{k}={v['done']}" + (f"({v['errors']} err)" if v["errors"] else "") for k, v in s["arms"].items()))
     if s["ended"]:
         parts.append("ENDED")
+    elif s.get("stopped"):
+        parts.append("STOPPED: " + "; ".join(map(str, s["stopped"])))
     elif "eta" in s:
         parts.append(f"{s['per_min']}/min, ends about {clock(s['eta'])}")
     if b := s.get("block"):
@@ -153,6 +159,8 @@ def main() -> int:
     udid = pc.pick_device(a.device)
     while True:
         s = sync_once(job, out, udid, a.relaunch_after)
+        if s.get("stopped"):
+            return 1  # waiting longer cannot help: the line above says why
         if not a.watch or finished(s):
             return 0
         time.sleep(a.watch)

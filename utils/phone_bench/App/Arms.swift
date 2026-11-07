@@ -32,12 +32,16 @@ enum ItemSet: String, Codable {
     switch self {
     case .cleanup:
       let url = inputs.map { documents.appendingPathComponent($0) } ?? res.appendingPathComponent("cleanup/inputs.jsonl")
-      return try String(contentsOf: url, encoding: .utf8)
-        .split(separator: "\n").map {
-          let d = try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
-          return Item(id: d["id"] as! String, chunks: d["chunks"] as! [String], file: "", dur: 0,
-                      chunksBy: d["chunks_by"] as? [String: [String]] ?? [:])
+      let items = try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n").enumerated().map { (n, line) in
+          // a job's own inputs come from outside the bundle: a bad line is an error, not a crash
+          guard let d = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                let id = d["id"] as? String, let chunks = d["chunks"] as? [String]
+          else { throw BenchError("\(url.lastPathComponent) line \(n + 1): needs a string id and a list of chunks") }
+          return Item(id: id, chunks: chunks, file: "", dur: 0, chunksBy: d["chunks_by"] as? [String: [String]] ?? [:])
         }
+      guard Set(items.map(\.id)).count == items.count else { throw BenchError("\(url.lastPathComponent): ids must be unique") }
+      return items
     case .speech:
       return try String(contentsOf: res.appendingPathComponent("clips/manifest.tsv"), encoding: .utf8)
         .split(separator: "\n").map {

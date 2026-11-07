@@ -204,6 +204,24 @@ class Progress(unittest.TestCase):
             "block": {"arm": "a", "block": 1, "i": 2, "of": 10},
             "app_state": "background"})
 
+    def test_a_launch_stopped_by_an_arm_that_cannot_load_is_reported(self):
+        write(self.out / "j.log.jsonl", [
+            {"event": "start", "items": 1, "t": 1},
+            {"event": "arm_failed", "arm": "a", "msg": "Apple Foundation Models unavailable", "t": 2},
+            {"event": "stopped", "failed": ["a"], "t": 3}])
+
+        s = phone_sync.progress(JOB, self.out, 4)
+
+        self.assertEqual(s["stopped"], ["Apple Foundation Models unavailable", "stopped, failed arms: ['a']"])
+        self.assertIn("STOPPED: Apple Foundation Models unavailable", phone_sync.line(s, "usb", 4))
+
+    def test_a_stop_before_the_latest_launch_is_forgotten(self):
+        write(self.out / "j.log.jsonl", [
+            {"event": "start", "items": 1, "t": 1}, {"event": "stopped", "failed": ["a"], "t": 2},
+            {"event": "start", "items": 1, "t": 3}])
+
+        self.assertNotIn("stopped", phone_sync.progress(JOB, self.out, 4))
+
     def test_end_after_the_latest_start_marks_the_job_ended(self):
         write(self.out / "j.log.jsonl", [{"event": "start", "items": 1, "t": 1}, {"event": "end", "t": 2}])
         self.assertTrue(phone_sync.progress(JOB, self.out, 3)["ended"])

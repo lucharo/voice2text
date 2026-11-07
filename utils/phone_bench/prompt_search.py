@@ -340,8 +340,9 @@ def run_generation(name: str, split: str, cands: list[dict], engine: str, block:
         py = sys.executable
         if subprocess.run([py, str(HERE / "phone_push.py"), str(jobdir / "job.json")]).returncode:
             raise SystemExit("phone_push failed: plug the phone in and unlock it, then run the same command again")
-        subprocess.run([py, str(HERE / "phone_sync.py"), str(jobdir / "job.json"), "--watch", "60",
-                        "--relaunch-after", "10"], check=True)
+        if subprocess.run([py, str(HERE / "phone_sync.py"), str(jobdir / "job.json"), "--watch", "60",
+                           "--relaunch-after", "10"]).returncode:
+            raise SystemExit("the phone stopped the job (see the line above): fix that, then run the same command again")
     else:
         run_mlx(job, jobdir, out, engine.split(":", 1)[1])
     return out
@@ -364,7 +365,7 @@ def run_mlx(job: dict, jobdir: Path, out: Path, model: str) -> None:
         if saved["model"] != model or saved["inputs"] != ident["inputs"] or clash:
             raise SystemExit(f"{out} holds rows from another model, inputs or prompt: use another --tag or move it aside")
         ident["prompts"] = {**saved["prompts"], **ident["prompts"]}
-    ident_path.write_text(json.dumps(ident, indent=1))
+    write_atomic(ident_path, json.dumps(ident, indent=1))
     mdl, tok = load(model)
     greedy = make_sampler(temp=0.0)
     arms = job["arms"]
@@ -373,7 +374,10 @@ def run_mlx(job: dict, jobdir: Path, out: Path, model: str) -> None:
         for a in (arms if k % 2 == 0 else arms[::-1]):
             prompt = json.loads((jobdir / "prompts" / a["options"]["prompt"]).read_text())
             path = out / f"{job['name']}.{a['id']}.jsonl"
-            done = {r.get("id") for r in grid.read_jsonl(path)}
+            done = {r.get("id") for r in phone_common.read_rows(path) if r.get("event") == "clean"}
+            if path.exists() and path.stat().st_size and not path.read_bytes().endswith(b"\n"):
+                with path.open("a") as f:  # a row cut short by a kill: end it, so the next one starts clean
+                    f.write("\n")
             with path.open("a") as f:
                 for it in items[k * job["block"]:(k + 1) * job["block"]]:
                     if it["id"] in done:
@@ -424,6 +428,13 @@ def state_path(tag: str) -> Path:
     return OUT / f"search-{tag}.json"
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """A checkpoint is either the old one or the new one, never half of one."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
 def loop(args) -> None:
     st = json.loads(state_path(args.tag).read_text()) if state_path(args.tag).exists() else {"best": TODAY, "tried": [], "generations": [], "spent": 0}
     # proposals wait in the state until they run, so none is lost to the per-job limit or a restart
@@ -465,7 +476,7 @@ def loop(args) -> None:
             print(f"  new best: {describe(st['best'])}")
         done = set(st["tried"]) | {cand_id(TODAY), cand_id(st["best"])}
         st["pending"] = [c for c in st["pending"] if cand_id(c) not in done]
-        state_path(args.tag).write_text(json.dumps(st, indent=1))
+        write_atomic(state_path(args.tag), json.dumps(st, indent=1))
     print(f"best after {st['spent']} candidates: {describe(st['best'])}")
 
 
