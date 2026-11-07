@@ -725,6 +725,12 @@ class VoiceToText:
         current = _default_input_id()
         return current is not None and current == self.devices_input_id
 
+    def _input_changed(self) -> bool:
+        """Whether CoreAudio's default input is known to differ from the one PortAudio
+        last read (an unreadable one is not known to differ)."""
+        current = _default_input_id()
+        return current is not None and current != self.devices_input_id
+
     def start_recording(self, show: bool = True, resume=None):
         """Open the microphone; with `show` the recording is also made visible.
 
@@ -763,7 +769,11 @@ class VoiceToText:
 
     def _open_microphone(self, show: bool, resume) -> None:
         with self.lifecycle_lock:
-            reuse = self.parked
+            # the first tap left the stream open; reuse it unless the default input
+            # changed meanwhile (a headset connected), which needs a fresh open
+            reuse = self.parked and not self._input_changed()
+            if self.parked and not reuse:
+                self._close_stream()
             # Re-initialising PortAudio while the last stop still runs would hang too.
             if not reuse and not self._await_mic_closed(MIC_REOPEN_WAIT_S):
                 logger.warning("Microphone still stopping; not recording")

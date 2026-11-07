@@ -4595,6 +4595,10 @@ class V2TSmokeTests(unittest.TestCase):
         stream = mock.patch.object(app.sd, "InputStream")
         self.addCleanup(stream.stop)
         stream.start()
+        # one microphone throughout, whatever this machine has (CI has no CoreAudio)
+        default_input = mock.patch.object(app, "_default_input_id", return_value=89)
+        self.addCleanup(default_input.stop)
+        default_input.start()
 
         class Timer:
             def __init__(self, _interval, function):
@@ -5491,6 +5495,30 @@ class V2TSmokeTests(unittest.TestCase):
         frames, duration = voice.jobs.get_nowait()
         np.testing.assert_array_equal(np.concatenate(frames), said)
         self.assertAlmostEqual(duration, 4.7)  # from the second press
+
+    def test_a_second_tap_after_the_default_input_changed_opens_the_new_microphone(self):
+        voice, _tap = self._tapper()
+        first, second = mock.Mock(), mock.Mock()
+        app.sd.InputStream.side_effect = [first, second]
+        default = [89]
+        app._default_input_id.side_effect = lambda: default[0]  # the _tapper's patch
+        clock = app.time.perf_counter
+
+        clock.return_value = 100.0
+        voice.on_press("HOTKEY")
+        clock.return_value = 100.1
+        voice.on_release("HOTKEY")
+        default[0] = 90  # a headset connected between the taps
+        clock.return_value = 100.3
+        voice.on_press("HOTKEY")
+        clock.return_value = 100.4
+        voice.on_release("HOTKEY")
+
+        self.assertTrue(voice.latched)
+        self.assertIs(voice.stream, second)
+        self.assertEqual(voice.devices_input_id, 90)
+        self.assertTrue(voice._await_mic_closed(5))
+        first.close.assert_called_once()
 
     def test_a_lone_tap_keeps_the_microphone_only_until_a_second_tap_could_come(self):
         voice, _tap = self._tapper()
