@@ -13,6 +13,9 @@ import V2TKeyboardCore
       Settings.shared.defaults.removeObject(forKey: "learnedWords")  // each UI test starts with nothing learned
     }
     let env = ProcessInfo.processInfo.environment
+    // the keyboard UI tests start with an empty dictionary: a word an earlier test kept ("Teh") would stop
+    // the next one's autocorrect (#147)
+    if env["V2T_RESET_DICTIONARY"] == "1" { try? PersonalDictionary().save(PersonalDictionary.header) }
     Settings.shared.previewRecording = env["V2T_PREVIEW_RECORDING"]  // never left on after a UI test
     Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
     let h = History(), d = PersonalDictionary()
