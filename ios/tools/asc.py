@@ -41,6 +41,7 @@ APP_ID = "6831059370"  # "v2t" in App Store Connect
 EXPORT_OPTIONS = Path(__file__).with_name("ExportOptions-manual.plist")
 WAIT_MINUTES = 30  # Apple: processing takes up to 30 minutes
 POLL_SECONDS = 30
+RETRYABLE = {408, 429, 500, 502, 503, 504}  # HTTP statuses that mean "try again shortly"
 TAG = re.compile(r"ios-v(?P<version>\d+\.\d+(?:\.\d+)?)(?:-(?P<build>\d+))?")
 
 # appVersionState values. A version in EDITABLE takes a new build and listing changes; one in SUBMITTED is with
@@ -121,7 +122,9 @@ def wait_for_build(build: str) -> None:
     while time.monotonic() < deadline:
         try:
             found = get("builds", **{"filter[app]": APP_ID, "filter[version]": build})
-        except OSError as error:  # a blip here must not fail a build that uploaded
+        except (OSError, ApiError) as error:  # a blip here must not fail a build that uploaded
+            if isinstance(error, ApiError) and error.status not in RETRYABLE:
+                raise
             print(f"build {build}: {error}, retrying", flush=True)
             time.sleep(POLL_SECONDS)
             continue
@@ -237,32 +240,33 @@ class Release:
         return created.get("data")
 
     def run(self) -> None:
-        build = self.pick_build()
         versions = get(f"apps/{APP_ID}/appStoreVersions", **{"filter[platform]": "IOS", "limit": "50"})
         first_release = not any(state_of(v) in RELEASED for v in versions)
-        if not first_release and not self.whats_new:  # before any change, so a bad tag leaves nothing half done
-            sys.exit("an update needs \"What's New\" text: tag with a message, e.g. "
-                     f"git tag -a ios-v{self.version_string} -m \"Fixes the mic key after a call\"")
+        done = [v for v in versions if v["attributes"]["versionString"] == self.version_string
+                and (state_of(v) in SUBMITTED or state_of(v) in RELEASED)]
+        if done:  # a rerun after success: the build may have expired since, and that no longer matters
+            self.already_submitted(done[0])
+            return
+
+        missing = []
+        if not first_release and not self.whats_new:
+            message = ("an update needs \"What's New\" text: tag with a message, e.g. "
+                       f"git tag -a ios-v{self.version_string} -m \"Fixes the mic key after a call\"")
+            if not self.dry_run:  # before any change, so a bad tag leaves nothing half done
+                sys.exit(message)
+            missing.append("What's New: the tag's message, which a dry run does not have")
+        build = self.pick_build()
         version = self.app_store_version(versions)
 
         if version is None:  # dry run, and the version does not exist yet
             print("  (dry run: nothing more to check until the version exists)")
-            missing = ["App Store version record (created by the real run)"]
-            self.report(missing)
+            self.report(missing + ["App Store version record (created by the real run)"])
             return
 
         state = state_of(version)
         attached = get(f"appStoreVersions/{version['id']}/build") if version.get("id") else None
         print(f"App Store version {self.version_string}: {state}, build "
               f"{attached['attributes']['version'] if attached else 'none'}")
-
-        if state in SUBMITTED or state in RELEASED:
-            if attached and attached["id"] != build["id"] and self.build_number:
-                sys.exit(f"version {self.version_string} is already {state} with build "
-                         f"{attached['attributes']['version']}, not {self.build_number}; cancel that in App Store "
-                         f"Connect first, or tag a new version")
-            print(f"nothing to do: version {self.version_string} is already {state}")
-            return
         if state not in EDITABLE:
             sys.exit(f"version {self.version_string} is {state}, which this script does not know how to handle")
 
@@ -278,7 +282,7 @@ class Release:
         localizations = get(f"appStoreVersions/{version['id']}/appStoreVersionLocalizations")
         if first_release:
             print("  first release: Apple shows no \"What's New\" for it, so none is set")
-        else:
+        elif self.whats_new:
             for localization in localizations:
                 if (localization["attributes"].get("whatsNew") or "").strip() != self.whats_new:
                     self.write("PATCH", f"appStoreVersionLocalizations/{localization['id']}", {"data": {
@@ -286,12 +290,21 @@ class Release:
                         "attributes": {"whatsNew": self.whats_new}}},
                         f"set What's New ({localization['attributes']['locale']})")
 
-        missing = self.check_listing(version, localizations)
+        missing += self.check_listing(version, localizations)
         if missing and not self.dry_run:  # Apple's check at the submission below is the authoritative one
             print("this listing looks incomplete; Apple will say what it needs:\n  - " + "\n  - ".join(missing))
         self.submit(version)
         if self.dry_run:
             self.report(missing)
+
+    def already_submitted(self, version: dict) -> None:
+        state = state_of(version)
+        attached = get(f"appStoreVersions/{version['id']}/build")
+        number = attached["attributes"]["version"] if attached else None
+        if self.build_number and number != self.build_number:
+            sys.exit(f"version {self.version_string} is already {state} with build {number}, not "
+                     f"{self.build_number}; cancel that in App Store Connect first, or tag a new version")
+        print(f"nothing to do: version {self.version_string} is already {state} with build {number}")
 
     def submit(self, version: dict) -> None:
         submissions = get("reviewSubmissions", **{
@@ -411,7 +424,10 @@ if __name__ == "__main__":
         case ["profiles", directory]:
             install_profiles(Path(directory))
         case ["wait", build]:
-            wait_for_build(build)
+            try:
+                wait_for_build(build)
+            except ApiError as error:
+                sys.exit(str(error))
         case ["status"]:
             status()
         case ["release", tag, *options]:

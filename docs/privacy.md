@@ -22,8 +22,9 @@ cover that.
 ## On the Mac
 
 Speech is transcribed on your Mac. The Mac app uses the network to download models from Hugging
-Face when it first needs them and to ask PyPI whether a newer version exists. A cleanup model you
-run yourself (such as Ollama) is reached on your own Mac, at `localhost`.
+Face when it first needs them and to ask PyPI whether a newer version exists. Cleanup with Ollama
+uses the Ollama server on your own Mac by default; if you set `ollama.url` to another machine, v2t
+sends the transcript and your dictionary's terms to that server for cleanup.
 
 ## Contact
 
