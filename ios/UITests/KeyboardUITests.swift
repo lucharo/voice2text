@@ -8,7 +8,14 @@ import XCTest
   func launch(layout: String = "en") {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = layout
+    app.launchEnvironment["V2T_RESET_DICTIONARY"] = "1"
     app.launch()
+    // a fresh Simulator clone has not added the keyboard yet: add it once, as MicrophoneUITests does
+    if !app.staticTexts["Done: the v2t keyboard is on."].waitForExistence(timeout: 5) {
+      app.terminate()
+      allowFullAccess()
+      app.launch()
+    }
     // the setup list changes height as the model row goes from Preparing to Ready; tapping Try it before then
     // can land on the row that moved under it
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
@@ -87,6 +94,28 @@ import XCTest
     while text.isEmpty, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     XCTAssertEqual(text, "To")
     shot("05-after-swipe")
+  }
+
+  /// Holding a letter opens its accents, and holding space turns it into a trackpad (#140 moved both onto
+  /// the touch arbiter).
+  func testLongPressAccentAndSpaceTrackpad() {
+    launch()
+    showKeyboard()
+    type("a")
+    // hold e, then slide one key right: the row is e, è, é…
+    let e = key("letters-e")
+    let from = e.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    from.press(forDuration: 0.8, thenDragTo: from.withOffset(CGVector(dx: e.frame.width, dy: 0)), withVelocity: 80, thenHoldForDuration: 0.2)
+    XCTAssertEqual(text, "Aè")
+    // hold space, slide left past the start, then type: the letter lands first (capitalised or not, as the
+    // start of the field may ask)
+    let space = key("space").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    space.press(forDuration: 0.7, thenDragTo: space.withOffset(CGVector(dx: -60, dy: 0)), withVelocity: 80, thenHoldForDuration: 0.2)
+    type("x")
+    let settled = Date().addingTimeInterval(3)
+    while text.lowercased() != "xaè", Date() < settled { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    XCTAssertEqual(text.lowercased(), "xaè")
+    shot("08-accent-and-trackpad")
   }
 
   func testSpanishLayoutRestoresAccentsAndEnye() {
