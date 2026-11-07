@@ -479,7 +479,7 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
 
   private func pickedPair(_ emoji: String) {
     guard let it = pairPicker.item else { return }
-    closePairPicker()
+    closePickers()  // also forgets a press still held, which would type the emoji again on release
     insert(emoji, from: it)
     showPicked(it)
   }
