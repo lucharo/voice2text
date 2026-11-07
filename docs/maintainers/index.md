@@ -31,6 +31,8 @@ How v2t is built, tested and shipped. You only need this page to contribute.
 | `check.yml` | every push and pull request | Lock check, lint, smoke tests, wheel and sdist build; Swift type-check on macOS |
 | `docs.yml` | docs changes | Strict docs build; deploys to GitHub Pages from `main` |
 | `release.yml` | a `v*` tag | Publishes to PyPI, signs and notarises the menu app, updates the cask |
+| `testflight.yml` | `ios/` changes on `main` | Tests, archives and uploads the iPhone app to TestFlight |
+| `appstore.yml` | an `ios-v*` tag | Submits a TestFlight build for App Store review; Apple releases it once approved |
 
 The repository is public, so GitHub Actions minutes on standard runners cost nothing and CI never pauses for a budget.
 
@@ -46,6 +48,23 @@ The repository is public, so GitHub Actions minutes on standard runners cost not
 There is no approval step: only `v*` tags reach the `release` environment, so pushing the tag is
 the release decision. The workflow publishes the engine to PyPI with trusted publishing, attaches the notarised app to
 the GitHub Release, and commits the new cask checksum to `main`.
+
+### iPhone app
+
+Merges to `main` put each iPhone build on TestFlight. To release one on the App Store, try it from TestFlight, then
+push a tag named after its version (`MARKETING_VERSION` in `ios/project.yml`), with "What's New" as the message:
+
+```sh
+git tag -a ios-v1.1 -m "The mic key works after a phone call" && git push origin ios-v1.1
+```
+
+`appstore.yml` submits the newest processed build of that version; `ios-v1.1-120` submits build 120 instead, so a
+merge that lands after you tried a build does not go out untested. Apple releases the version as soon as it approves
+it. The first release has no "What's New", so its tag may be a plain one. There is no approval step either: the
+`testflight` environment admits `main` and `ios-v*` tags only, so pushing the tag is the release decision. A rerun
+picks up where a failed run stopped, and changes nothing once the version is submitted. Run the workflow by hand from
+the Actions tab for a dry run: it only reads, and lists what the listing still lacks. Once a version is released,
+raise `MARKETING_VERSION`, because App Store Connect takes no more builds of it.
 
 ## Benchmarks
 
