@@ -322,6 +322,11 @@ class Release:
                     print(f"nothing to do: version {self.version_string} is already {state}")
                     return
                 sys.exit(f"another submission ({submission['id']}) is {state}; Apple allows one at a time")
+            for item in items:  # a rejected item blocks resubmission until it is marked resolved
+                if item.get("attributes", {}).get("state") == "REJECTED":
+                    self.write("PATCH", f"reviewSubmissionItems/{item['id']}", {"data": {
+                        "type": "reviewSubmissionItems", "id": item["id"], "attributes": {"resolved": True}}},
+                        "mark Apple's rejection resolved")
             break  # a draft or rejected submission: reuse it
         else:
             opened = self.write("POST", "reviewSubmissions", {"data": {
