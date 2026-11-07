@@ -19,6 +19,7 @@ nav = [
     { "config.toml" = "reference/config.md" },
   ] },
   { "FAQ" = "faq.md" },
+  { "Privacy" = "privacy.md" },
   { "Maintainers" = "maintainers/index.md" },
 ]
 
