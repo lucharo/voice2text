@@ -13,8 +13,6 @@ struct TouchArbiterTests {
     case down(Int, String, Double)
     /// The finger slides by (dx, dy) key widths from where it is, sampled every 8 ms (120 Hz), ending then.
     case slide(Int, CGFloat, CGFloat, Double)
-    /// The screen reports the finger at another key's centre in one sample: two quick taps merged.
-    case jump(Int, String, Double)
     case up(Int, Double)
     /// The view takes the finger over: alternatives open, or the space bar turns into a trackpad.
     case hold(Int)
@@ -34,16 +32,15 @@ struct TouchArbiterTests {
         switch e {
         case .tapped(let k, _, _): out += k.action == .space ? " " : (k.output(shift: .off) ?? "")
         case .swiped: out += "~"
-        case .swipeStarted, .pressed: break
+        case .swipeStarted: break
         }
       }
     }
-    let canSwipe = { (k: Key) in k.startsSwipe }
     for step in steps {
       switch step {
       case .down(let f, let s, let ms):
         let k = key(s)
-        arbiter.began(f, key: k, at: k.center, time: ms / 1000, canSwipe: canSwipe(k))
+        arbiter.began(f, key: k, at: k.center, time: ms / 1000, canSwipe: k.startsSwipe)
         at[f] = (k.center, ms)
       case .slide(let f, let dx, let dy, let ms):
         let (p0, t0) = at[f]!
@@ -53,12 +50,8 @@ struct TouchArbiterTests {
           let u = CGFloat(i) / CGFloat(n)
           return (CGPoint(x: p0.x + (p1.x - p0.x) * u, y: p0.y + (p1.y - p0.y) * u), (t0 + (ms - t0) * Double(u)) / 1000)
         }
-        apply(arbiter.moved(f, samples, canSwipe: canSwipe, keyAt: layout.key(at:)))
+        apply(arbiter.moved(f, samples))
         at[f] = (p1, ms)
-      case .jump(let f, let s, let ms):
-        let p = key(s).center
-        apply(arbiter.moved(f, [(p, ms / 1000)], canSwipe: canSwipe, keyAt: layout.key(at:)))
-        at[f] = (p, ms)
       case .up(let f, let ms):
         apply(arbiter.ended(f, at: at[f]!.0, time: ms / 1000))
       case .hold(let f):
@@ -103,11 +96,6 @@ struct TouchArbiterTests {
   @Test func aShortTapDuringALongHoldTypesAfterIt() {
     // left thumb holds "t" 150 ms; the right thumb taps "y" inside that hold and lifts first
     #expect(run([.down(0, "t", 0), .down(1, "y", 60), .up(1, 110), .up(0, 150)]) == "ty")
-  }
-
-  @Test func twoQuickTapsMergedIntoOneJumpingFingerTypeBoth() {
-    #expect(run([.down(0, "g", 0), .jump(0, "h", 70), .up(0, 120)]) == "gh")
-    #expect(run([.down(0, "a", 0), .jump(0, "l", 60), .up(0, 100)]) == "al")
   }
 
   @Test func aSlowSingleFingerSwipeStillSwipes() {

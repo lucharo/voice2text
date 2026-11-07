@@ -16,10 +16,6 @@ import Foundation
 ///   6 key widths, falling to the usual 0.7 over 450 ms, and to stay down at least 300 ms falling to 20 ms,
 ///   before it becomes a swipe (LatinIME `GestureStrokeRecognitionParams`: 350 ms, 6.0 → 0.35 key widths,
 ///   300 → 20 ms, 450 ms decay). A thumb that rolls as it lifts no longer turns its letter into a swipe.
-///
-/// And one for touch screens that merge two quick taps into one finger that jumps: a tap whose position
-/// moves a key width or more between two samples types its first key and starts again on the second
-/// (LatinIME `processPhantomSuddenMoveHack`).
 public struct TouchArbiter<ID: Hashable> {
   /// What a finger's progress means for the keyboard.
   public enum Event: Equatable {
@@ -29,8 +25,6 @@ public struct TouchArbiter<ID: Hashable> {
     case swipeStarted(touch: ID)
     /// A swipe ended; decode this trace.
     case swiped([CGPoint], touch: ID)
-    /// A jump started a new tap on this key for the same finger (show its balloon).
-    case pressed(Key, touch: ID)
   }
 
   public enum Mode: Equatable {
@@ -63,8 +57,6 @@ public struct TouchArbiter<ID: Hashable> {
   static var fastTypingDecay: TimeInterval { 0.45 }
   static var fastTypingDistance: CGFloat { 6 }
   static var fastTypingTime: (from: TimeInterval, to: TimeInterval) { (0.30, 0.02) }
-  /// A jump this far between two samples of one tap is two fingers, in key widths.
-  static var jumpDistance: CGFloat { 1 }
 
   private var tracks: [Track] = []
   private var lastTap: TimeInterval?
@@ -78,33 +70,16 @@ public struct TouchArbiter<ID: Hashable> {
   /// A finger landed on `key`. `canSwipe`: a letter key on the letters page.
   public mutating func began(_ id: ID, key: Key, at p: CGPoint, time: TimeInterval, canSwipe: Bool) {
     tracks.removeAll { $0.id == id }
-    tracks.append(track(id, key: key, at: p, time: time, canSwipe: canSwipe))
-  }
-
-  private func track(_ id: ID, key: Key, at p: CGPoint, time: TimeInterval, canSwipe: Bool) -> Track {
     let releasable = key.isCharacter || key.action == .space
-    return Track(id: id, key: key, start: p, began: time, points: [p], mode: releasable ? .tap : .press,
-                 canSwipe: canSwipe)
+    tracks.append(Track(id: id, key: key, start: p, began: time, points: [p], mode: releasable ? .tap : .press,
+                        canSwipe: canSwipe))
   }
 
-  /// The finger moved through these samples, oldest first. `keyAt` finds the key under a point, for a jump.
-  public mutating func moved(_ id: ID, _ samples: [(CGPoint, TimeInterval)], canSwipe: (Key) -> Bool,
-                             keyAt: (CGPoint) -> Key?) -> [Event] {
+  /// The finger moved through these samples, oldest first.
+  public mutating func moved(_ id: ID, _ samples: [(CGPoint, TimeInterval)]) -> [Event] {
     var events: [Event] = []
+    guard let i = tracks.firstIndex(where: { $0.id == id }) else { return events }
     for (p, t) in samples {
-      guard let i = tracks.firstIndex(where: { $0.id == id }) else { break }
-      let last = tracks[i].points.last ?? p
-      if tracks[i].mode == .tap, hypot(p.x - last.x, p.y - last.y) >= Self.jumpDistance * unitWidth,
-         let next = keyAt(p), next.id != tracks[i].key.id {
-        events += release(i, at: last, time: t)
-        if next.isCharacter || next.action == .space {
-          tracks[i] = track(id, key: next, at: p, time: t, canSwipe: canSwipe(next))
-          events.append(.pressed(next, touch: id))
-        } else {
-          tracks[i].mode = .spent
-        }
-        continue
-      }
       tracks[i].points.append(p)
       if tracks[i].mode == .tap, tracks[i].canSwipe, startsSwipe(tracks[i], at: p, time: t) {
         tracks[i].mode = .swiping
