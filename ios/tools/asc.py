@@ -146,7 +146,7 @@ def status() -> None:
     for submission in get("reviewSubmissions", **{"filter[app]": APP_ID, "limit": "10"}):
         attributes = submission["attributes"]
         print(f"review submission {submission['id']}: {attributes['state']}, submitted {attributes.get('submittedDate')}")
-    builds = call("GET", "builds", {"filter[app]": APP_ID, "sort": "-uploadedDate", "limit": "5",
+    builds = call("GET", "builds", {"filter[app]": APP_ID, "sort": "-uploadedDate", "limit": "200",
                                     "include": "buildBetaDetail,betaAppReviewSubmission,preReleaseVersion"})
     included = {(i["type"], i["id"]): i["attributes"] for i in builds.get("included", [])}
 
@@ -154,11 +154,19 @@ def status() -> None:
         data = build["relationships"].get(name, {}).get("data")
         return included.get((data["type"], data["id"]), {}) if data else {}
 
-    for build in builds["data"]:
+    for index, build in enumerate(builds["data"]):
+        review = related(build, "betaAppReviewSubmission").get("betaReviewState")
+        if index >= 3 and not review:  # the newest three, and any build ever sent to external beta review
+            continue
         print(f"build {related(build, 'preReleaseVersion').get('version')} ({build['attributes']['version']}): "
               f"{build['attributes']['processingState']}, external "
               f"{related(build, 'buildBetaDetail').get('externalBuildState')}, beta review "
-              f"{related(build, 'betaAppReviewSubmission').get('betaReviewState')}")
+              f"{review}")
+    for group in get("betaGroups", **{"filter[app]": APP_ID}):
+        testers = get(f"betaGroups/{group['id']}/betaTesters")
+        kind = "internal" if group["attributes"].get("isInternalGroup") else "external"
+        print(f"{kind} TestFlight group {group['attributes']['name']}: "
+              f"{', '.join(t['attributes'].get('state') or '?' for t in testers) or 'no testers'}")
 
 
 # --- release -------------------------------------------------------------------------------------------------
@@ -381,14 +389,12 @@ class Release:
                           if v is None and k not in OPTIONAL_RATING_FIELDS]
             if not rating or unanswered:
                 missing.append("age rating" + (f" (unanswered: {', '.join(unanswered)})" if unanswered else ""))
-        try:
-            get(f"apps/{APP_ID}/appPriceSchedule")
-        except ApiError as error:
-            missing.append(f"price (HTTP {error.status})")
-        try:
-            get(f"apps/{APP_ID}/appAvailabilityV2")
-        except ApiError as error:
-            missing.append(f"availability in countries (HTTP {error.status})")
+        for path, what in ((f"apps/{APP_ID}/appPriceSchedule", "price"),
+                           (f"apps/{APP_ID}/appAvailabilityV2", "availability in countries")):
+            try:
+                get(path)
+            except ApiError as error:
+                missing.append(f"{what} ({str(error).splitlines()[1] if error.status != 404 else 'not set'})")
         return missing
 
     def report(self, missing: list[str]) -> None:
