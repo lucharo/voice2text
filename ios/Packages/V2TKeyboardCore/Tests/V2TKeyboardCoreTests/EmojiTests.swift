@@ -78,7 +78,51 @@ struct EmojiTests {
       #expect(e.skinTones.count == 5 && e.skinTones.allSatisfy { Emoji.family($0) == Emoji.family(e.base) }, "\(e.base)")
     }
     #expect(!all.contains { $0.base == "🏻" })  // the bare skin-tone swatches are components, not emoji to type
+    // the two-person emoji whose people can have their own tones, as on Apple's keyboard since iOS 15.4
+    let pairs = all.filter { $0.pair != nil }
+    #expect(pairs.map(\.base) == ["🤝", "🧑‍🤝‍🧑", "👭", "👫", "👬", "💏", "👩‍❤️‍💋‍👨", "👨‍❤️‍💋‍👨", "👩‍❤️‍💋‍👩", "💑", "👩‍❤️‍👨", "👨‍❤️‍👨", "👩‍❤️‍👩"])
     #expect(cats.last!.emoji.contains(Emoji(base: "🇬🇧")))
+  }
+
+  // MARK: two people
+
+  static let handshake = Emoji(base: "🤝", skinTones: ["🤝🏻", "🤝🏼", "🤝🏽", "🤝🏾", "🤝🏿"], pair: "🫱*\u{200D}🫲*")
+  static let couple = Emoji(base: "👫", skinTones: ["👫🏻", "👫🏼", "👫🏽", "👫🏾", "👫🏿"], pair: "👩*\u{200D}🤝\u{200D}👨*")
+
+  @Test func parsesTheMixedTonePatternOfTwoPeople() {
+    let cats = EmojiData.parse("@smileys\n🤝,🤝🏻,🤝🏼,🤝🏽,🤝🏾,🤝🏿|🫱*\u{200D}🫲*\n*️⃣\n")
+    #expect(cats[0].emoji == [Self.handshake, Emoji(base: "*️⃣")])  // a keycap asterisk is not a pattern
+  }
+
+  @Test func eachPersonGetsTheirOwnToneAndMatchingTonesUseTheSingleForm() {
+    let h = Self.handshake, c = Self.couple
+    #expect(h.variant(.light, .dark) == "🫱🏻\u{200D}🫲🏿")
+    #expect(h.variant(.medium, .medium) == "🤝🏽")  // Unicode's form for one tone, not 🫱🏽‍🫲🏽
+    #expect(c.variant(.dark, .light) == "👩🏿\u{200D}🤝\u{200D}👨🏻")
+    #expect(h.people(.medium) == ["🫱🏽", "🫲🏽"])
+    #expect(c.people(.light) == ["👩🏻", "👨🏻"])
+    let kiss = Emoji(base: "👩‍❤️‍💋‍👨", skinTones: [], pair: "👩*\u{200D}❤️\u{200D}💋\u{200D}👨*")
+    #expect(kiss.people(.dark) == ["👩🏿", "👨🏿"])  // the person after the last joiner, not "❤️‍💋‍👨"
+    #expect(Emoji(base: "👍").variant(.light, .dark) == nil)
+    #expect(h.tones(of: "🫱🏻\u{200D}🫲🏿") == [.light, .dark])
+    #expect(h.tones(of: "🤝🏽") == [.medium])
+    #expect(h.tones(of: "🤝") == [])
+    #expect(h.tones(of: "👍🏽") == nil)
+    #expect(h.families == ["🤝", "🫱\u{200D}🫲"])
+  }
+
+  @Test func theBundledPairsPatternsMakeUnicodesMixedForms() throws {
+    let all = EmojiData.parse(try String(contentsOf: Self.dataFile, encoding: .utf8)).flatMap(\.emoji)
+    let byBase = Dictionary(uniqueKeysWithValues: all.map { ($0.base, $0) })
+    // names from Unicode emoji-test.txt 16.0
+    #expect(byBase["🤝"]?.variant(.light, .mediumLight) == "🫱🏻‍🫲🏼")  // handshake: light skin tone, medium-light skin tone
+    #expect(byBase["💏"]?.variant(.dark, .light) == "🧑🏿‍❤️‍💋‍🧑🏻")  // kiss: person, person, dark skin tone, light skin tone
+    #expect(byBase["👩‍❤️‍👨"]?.variant(.medium, .mediumDark) == "👩🏽‍❤️‍👨🏾")  // couple with heart: woman, man, medium, medium-dark
+    #expect(byBase["🧑‍🤝‍🧑"]?.variant(.medium, .medium) == "🧑🏽‍🤝‍🧑🏽")
+    let toned = EmojiData.toned([EmojiCategory(id: "x", emoji: all)])
+    #expect(toned[Emoji.family("👩🏻‍🤝‍👨🏿")]?.base == "👫")  // a recent in a mixed form finds its emoji
+    #expect(toned[Emoji.family("☝🏻")]?.base == "☝️")
+    #expect(toned["😀"] == nil)
   }
 
   // MARK: history
@@ -110,6 +154,57 @@ struct EmojiTests {
     h.use("👍", from: thumbs)  // back to the yellow one
     #expect(h.tones == [:])
     #expect(h.shown(thumbs) == "👍")
+  }
+
+  @Test func aDefaultToneShowsEveryEmojiWithTonesInItUntilOneIsPickedForIt() {
+    let thumbs = Emoji(base: "👍", skinTones: ["👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]), wave = Emoji(base: "👋", skinTones: ["👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"])
+    var h = EmojiHistory(tones: ["👋": "👋🏿"])
+    h.setDefault(.medium)
+    #expect(h.tones == [:])  // a new default applies to every emoji, even those given a tone before
+    #expect(h.shown(thumbs) == "👍🏽")
+    #expect(h.shown(wave) == "👋🏽")
+    #expect(h.shown(Emoji(base: "😀")) == "😀")
+    h.use("👍🏽", from: thumbs)
+    #expect(h.tones == [:])  // the default tone needs no entry
+    h.use("👍", from: thumbs)  // yellow over the default is kept
+    #expect(h.tones == ["👍": "👍"])
+    #expect(h.shown(thumbs) == "👍")
+    #expect(h.shown(wave) == "👋🏽")
+    h.setDefault(nil)
+    #expect(h.shown(thumbs) == "👍" && h.shown(wave) == "👋")
+  }
+
+  @Test func twoPeopleRememberTheirMixedTonesAndShareARecentsSlot() {
+    let h0 = Self.handshake
+    var h = EmojiHistory()
+    h.use("🤝🏽", from: h0)
+    h.use("🫱🏻\u{200D}🫲🏿", from: h0)
+    #expect(h.recents == ["🫱🏻\u{200D}🫲🏿"])  // one handshake in the recents, whatever its tones
+    #expect(h.shown(h0) == "🫱🏻\u{200D}🫲🏿")
+    h.use("🎉", from: nil)
+    h.use("🤝", from: h0)
+    #expect(h.recents == ["🤝", "🎉"])
+  }
+
+  @Test func searchAndTheBarOfferBaseFormsInTheRememberedTone() {
+    let thumbs = Emoji(base: "👍", skinTones: ["👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"])
+    let toned = EmojiData.toned([EmojiCategory(id: "x", emoji: [thumbs, Self.handshake, Emoji(base: "🍕")])])
+    var h = EmojiHistory(defaultTone: .dark)
+    h.use("🫱🏻\u{200D}🫲🏼", from: Self.handshake)
+    #expect(h.shown("👍", toned: toned) == "👍🏿")
+    #expect(h.shown("🤝", toned: toned) == "🫱🏻\u{200D}🫲🏼")
+    #expect(h.shown("🍕", toned: toned) == "🍕")
+    #expect(h.shown("👍🏻", toned: toned) == "👍🏻")  // already toned: left as it is
+  }
+
+  @Test func theBarsEmojiComesInTheRememberedTone() throws {
+    let (e, _) = try engine()
+    e.emojiIndexes = ["en": try EmojiIndexTests.index.get()]
+    for ch in "clap" { e.character(String(ch)) }
+    #expect(e.emojiSuggestion == "👏")
+    e.emojiShown = { $0 == "👏" ? "👏🏽" : $0 }
+    #expect(e.emojiSuggestion == "👏🏽")
+    #expect(e.suggestions().last?.word == "👏🏽")
   }
 
   @Test func storedHistoryIsCleanedOnLoad() {
@@ -272,5 +367,20 @@ struct EmojiSuggestionTests {
     for ch in "pizzs" { e.character(String(ch)) }
     #expect(e.pendingAutocorrection == "pizzas")  // no keyword of its own: its singular names 🍕
     #expect(e.emojiSuggestion == "🍕")
+  }
+}
+
+/// The default skin tone's two copies, the keyboard's and the app's.
+struct StoredSkinToneTests {
+  @Test func theNewerCopyWinsAndYellowIsKeptAsAChoice() throws {
+    let a = try #require(UserDefaults(suiteName: "v2t.test.tone.a")), b = try #require(UserDefaults(suiteName: "v2t.test.tone.b"))
+    for d in [a, b] { d.removeObject(forKey: StoredSkinTone.toneKey); d.removeObject(forKey: StoredSkinTone.dateKey) }
+    #expect(StoredSkinTone(a) == nil)
+    StoredSkinTone(tone: .mediumDark, date: 10).save(to: a)
+    StoredSkinTone(tone: nil, date: 20).save(to: b)  // yellow, chosen later in the app
+    #expect(StoredSkinTone(a) == StoredSkinTone(tone: .mediumDark, date: 10))
+    #expect(StoredSkinTone.newest([StoredSkinTone(a), StoredSkinTone(b)]) == StoredSkinTone(tone: nil, date: 20))
+    #expect(StoredSkinTone.newest([StoredSkinTone(a), nil]) == StoredSkinTone(tone: .mediumDark, date: 10))
+    #expect(SkinTone.medium.modifier == "\u{1F3FD}")
   }
 }

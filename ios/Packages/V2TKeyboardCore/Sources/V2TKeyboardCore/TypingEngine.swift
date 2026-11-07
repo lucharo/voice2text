@@ -48,6 +48,9 @@ public final class TypingEngine {
   /// The emoji keywords by language ("en", "es"); the bar offers the emoji a word names, as Apple's does for
   /// "pizza" or "love". Empty leaves the bar words only.
   public var emojiIndexes: [String: EmojiIndex] = [:]
+  /// The emoji as the user last picked it (the keywords list base forms): the bar offers 👍🏽 for "thumbs"
+  /// once 👍🏽 was picked, or is the default tone. Nil offers the base form.
+  public var emojiShown: ((String) -> String)?
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
@@ -257,7 +260,8 @@ public final class TypingEngine {
       return nil
     }
     // the word as typed first: the correction is a beam search, only run when the word itself names nothing
-    return emoji(literal) ?? pendingAutocorrection.flatMap(emoji)
+    let found = emoji(literal) ?? pendingAutocorrection.flatMap(emoji)
+    return found.map { emojiShown?($0) ?? $0 }
   }
 
   /// Suggestions spelled with the apostrophe the user typed ("i’m": I’m), so a tap writes what space would,
