@@ -250,8 +250,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     if [.URL, .emailAddress].contains(type) { t.capitalization = .none }
     engine.traits = t
     keyboardView.returnLabel = Self.returnLabel(p.returnKeyType ?? .default, language)
-    if [.numberPad, .decimalPad, .numbersAndPunctuation, .phonePad, .asciiCapableNumberPad].contains(type), keyboardView.layout.page == .letters {
-      relayout(page: .numbers)
+    let numeric = [.numberPad, .decimalPad, .numbersAndPunctuation, .phonePad, .asciiCapableNumberPad].contains(type)
+    if let page = KeyboardPage.forField(numeric: numeric, current: keyboardView.layout.page, emojiSearch: emojiSearch != nil) {
+      relayout(page: page)
     }
   }
 
@@ -465,6 +466,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     emojiSearch = nil
     bar.isHidden = false
     resizeBar()
+    applyTraits()  // a numbers field's page comes back, under the panel, once search no longer owns the keys
     showEmoji(true)
   }
 

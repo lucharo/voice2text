@@ -15,7 +15,16 @@ public enum KeyAction: Hashable, Sendable {
   case page(KeyboardPage)
 }
 
-public enum KeyboardPage: Hashable, Sendable { case letters, numbers, symbols }
+public enum KeyboardPage: Hashable, Sendable {
+  case letters, numbers, symbols
+
+  /// The page a field's keyboard type moves the keys to when they come up or the field changes: a number pad
+  /// or numbers-and-punctuation field opens on numbers, as Apple's keyboard does; nil leaves the page alone.
+  /// Never while emoji search owns the keys, since the query is typed in letters (#138).
+  public static func forField(numeric: Bool, current: KeyboardPage, emojiSearch: Bool) -> KeyboardPage? {
+    numeric && current == .letters && !emojiSearch ? .numbers : nil
+  }
+}
 
 /// Which of Apple's keyboards the layout follows: the iPhone one; the iPad one (delete and return on the
 /// right of their rows, a shift at each end, a hide-keyboard key); or the 13-inch iPad's full keyboard, which

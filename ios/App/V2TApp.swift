@@ -68,6 +68,8 @@ struct HomeView: View {
         Section("Try it") {
           TextField("Type, swipe or dictate here", text: $tryText, axis: .vertical)
             .lineLimit(3...6)
+            // UI tests try the keyboard in a numbers-and-punctuation field (V2T_TRY_KEYBOARD=numbers)
+            .keyboardType(ProcessInfo.processInfo.environment["V2T_TRY_KEYBOARD"] == "numbers" ? .numbersAndPunctuation : .default)
             .accessibilityIdentifier("v2t.try")
         }
         Section("Dictation") {
