@@ -110,9 +110,13 @@ public struct TouchArbiter<ID: Hashable> {
     return travelled > distance && elapsed >= to + (from - to) * decay
   }
 
-  /// The keys left the letters page: fingers still down tap rather than swipe.
+  /// The keys left the letters page: fingers still down tap rather than swipe, and a swipe under way is
+  /// dropped (its letters belong to a page no longer shown).
   public mutating func stopSwipes() {
-    for i in tracks.indices { tracks[i].canSwipe = false }
+    for i in tracks.indices {
+      tracks[i].canSwipe = false
+      if tracks[i].mode == .swiping { tracks[i].mode = .spent }
+    }
   }
 
   /// The view took this finger over: long-press alternatives showed (`types`: they type on lift), or the
@@ -140,7 +144,8 @@ public struct TouchArbiter<ID: Hashable> {
     switch track.mode {
     case .tap, .press:
       events.append(.tapped(track.key, at: p, touch: id))
-      if track.mode == .tap { lastTap = time }
+      // return and tab type too, though another finger lifting never types them early
+      if track.mode == .tap || track.key.action == .returnKey || track.key.action == .tab { lastTap = time }
     case .swiping: events.append(.swiped(track.points + [p], touch: id))
     case .held: if track.holdTypes { lastTap = time }  // the view types the alternative
     case .spent: break
