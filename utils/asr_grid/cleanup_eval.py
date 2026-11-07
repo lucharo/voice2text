@@ -37,7 +37,9 @@ FILLERS = frozenset({"um", "uh", "erm", "er", "uhm", "hmm", "mm", "ah"})
 MARKS = (",", ".", "?", "!", ":", ";")
 # a grouped number (1,000.5) is one word, so its comma is not punctuation; an apostrophe belongs to a word
 # only inside it (it's), so quotes around a word stay outside
-_WORD_RE = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\w+(?:['’]\w+)*(?:[-.]\w+(?:['’]\w+)*)*"
+# a number keeps its sign and a leading decimal point (-5, .5) unless it follows a word (3-5)
+_WORD_RE = (r"(?<!\w)[-+−]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+)(?![\w'’])"
+            r"|\w+(?:['’]\w+)*(?:[-.]\w+(?:['’]\w+)*)*")
 _WORD = re.compile(_WORD_RE)
 _TOKEN = re.compile(_WORD_RE + r"|[^\w\s]")
 

@@ -31,6 +31,13 @@ class Compare(unittest.TestCase):
 
         self.assertEqual((got["digits_ref"], got["digits_hit"], got["tp,"], got["fp,"]), (1, 0, 1, 0))
 
+    def test_a_sign_or_leading_point_is_part_of_the_number(self):
+        flipped = ce.compare("Change was -5.", "Change was 5.")
+        point = ce.compare("Down .5 today.", "Down 5 today.")
+        ranged = ce.compare("Pages 3-5.", "Pages 3-5.")
+
+        self.assertEqual([(c["digits_ref"], c["digits_hit"]) for c in (flipped, point, ranged)], [(1, 0), (1, 0), (2, 2)])
+
     def test_quotes_stay_outside_the_word_so_its_capital_counts(self):
         got = ce.compare("'Hello,' she said.", "'hello,' she said.")
 
