@@ -548,6 +548,12 @@ struct TypingEngineTests {
     f.character("!", now: 51)
     type(" ok", f, start: 60)
     #expect(q.text == "I saw the?! Ok")
+    // an ellipsis is full stops only: the correction waits for the space, which keeps it
+    let (g, r) = try engine("I saw ")
+    type("teh", g)
+    for i in 0..<3 { g.character(".", now: 50 + Double(i)) }
+    type(" ok", g, start: 60)
+    #expect(r.text == "I saw the... Ok")
   }
 
   /// A contraction typed onto a reopened replacement ("we" + "'re") is one word, not a new shortcut.
