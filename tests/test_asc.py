@@ -39,6 +39,7 @@ class FakeConnect:
         self.whats_new = whats_new
         self.screenshots = {"APP_IPHONE_67": 3, "APP_IPAD_PRO_3GEN_129": 2}
         self.category = {"id": "PRODUCTIVITY"}
+        self.item_state = "READY_FOR_REVIEW"  # of every review submission item
         self.failing = {}  # {path: HTTP status} for GETs that fail with an empty body
         self.writes = []
         self.bodies = {}  # {(method, path): the last body written there}
@@ -94,7 +95,8 @@ class FakeConnect:
             wanted = params["filter[state]"].split(",")
             return {"data": [s for s in self.submissions if s["attributes"]["state"] in wanted]}
         if m := re.fullmatch(r"reviewSubmissions/(.+)/items", path):
-            return {"data": [{"relationships": {"appStoreVersion": {"data": {"id": v}}}}
+            return {"data": [{"id": f"item-{v}", "attributes": {"state": self.item_state},
+                              "relationships": {"appStoreVersion": {"data": {"id": v}}}}
                              for v in self.items.get(m[1], [])]}
         if m := re.fullmatch(r"reviewSubmissions/(.+)", path):
             return {"data": {"attributes": {"state": "WAITING_FOR_REVIEW"}}}
@@ -200,11 +202,14 @@ class Release(unittest.TestCase):
         fake = FakeConnect([version("v1", "1.0", "REJECTED")], {"1.0": [build("b114", "114")]},
                            attached={"v1": build("b113", "113")},
                            submissions=[submission("s1", "UNRESOLVED_ISSUES")], items={"s1": ["v1"]})
+        fake.item_state = "REJECTED"
 
         self.run_release(fake)
 
-        self.assertEqual(fake.writes, [
-            ("PATCH", "appStoreVersions/v1/relationships/build"), ("PATCH", "reviewSubmissions/s1")])
+        self.assertEqual(fake.writes, [("PATCH", "appStoreVersions/v1/relationships/build"),
+                                       ("PATCH", "reviewSubmissionItems/item-v1"), ("PATCH", "reviewSubmissions/s1")])
+        self.assertEqual(fake.bodies[("PATCH", "reviewSubmissionItems/item-v1")], {"data": {
+            "type": "reviewSubmissionItems", "id": "item-v1", "attributes": {"resolved": True}}})
 
     def test_another_submission_in_review_stops_before_submitting(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]},
