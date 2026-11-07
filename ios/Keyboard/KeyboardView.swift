@@ -32,24 +32,26 @@ final class KeyboardView: UIView {
   private let preview = PreviewLayer()
   private let trail = CAShapeLayer()
 
-  /// One finger's progress through a gesture.
+  /// What the view shows for one finger: its key's balloon or pressed look, timers, long-press alternatives
+  /// and the trackpad. Whether the finger taps or swipes, and in what order taps type, is the arbiter's.
   @MainActor private final class Track {
-    let key: Key
-    let start: CGPoint
-    var points: [CGPoint]
-    var swiping = false
+    var key: Key
     var alternatives: [String] = []
     var chosen = 0
     var trackpad = false
     var lastTrackX: CGFloat = 0
     var timer: Timer?
     var repeats = 0
-    init(key: Key, start: CGPoint) { self.key = key; self.start = start; points = [start] }
+    init(key: Key) { self.key = key }
   }
   private var tracks: [ObjectIdentifier: Track] = [:]
+  private var arbiter: TouchArbiter<ObjectIdentifier>
+  /// The finger whose balloon is showing, so another finger lifting does not hide it.
+  private var previewOwner: ObjectIdentifier?
 
   init(layout: KeyboardLayout) {
     self.layout = layout
+    arbiter = TouchArbiter(unitWidth: layout.unitWidth)
     super.init(frame: .zero)
     isMultipleTouchEnabled = true
     trail.fillColor = nil
@@ -68,6 +70,7 @@ final class KeyboardView: UIView {
 
   func setLayout(_ l: KeyboardLayout) {
     layout = l
+    arbiter.unitWidth = l.unitWidth
     rebuild()
   }
 
@@ -260,18 +263,14 @@ final class KeyboardView: UIView {
     for touch in touches {
       let p = touch.location(in: self)
       guard let key = layout.key(at: p) else { continue }
-      let track = Track(key: key, start: p)
-      tracks[ObjectIdentifier(touch)] = track
+      let id = ObjectIdentifier(touch)
+      let track = Track(key: key)
+      tracks[id] = track
+      arbiter.began(id, key: key, at: p, time: touch.timestamp, canSwipe: canSwipe(key))
       delegate?.keyboardViewKeyDown(self)
       switch key.action {
       case .character:
-        // the iPhone shows a balloon above the key; Apple's iPad keyboard darkens the key instead
-        if layout.form.isPad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0) }
-        if key.longPress(shift: shift, manual: shiftManual).count > 1 {
-          track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
-            MainActor.assumeIsolated { if let self, let track, !track.swiping { self.showAlternatives(track) } }
-          }
-        }
+        press(track, id)
       case .delete:
         setPressed(key, true)
         delegate?.keyboardViewDelete(self, wholeWord: false)
@@ -282,9 +281,9 @@ final class KeyboardView: UIView {
         setPressed(key, true)
         track.timer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self, weak track] _ in
           MainActor.assumeIsolated {
-            guard let self, let track else { return }
+            guard let self, let track, self.arbiter.hold(id) else { return }
             track.trackpad = true
-            track.lastTrackX = track.points.last?.x ?? track.start.x
+            track.lastTrackX = self.arbiter.points(of: id).last?.x ?? p.x
             self.setTrackpad(true)
           }
         }
@@ -294,12 +293,29 @@ final class KeyboardView: UIView {
     }
   }
 
+  private func canSwipe(_ key: Key) -> Bool { key.startsSwipe && layout.page == .letters }
+
+  /// A character key's balloon (the iPhone) or darkened key (Apple's iPad keyboard), and its long-press timer.
+  private func press(_ track: Track, _ id: ObjectIdentifier) {
+    let key = track.key
+    if layout.form.isPad { setPressed(key, true) } else { showPreview(key, text: label(for: key).0, for: id) }
+    guard key.longPress(shift: shift, manual: shiftManual).count > 1 else { return }
+    track.timer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: false) { [weak self, weak track] _ in
+      MainActor.assumeIsolated {
+        guard let self, let track, self.arbiter.hold(id) else { return }
+        self.showAlternatives(track, for: id)
+      }
+    }
+  }
+
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
     for touch in touches {
-      guard let track = tracks[ObjectIdentifier(touch)] else { continue }
+      let id = ObjectIdentifier(touch)
+      guard let track = tracks[id] else { continue }
       let p = touch.location(in: self)
-      let coalesced = event?.coalescedTouches(for: touch)?.map { $0.location(in: self) } ?? [p]
-      track.points.append(contentsOf: coalesced)
+      let samples = (event?.coalescedTouches(for: touch) ?? [touch]).map { ($0.location(in: self), $0.timestamp) }
+      let events = arbiter.moved(id, samples, canSwipe: canSwipe, keyAt: layout.key(at:))
+      apply(events)
       if track.trackpad {
         let step: CGFloat = 9
         let dx = p.x - track.lastTrackX
@@ -314,14 +330,7 @@ final class KeyboardView: UIView {
         updateAlternativeChoice(track, x: p.x)
         continue
       }
-      // a letter-key touch that travels most of a key's width becomes a swipe
-      if track.key.startsSwipe, layout.page == .letters, !track.swiping,
-         hypot(p.x - track.start.x, p.y - track.start.y) > layout.unitWidth * 0.7 {
-        track.swiping = true
-        track.timer?.invalidate()
-        hidePreview()
-      }
-      if track.swiping { drawTrail(track.points) }
+      if arbiter.mode(of: id) == .swiping { drawTrail(arbiter.points(of: id)) }
     }
   }
 
@@ -334,29 +343,54 @@ final class KeyboardView: UIView {
   }
 
   private func finish(_ touch: UITouch, cancelled: Bool) {
-    guard let track = tracks.removeValue(forKey: ObjectIdentifier(touch)) else { return }
-    track.timer?.invalidate()
-    hidePreview()
-    setPressed(track.key, false)
+    let id = ObjectIdentifier(touch)
+    guard let track = tracks.removeValue(forKey: id) else { return }
+    release(track, id)
+    if cancelled {
+      if arbiter.mode(of: id) == .swiping { clearTrail() }
+      arbiter.cancelled(id)
+      if track.trackpad { setTrackpad(false) }
+      return
+    }
+    // older fingers still down type first (rollover), then this one
+    apply(arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp))
     if track.trackpad { setTrackpad(false); return }
-    guard !cancelled else { clearTrail(); return }
-    if track.swiping {
-      clearTrail()
-      delegate?.keyboardView(self, swiped: track.points)
-      return
-    }
     if !track.alternatives.isEmpty {
-      preview.isHidden = true
       delegate?.keyboardView(self, typed: track.alternatives[track.chosen], at: nil)
-      return
     }
-    switch track.key.action {
-    case .character:
-      delegate?.keyboardView(self, typed: track.key.output(shift: shift, manual: shiftManual)!, at: touch.location(in: self))
-    case .delete:
-      break
-    default:
-      delegate?.keyboardView(self, action: track.key.action)
+  }
+
+  /// Takes down a finger's balloon, pressed look and timer.
+  private func release(_ track: Track, _ id: ObjectIdentifier) {
+    track.timer?.invalidate()
+    track.timer = nil
+    if previewOwner == id { hidePreview() }
+    setPressed(track.key, false)
+  }
+
+  private func apply(_ events: [TouchArbiter<ObjectIdentifier>.Event]) {
+    for e in events {
+      switch e {
+      case .tapped(let key, let at, let id):
+        // a finger typed by rollover is still down: it shows nothing more
+        if let track = tracks[id] { release(track, id) }
+        switch key.action {
+        case .character: delegate?.keyboardView(self, typed: key.output(shift: shift, manual: shiftManual)!, at: at)
+        case .delete: break
+        default: delegate?.keyboardView(self, action: key.action)
+        }
+      case .swipeStarted(let id):
+        if let track = tracks[id] { track.timer?.invalidate(); track.timer = nil }
+        if previewOwner == id { hidePreview() }
+      case .swiped(let trace, _):
+        clearTrail()
+        delegate?.keyboardView(self, swiped: trace)
+      case .pressed(let key, let id):
+        guard let track = tracks[id] else { continue }
+        track.key = key
+        delegate?.keyboardViewKeyDown(self)
+        if key.action == .space { setPressed(key, true) } else { press(track, id) }
+      }
     }
   }
 
@@ -379,7 +413,8 @@ final class KeyboardView: UIView {
 
   // MARK: previews and alternatives
 
-  private func showPreview(_ key: Key, text: String) {
+  private func showPreview(_ key: Key, text: String, for id: ObjectIdentifier) {
+    previewOwner = id
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     preview.show(text: text, over: key.frame, in: bounds, traits: traitCollection)
@@ -387,14 +422,16 @@ final class KeyboardView: UIView {
   }
 
   private func hidePreview() {
+    previewOwner = nil
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     preview.isHidden = true
     CATransaction.commit()
   }
 
-  private func showAlternatives(_ track: Track) {
+  private func showAlternatives(_ track: Track, for id: ObjectIdentifier) {
     guard case .character = track.key.action else { return }
+    previewOwner = id
     let alts = track.key.longPress(shift: shift, manual: shiftManual)
     track.alternatives = alts
     track.chosen = 0
