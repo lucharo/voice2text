@@ -184,6 +184,15 @@ final class EmojiPanel: UIView, UICollectionViewDataSource, UICollectionViewDele
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+  /// The keyboard came back with the panel still open: the app's settings may have changed the default tone
+  /// meanwhile, so the cells take it, where the grid is.
+  func reload() {
+    closePickers()
+    hideOffer()
+    history = EmojiStore.load()
+    grid.reloadData()
+  }
+
   /// Opens at the recently used emoji (the first category while there are none), with the recents as of now.
   func show() {
     history = EmojiStore.load()  // emoji search or the app's settings may have changed it since the panel was made
@@ -756,6 +765,8 @@ final class PairPicker: UIView {
     isHidden = true
     subviews.forEach { $0.removeFromSuperview() }
     rows = []
+    yellow = PickCell()  // new empty cells, so the old ones' emoji font goes too
+    preview = PickCell()
     item = nil
   }
 
@@ -935,10 +946,11 @@ enum EmojiStore {
     return emojis.map { h.shown($0, toned: toned) }.filter { seen.insert($0).inserted }
   }
 
-  /// `emoji` was used outside the panel (search, the suggestion bar).
-  static func record(_ emoji: String) {
+  /// `emoji` was used outside the panel (search, the suggestion bar); `toned` (EmojiData.toned) finds its
+  /// emoji, so it takes the recents slot of that emoji's other tones.
+  static func record(_ emoji: String, toned: [String: Emoji]) {
     var h = load()
-    h.use(emoji, from: nil)
+    h.use(emoji, from: toned[Emoji.family(emoji)])
     save(h)
   }
 
