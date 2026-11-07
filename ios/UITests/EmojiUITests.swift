@@ -10,7 +10,8 @@ import XCTest
   var field: XCUIElement { app.textFields["v2t.try"] }
   var text: String { field.value as? String ?? "" }
 
-  func launch(globe: String? = nil, skinTone: Int? = nil) {
+  /// `firstKey` is the key the keyboard opens with: "numbers-1" in a numbers field.
+  func launch(globe: String? = nil, skinTone: Int? = nil, firstKey: String = "letters-q") {
     continueAfterFailure = false
     app.launchEnvironment["V2T_LAYOUT"] = "en"
     if let skinTone { app.launchEnvironment["V2T_SKIN_TONE"] = String(skinTone) }
@@ -20,14 +21,14 @@ import XCTest
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     field.tap()
     // a keyboard extension's first start after an install can take several seconds
-    for _ in 0..<8 where !key("letters-q").waitForExistence(timeout: 8) {
+    for _ in 0..<8 where !key(firstKey).waitForExistence(timeout: 8) {
       // a fresh Simulator's Apple keyboard first shows a one-time introduction with a Continue button
       let intro = app.buttons["Continue"]
       if intro.exists { intro.tap(); continue }
       let globe = app.buttons["Next keyboard"]
       if globe.exists { globe.tap() } else { field.tap() }  // no keyboard came up at all (seen after a reinstall)
     }
-    XCTAssertTrue(key("letters-q").waitForExistence(timeout: 10), app.debugDescription)
+    XCTAssertTrue(key(firstKey).waitForExistence(timeout: 10), app.debugDescription)
   }
 
   func waitForText(_ want: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -249,5 +250,30 @@ import XCTest
     waitForText("🫱🏻\u{200D}🫲🏿")
     XCTAssertFalse(app.descendants(matching: .any)["emoji.pair"].exists)
     XCTAssertTrue(emoji("🫱🏻\u{200D}🫲🏿").waitForExistence(timeout: 3), "the grid still shows the yellow 🤝")
+  }
+
+  // MARK: emoji search in a numbers field (#138)
+
+  /// In a numbers-and-punctuation field the keys open on numbers. Emoji search brings the letters, and they
+  /// stay when the app then changes the field's text (this one adds a "#" after each change): that change
+  /// used to send the keys back to numbers mid-query.
+  func testEmojiSearchKeepsItsLettersInANumbersField() {
+    app.launchEnvironment["V2T_TRY_KEYBOARD"] = "numbers"
+    launch(globe: "0", firstKey: "numbers-1")
+    XCTAssertFalse(key("letters-q").exists, "a numbers field opened on letters")
+    key("emoji").tap()
+    app.buttons["emoji.search.open"].tap()
+    XCTAssertTrue(key("letters-p").waitForExistence(timeout: 3))
+    for ch in "pizz" { key("letters-\(ch)").tap() }
+    let pizza = app.buttons["emoji.result.🍕"]
+    XCTAssertTrue(pizza.waitForExistence(timeout: 3))
+    pizza.tap()
+    waitForText("🍕#")  // the app's own change, which iOS reports to the keyboard
+    XCTAssertTrue(key("letters-a").exists, "the keys went back to numbers while search was open")
+    key("letters-a").tap()
+    XCTAssertEqual(app.descendants(matching: .any)["emoji.search.field"].value as? String, "pizza")
+    shot("58-emoji-search-numbers-field")
+    app.buttons["emoji.search.back"].tap()
+    XCTAssertTrue(app.descendants(matching: .any)["v2t.emoji"].waitForExistence(timeout: 3))
   }
 }
