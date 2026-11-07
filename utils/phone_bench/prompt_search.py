@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
 import re
 import statistics
@@ -49,8 +50,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-sys.path[:0] = [str(REPO), str(REPO / "utils/asr_grid")]
+sys.path[:0] = [str(REPO), str(REPO / "utils/asr_grid"), str(HERE)]
 import grid  # noqa: E402
+import phone_common  # noqa: E402
 from v2t import backends, config  # noqa: E402
 
 OUT = grid.EVAL / "prompt-search"
@@ -155,6 +157,11 @@ def build(args) -> None:
         row = {"id": iid, "chunks": backends.chunk_text(text, TODAY["chunk_words"]),
                "chunks_by": {str(n): backends.chunk_text(text, n) for n in sizes}}
         by_split[m["split"]].append(row)
+    for split in by_split:
+        kinds = {m["kind"] for m in meta if m["split"] == split}
+        if not {"e22", "pieces", "whole"} <= kinds:
+            raise SystemExit(f"{split} split lacks {sorted({'e22', 'pieces', 'whole'} - kinds)}: check the grid "
+                             f"results and {PIECES}")
     for split, rows in by_split.items():
         (OUT / f"inputs-{split}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     (OUT / "meta.jsonl").write_text("".join(json.dumps(m) + "\n" for m in meta))
@@ -239,8 +246,10 @@ def totals(items: list[dict]) -> dict:
         "heard": 100 * sum(i["heard_err"] for i in dictations) / max(sum(i["heard_n"] for i in dictations), 1),
         "extra_ends": s("extra_ends"), "cuts": sum(i["cuts"] for i in pieces),
         "answers": s("answers"), "reverts": s("reverts"), "chunks": s("chunks"), "errors": s("errors"),
-        "s_p50": statistics.median(secs) if secs else None, "s_p90": secs[int(0.9 * len(secs)) - 1] if secs else None,
-        "s_mean": statistics.fmean(secs) if secs else None, "n_e22": len(e22), "n_pieces": len(pieces),
+        "s_p50": statistics.median(secs) if secs else None, "s_p90": secs[math.ceil(0.9 * len(secs)) - 1] if secs else None,
+        # per item, all its chunks: a candidate cutting the text finer must not look faster for shorter chunks
+        "s_item": statistics.fmean(sum(i["seconds"]) for i in items) if items else None,
+        "n_e22": len(e22), "n_pieces": len(pieces),
     }
 
 
@@ -249,7 +258,7 @@ METRICS = {  # name: (lower is better, how to compute on a resample)
     "heard": lambda it: totals(it)["heard"],
     "fmt": lambda it: totals(it)["fmt"],
     "extra_ends": lambda it: totals(it)["extra_ends"],
-    "s_mean": lambda it: totals(it)["s_mean"] or 0,
+    "s_item": lambda it: totals(it)["s_item"] or 0,
 }
 
 
@@ -259,7 +268,7 @@ def group(item_id: str) -> str:
     return item_id if item_id.startswith("e22/") else item_id.rsplit("/", 1)[-1]
 
 
-def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -> tuple[float, float, float]:
+def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -> tuple[float, float, float] | None:
     """Difference b - a over the items both have, with a 95% paired bootstrap interval that resamples
     whole groups (see group)."""
     ids = sorted(set(a) & set(b))
@@ -269,6 +278,8 @@ def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -
         ids = [i for i in ids if not i.startswith("e22/")]
     elif metric == "extra_ends":
         ids = [i for i in ids if "extra_ends" in a[i] and "extra_ends" in b[i]]
+    if not ids:  # nothing to compare: no evidence either way, never a tie
+        return None
     f = METRICS[metric]
     point = f([b[i] for i in ids]) - f([a[i] for i in ids])
     groups: dict[str, list[str]] = {}
@@ -287,6 +298,8 @@ def paired(a: dict[str, dict], b: dict[str, dict], metric: str, seed: int = 0) -
 def verdict(best: dict, cand: dict) -> tuple[bool, dict]:
     """Whether `cand` should replace `best` (both per-item dicts from one job), and the evidence."""
     ev = {m: paired(best, cand, m) for m in METRICS}
+    if any(v is None for v in ev.values()):
+        return False, ev
     worse = lambda m: ev[m][1] > 0  # noqa: E731  whole interval above zero: significantly worse
     better = lambda m: ev[m][2] < 0  # noqa: E731
     if worse("wer") or worse("heard"):
@@ -294,7 +307,7 @@ def verdict(best: dict, cand: dict) -> tuple[bool, dict]:
     if (better("fmt") and not worse("extra_ends")) or (better("extra_ends") and not worse("fmt")):
         return True, ev
     tied = not any(better(m) or worse(m) for m in ("fmt", "extra_ends"))
-    return tied and better("s_mean"), ev
+    return tied and better("s_item"), ev
 
 
 # ---------------------------------------------------------------- running a generation
@@ -340,6 +353,18 @@ def run_mlx(job: dict, jobdir: Path, out: Path, model: str) -> None:
     from mlx_lm.sample_utils import make_sampler
 
     items = [json.loads(line) for line in (jobdir / job["inputs"]).read_text().splitlines() if line.strip()]
+    # rows resume by item id, so they may only come from the same model, inputs and prompts
+    ident = {"model": model, "inputs": hashlib.sha256((jobdir / job["inputs"]).read_bytes()).hexdigest()[:16],
+             "prompts": {a["id"]: hashlib.sha256((jobdir / "prompts" / a["options"]["prompt"]).read_bytes()).hexdigest()[:16]
+                         for a in job["arms"]}}
+    ident_path = out / f"{job['name']}.mac.json"
+    if ident_path.exists():
+        saved = json.loads(ident_path.read_text())
+        clash = [a for a in ident["prompts"] if a in saved["prompts"] and saved["prompts"][a] != ident["prompts"][a]]
+        if saved["model"] != model or saved["inputs"] != ident["inputs"] or clash:
+            raise SystemExit(f"{out} holds rows from another model, inputs or prompt: use another --tag or move it aside")
+        ident["prompts"] = {**saved["prompts"], **ident["prompts"]}
+    ident_path.write_text(json.dumps(ident, indent=1))
     mdl, tok = load(model)
     greedy = make_sampler(temp=0.0)
     arms = job["arms"]
@@ -376,7 +401,8 @@ def score_generation(name: str, cands: list[dict]) -> dict[str, dict[str, dict]]
     vocabulary = json.loads((OUT / "vocabulary.json").read_text())
     scored = {}
     for c in cands:
-        rows = [r for r in grid.read_jsonl(results_dir(name) / f"{name}.{cand_id(c)}.jsonl") if r.get("event") == "clean"]
+        # the phone's reader: a row cut short when the app died mid-write is skipped, as the app skips it
+        rows = [r for r in phone_common.read_rows(results_dir(name) / f"{name}.{cand_id(c)}.jsonl") if r.get("event") == "clean"]
         scored[cand_id(c)] = pair_cuts({r["id"]: per_item(r, meta[r["id"]], vocabulary) for r in rows if "chunk_in" in r})
     return scored
 
@@ -427,7 +453,7 @@ def loop(args) -> None:
         for c in fresh:
             ok, ev = verdict(scored[best_id], scored[cand_id(c)])
             print(f"  {describe(c):40} {'ACCEPT' if ok else 'keep best'}  " +
-                  "  ".join(f"{m} {p:+.2f} [{lo:+.2f},{hi:+.2f}]" for m, (p, lo, hi) in ev.items()), flush=True)
+                  "  ".join(f"{m} {v[0]:+.2f} [{v[1]:+.2f},{v[2]:+.2f}]" if v else f"{m} no data" for m, v in ev.items()), flush=True)
             if ok:  # among several, the lowest formatted WER, then the fewest extra sentence ends
                 accepted.append(((ev["fmt"][0], ev["extra_ends"][0]), c))
         st["tried"] += [cand_id(c) for c in fresh]
@@ -456,8 +482,8 @@ def heldout(args) -> None:
     if len(cands) == 2:
         ok, ev = verdict(scored[cand_id(TODAY)], scored[cand_id(st["best"])])
         print(f"\nheld-out verdict, {describe(st['best'])} against today's: {'BEATS today' if ok else 'does not beat today'}")
-        for m, (p, lo, hi) in ev.items():
-            print(f"  {m:10} {p:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
+        for m, v in ev.items():
+            print(f"  {m:10} " + (f"{v[0]:+.3f}  95% CI [{v[1]:+.3f}, {v[2]:+.3f}]" if v else "no data"))
 
 
 def print_table(name: str, cands: list[dict], scored: dict) -> None:
@@ -502,6 +528,8 @@ def main() -> None:
                    "in TODAY, optionally with `custom` rules text replacing the casual rules")
     p.add_argument("--max-seconds", type=float, default=120, help="build: longest dictation to use (default 120 s)")
     a = p.parse_args()
+    if a.per_gen < 1 or a.budget < 0 or a.block < 1:
+        p.error("--per-gen and --block must be at least 1, --budget at least 0")
     if a.engine != "phone":
         RESULTS["root"] = OUT / "mac"
         if a.tag == "afm":

@@ -93,7 +93,10 @@ class ScoreGeneration(unittest.TestCase):
                      "chunk_out": ["I went home. And slept."], "chunk_s": [1.0]},
                     {"event": "clean", "id": "whole/n/1", "chunk_in": ["i went home and slept"],
                      "chunk_out": ["I went home and slept."], "chunk_s": [1.0]}]
-            (res / "g0" / f"g0.{ps.cand_id(ps.TODAY)}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            # the app died mid-write once and resumed: the cut row stays in the file
+            (res / "g0" / f"g0.{ps.cand_id(ps.TODAY)}.jsonl").write_text(
+                "".join(json.dumps(r) + "\n" for r in rows[:2]) + '{"event": "clean", "id": "whole/n/1", "chu\n'
+                + json.dumps(rows[2]) + "\n")
 
             with mock.patch.object(ps, "OUT", out), mock.patch.dict(ps.RESULTS, {"root": res}):
                 scored = ps.score_generation("g0", [ps.TODAY])
@@ -101,15 +104,16 @@ class ScoreGeneration(unittest.TestCase):
         self.assertEqual(scored[ps.cand_id(ps.TODAY)]["pieces/n/1"]["extra_ends"], 1)
 
 
-def items(n_e22=40, n_pieces=40, fmt_err=2, extra=1, heard_err=0, wer_err=0, s=1.0):
-    """Per-item numbers for a candidate: n Earnings22 items and n dictations, all alike."""
+def items(n_e22=40, n_pieces=40, fmt_err=2, extra=1, heard_err=0, wer_err=0, s=1.0, chunks=1):
+    """Per-item numbers for a candidate: n Earnings22 items and n dictations, all alike, each item in
+    `chunks` chunks of `s` seconds."""
     out = {f"e22/{i}": {"wer_err": wer_err, "wer_n": 10, "fmt_err": fmt_err, "fmt_n": 12, "heard_err": 0,
-                        "heard_n": 10, "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s]}
+                        "heard_n": 10, "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s] * chunks}
            for i in range(n_e22)}
     out |= {f"pieces/n/{i}": {"heard_err": heard_err, "heard_n": 20, "ends": 3 + extra, "extra_ends": extra, "cuts": 2,
-                              "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s]} for i in range(n_pieces)}
+                              "chunks": 1, "reverts": 0, "answers": 0, "errors": 0, "seconds": [s] * chunks} for i in range(n_pieces)}
     out |= {f"whole/n/{i}": {"heard_err": 0, "heard_n": 20, "ends": 3, "chunks": 1, "reverts": 0, "answers": 0,
-                             "errors": 0, "seconds": [s]} for i in range(n_pieces)}
+                             "errors": 0, "seconds": [s] * chunks} for i in range(n_pieces)}
     return out
 
 
@@ -130,6 +134,16 @@ class Verdict(unittest.TestCase):
     def test_a_tie_wins_only_by_being_faster(self):
         self.assertTrue(ps.verdict(items(), items(s=0.8))[0])
         self.assertFalse(ps.verdict(items(), items())[0])
+
+    def test_faster_means_less_time_per_item_not_per_chunk(self):
+        # three chunks of 0.8 s take longer than two of 1 s
+        self.assertFalse(ps.verdict(items(chunks=2), items(s=0.8, chunks=3))[0])
+        self.assertTrue(ps.verdict(items(chunks=3), items(s=0.8, chunks=2))[0])
+
+    def test_no_earnings22_rows_is_no_evidence_not_a_tie(self):
+        accepted, ev = ps.verdict(items(n_e22=0), items(n_e22=0, extra=0))
+
+        self.assertEqual((accepted, ev["wer"], ev["fmt"]), (False, None, None))
 
     def test_faster_does_not_buy_worse_formatting(self):
         self.assertFalse(ps.verdict(items(), items(fmt_err=3, s=0.8))[0])

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import statistics
@@ -276,7 +277,7 @@ def models(args) -> None:
         chunks = sum(r["stats"].get("chunks", 0) for r in rows)
         runs = grid.read_jsonl(MODELS / n / "run.jsonl")
         cells += [str(answers(rows)), f"{reverts} of {chunks}",
-                  f"{statistics.median(secs):.2f} / {secs[int(0.9 * len(secs)) - 1]:.2f}", _memory_cell(runs)]
+                  f"{statistics.median(secs):.2f} / {secs[math.ceil(0.9 * len(secs)) - 1]:.2f}", _memory_cell(runs)]
         print("| " + " | ".join(cells) + " |")
     print(f"\n{system}, clips per set: " + ", ".join(f"{s} {len(shared[s])}" for s in sets))
 
