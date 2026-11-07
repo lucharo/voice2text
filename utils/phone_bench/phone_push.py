@@ -56,6 +56,9 @@ def main() -> int:
     missing = [m for m in models if not (a.models / m).is_dir()]
     if missing:
         sys.exit("not on this Mac: " + ", ".join(str(a.models / m) for m in missing))
+    extra = pc.job_files(job, a.job)
+    if gone := [str(src) for src, _ in extra if not src.is_file()]:
+        sys.exit("not on this Mac: " + ", ".join(gone))
     if not a.no_install and not a.app.is_dir():
         sys.exit(f"{a.app} missing: run ./setup.sh build")
     udid = pc.pick_device(a.device)
@@ -75,6 +78,9 @@ def main() -> int:
         print(f"model {m}: copying ...", flush=True)
         if not pc.copy_to(udid, a.models / m, f"Documents/models/{m}"):
             sys.exit(f"copying {m} failed")
+    for src, dest in extra:  # small; always recopied, since a prompt file's name is its content's hash
+        if not pc.copy_to(udid, src, f"Documents/{dest}"):
+            sys.exit(f"copying {src.name} failed")
     if not pc.copy_to(udid, a.job, "Documents/job.json"):
         sys.exit("copying the job file failed")
     print(f"job {job['name']}: {len(job['arms'])} arms, block {job['block']}, order {job.get('order', 'abba')}")

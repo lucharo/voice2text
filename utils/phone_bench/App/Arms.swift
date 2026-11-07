@@ -18,20 +18,25 @@ struct Item {
   let chunks: [String]  // cleanup
   let file: String      // speech: file name in Res/clips
   let dur: Double       // speech: seconds of audio
+  var chunksBy: [String: [String]] = [:]  // cleanup inputs from a job's `inputs`: the text in chunks of other sizes
 }
 
 enum ItemSet: String, Codable {
   case cleanup, speech
 
   /// Res/cleanup/inputs.jsonl (600 transcripts in chunks) or Res/clips/manifest.tsv (450 clips), in file order.
-  func load() throws -> [Item] {
+  /// A cleanup job's `inputs` names a file in Documents of the same shape instead, where each line may also
+  /// carry `chunks_by` ({"80": [...]}), the text cut at other chunk sizes for prompt files that ask for one.
+  func load(inputs: String? = nil) throws -> [Item] {
     let res = Bundle.main.resourceURL!
     switch self {
     case .cleanup:
-      return try String(contentsOf: res.appendingPathComponent("cleanup/inputs.jsonl"), encoding: .utf8)
+      let url = inputs.map { documents.appendingPathComponent($0) } ?? res.appendingPathComponent("cleanup/inputs.jsonl")
+      return try String(contentsOf: url, encoding: .utf8)
         .split(separator: "\n").map {
           let d = try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
-          return Item(id: d["id"] as! String, chunks: d["chunks"] as! [String], file: "", dur: 0)
+          return Item(id: d["id"] as! String, chunks: d["chunks"] as! [String], file: "", dur: 0,
+                      chunksBy: d["chunks_by"] as? [String: [String]] ?? [:])
         }
     case .speech:
       return try String(contentsOf: res.appendingPathComponent("clips/manifest.tsv"), encoding: .utf8)
@@ -91,7 +96,13 @@ func makeArm(_ s: ArmSpec) throws -> Arm {
   switch s.runtime {
   case "mlx": return MLXCleanup(dir: try need(), name: s.model!)
   case "anemll": return AnemllCleanup(dir: try need(), name: s.model!)
-  case "afm": return AFMCleanup(wrap: opt["wrap"] == "true")
+  case "afm":
+    let prompt = try opt["prompt"].map { name -> AFMPrompt in
+      let url = documents.appendingPathComponent("prompts/\(name)")
+      guard FileManager.default.fileExists(atPath: url.path) else { throw BenchError("arm \(s.id): Documents/prompts/\(name) is missing; run phone_push.py") }
+      return try JSONDecoder().decode(AFMPrompt.self, from: Data(contentsOf: url))
+    }
+    return AFMCleanup(wrap: opt["wrap"] == "true", prompt: prompt)
   case "parakeet-coreml": return ParakeetCoreML()
   case "mlx-stt": return MLXSpeech(dir: try need(), type: opt["model_type"] ?? "parakeet")
   case "bark": return BarkSpeech(units: computeUnits(opt["units"]))
@@ -220,46 +231,72 @@ final class AnemllCleanup: Arm, @unchecked Sendable {
   func unload() { im?.unload(); im = nil; tokenizer = nil }
 }
 
+/// A prompt to try for Apple Foundation Models (#126), read from Documents/prompts/<name> by the `prompt`
+/// option: the instructions, how each chunk is framed (`{text}` stands for the chunk), the response cap
+/// (max(min_cap, cap x the chunk's words)) and which chunk size of the item to use. Guardrails are the
+/// permissive ones the app uses.
+struct AFMPrompt: Codable {
+  let instructions: String
+  let frame: String
+  var cap: Int?
+  var min_cap: Int?
+  var chunk_words: Int?
+}
+
 /// Apple Foundation Models. Options: `wrap: "true"` frames each chunk as "Dictation: … Cleaned:" under
-/// the permissive guardrails, which stops most refusals.
+/// the permissive guardrails, which stops most refusals; `prompt: <file>` uses a prompt file instead
+/// (AFMPrompt), and its rows also keep each chunk's input, output and seconds, so the Mac can apply the
+/// app's guards and score every chunk.
 final class AFMCleanup: Arm, @unchecked Sendable {
   let set = ItemSet.cleanup
   let wrap: Bool
+  let prompt: AFMPrompt?
   var model: SystemLanguageModel?
   var instructions = ""
-  init(wrap: Bool) { self.wrap = wrap }
+  init(wrap: Bool, prompt: AFMPrompt? = nil) { self.wrap = wrap; self.prompt = prompt }
 
   func load() async throws -> [String: Any] {
-    instructions = try String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("cleanup/instructions.txt"), encoding: .utf8)
-    let m = wrap ? SystemLanguageModel(guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
+    instructions = try prompt?.instructions
+      ?? String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("cleanup/instructions.txt"), encoding: .utf8)
+    let m = wrap || prompt != nil ? SystemLanguageModel(guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
     guard case .available = m.availability else { throw BenchError("Apple Foundation Models unavailable: \(m.availability)") }
     model = m
     let warm = LanguageModelSession(model: m, instructions: instructions)
     warm.prewarm()
-    _ = try? await warm.respond(to: warmText, options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 64))
+    _ = try? await warm.respond(to: frame(warmText), options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 64))
     return ["availability": "\(m.availability)"]
   }
 
+  func frame(_ c: String) -> String {
+    if let p = prompt { return p.frame.replacingOccurrences(of: "{text}", with: c) }
+    return wrap ? "Dictation: \(c)\nCleaned:" : c
+  }
+
   func process(_ item: Item) async throws -> [String: Any] {
-    var outs: [String] = [], errs: [String] = []
+    var outs: [String] = [], errs: [String] = [], secs: [Double] = []
     let t = ContinuousClock.now
     var firstChunkS = 0.0
-    for (k, c) in item.chunks.enumerated() {
+    let chunks = prompt?.chunk_words.flatMap { item.chunksBy[String($0)] } ?? item.chunks
+    for (k, c) in chunks.enumerated() {
       // cap runaway generations: a faithful cleanup is about as long as its input
-      let opts = GenerationOptions(sampling: .greedy, maximumResponseTokens: max(64, c.split(separator: " ").count * 3))
+      let opts = GenerationOptions(sampling: .greedy, maximumResponseTokens: max(prompt?.min_cap ?? 64, c.split(separator: " ").count * (prompt?.cap ?? 3)))
       let session = LanguageModelSession(model: model!, instructions: instructions)
-      let prompt = wrap ? "Dictation: \(c)\nCleaned:" : c
+      let input = frame(c)
+      let tc = ContinuousClock.now
       do {
         let r: String = try await withThrowingTaskGroup(of: String.self) { g in
-          g.addTask { try await session.respond(to: prompt, options: opts).content }
+          g.addTask { try await session.respond(to: input, options: opts).content }
           g.addTask { try await Task.sleep(for: .seconds(30)); throw CancellationError() }
           let first = try await g.next()!; g.cancelAll(); return first
         }
         outs.append(r)
       } catch { outs.append(c); errs.append(error is CancellationError ? "timeout30s" : "\(error)") }
+      secs.append((ContinuousClock.now - tc).seconds)
       if k == 0 { firstChunkS = (ContinuousClock.now - t).seconds }
     }
-    return ["clean": outs.joined(separator: " "), "first_chunk_s": firstChunkS, "chunks": item.chunks.count, "errors": errs]
+    var row: [String: Any] = ["clean": outs.joined(separator: " "), "first_chunk_s": firstChunkS, "chunks": chunks.count, "errors": errs]
+    if prompt != nil { row["chunk_in"] = chunks; row["chunk_out"] = outs; row["chunk_s"] = secs }
+    return row
   }
 
   func unload() { model = nil }

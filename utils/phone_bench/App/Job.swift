@@ -11,6 +11,7 @@ struct JobSpec: Codable {
   var rounds: Int?   // passes over the items; speech runs used 3
   let block: Int     // items per arm before switching
   var order: String? // abba (default), alternate, sequential
+  var inputs: String? // cleanup: a file in Documents to use instead of Res/cleanup/inputs.jsonl
   let arms: [ArmSpec]
 
   static let order = ["abba", "alternate", "sequential"]
@@ -20,7 +21,7 @@ struct JobSpec: Codable {
 
   /// The items every arm processes, in order, each with a key unique across rounds.
   func items() throws -> [(key: String, round: Int, item: Item)] {
-    let all = try set.load()
+    let all = try set.load(inputs: inputs)
     let lo = min(offset ?? 0, all.count), hi = min(lo + (limit ?? all.count), all.count)
     let r = rounds ?? 1
     return (1...max(r, 1)).flatMap { round in all[lo..<hi].map { (key: r > 1 ? "\(round)|\($0.id)" : $0.id, round: round, item: $0) } }
@@ -46,6 +47,10 @@ struct JobSpec: Codable {
     // names become file names in Documents, so no path separators or other surprises
     let safe = { (s: String) in !s.isEmpty && s.contains { $0 != "." } && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) } }
     guard safe(name), arms.allSatisfy({ safe($0.id) }) else { throw BenchError("job name and arm ids may use only letters, digits, . _ -") }
+    guard inputs.map(safe) ?? true, arms.allSatisfy({ $0.options?["prompt"].map(safe) ?? true }) else {
+      throw BenchError("inputs and prompt files are names in Documents (and Documents/prompts): letters, digits, . _ -")
+    }
+    guard inputs == nil || set == .cleanup else { throw BenchError("inputs is for the cleanup set") }
     for a in arms {
       guard let s = runtimeSet[a.runtime] else { throw BenchError("arm \(a.id): unknown runtime \(a.runtime)") }
       guard s == set else { throw BenchError("arm \(a.id): runtime \(a.runtime) runs on the \(s.rawValue) set, not \(set.rawValue)") }

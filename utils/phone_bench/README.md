@@ -10,7 +10,7 @@ Runtimes ("arms") one app can alternate:
 | --- | --- | --- | --- |
 | `mlx` | cleanup | an LLM on the GPU through mlx-swift-lm | folder in Documents/models |
 | `anemll` | cleanup | an ANEMLL Core ML LLM on the Neural Engine | folder in Documents/models |
-| `afm` | cleanup | Apple Foundation Models (`options.wrap: "true"` for the wrapped prompt) | built in |
+| `afm` | cleanup | Apple Foundation Models (`options.wrap: "true"` for the wrapped prompt, `options.prompt: <file>` for a prompt file in `prompts/` next to the job) | built in |
 | `parakeet-coreml` | speech | Parakeet TDT v3 through FluidAudio on Core ML | bundled in Res/models |
 | `mlx-stt` | speech | a speech model through mlx-audio-swift (`options.model_type`, default parakeet) | folder in Documents/models |
 | `bark` | speech | Bark 3.0's Core ML encoder plus a Swift decoder (`options.units`: ane, gpu, cpu, all) | bundled in Res/bark |
@@ -117,6 +117,7 @@ so such runs would suit accuracy, not speed. Details in
 | --- | --- |
 | `name` | names the result files; a new name starts over, the same name resumes |
 | `set` | `cleanup` (600 transcripts, Res/cleanup/inputs.jsonl) or `speech` (450 clips, Res/clips/manifest.tsv) |
+| `inputs` | cleanup only: a JSONL file next to the job (`id`, `chunks`, optional `chunks_by` with the text cut at other sizes), copied to Documents and used instead of the bundled 600 transcripts |
 | `offset`, `limit` | the slice of the set to run, in file order (default: all of it) |
 | `rounds` | passes over the slice (default 1); speech timings used 3 |
 | `block` | items one arm runs before the next arm takes over |
@@ -128,6 +129,31 @@ id stops with an error rather than mixing two configurations in one file; give t
 the first step whose arm has not done all of that block's items, so the result files are the only state:
 kill the app mid-block and the next launch reruns only the items with no row. Two blocks in a row for the
 same arm keep its model loaded; switching arms unloads one model and loads the other.
+
+A prompt file (`prompts/<name>.json`, also copied by `phone_push.py`) holds `instructions`, `frame` (the chunk
+goes where `{text}` is), `cap` and `min_cap` (the response cap is max(min_cap, cap × the chunk's words)) and
+`chunk_words` (which `chunks_by` entry to use). An arm with one also writes `chunk_in`, `chunk_out` and `chunk_s`
+per item, so the Mac can apply the app's guards chunk by chunk. `prompt_search.py` writes these jobs.
+
+## Searching for a better cleanup prompt (#126)
+
+`prompt_search.py` proposes cleanup prompts for Apple's model, runs each generation as one job on the phone,
+scores it and keeps the best, with a held-out split for the end. See its docstring for the inputs and the rule
+that decides when a candidate replaces the best.
+
+```sh
+cd ../..                                                         # repo root
+.venv/bin/python utils/phone_bench/prompt_search.py build         # inputs, splits, the dictionary, once
+.venv/bin/python utils/phone_bench/prompt_search.py raw           # the scores with no cleanup
+.venv/bin/python utils/phone_bench/prompt_search.py loop --budget 18   # three jobs of six candidates
+.venv/bin/python utils/phone_bench/prompt_search.py heldout       # the best against today's, held out
+.venv/bin/python utils/phone_bench/prompt_search.py report
+```
+
+Each generation runs today's prompt and the current best beside the new candidates, so every comparison is
+within one job. `loop` pushes the job, then syncs every minute until it ends; keep the phone in front (Guided
+Access) and plugged in. Interrupted, the same command resumes the job. `--engine mlx:<model>` runs the same loop
+on the Mac through mlx-lm, to check the harness without a phone.
 
 ## Result files
 
