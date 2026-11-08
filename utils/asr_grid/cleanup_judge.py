@@ -21,8 +21,8 @@ scoring against it, not tuning on it, #122).
 
 Outputs come from cleanup_bench.py's rows (`--cleanup` runs, guarded text as pasted) plus the iPhone's Apple
 Intelligence run from #67 on Earnings22. Judgments are cached per clip and set of outputs in
-~/.v2t/eval/cleanup-judge/judgments.jsonl, so a rerun only pays for what changed. The key is fetched
-with `az` at run time (the one in the environment can be stale) and never written down.
+~/.v2t/eval/cleanup-judge/judgments.jsonl, so a rerun only pays for what changed. The key is
+AZURE_OPENAI_API_KEY from the environment (jules-aiml-2's).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import hashlib
 import json
 import random
 import statistics
-import subprocess
+import os
 import sys
 import time
 import urllib.request
@@ -45,7 +45,6 @@ import grid
 OUT = grid.EVAL / "cleanup-judge"
 MODEL = "gpt-6.1-sol"
 ENDPOINT = "https://jules-aiml-2.openai.azure.com/openai/v1/responses"
-ACCOUNT = ("jules-aiml-2", "RD-jules-aiml-AppResources-devtest", "e2691b7e-8c09-48f0-a9db-0b55fb638d4a")
 PRICE = (2.0, 10.0)  # dollars per million input and output tokens, gsk-llms ls azure_openai (2026-11-07)
 AFM_PHONE = grid.EVAL / "iphone-2026-10-27" / "cleanup-afm-wrap.jsonl"
 CRITERIA = ("punctuation", "capitals", "fillers", "numbers", "faithful")
@@ -102,12 +101,9 @@ def outputs(set_name: str, system: str = "parakeet-v3") -> dict[str, dict[str, s
 
 
 def azure_key() -> str:
-    name, group, sub = ACCOUNT
-    key = subprocess.run(["az", "cognitiveservices", "account", "keys", "list", "-n", name, "-g", group,
-                          "--subscription", sub, "--query", "key2", "-o", "tsv"],
-                         capture_output=True, text=True).stdout.strip()
+    key = os.environ.get("AZURE_OPENAI_API_KEY", "")
     if not key:
-        raise SystemExit("could not read the Azure key: run `az login`")
+        raise SystemExit("AZURE_OPENAI_API_KEY is not set: it is jules-aiml-2's key")
     return key
 
 
