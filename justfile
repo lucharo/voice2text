@@ -4,7 +4,7 @@ lint:
 
 # Fast checks; no models, microphone, or permissions needed
 check: lint
-    uv run python -m unittest -v tests.test_smoke
+    uv run python -m unittest -v tests.test_smoke tests.test_cleanup_eval
     uv run python -m v2t.config
     uv run python -m v2t.backends
     xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices

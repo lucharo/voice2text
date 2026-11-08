@@ -40,6 +40,11 @@ SETS = ("ls-clean", "ls-other", "ami-sdm", "earnings22")
 SYSTEMS = ("parakeet-v3", "parakeet-unified-en", "qwen3-asr-1.7b-8bit")
 OUT = grid.GRID / "cleanup"
 MODELS = grid.GRID / "cleanup-models"
+# The maintainer's 208 dictations, scored against Wispr Flow's formatted text: a reference to compare with,
+# not ground truth, and never a tuning target (its terms allow the one, not the other, #122)
+WISPR = "wispr"
+WISPR_MODELS = grid.GRID / "cleanup-wispr"
+WISPR_REFS = grid.EVAL / "wisprflow" / "results-2b-casual.jsonl"
 FORMATTED = ("earnings22",)  # references with punctuation and capitals
 ANSWER = 1.3  # an output this many times the input's words is an answer or a continuation
 _TOKEN = re.compile(r"\w+(?:['’]\w+)*|[^\w\s]")
@@ -114,7 +119,10 @@ def run(args) -> None:
     t0 = time.perf_counter()
     cleaner = backends.make_cleanup(engine, model, cfg.ollama_url)
     cleaner.vocabulary = tuple(vocabulary)
-    out = MODELS / backends.short_model(cleaner.model_id) if args.cleanup else OUT
+    root = WISPR_MODELS if args.sets == [WISPR] else MODELS
+    out = root / backends.short_model(cleaner.model_id) if args.cleanup else OUT
+    if WISPR in args.sets and (not args.cleanup or args.sets != [WISPR]):
+        raise SystemExit("--sets wispr goes on its own, with --cleanup")
     print(f"cleanup: {cleaner.model_id}, {mode}, {len(vocabulary)} terms, {len(replacements)} replacements -> {out}")
     _check_signature(out, _signature(cleaner.model_id, mode, vocabulary, replacements))
     model_text = _record_model_text(cleaner) if args.cleanup else []
@@ -282,17 +290,49 @@ def models(args) -> None:
     print(f"\n{system}, clips per set: " + ", ".join(f"{s} {len(shared[s])}" for s in sets))
 
 
+def wispr(args) -> None:
+    """One table: each model run with --sets wispr against Wispr Flow's formatted text, on the dictations
+    where Wispr kept its formatting (not cut short) and every model has a row."""
+    system = args.systems[0]
+    refs = {r["id"]: r["wispr_formatted"] for r in grid.read_jsonl(WISPR_REFS)
+            if r.get("wispr_formatted") and not r.get("wispr_cut")}
+    names = sorted(p.parent.parent.name for p in WISPR_MODELS.glob(f"*/{WISPR}/{system}.jsonl"))
+    if not names:
+        raise SystemExit(f"no {system} results under {WISPR_MODELS}: run with --cleanup ... --sets wispr first")
+    data = {n: {r["id"]: r for r in grid.read_jsonl(WISPR_MODELS / n / WISPR / f"{system}.jsonl")} for n in names}
+    ids = sorted(set(refs).intersection(*(set(d) for d in data.values())))
+    if not ids:
+        raise SystemExit("no dictation has both a Wispr formatted text and a row from every model")
+    fmt = _TOKEN.findall
+    print("| model | WER vs Wispr (model / guarded) | formatted WER vs Wispr, guarded | >1.3x | guard reverts | p50 / p90 s per dictation |")
+    print("|---|--:|--:|--:|--:|--:|")
+    first = data[names[0]]
+    print(f"| raw transcript | {100 * _wer([(refs[i], first[i]['raw']) for i in ids], _norm):.2f} | "
+          f"{100 * _wer([(refs[i], first[i]['raw']) for i in ids], fmt):.2f} | – | – | – |")
+    for n in names:
+        rows = [data[n][i] for i in ids]
+        secs = sorted(r["seconds"] for r in rows)
+        reverts = sum(r["stats"].get("guarded", 0) + r["stats"].get("limited", 0) for r in rows)
+        print(f"| {n} | {100 * _wer([(refs[i], data[n][i]['model']) for i in ids], _norm):.2f} / "
+              f"{100 * _wer([(refs[i], data[n][i]['clean']) for i in ids], _norm):.2f} | "
+              f"{100 * _wer([(refs[i], data[n][i]['clean']) for i in ids], fmt):.2f} | {answers(rows)} | "
+              f"{reverts} of {sum(r['stats'].get('chunks', 0) for r in rows)} | "
+              f"{statistics.median(secs):.2f} / {secs[math.ceil(0.9 * len(secs)) - 1]:.2f} |")
+    print(f"\n{system}, {len(ids)} dictations (Wispr formatted, not cut short)")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("command", nargs="?", default="report", choices=("run", "report", "models"))
+    p.add_argument("command", nargs="?", default="report", choices=("run", "report", "models", "wispr"))
     p.add_argument("--cleanup", help="engine:model, e.g. mlx:mlx-community/Qwen3.5-0.8B-4bit or ollama:qwen3:4b-instruct-2507-q4_K_M")
     p.add_argument("--mode", help="cleanup mode (default: the configured one)")
-    p.add_argument("--sets", nargs="+", default=list(SETS), choices=SETS)
+    p.add_argument("--sets", nargs="+", default=list(SETS), choices=(*SETS, WISPR),
+                   help="labelled sets (default all four), or wispr on its own: the maintainer's dictations")
     p.add_argument("--systems", nargs="+", default=list(SYSTEMS), choices=SYSTEMS)
     args = p.parse_args()
-    if args.command == "models" and args.systems == list(SYSTEMS):
+    if args.command in ("models", "wispr") and args.systems == list(SYSTEMS):
         args.systems = ["parakeet-v3"]
-    {"run": run, "report": lambda a: report(), "models": models}[args.command](args)
+    {"run": run, "report": lambda a: report(), "models": models, "wispr": wispr}[args.command](args)
 
 
 if __name__ == "__main__":
