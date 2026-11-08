@@ -159,7 +159,11 @@ import XCTest
   func testSearchTypesIntoTheFieldAndInsertsAResult() {
     launch(globe: "0")
     key("emoji").tap()
-    XCTAssertEqual(app.buttons["emoji.search.open"].label, "Search Emoji")  // titled from the start
+    let open = app.buttons["emoji.search.open"]
+    XCTAssertEqual(open.label, "Search Emoji")  // titled from the start
+    // across the top, above the category's name, as on Apple's iOS 27 emoji keyboard
+    XCTAssertGreaterThan(open.frame.width, app.windows.firstMatch.frame.width * 0.9)
+    XCTAssertLessThan(open.frame.maxY, app.staticTexts["emoji.header"].frame.minY)
     app.buttons["emoji.search.open"].tap()
     XCTAssertTrue(key("letters-p").waitForExistence(timeout: 3))
     for ch in "pizz" { key("letters-\(ch)").tap() }
