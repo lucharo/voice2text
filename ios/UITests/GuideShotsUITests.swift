@@ -39,6 +39,18 @@ import XCTest
     XCTAssertTrue(app.staticTexts["v2t"].exists, app.debugDescription)
   }
 
+  /// The setup list before the speech model is on the device: its Download button sits at the row's end, whole
+  /// (never wrapped). Needs a Simulator without the model; skipped when it is there.
+  func testSetupRowOffersTheDownload() throws {
+    continueAfterFailure = false
+    app.launch()
+    let download = app.buttons["v2t.model.download"]
+    guard download.waitForExistence(timeout: 20) else { throw XCTSkip("the speech model is on this Simulator") }
+    XCTAssertTrue(download.isHittable)
+    XCTAssertLessThan(download.frame.height, 44, "the Download button wrapped onto two lines")
+    shot("40-setup-download")
+  }
+
   /// The "This iPhone" section: which speech model and cleanup this device gets, and why.
   func testDeviceCardNamesTheModel() {
     continueAfterFailure = false

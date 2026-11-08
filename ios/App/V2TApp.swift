@@ -132,7 +132,7 @@ struct SetupRow: View {
 struct ModelRow: View {
   @EnvironmentObject var dictation: DictationService
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
+    HStack(alignment: dictation.engineState == .notDownloaded ? .center : .top, spacing: 12) {
       Image(systemName: icon).font(.title2).foregroundStyle(color)
       VStack(alignment: .leading, spacing: 4) {
         Text("Speech model").foregroundStyle(.primary)
@@ -147,11 +147,18 @@ struct ModelRow: View {
           Button("Try again") { Task { await dictation.prepareModel() } }
         case .ready: Text("Ready. Transcription runs on this \(dictation.recommendation.deviceName), offline.").font(.footnote).foregroundStyle(.secondary)
         case .notDownloaded:
-          Text("Not on this \(dictation.recommendation.deviceName) yet. The keyboard's mic needs it; typing works without it.")
-            .font(.footnote).foregroundStyle(.secondary)
-          Button("Download (\(dictation.recommendation.downloadMB) MB)") { Task { await dictation.prepareModel() } }
-            .accessibilityIdentifier("v2t.model.download")
+          Text("Needed for the mic. Typing works without it.").font(.footnote).foregroundStyle(.secondary)
         }
+      }
+      // the text takes every point the button leaves, so the row has no gap between them
+      .frame(maxWidth: .infinity, alignment: .leading)
+      if dictation.engineState == .notDownloaded {
+        // a real button at the row's end (a bordered style also keeps the rest of the row from acting as it)
+        Button { Task { await dictation.prepareModel() } } label: { Label("Download", systemImage: "arrow.down") }
+          .labelStyle(.titleAndIcon).fixedSize()  // never wrapped to "Down-load" in a narrow row
+          .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).controlSize(.small)
+          .accessibilityLabel("Download, \(dictation.recommendation.downloadMB) MB")
+          .accessibilityIdentifier("v2t.model.download")
       }
     }
   }
@@ -288,7 +295,7 @@ struct StorageRows: View {
     VStack(alignment: .leading, spacing: 4) {
       LabeledContent("Dictations", value: !history.hasFiles ? "None" : "\(history.items.count) · \(Self.size(history.bytes))")
         .accessibilityIdentifier("v2t.storage.history")
-      Text("History keeps the text only. Audio is never saved: v2t holds it in memory while it transcribes, then drops it.")
+      Text("Text only. Audio is never saved.")
         .font(.footnote).foregroundStyle(.secondary)
       Button("Clear History", role: .destructive) { confirmHistory = true }
         .disabled(!history.hasFiles)
