@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.21
+
+- **A double tap starts hands-free recording at once.** A double tap opened the microphone three times in a row: on the first press, on the second press, and again when the second tap switched to hands-free, closing it in between. In an engine whose memory macOS had paged out, each open could take one to two seconds (one double tap on 7 Nov took 0.68 s, 2.19 s and 1.77 s, so the pill showed about five seconds after the first tap). The microphone now opens once, on the first press. After a tap it stays open, taking no audio, for the 0.5 s in which a second tap counts, and the second tap's recording carries on hands-free with the audio from that press. Over 18 double taps on a loaded Mac, the pill showed 0.02 s after the second tap lifted at the median, against 0.51 s, and the audio from the second press on was kept (0.59 s of it was lost at the median before). After a single tap the orange microphone dot stays on up to 0.5 s longer (#152).
+- **Recording skips re-reading the audio devices when nothing changed.** Since #14 v2t re-read the device list before every recording, which took up to 0.77 s under load. It now does so only when macOS's default input is not the one it read last, and after an open that failed, which it then retries once, so a newly plugged headset is still picked up. The log line for a slow open now splits the time into devices, open and start (#152).
+
 ## 0.5.20
 
 - **The cleanup model leaves less behind in memory.** MLX kept the scratch buffers each cleanup had used, so v2t's engine grew by a few gigabytes after the first dictations and held them while idle: with Qwen3.5-2B, 5.2 GB after 60 cleanups. They are now handed back after every cleanup (1.7 GB in the same test), which made the next cleanup about 1% slower, 2 ms at the median (#129).
