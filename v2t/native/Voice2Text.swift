@@ -1286,6 +1286,7 @@ final class Pill: NSObject {
             view.begin()
             hide()  // Undo reanchors and restores the selected style's full size.
         }
+        let cleaningStarts = phase == "cleaning" && view.phase != "cleaning"
         // The engine says "delivering" just before it pastes: the bubble stops
         // following and fades out as the paste lands, still showing the cleanup.
         if phase != "delivering" { view.phase = phase }
@@ -1306,6 +1307,7 @@ final class Pill: NSObject {
         }
         if !visible { show(); log("shown") }
         else { position() }
+        if cleaningStarts && visible { startTicker() }  // the count's tenths start with the cleanup
         view.needsDisplay = true
     }
 
@@ -1341,13 +1343,23 @@ final class Pill: NSObject {
         }
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
         visible = true
-        // Half the original 20 Hz history speed, with two-sample smoothing.
-        let ticker = Timer(timeInterval: 2.0 / 20, repeats: true) { [weak self] _ in self?.view.tick() }
-        RunLoop.main.add(ticker, forMode: .common)
-        self.ticker = ticker
+        startTicker()
         let follower = Timer(timeInterval: Self.followInterval, repeats: true) { [weak self] _ in self?.follow() }
         RunLoop.main.add(follower, forMode: .common)
         self.follower = follower
+    }
+
+    /// Animation frames at half the original 20 Hz history speed, with two-sample
+    /// smoothing. Restarted when cleanup begins, so each frame lands half a tenth into
+    /// the count's tenth: one a few milliseconds late still shows the next tenth.
+    private func startTicker() {
+        ticker?.invalidate()
+        let interval = 2.0 / 20
+        let ticker = Timer(fire: Date(timeIntervalSinceNow: interval / 2), interval: interval, repeats: true) { [weak self] _ in
+            self?.view.tick()
+        }
+        RunLoop.main.add(ticker, forMode: .common)
+        self.ticker = ticker
     }
 
     /// Re-read the focus off the main thread (a hung app would block it for an AX
@@ -1822,9 +1834,16 @@ final class Pill: NSObject {
 final class PillView: NSView {
     var style = PillStyle.cursorBubble
     var phase = "idle" {
-        didSet { if phase == "cleaning" && oldValue != "cleaning" { cleaningSince = CACurrentMediaTime() } }
+        didSet {
+            if phase == "cleaning" && oldValue != "cleaning" { cleaningSince = CACurrentMediaTime(); cleaningTenths = 0 }
+        }
     }
     private var cleaningSince = CACurrentMediaTime()
+    /// The cleanup count in tenths of a second, moved on only by tick(). The menu app's
+    /// one-second refresh redraws the pill between ticks, and a count read off the clock
+    /// there jumped a tenth early: once a second one tenth showed for 50 ms and the next
+    /// for 150 ms (2026-11-08).
+    private var cleaningTenths = 0
     var partial = ""
     private var bars = [CGFloat](repeating: 0, count: 64)
     private var loudest: Double?  // since the last tick
@@ -1860,6 +1879,8 @@ final class PillView: NSView {
             bars.removeFirst()
             bars.append(((bars.last ?? 0) + next) / 2)
             loudest = nil
+        } else if phase == "cleaning" {
+            cleaningTenths = Int((CACurrentMediaTime() - cleaningSince) * 10)
         }
         needsDisplay = true
     }
@@ -1927,7 +1948,7 @@ final class PillView: NSView {
             drawWords(in: NSRect(x: 72, y: body.minY, width: body.width - 88, height: body.height))
         } else if phase == "cleaning" {
             // Count the cleanup up live, so its speed is visible every time.
-            let elapsed = String(format: "%.1f s", CACurrentMediaTime() - cleaningSince)
+            let elapsed = String(format: "%.1f s", Double(cleaningTenths) / 10)
             drawBars(in: NSRect(x: 14, y: body.minY + 9, width: 44, height: body.height - 18))
             drawText(elapsed, in: NSRect(x: 64, y: body.minY, width: body.width - 76, height: body.height),
                      color: NSColor(white: 1, alpha: 0.85))
