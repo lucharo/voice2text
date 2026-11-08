@@ -23,7 +23,7 @@ jobs:
           uv run --no-project --python 3.12
           --with 'numpy<2.4' --with scipy --with sounddevice --with loguru
           --with 'kaldialign>=0.12' --with num2words --with regex
-          python -m unittest -v tests.test_smoke tests.test_cleanup_eval
+          python -m unittest -v tests.test_smoke tests.test_cleanup_eval tests.test_cleanup_judge
       - name: App Store submission script (ios/tools/asc.py), against a fake App Store Connect
         run: uv run --no-project --python 3.12 --with 'pyjwt[crypto]==2.10.1' python -m unittest -v tests.test_asc
       - run: uv build

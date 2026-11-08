@@ -132,13 +132,43 @@ def cost(usage: dict) -> float:
     return (usage["input_tokens"] * PRICE[0] + usage["output_tokens"] * PRICE[1]) / 1e6
 
 
+def text_id(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def judgment_key(set_name: str, cid: str, raw: str, distinct: list[str]) -> str:
+    """What decides a judgment: the clip, the judge and its instructions, and the distinct texts it saw.
+    Which model wrote which text is not part of it: scores are kept per text and given to the models
+    at report time, from their current outputs."""
+    return hashlib.sha256(json.dumps([set_name, cid, MODEL, INSTRUCTIONS, raw, distinct]).encode()).hexdigest()[:20]
+
+
+def check(grades: dict, labels: list[str]) -> str | None:
+    """Why a reply cannot be used, or None: every label scored once, 1 to 5, and a winner among them."""
+    got = [g.get("label") for g in grades.get("versions", [])]
+    if sorted(got) != sorted(labels):
+        return f"labels {sorted(got)} for {sorted(labels)}"
+    if any(not (isinstance(g.get(c), int) and 1 <= g[c] <= 5) for g in grades["versions"] for c in CRITERIA):
+        return "a score outside 1-5"
+    if grades.get("best") not in labels:
+        return f"best {grades.get('best')!r} is not a label"
+    return None
+
+
+def worst_case(raw: str, distinct: list[str]) -> float:
+    """An upper bound on one call's cost, about 3 characters a token, so a run stops before the budget."""
+    chars = len(INSTRUCTIONS) + len(raw) + sum(len(t) + 20 for t in distinct)
+    return (chars / 3 * PRICE[0] + 4000 * PRICE[1]) / 1e6
+
+
 def run(args) -> None:
     path = grid.private_dir(OUT) / "judgments.jsonl"
+    spend = grid.private_dir(OUT) / "spend.jsonl"  # every call, kept or not, for the bill
     done = {r["key"] for r in grid.read_jsonl(path)}
-    spent = sum(cost(r["usage"]) for r in grid.read_jsonl(path))
-    print(f"already spent ${spent:.2f} over {len(done)} judgments")
-    key, budget_start = azure_key(), spent
-    with path.open("a") as f:
+    spent = sum(r["usd"] for r in grid.read_jsonl(spend))
+    print(f"already spent ${spent:.2f}; {len(done)} judgments")
+    key, start = azure_key(), spent
+    with path.open("a") as f, spend.open("a") as bill:
         for set_name in args.sets:
             clips = outputs(set_name)
             ids = sorted(clips)[: args.limit] if args.limit else sorted(clips)
@@ -146,46 +176,60 @@ def run(args) -> None:
                 outs = clips[cid]
                 # identical texts are judged once: the judge sees each distinct cleanup a single time
                 distinct = sorted({t for t in outs.values()})
-                k = hashlib.sha256(json.dumps([set_name, cid, MODEL, INSTRUCTIONS, outs["raw"], distinct]).encode()).hexdigest()[:20]
+                k = judgment_key(set_name, cid, outs["raw"], distinct)
                 if k in done:
                     continue
-                if spent - budget_start >= args.budget:
-                    print(f"budget of ${args.budget:.2f} reached; run again to continue")
+                if spent - start + worst_case(outs["raw"], distinct) > args.budget:
+                    print(f"the next call could pass the ${args.budget:.2f} budget; run again to continue")
                     return
                 rng = random.Random(k)  # the order is shuffled, but the same on a rerun
                 order = rng.sample(distinct, len(distinct))
                 labels = [chr(ord("A") + i) for i in range(len(order))]
                 grades, usage = ask(key, outs["raw"], list(zip(labels, order)))
-                by_text = {t: g for g in grades["versions"] for lab, t in zip(labels, order) if g["label"] == lab}
-                best = dict(zip(labels, order)).get(grades["best"])
-                row = {"key": k, "set": set_name, "id": cid, "model": MODEL, "usage": usage,
-                       "scores": {name: by_text.get(t) for name, t in outs.items()},
-                       "best": sorted(n for n, t in outs.items() if t == best)}
+                spent += cost(usage)
+                problem = check(grades, labels)
+                bill.write(json.dumps({"key": k, "usd": cost(usage), "usage": usage, "rejected": problem}) + "\n")
+                bill.flush()
+                if problem:  # not marked done, so the next run asks again
+                    print(f"{set_name}/{cid}: reply not used ({problem})")
+                    continue
+                by_label = {g["label"]: {c: g[c] for c in CRITERIA} for g in grades["versions"]}
+                row = {"key": k, "set": set_name, "id": cid, "model": MODEL,
+                       "texts": {text_id(t): by_label[lab] for lab, t in zip(labels, order)},
+                       "best": text_id(dict(zip(labels, order))[grades["best"]])}
                 f.write(json.dumps(row) + "\n")
                 f.flush()
-                spent += cost(usage)
                 done.add(k)
-    print(f"spent ${spent - budget_start:.2f} this run, ${spent:.2f} in all")
+    print(f"spent ${spent - start:.2f} this run, ${spent:.2f} in all")
 
 
 def report(args) -> None:
-    rows = grid.read_jsonl(OUT / "judgments.jsonl")
+    rows = {r["key"]: r for r in grid.read_jsonl(OUT / "judgments.jsonl")}
     if not rows:
         raise SystemExit(f"no judgments under {OUT}: run first")
     for set_name in args.sets:
-        sel = [r for r in rows if r["set"] == set_name]
-        if not sel:
+        # only the judgment of each clip's current outputs; older ones stay in the file for the bill
+        current = []
+        for cid, outs in outputs(set_name).items():
+            r = rows.get(judgment_key(set_name, cid, outs["raw"], sorted(set(outs.values()))))
+            if r:
+                current.append({n: (r["texts"][text_id(t)], text_id(t) == r["best"]) for n, t in outs.items()})
+        if not current:
             continue
-        # compare only on clips where every output in the table was judged
-        names = sorted(set.intersection(*(set(n for n, s in r["scores"].items() if s) for r in sel)))
-        print(f"\n{set_name}: {len(sel)} clips judged by {MODEL}, scores 1-5 (mean), and how often each was the pick (identical outputs share a pick, so the column sums past 100%)")
+        names = sorted(set.intersection(*(set(c) for c in current)), key=lambda n: (n != "raw", n))
+        print(f"\n{set_name}: {len(current)} clips judged by {MODEL}, scores 1-5 (mean), and how often each was the pick"
+              " (identical outputs share a pick, so the column sums past 100%)")
         print("| output | " + " | ".join(CRITERIA) + " | mean | picked |")
         print("|---|" + "--:|" * (len(CRITERIA) + 2))
-        for n in sorted(names, key=lambda n: (n != "raw", n)):
-            means = [statistics.fmean(r["scores"][n][c] for r in sel) for c in CRITERIA]
-            picked = sum(n in r["best"] for r in sel) / len(sel)
+        for n in names:
+            means = [statistics.fmean(c[n][0][k] for c in current) for k in CRITERIA]
+            picked = sum(c[n][1] for c in current) / len(current)
             print(f"| {n} | " + " | ".join(f"{m:.2f}" for m in means) + f" | {statistics.fmean(means):.2f} | {100 * picked:.0f}% |")
-    print(f"\ncost so far: ${sum(cost(r['usage']) for r in rows):.2f} over {len(rows)} calls")
+        missing = len(outputs(set_name)) - len(current)
+        if missing:
+            print(f"({missing} clips not judged for their current outputs: run again)")
+    bill = grid.read_jsonl(OUT / "spend.jsonl")
+    print(f"\ncost so far: ${sum(r['usd'] for r in bill):.2f} over {len(bill)} calls")
 
 
 def main() -> None:
