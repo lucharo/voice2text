@@ -3483,9 +3483,9 @@ class V2TSmokeTests(unittest.TestCase):
 
                 self.assertEqual(self._rows(rows), [
                     ("off", "Off", None, True, False, ""),
-                    (f"mlx:{backends.MLX_CLEANUP_FAST}", "Qwen3.5 0.8B · fastest", False, True, False,
-                     "downloads 0.65 GB on first use"),
-                    ("mlx", "Qwen3.5 2B (default)", True, True, True, "1.7 GB, downloaded"),
+                    ("mlx", "Qwen3.5 0.8B (default)", True, True, True, "0.65 GB, downloaded"),
+                    (f"mlx:{backends.MLX_CLEANUP_BALANCED}", "Qwen3.5 2B", False, True, False,
+                     "downloads 1.7 GB on first use"),
                     (f"mlx:{backends.MLX_CLEANUP_QUALITY}", "Qwen3.5 4B", False, True, False,
                      "downloads 3.1 GB on first use"),
                     ("ollama", "Ollama · qwen3:4b", bool(pulled), bool(pulled), False, note),
@@ -3497,7 +3497,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in rows if r["current"]], ["off"])
         self.assertEqual([r["set"] for r in rows[:2]], [
             [["cleanup.enabled", "false"]],
-            [["cleanup.enabled", "true"], ["cleanup.engine", "mlx"], ["cleanup.model", backends.MLX_CLEANUP_FAST]],
+            [["cleanup.enabled", "true"], ["cleanup.engine", "mlx"], ["cleanup.model", ""]],
         ])
 
     def test_every_picker_row_names_a_backend_v2t_accepts_once(self):

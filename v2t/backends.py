@@ -627,11 +627,13 @@ def cleanup_messages(
     return messages
 
 
-# Default measured 2026-09-04 over 208 real dictations (casual mode): Qwen3.5-2B kept
-# 98% of the words (p10 93%) at 1.17s median cleanup; Qwen2.5-1.5B kept 92% at 0.85s,
-# Qwen3.5-0.8B 96% at 0.61s, Qwen3.5-4B 96% at 2.21s. Non-thinking by default.
-MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3.5-2B-4bit"
-MLX_CLEANUP_FAST = "mlx-community/Qwen3.5-0.8B-4bit"  # 96% kept, fastest
+# Default since 2026-11-08 (#129): with the casual length guard no longer counting fillers and
+# repeats, an LLM judge (gpt-6.1-sol, utils/asr_grid/cleanup_judge.py) scored Qwen3.5-0.8B level
+# with Qwen3.5-2B on Earnings22 (4.38 vs 4.37 of 5) and on 208 real dictations (3.74 vs 3.75),
+# at 0.05 against 0.09 s per clip and 2.3 against 2.8 GB loaded. Qwen3.5-4B scored 4.06 on the
+# dictations, the better choice for punctuation. Non-thinking by default.
+MLX_CLEANUP_DEFAULT = "mlx-community/Qwen3.5-0.8B-4bit"
+MLX_CLEANUP_BALANCED = "mlx-community/Qwen3.5-2B-4bit"  # the default up to 0.5.22
 MLX_CLEANUP_QUALITY = "mlx-community/Qwen3.5-4B-4bit"  # non-thinking by default
 # Ollama's library dropped the bare `qwen3:4b-instruct-2507` tag (pull: "file does not
 # exist", 2026-11-07); this one names the same weights.
@@ -1194,8 +1196,8 @@ CLEANUP = {"mlx": MLXCleanup, "ollama": OllamaCleanup}
 # The menu app's Cleanup Model picker, in menu order, smallest model first.
 CLEANUP_CHOICES = (
     ModelChoice("off", "", "Off", 0),
-    ModelChoice("mlx", MLX_CLEANUP_FAST, "Qwen3.5 0.8B · fastest", 0.65),
-    ModelChoice("mlx", "", "Qwen3.5 2B", 1.7),
+    ModelChoice("mlx", "", "Qwen3.5 0.8B", 0.65),
+    ModelChoice("mlx", MLX_CLEANUP_BALANCED, "Qwen3.5 2B", 1.7),
     ModelChoice("mlx", MLX_CLEANUP_QUALITY, "Qwen3.5 4B", 3.1),
     # Ollama pulls its own models: v2t never downloads this one
     ModelChoice("ollama", "", "Ollama · qwen3:4b", 2.5),
