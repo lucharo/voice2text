@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.22
+
+- **The cleanup count in the pill ticks evenly.** Once a second the menu app redraws the pill, and that redraw read the count off the clock and rounded it up, so a tenth showed early: one tenth stayed up for about 50 ms and the next for 150 ms. The count now moves only on the pill's own animation frames, which start half a tenth after the cleanup does. In a copy of the pill redrawn once a second like the menu app does, every tenth stayed up 96 to 104 ms in four runs; before, three of the four runs had a tenth up for 42 to 73 ms followed by one up for 127 to 158 ms.
+
 ## 0.5.21
 
 - **A double tap starts hands-free recording at once.** A double tap opened the microphone three times in a row: on the first press, on the second press, and again when the second tap switched to hands-free, closing it in between. In an engine whose memory macOS had paged out, each open could take one to two seconds (one double tap on 7 Nov took 0.68 s, 2.19 s and 1.77 s, so the pill showed about five seconds after the first tap). The microphone now opens once, on the first press. After a tap it stays open, taking no audio, for the 0.5 s in which a second tap counts, and the second tap's recording carries on hands-free with the audio from that press. Over 18 double taps on a loaded Mac, the pill showed 0.02 s after the second tap lifted at the median, against 0.51 s, and the audio from the second press on was kept (0.59 s of it was lost at the median before). After a single tap the orange microphone dot stays on up to 0.5 s longer (#152).
