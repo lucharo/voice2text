@@ -67,8 +67,9 @@ _END = re.compile(r"[.!?…][\"'”’)\]]*$")
 # ---------------------------------------------------------------- the search space
 
 # today's phone prompt: Cleaner.swift sends the casual system prompt with the dictionary as instructions,
-# and each chunk as "Dictation: <chunk>\nCleaned:"
-TODAY = {"rules": "casual", "join": False, "examples": 0, "cut_example": False, "frame": "dictation", "chunk_words": 120}
+# and each chunk in a quoted block (CleanupPrompt.appleFrame; "Dictation: <chunk>\nCleaned:" until #126's search)
+TODAY = {"rules": "casual", "join": False, "examples": 0, "cut_example": False, "frame": "dictation-block",
+         "chunk_words": 120}
 
 KNOBS = {
     "join": [False, True],
