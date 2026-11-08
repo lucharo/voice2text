@@ -150,8 +150,9 @@ struct ModelRow: View {
           Text("Needed for the mic. Typing works without it.").font(.footnote).foregroundStyle(.secondary)
         }
       }
+      // the text takes every point the button leaves, so the row has no gap between them
+      .frame(maxWidth: .infinity, alignment: .leading)
       if dictation.engineState == .notDownloaded {
-        Spacer(minLength: 8)
         // a real button at the row's end (a bordered style also keeps the rest of the row from acting as it)
         Button { Task { await dictation.prepareModel() } } label: { Label("Download", systemImage: "arrow.down") }
           .labelStyle(.titleAndIcon).fixedSize()  // never wrapped to "Down-load" in a narrow row
