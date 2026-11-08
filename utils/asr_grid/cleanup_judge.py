@@ -88,7 +88,7 @@ def outputs(set_name: str, system: str = "parakeet-v3") -> dict[str, dict[str, s
         sys.path.insert(0, str(grid.REPO))
         from v2t import backends, config
 
-        vocabulary, _ = config.read_dictionary()
+        vocabulary, replacements = config.read_dictionary()
         for r in map(json.loads, AFM_PHONE.read_text().splitlines()):
             cid = r.get("id", "").removeprefix("earnings22/")
             if r.get("event") != "clean" or cid not in clips:
@@ -96,7 +96,9 @@ def outputs(set_name: str, system: str = "parakeet-v3") -> dict[str, dict[str, s
             raw, out = clips[cid]["raw"], (r.get("clean") or "").strip()
             # the app's guards, as Cleaner.swift applies them per chunk (these clips are one chunk each)
             ok = out and backends.within_length_guard(raw, out, "casual")
-            clips[cid]["apple-fm (iPhone)"] = backends.keep_spoken_words(raw, out, vocabulary)[0] if ok else raw
+            clean = backends.keep_spoken_words(raw, out, vocabulary)[0] if ok else raw
+            # then the dictionary's replacements, as DictationService applies them and cleanup_bench did
+            clips[cid]["apple-fm (iPhone)"] = config.apply_replacements(clean, replacements)
     return clips
 
 
@@ -124,8 +126,14 @@ def ask(key: str, raw: str, versions: list[tuple[str, str]]) -> tuple[dict, dict
                 time.sleep(10 * (attempt + 1))
                 continue
             raise
-    out = next(c["text"] for o in data["output"] if o["type"] == "message" for c in o["content"] if c["type"] == "output_text")
-    return json.loads(out), data["usage"]
+    # a refusal or a reply cut short is still billed: give back the usage with an empty reply, which check refuses
+    try:
+        out = next(c["text"] for o in data.get("output", []) if o.get("type") == "message"
+                   for c in o.get("content", []) if c.get("type") == "output_text")
+        grades = json.loads(out)
+    except (StopIteration, ValueError):
+        grades = {}
+    return grades, data["usage"]
 
 
 def cost(usage: dict) -> float:
@@ -156,9 +164,10 @@ def check(grades: dict, labels: list[str]) -> str | None:
 
 
 def worst_case(raw: str, distinct: list[str]) -> float:
-    """An upper bound on one call's cost, about 3 characters a token, so a run stops before the budget."""
-    chars = len(INSTRUCTIONS) + len(raw) + sum(len(t) + 20 for t in distinct)
-    return (chars / 3 * PRICE[0] + 4000 * PRICE[1]) / 1e6
+    """An upper bound on one call's cost, so a run stops before the budget: every character of the input
+    (instructions, schema, framing and texts) counted as a token, and the whole output allowance."""
+    chars = len(INSTRUCTIONS) + len(json.dumps(SCHEMA)) + len(raw) + sum(len(t) + 20 for t in distinct) + 100
+    return (chars * PRICE[0] + 4000 * PRICE[1]) / 1e6
 
 
 def run(args) -> None:
@@ -171,7 +180,7 @@ def run(args) -> None:
     with path.open("a") as f, spend.open("a") as bill:
         for set_name in args.sets:
             clips = outputs(set_name)
-            ids = sorted(clips)[: args.limit] if args.limit else sorted(clips)
+            ids = sorted(clips)[: args.limit]
             for cid in ids:
                 outs = clips[cid]
                 # identical texts are judged once: the judge sees each distinct cleanup a single time
@@ -216,7 +225,14 @@ def report(args) -> None:
                 current.append({n: (r["texts"][text_id(t)], text_id(t) == r["best"]) for n, t in outs.items()})
         if not current:
             continue
-        names = sorted(set.intersection(*(set(c) for c in current)), key=lambda n: (n != "raw", n))
+        # every model with a result, compared on the clips all of them have (a model still running would
+        # otherwise drop the others to its few clips: those with fewer than half the clips are listed apart)
+        counts = {n: sum(n in c for c in current) for c in current for n in c}
+        names = sorted((n for n, k in counts.items() if k >= len(current) / 2), key=lambda n: (n != "raw", n))
+        partial = sorted(n for n in counts if n not in names)
+        current = [c for c in current if all(n in c for n in names)]
+        if partial:
+            print(f"\n{set_name}: left out, judged on too few clips: " + ", ".join(f"{n} ({counts[n]})" for n in partial))
         print(f"\n{set_name}: {len(current)} clips judged by {MODEL}, scores 1-5 (mean), and how often each was the pick"
               " (identical outputs share a pick, so the column sums past 100%)")
         print("| output | " + " | ".join(CRITERIA) + " | mean | picked |")
@@ -239,6 +255,8 @@ def main() -> None:
     p.add_argument("--budget", type=float, default=5.0, help="run: dollars to spend at most this run (default 5)")
     p.add_argument("--limit", type=int, help="run: only the first N clips of each set")
     a = p.parse_args()
+    if a.limit is not None and a.limit < 0:
+        p.error("--limit must be 0 or more")
     {"run": run, "report": report}[a.command](a)
 
 

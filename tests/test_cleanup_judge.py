@@ -26,6 +26,26 @@ class Check(unittest.TestCase):
              "best 'C' is not a label"])
 
 
+class Ask(unittest.TestCase):
+    def reply(self, body):
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = json.dumps(body).encode()
+        return resp
+
+    def test_a_refusal_or_cut_reply_comes_back_empty_with_its_usage(self):
+        usage = {"input_tokens": 10, "output_tokens": 5}
+        bodies = [{"output": [{"type": "message", "content": [{"type": "refusal", "refusal": "no"}]}], "usage": usage},
+                  {"output": [{"type": "message", "content": [{"type": "output_text", "text": '{"versions": ['}]}],
+                   "usage": usage}]
+        got = []
+        for body in bodies:
+            with mock.patch.object(cj.urllib.request, "urlopen", return_value=self.reply(body)):
+                got.append(cj.ask("k", "raw", [("A", "text")]))
+
+        self.assertEqual(got, [({}, usage), ({}, usage)])
+        self.assertEqual(cj.check({}, ["A"]), "labels [] for ['A']")
+
+
 class Run(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -83,6 +103,29 @@ class Run(unittest.TestCase):
             cj.report(mock.Mock(sets=["earnings22"]))
         rows = [str(c.args[0]) for c in p.call_args_list if c.args and str(c.args[0]).startswith("| m1 |")]
         self.assertEqual(rows[0].split(" | ")[1], "5.00")
+
+    def test_a_model_on_only_a_few_clips_is_listed_apart_and_the_rest_compared(self):
+        outs = {f"c{i}": {"raw": f"so uh hi {i}", "m1": f"So, hi {i}."} for i in range(4)}
+        outs["c0"]["m2"] = "So hi 0."
+        for i in range(3):
+            outs[f"c{i}"]["m3"] = f"so hi {i}."  # most clips: compared, on the three it has
+        self.run_judge(outs, [self.fine] * 4)
+
+        with mock.patch.object(cj, "outputs", lambda s: outs if s == "earnings22" else {}), \
+             mock.patch("builtins.print") as p:
+            cj.report(mock.Mock(sets=["earnings22"]))
+        text = "\n".join(str(c.args[0]) for c in p.call_args_list if c.args)
+        self.assertIn("left out, judged on too few clips: m2 (1)", text)
+        self.assertIn("3 clips judged", text)
+        self.assertIn("| m1 |", text)
+        self.assertIn("| m3 |", text)
+
+    def test_limit_zero_judges_nothing(self):
+        outs = {"c1": {"raw": "so uh hi", "m1": "So, hi."}}
+        calls = []
+        with mock.patch.object(cj, "outputs", lambda s: outs), mock.patch.object(cj, "ask", lambda *a: calls.append(a)):
+            cj.run(mock.Mock(sets=["earnings22"], budget=5.0, limit=0))
+        self.assertEqual(calls, [])
 
     def test_a_refused_reply_is_billed_but_asked_again_next_run(self):
         outs = {"c1": {"raw": "so uh hi", "m1": "So, hi."}}
