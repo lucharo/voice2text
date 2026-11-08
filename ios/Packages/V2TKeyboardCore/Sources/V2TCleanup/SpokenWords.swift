@@ -65,30 +65,22 @@ public func chunkText(_ text: String, maxWords: Int = chunkWords) -> [String] {
 /// Whether the cleaned text kept a plausible share of the raw words for `mode`.
 public func withinLengthGuard(raw: String, clean: String, mode: CleanupMode) -> Bool {
   let (low, high) = lengthGuard(mode)
-  var rawWords = Py.split(raw.py).count
-  // casual cleanup may drop fillers and immediate repeats, so they do not count against it (#129)
-  if mode == .casual { rawWords -= droppableWords(raw) }
+  let rawWords = Py.split(raw.py).count
   let cleanWords = Py.split(clean.py).count
   if rawWords == 0 { return cleanWords == 0 }
-  let ratio = Double(cleanWords) / Double(rawWords)
-  return low <= ratio && ratio <= high
+  // casual cleanup may drop fillers and immediate repeats, so they do not count towards the floor (#129);
+  // the ceiling counts every word
+  let floorWords = mode == .casual ? rawWords - droppableWords(raw) : rawWords
+  return low * Double(floorWords) <= Double(cleanWords) && Double(cleanWords) <= high * Double(rawWords)
 }
 
-/// How many words casual cleanup may drop: fillers, and a run of up to three words said again right after
-/// itself, fillers aside ("we have uh we have" -> "we have"). Mirrors backends.droppable_words.
+/// How many words casual cleanup may drop: fillers, and a word said again right after itself, the same ones
+/// keepSpokenWords lets it leave out. Mirrors backends.droppable_words.
 func droppableWords(_ text: String) -> Int {
   let words = Py.split(text.py).map { bare($0) }
-  let kept = words.filter { !$0.isEmpty && !casualDroppable.contains($0) }
-  var dropped = words.count - kept.count, i = 1
-  while i < kept.count {
-    var matched = 0
-    for n in [3, 2, 1] where i >= n && i + n <= kept.count && Array(kept[i..<(i + n)]) == Array(kept[(i - n)..<i]) {
-      matched = n
-      break
-    }
-    if matched > 0 { dropped += matched; i += matched } else { i += 1 }
-  }
-  return dropped
+  return words.indices.filter { i in
+    casualDroppable.contains(words[i]) || (i > 0 && words[i] == words[i - 1] && !words[i].isEmpty)
+  }.count
 }
 
 /// Fillers casual cleanup may drop.

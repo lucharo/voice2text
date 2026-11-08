@@ -2318,11 +2318,17 @@
    "raw": "we have set we have set it",
    "clean": "We have set it.",
    "mode": "casual",
-   "ok": true
+   "ok": false
   },
   {
    "raw": "I think I think so",
    "clean": "I think so.",
+   "mode": "casual",
+   "ok": false
+  },
+  {
+   "raw": "hmm ah we need help",
+   "clean": "Hmm, ah, we need help.",
    "mode": "casual",
    "ok": true
   }

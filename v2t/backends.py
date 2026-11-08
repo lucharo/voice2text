@@ -684,15 +684,15 @@ def chunk_text(text: str, max_words: int = CHUNK_WORDS) -> list[str]:
 def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     low, high = LENGTH_GUARD[mode]
     raw_words = len(_WORDS.findall(raw))
-    if mode == "casual":
-        # casual cleanup may drop fillers and immediate repeats, so they do not count against it: on
-        # Earnings22 Qwen3.5-0.8B lost whole chunks to the guard for dropping "uh we have uh we have"
-        # (17 of 150, #129); keep_spoken_words still puts back anything else it dropped
-        raw_words -= droppable_words(raw)
     clean_words = len(_WORDS.findall(clean))
     if raw_words == 0:
         return clean_words == 0
-    return low <= clean_words / raw_words <= high
+    # casual cleanup may drop fillers and immediate repeats, so they do not count towards the floor: on
+    # Earnings22 Qwen3.5-0.8B lost whole chunks to the guard for dropping "uh we have uh" (17 of 150,
+    # #129); keep_spoken_words still puts back anything else it dropped. The ceiling counts every word,
+    # so a cleanup that keeps the fillers and only punctuates still passes.
+    floor_words = raw_words - droppable_words(raw) if mode == "casual" else raw_words
+    return low * floor_words <= clean_words <= high * raw_words
 
 
 # Casual cleanup may punctuate, capitalise, drop the fillers its prompt names and
@@ -723,19 +723,10 @@ def _bare(token: str) -> str:
 
 
 def droppable_words(text: str) -> int:
-    """How many words casual cleanup may drop: fillers, and a run of up to three words said again right
-    after itself, fillers aside ("we have uh we have" -> "we have")."""
+    """How many words casual cleanup may drop: fillers, and a word said again right after itself, the
+    same ones keep_spoken_words lets it leave out."""
     words = [_bare(w) for w in _WORDS.findall(text)]
-    kept = [w for w in words if w and w not in CASUAL_DROPPABLE]
-    dropped, i = len(words) - len(kept), 1
-    while i < len(kept):
-        for n in (3, 2, 1):
-            if i >= n and kept[i : i + n] == kept[i - n : i]:
-                dropped, i = dropped + n, i + n
-                break
-        else:
-            i += 1
-    return dropped
+    return sum(w in CASUAL_DROPPABLE or (i > 0 and w == words[i - 1] and w != "") for i, w in enumerate(words))
 
 
 _SOFT = re.compile(r"[aeiouhwy']")

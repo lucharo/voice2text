@@ -209,6 +209,7 @@ GUARD = [
     ("uh we have uh we have set a clear course uh and we deliver", "We have set a clear course and we deliver.", "casual"),
     ("we have set we have set it", "We have set it.", "casual"),
     ("I think I think so", "I think so.", "casual"),
+    ("hmm ah we need help", "Hmm, ah, we need help.", "casual"),
 ]
 
 MESSAGES = [
