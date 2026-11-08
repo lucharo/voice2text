@@ -119,6 +119,18 @@ class Run(unittest.TestCase):
         self.assertIn("3 clips judged", text)
         self.assertIn("| m1 |", text)
         self.assertIn("| m3 |", text)
+        self.assertIn("(1 judged clips left out: a model above has no output for them)", text)
+        self.assertNotIn("not judged", text)
+
+    def test_models_on_disjoint_clips_get_a_note_not_a_crash(self):
+        outs = {f"c{i}": {"raw": f"so uh hi {i}", ("m1" if i < 2 else "m2"): f"So, hi {i}."} for i in range(4)}
+        self.run_judge(outs, [self.fine] * 4)
+
+        with mock.patch.object(cj, "outputs", lambda s: outs if s == "earnings22" else {}), \
+             mock.patch("builtins.print") as p:
+            cj.report(mock.Mock(sets=["earnings22"]))
+        text = "\n".join(str(c.args[0]) for c in p.call_args_list if c.args)
+        self.assertIn("share no clip (raw, m1, m2)", text)
 
     def test_limit_zero_judges_nothing(self):
         outs = {"c1": {"raw": "so uh hi", "m1": "So, hi."}}

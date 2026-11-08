@@ -230,9 +230,14 @@ def report(args) -> None:
         counts = {n: sum(n in c for c in current) for c in current for n in c}
         names = sorted((n for n, k in counts.items() if k >= len(current) / 2), key=lambda n: (n != "raw", n))
         partial = sorted(n for n in counts if n not in names)
+        unjudged = len(outputs(set_name)) - len(current)
+        judged = len(current)
         current = [c for c in current if all(n in c for n in names)]
         if partial:
             print(f"\n{set_name}: left out, judged on too few clips: " + ", ".join(f"{n} ({counts[n]})" for n in partial))
+        if not current:
+            print(f"\n{set_name}: the models with results share no clip ({', '.join(names)}); finish their runs first")
+            continue
         print(f"\n{set_name}: {len(current)} clips judged by {MODEL}, scores 1-5 (mean), and how often each was the pick"
               " (identical outputs share a pick, so the column sums past 100%)")
         print("| output | " + " | ".join(CRITERIA) + " | mean | picked |")
@@ -241,9 +246,10 @@ def report(args) -> None:
             means = [statistics.fmean(c[n][0][k] for c in current) for k in CRITERIA]
             picked = sum(c[n][1] for c in current) / len(current)
             print(f"| {n} | " + " | ".join(f"{m:.2f}" for m in means) + f" | {statistics.fmean(means):.2f} | {100 * picked:.0f}% |")
-        missing = len(outputs(set_name)) - len(current)
-        if missing:
-            print(f"({missing} clips not judged for their current outputs: run again)")
+        if judged - len(current):
+            print(f"({judged - len(current)} judged clips left out: a model above has no output for them)")
+        if unjudged:
+            print(f"({unjudged} clips not judged for their current outputs: run again)")
     bill = grid.read_jsonl(OUT / "spend.jsonl")
     print(f"\ncost so far: ${sum(r['usd'] for r in bill):.2f} over {len(bill)} calls")
 
