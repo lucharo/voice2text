@@ -120,7 +120,7 @@ def run(args) -> None:
     cleaner = backends.make_cleanup(engine, model, cfg.ollama_url)
     cleaner.vocabulary = tuple(vocabulary)
     root = WISPR_MODELS if args.sets == [WISPR] else MODELS
-    out = root / backends.short_model(cleaner.model_id) if args.cleanup else OUT
+    out = root / (backends.short_model(cleaner.model_id) + (f"@{args.tag}" if args.tag else "")) if args.cleanup else OUT
     if WISPR in args.sets and (not args.cleanup or args.sets != [WISPR]):
         raise SystemExit("--sets wispr goes on its own, with --cleanup")
     print(f"cleanup: {cleaner.model_id}, {mode}, {len(vocabulary)} terms, {len(replacements)} replacements -> {out}")
@@ -326,6 +326,8 @@ def main() -> None:
     p.add_argument("command", nargs="?", default="report", choices=("run", "report", "models", "wispr"))
     p.add_argument("--cleanup", help="engine:model, e.g. mlx:mlx-community/Qwen3.5-0.8B-4bit or ollama:qwen3:4b-instruct-2507-q4_K_M")
     p.add_argument("--mode", help="cleanup mode (default: the configured one)")
+    p.add_argument("--tag", help="with --cleanup: a suffix for the model's folder (<model>@<tag>), to keep a run of "
+                   "changed v2t code beside the earlier one")
     p.add_argument("--sets", nargs="+", default=list(SETS), choices=(*SETS, WISPR),
                    help="labelled sets (default all four), or wispr on its own: the maintainer's dictations")
     p.add_argument("--systems", nargs="+", default=list(SYSTEMS), choices=SYSTEMS)

@@ -684,6 +684,11 @@ def chunk_text(text: str, max_words: int = CHUNK_WORDS) -> list[str]:
 def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     low, high = LENGTH_GUARD[mode]
     raw_words = len(_WORDS.findall(raw))
+    if mode == "casual":
+        # casual cleanup may drop fillers and immediate repeats, so they do not count against it: on
+        # Earnings22 Qwen3.5-0.8B lost whole chunks to the guard for dropping "uh we have uh we have"
+        # (17 of 150, #129); keep_spoken_words still puts back anything else it dropped
+        raw_words -= droppable_words(raw)
     clean_words = len(_WORDS.findall(clean))
     if raw_words == 0:
         return clean_words == 0
@@ -715,6 +720,22 @@ _NUMBER_WORDS = frozenset(
 
 def _bare(token: str) -> str:
     return _BARE.sub("", token).lower()
+
+
+def droppable_words(text: str) -> int:
+    """How many words casual cleanup may drop: fillers, and a run of up to three words said again right
+    after itself, fillers aside ("we have uh we have" -> "we have")."""
+    words = [_bare(w) for w in _WORDS.findall(text)]
+    kept = [w for w in words if w and w not in CASUAL_DROPPABLE]
+    dropped, i = len(words) - len(kept), 1
+    while i < len(kept):
+        for n in (3, 2, 1):
+            if i >= n and kept[i : i + n] == kept[i - n : i]:
+                dropped, i = dropped + n, i + n
+                break
+        else:
+            i += 1
+    return dropped
 
 
 _SOFT = re.compile(r"[aeiouhwy']")

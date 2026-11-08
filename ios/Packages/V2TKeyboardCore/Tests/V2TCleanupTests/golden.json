@@ -2283,6 +2283,48 @@
    "clean": "A b c.",
    "mode": "casual",
    "ok": true
+  },
+  {
+   "raw": "so uh we have uh we have set a course",
+   "clean": "So we have set a course.",
+   "mode": "casual",
+   "ok": true
+  },
+  {
+   "raw": "so uh we have uh we have set a course",
+   "clean": "So we have set a course.",
+   "mode": "strict",
+   "ok": true
+  },
+  {
+   "raw": "the the plan um is is fine",
+   "clean": "The plan.",
+   "mode": "casual",
+   "ok": false
+  },
+  {
+   "raw": "Uh, uh. The, the plan",
+   "clean": "The plan.",
+   "mode": "casual",
+   "ok": true
+  },
+  {
+   "raw": "uh we have uh we have set a clear course uh and we deliver",
+   "clean": "We have set a clear course and we deliver.",
+   "mode": "casual",
+   "ok": true
+  },
+  {
+   "raw": "we have set we have set it",
+   "clean": "We have set it.",
+   "mode": "casual",
+   "ok": true
+  },
+  {
+   "raw": "I think I think so",
+   "clean": "I think so.",
+   "mode": "casual",
+   "ok": true
   }
  ],
  "cleanup_messages": [

@@ -4439,6 +4439,16 @@ class V2TSmokeTests(unittest.TestCase):
         cleaner._decode = decode
         return cleaner
 
+    def test_casual_length_guard_does_not_count_fillers_and_repeats_the_model_may_drop(self):
+        raw = "uh we have uh we have set a clear course uh and we deliver"
+        clean = "We have set a clear course and we deliver."
+
+        # 8 of 13 words is under casual's 0.75; 8 of the 8 that are not fillers or repeats is not
+        self.assertEqual(backends.droppable_words(raw), 5)
+        self.assertTrue(backends.within_length_guard(raw, clean, "casual"))
+        self.assertEqual(backends.droppable_words("so uh I think I think so"), 3)  # uh, and "I think" again
+        self.assertFalse(backends.within_length_guard("we have set a clear course and deliver it", "We have set.", "casual"))
+
     def test_cleanup_keeps_the_raw_chunk_when_the_model_hits_its_token_limit(self):
         cleaner = self._mlx_cleaner([None])
 
