@@ -68,8 +68,19 @@ public func withinLengthGuard(raw: String, clean: String, mode: CleanupMode) -> 
   let rawWords = Py.split(raw.py).count
   let cleanWords = Py.split(clean.py).count
   if rawWords == 0 { return cleanWords == 0 }
-  let ratio = Double(cleanWords) / Double(rawWords)
-  return low <= ratio && ratio <= high
+  // casual cleanup may drop fillers and immediate repeats, so they do not count towards the floor (#129);
+  // the ceiling counts every word
+  let floorWords = mode == .casual ? rawWords - droppableWords(raw) : rawWords
+  return low * Double(floorWords) <= Double(cleanWords) && Double(cleanWords) <= high * Double(rawWords)
+}
+
+/// How many words casual cleanup may drop: fillers, and a word said again right after itself, the same ones
+/// keepSpokenWords lets it leave out. Mirrors backends.droppable_words.
+func droppableWords(_ text: String) -> Int {
+  let words = Py.split(text.py).map { bare($0) }
+  return words.indices.filter { i in
+    casualDroppable.contains(words[i]) || (i > 0 && words[i] == words[i - 1] && !words[i].isEmpty)
+  }.count
 }
 
 /// Fillers casual cleanup may drop.

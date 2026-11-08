@@ -202,6 +202,14 @@ GUARD = [
     ("hola mundo", "Hola mundo.", "strict"),
     ("a b c d e", "A b c.", "strict"),
     ("a b c d", "A b c.", "casual"),
+    ("so uh we have uh we have set a course", "So we have set a course.", "casual"),
+    ("so uh we have uh we have set a course", "So we have set a course.", "strict"),
+    ("the the plan um is is fine", "The plan.", "casual"),
+    ("Uh, uh. The, the plan", "The plan.", "casual"),
+    ("uh we have uh we have set a clear course uh and we deliver", "We have set a clear course and we deliver.", "casual"),
+    ("we have set we have set it", "We have set it.", "casual"),
+    ("I think I think so", "I think so.", "casual"),
+    ("hmm ah we need help", "Hmm, ah, we need help.", "casual"),
 ]
 
 MESSAGES = [

@@ -4439,6 +4439,26 @@ class V2TSmokeTests(unittest.TestCase):
         cleaner._decode = decode
         return cleaner
 
+    def test_casual_length_guard_does_not_count_fillers_and_repeats_the_model_may_drop(self):
+        raw = "uh so so we have uh we deliver on on it um"
+        clean = "So we have, we deliver on it."
+
+        # 7 of 12 words is under casual's 0.75 floor; 7 of the 7 that are not fillers or repeats is not
+        self.assertEqual(backends.droppable_words(raw), 5)
+        self.assertTrue(backends.within_length_guard(raw, clean, "casual"))
+        self.assertFalse(backends.within_length_guard(raw, clean, "strict"), "strict counts every word")
+        self.assertFalse(backends.within_length_guard("we have set a clear course and deliver it", "We have set.", "casual"))
+        # the ceiling still counts every word: keeping the fillers and only punctuating passes
+        self.assertTrue(backends.within_length_guard("hmm ah we need help", "Hmm, ah, we need help.", "casual"))
+
+    def test_a_cleanup_that_drops_only_fillers_and_repeats_is_pasted_as_cleaned(self):
+        cleaner = self._mlx_cleaner(["So we have, we deliver on it."])
+
+        text, _ttft, _total = cleaner.cleanup("uh so so we have uh we deliver on on it um", "casual")
+
+        self.assertEqual(text, "So we have, we deliver on it.")
+        self.assertEqual(cleaner.last_stats["guarded"], 0)
+
     def test_cleanup_keeps_the_raw_chunk_when_the_model_hits_its_token_limit(self):
         cleaner = self._mlx_cleaner([None])
 

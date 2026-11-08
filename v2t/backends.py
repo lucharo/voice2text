@@ -687,7 +687,12 @@ def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     clean_words = len(_WORDS.findall(clean))
     if raw_words == 0:
         return clean_words == 0
-    return low <= clean_words / raw_words <= high
+    # casual cleanup may drop fillers and immediate repeats, so they do not count towards the floor: on
+    # Earnings22 Qwen3.5-0.8B lost whole chunks to the guard for dropping "uh we have uh" (17 of 150,
+    # #129); keep_spoken_words still puts back anything else it dropped. The ceiling counts every word,
+    # so a cleanup that keeps the fillers and only punctuates still passes.
+    floor_words = raw_words - droppable_words(raw) if mode == "casual" else raw_words
+    return low * floor_words <= clean_words <= high * raw_words
 
 
 # Casual cleanup may punctuate, capitalise, drop the fillers its prompt names and
@@ -715,6 +720,13 @@ _NUMBER_WORDS = frozenset(
 
 def _bare(token: str) -> str:
     return _BARE.sub("", token).lower()
+
+
+def droppable_words(text: str) -> int:
+    """How many words casual cleanup may drop: fillers, and a word said again right after itself, the
+    same ones keep_spoken_words lets it leave out."""
+    words = [_bare(w) for w in _WORDS.findall(text)]
+    return sum(w in CASUAL_DROPPABLE or (i > 0 and w == words[i - 1] and w != "") for i, w in enumerate(words))
 
 
 _SOFT = re.compile(r"[aeiouhwy']")
