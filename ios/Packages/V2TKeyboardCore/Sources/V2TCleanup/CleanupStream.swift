@@ -13,7 +13,12 @@ public struct CleanupStream: Sendable {
   /// Words handed out so far, as `next` split them; the text after Stop must begin with them.
   private var taken: [Substring] = []
 
-  public init(minimumWords: Int = 30) { self.minimumWords = minimumWords }
+  /// 80 words: the smallest chunk Apple's model has been measured on without a formatting loss against today's
+  /// 120 (#126's prompt search, 80-word arm: no formatting change, 0.3 s slower per item). Smaller segments
+  /// would leave less after Stop but give the model less context, unmeasured so far.
+  public static let defaultMinimumWords = 80
+
+  public init(minimumWords: Int = defaultMinimumWords) { self.minimumWords = minimumWords }
 
   /// Number of words already handed out for cleaning.
   public var takenWords: Int { taken.count }

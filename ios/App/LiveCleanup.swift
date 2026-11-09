@@ -20,7 +20,7 @@ import V2TCleanup
   private var tasks: [Task<Void, Never>] = []
   private var closed = false
 
-  init(terms: [String], minimumWords: Int = 30, clean: @escaping Clean) {
+  init(terms: [String], minimumWords: Int = CleanupStream.defaultMinimumWords, clean: @escaping Clean) {
     self.terms = terms
     self.clean = clean
     stream = CleanupStream(minimumWords: minimumWords)
