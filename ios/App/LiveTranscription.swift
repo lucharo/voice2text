@@ -16,6 +16,11 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
   private var fed = 0
   private var timer: Timer?
   private var feeding = false
+  /// Called on the main actor with every piece's text each time a new piece is decoded while recording.
+  var onPieces: (@MainActor ([String]) -> Void)?
+  private var piecesSeen = 0
+  /// Set at Stop: pieces decoded after it (the tail, by `finish`) are never offered for cleanup while recording.
+  private var stopped = false
 
   /// `decode` is the speech model's call; `isReady` says whether it is loaded, since a piece is held back
   /// rather than sent to a model still loading.
@@ -34,6 +39,7 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
 
   /// Stops feeding; work already handed to the transcriber carries on, and `finish` picks up the rest.
   func stopFeeding() {
+    stopped = true
     timer?.invalidate()
     timer = nil
   }
@@ -56,6 +62,11 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
     Task {
       await pieces.add(new)
       feeding = false
+      let texts = await pieces.pieceTexts
+      if !stopped, texts.count > piecesSeen {  // a feed still running at Stop may read the tail's pieces
+        piecesSeen = texts.count
+        onPieces?(texts)
+      }
     }
   }
 
