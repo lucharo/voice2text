@@ -48,7 +48,19 @@ import XCTest
     return "\(row.label) \(row.value as? String ?? "") " + row.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
   }
 
-  func back() { app.navigationBars.buttons.element(boundBy: 0).tap() }
+  /// Back to the app's first page. On iOS 27 the back button is not a Button to XCUITest, so it is found by its
+  /// label, with an edge swipe if it has none.
+  func back() {
+    let bar = app.navigationBars.firstMatch
+    let button = bar.descendants(matching: .any).matching(NSPredicate(format: "label IN {'v2t', 'Back'}")).firstMatch
+    if button.exists && button.isHittable {
+      button.tap()
+    } else {
+      let w = app.windows.firstMatch
+      w.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).press(forDuration: 0.05, thenDragTo: w.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+    }
+    XCTAssertTrue(app.navigationBars["v2t"].waitForExistence(timeout: 5), "still not back on the first page")
+  }
 
   func flip(_ s: XCUIElement) { s.switches.firstMatch.exists ? s.switches.firstMatch.tap() : s.tap() }
 
@@ -60,6 +72,14 @@ import XCTest
 
   func testSwitchDotAndRecording() {
     launch()
+    // whatever happens, the log is off again for the tests after this one
+    addTeardownBlock { @MainActor in
+      let app = XCUIApplication()
+      app.terminate()
+      app.launchEnvironment["V2T_RESET_KEYBOARD_LOG"] = "1"
+      app.launch()
+      app.terminate()
+    }
     openKeyboardSettings()
     XCTAssertEqual(logSwitch.value as? String, "0", "off by default")
     XCTAssertTrue(logSize.contains("Empty"), "log row: \(logSize)")
