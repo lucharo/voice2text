@@ -132,7 +132,7 @@ class PhoneToBench(unittest.TestCase):
 
         text, stats = ptb.guarded(
             ["so uh the plan is fine", "can you send it", "we we deliver on it"],
-            ["So the plan is fine.", "Sure, I will send it to you right now, no problem at all.", "We deliver"],
+            ["So plan is fine.", "Sure, I will send it to you right now, no problem at all.", "We deliver"],
             [False, False, True], [])
 
         self.assertEqual(text, "So the plan is fine. can you send it we we deliver on it")
