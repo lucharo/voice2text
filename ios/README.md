@@ -82,6 +82,51 @@ iOS gives keyboards no microphone, so the app records:
 - History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
   saved: the app holds it in memory while it transcribes, then drops it.
 
+### Keyboard debug log
+
+An opt-in log of everything the keyboard does while you type, to find where it gets typing wrong (#162). Off by
+default; **Languages and typing** › Debugging turns it on for 24 hours, and a red dot in the suggestion bar shows
+while it records. It is written by `KeyboardDebugLog` (V2TKeyboardCore) as JSON lines to `KeyboardLog/keyboard.jsonl`
+in the App Group, moving to `keyboard.1.jsonl` past 4 MB, so it never holds more than 8 MB. The app's Export
+shares both files joined; Clear log deletes them.
+
+- **Privacy.** Local only. Never recorded: fields whose content type asks for a password, a new password, a
+  one-time code or card details (iOS already swaps in its own keyboard for secure fields; `keyboardType` has no
+  password or card value, so it marks nothing on its own). A `skip` line names the reason, then nothing until
+  the field changes. Dictation is recorded by length only: its words are in History already. The text before the
+  cursor is recorded only as far as the engine reads it (`TypingContext`, the last 160 characters), when the host
+  app changes it.
+- **Without Full Access** iOS keeps the App Group, and so the switch, from the keyboard: it reads off and nothing
+  is recorded. If the keyboard can read the switch but not write to the App Group, it writes to its own
+  container, which the app cannot export.
+- **Cost.** `log()` only appends to a buffer under a lock (0.5 µs a call on the Mac); a background queue encodes
+  and appends to the file every 64 events or second. On the Mac, per key with every event a key logs, against
+  the 8 ms budget: see `DebugLogTests.perKeyCostWithTheLogOn`.
+- **Fetch.** `ios/tools/fetch_kb_log.sh` copies the log off a connected iPhone (`xcrun devicectl device copy from
+  --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
+  reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
+  `uv run ios/tools/kb_log_report.py <that folder>` reports autocorrections kept and taken back, words deleted and
+  retyped, swipes kept, bar taps by slot, taps read as swipes (#140) and keys per second; `--json` for the numbers.
+
+Each line has `t` (milliseconds of system uptime, the clock of touch timestamps) and `e`, the event:
+
+| `e` | Fields | When |
+| --- | --- | --- |
+| `appear`, `disappear` | full access, store, layout, languages, width, form, build | the keyboard opens or closes |
+| `field` | keyboardType, contentType, autocorrect, capitalization, return | a new text field |
+| `skip`, `resume`, `auto-off` | reason | a field the log never records; the 24 hours are up |
+| `down` | n (finger), key, p, fingers down | a finger lands |
+| `up` | n, key, liftKey, p, ms, travel, verdict (tap, swipe, accent, trackpad, rolled, cancelled), path (24 points) | it lifts |
+| `rollover`, `swipe-start` | n, key, p, by | a finger typed early by a newer one lifting; a finger becomes a swipe |
+| `key`, `act`, `cursor` | text and p; action; by | a character, another key, the space-bar trackpad |
+| `swipe` | points, trace (48 points), candidates (word, score), applied, decodeMs | a swipe decoded |
+| `swiped`, `picked` | word, alternatives; word, replaced | the engine typed a swipe; a bar tap replaced a word |
+| `bar`, `pick` | words, kinds, bold; slot, word, emoji | the bar changed; a slot was tapped |
+| `autocorrect`, `revert-offer`, `revert` | from, to, how (bar, address) | a correction; offered back after delete; undone |
+| `ins`, `del` | text (chars for dictation) | the keyboard edited the document |
+| `host` | kind, before | the app changed the text or moved the cursor |
+| `page`, `emoji`, `dictation` | page, form, width; e, from; chars, words | |
+
 ### Which model this iPhone gets
 
 One choice per iPhone, decided by Apple's own Apple Intelligence eligibility check (`SystemLanguageModel`):

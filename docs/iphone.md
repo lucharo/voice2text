@@ -170,6 +170,13 @@ when you hold the space bar and slide. Their settings are under **Languages and 
   alone, and cleanup spells it too. Delete a typo kept by mistake in **Dictionary**.
 - **Hide the keyboard** with the chevron at the right end of the suggestion bar (on the iPad, the
   hide key in the bottom row).
+- **Keyboard debug log:** off unless you turn it on, under **Languages and typing** › Debugging.
+  While it is on, a small red dot shows at the left of the suggestion bar and the keyboard records
+  what you type with it (keys, swipes, suggestions, corrections, and the words themselves) to a file
+  on your iPhone, so the keyboard's mistakes can be studied. Dictation is recorded by length only.
+  Nothing leaves the iPhone unless you tap **Export**, and **Clear log** deletes it. It turns itself
+  off after 24 hours, and never records in password, one-time-code or card fields. It needs Full
+  Access, like dictation.
 
 iOS limits every third-party keyboard, v2t's included:
 
