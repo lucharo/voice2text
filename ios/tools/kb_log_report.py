@@ -44,7 +44,8 @@ ZWJ = "\u200d"
 def is_extender(ch: str) -> bool:
     """A code point that belongs to the character before it: combining marks, variation selectors, skin tones,
     the keycap mark."""
-    return unicodedata.category(ch) in ("Mn", "Me") or "\ufe00" <= ch <= "\ufe0f" or "\U0001f3fb" <= ch <= "\U0001f3ff" or ch == "\u20e3"
+    return (unicodedata.category(ch) in ("Mn", "Me") or "\ufe00" <= ch <= "\ufe0f" or "\U0001f3fb" <= ch <= "\U0001f3ff"
+            or ch == "\u20e3" or "\U000e0020" <= ch <= "\U000e007f")  # tags: the England, Scotland and Wales flags
 
 
 def drop_last_character(text: str) -> str:

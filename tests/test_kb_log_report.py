@@ -96,6 +96,10 @@ class ReportTests(unittest.TestCase):
         ev += [{"t": 2, "e": "del"}] * 6 + [{"t": 3, "e": "ins", "text": "from "}]  # the emoji, space and "form"
         self.assertEqual(rep.analyse(ev).misses, [("form", "from")])
 
+    def test_deleting_a_tag_flag_takes_it_whole(self):
+        flag = "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"  # England
+        self.assertEqual(rep.drop_last_character("a " + flag), "a ")
+
     def test_shift_between_offer_and_pick_is_one_revert(self):
         ev = [{"t": 0, "e": "autocorrect", "from": "teh", "to": "The"},
               {"t": 1, "e": "act", "a": "delete"}, {"t": 1, "e": "revert-offer", "from": "teh", "to": "The"},

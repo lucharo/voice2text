@@ -24,7 +24,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// so they are not recorded.
   private var typedSinceHost = false
   /// True while nothing read back from the current field may be logged.
-  private var fieldRedacted: Bool { !typedSinceHost || dictatedFields.contains(textDocumentProxy.documentIdentifier) }
+  private var fieldRedacted: Bool {
+    !typedSinceHost || engine.composingResynced || dictatedFields.contains(textDocumentProxy.documentIdentifier)
+  }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -166,7 +168,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     super.viewDidDisappear(animated)
     dictation.detach()
     dlog("disappear")
-    debugLog?.flush()
+    debugLog?.flush(wait: true)  // iOS may end a closed keyboard before a queued write runs
   }
 
   override func viewDidLayoutSubviews() {

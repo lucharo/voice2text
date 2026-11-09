@@ -152,6 +152,20 @@ struct DebugLogTests {
     ])
   }
 
+  @Test func engineMarksAWordReadBackFromTheDocument() throws {
+    let p = FakeProxy()
+    p.text = "dictated marimo"
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [try Fixtures.english.get()], layout: KeyboardLayout(width: 402, language: .english)))
+    e.resync()
+    #expect(e.composingResynced)  // "marimo" came from the document
+    e.character("x")
+    #expect(e.composingResynced)  // "marimox" still holds it
+    e.space()
+    #expect(!e.composingResynced)
+    e.character("a")
+    #expect(!e.composingResynced)  // typed here
+  }
+
   /// The logging call itself, on the calling thread (the keyboard's main thread): buffered, no file access.
   @Test func oneLogCallCostsMicroseconds() {
     let log = KeyboardDebugLog(directory: tempDir())

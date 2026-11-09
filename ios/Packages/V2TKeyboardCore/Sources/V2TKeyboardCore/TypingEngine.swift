@@ -33,7 +33,10 @@ public final class TypingEngine {
   /// iPad keyboard's number and punctuation keys type their second mark.
   public private(set) var shiftManual = false
   /// Keys of the word under construction, since the last word boundary.
-  public private(set) var composing: [TypedKey] = []
+  public private(set) var composing: [TypedKey] = [] { didSet { if composing.isEmpty { composingResynced = false } } }
+  /// The word under construction began as text already in the document (read back by `resync`), not as keys
+  /// typed here: the debug log keeps its letters out, since they may be dictated ones (#162).
+  public private(set) var composingResynced = false
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
   public var learned: Set<String> = [] {
     // kept lowercase with straight apostrophes, as `learn` stores them, so either apostrophe matches
@@ -409,6 +412,7 @@ public final class TypingEngine {
     lastCorrection = nil
     revertOffer = nil
     composing = Self.trailingWord(before)
+    composingResynced = !composing.isEmpty
     refreshShift()
   }
 
