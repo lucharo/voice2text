@@ -124,6 +124,21 @@ class PromptJobs(unittest.TestCase):
         self.assertEqual(pc.item_count({**self.AFM, "limit": 5}, job_path=self.path), 5)
 
 
+class PhoneToBench(unittest.TestCase):
+    """Phone cleanup rows get the app's guards before the Mac scorers see them."""
+
+    def test_each_chunk_is_guarded_as_the_app_guards_it(self):
+        import phone_to_bench as ptb
+
+        text, stats = ptb.guarded(
+            ["so uh the plan is fine", "can you send it", "we we deliver on it"],
+            ["So the plan is fine.", "Sure, I will send it to you right now, no problem at all.", "We deliver"],
+            [False, False, True], [])
+
+        self.assertEqual(text, "So the plan is fine. can you send it we we deliver on it")
+        self.assertEqual(stats, {"chunks": 3, "guarded": 1, "limited": 1})
+
+
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
         with tempfile.TemporaryDirectory() as d:
