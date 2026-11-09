@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import collections
 import ctypes
+import faulthandler
 import json
 import os
 import queue
@@ -66,6 +67,17 @@ SLOW_KEY_S = 0.25
 # more than a paste holds it (0.31 s including the clipboard restore in the log).
 ESC_LOCK_WAIT_S = 0.5
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
+# A cleanup slower than 5 s plus one second per 200 characters has stalled. Qwen3.5-2B
+# usually cleans 600 to 1,200 characters a second (the 0.8B default is faster); 11 of 1,217 MLX cleanups in the
+# maintainer's history crossed this mark, the 28.1 s one for 2,177 characters on
+# 2026-11-08 among them, which a fresh process cleaned again in 1.7 s.
+CLEANUP_STALL_BASE_S = 5.0
+CLEANUP_STALL_CHARS_PER_S = 200.0
+
+
+def cleanup_stall_s(text: str) -> float:
+    """Seconds after which a cleanup of `text` counts as stalled."""
+    return CLEANUP_STALL_BASE_S + len(text) / CLEANUP_STALL_CHARS_PER_S
 
 
 def _resolve_hotkey(name: str):
@@ -1237,10 +1249,22 @@ class VoiceToText:
         if self.cleaner is not None:
             self._set_state("cleaning")
             logger.info("Cleaning up...")
+            stall_s = cleanup_stall_s(raw_text)
+            # Once past the stall mark, Python writes every thread's stack to stderr,
+            # which the menu app keeps in v2t.log; the watchdog is cancelled on time.
+            faulthandler.dump_traceback_later(stall_s)
             try:
-                cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(
-                    raw_text, self.cfg.mode
-                )
+                try:
+                    cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(
+                        raw_text, self.cfg.mode
+                    )
+                finally:
+                    faulthandler.cancel_dump_traceback_later()
+                if cleanup_s > stall_s:
+                    logger.warning(
+                        f"Cleanup took {cleanup_s:.1f}s, past its {stall_s:.1f}s stall mark: "
+                        "the thread stacks above show where each thread was"
+                    )
                 if not cleaned_text:
                     raise RuntimeError("empty response")
                 logger.info(

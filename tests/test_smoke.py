@@ -17,6 +17,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import tomllib
 import types
 import unittest
@@ -972,6 +973,38 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("Clean words.")
         self.assertIsNotNone(audio_path)
         self.assertFalse(Path(audio_path).exists())
+
+    def test_a_stalled_cleanup_writes_every_thread_stack_and_a_fast_one_nothing(self):
+        voice = app.VoiceToText(config.Config(save_history=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        pace = {"s": 0.0}
+
+        def cleanup(text, mode):
+            time.sleep(pace["s"])
+            return "Clean words.", 0.01, pace["s"]
+
+        voice.cleaner = types.SimpleNamespace(cleanup=cleanup, model_id="cleaner", last_stats={})
+        lines: list[str] = []
+        sink = app.logger.add(lambda m: lines.append(str(m)), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+        self.assertEqual(app.cleanup_stall_s("x" * 2177), 5.0 + 2177 / 200)
+        with tempfile.TemporaryFile("w+") as stderr, \
+                mock.patch.object(app, "CLEANUP_STALL_BASE_S", 0.2), \
+                mock.patch.object(app, "CLEANUP_STALL_CHARS_PER_S", 1e9), \
+                mock.patch.object(app.sys, "stderr", stderr), \
+                mock.patch.object(voice, "paste_to_cursor"):
+            voice._deliver("raw words", 1.0, 0.1, streamed=False)  # fast: the watchdog is cancelled
+            time.sleep(0.4)
+            stderr.seek(0)
+            self.assertEqual(stderr.read(), "")
+            pace["s"] = 0.6
+            voice._deliver("raw words", 1.0, 0.1, streamed=False)  # past the 0.2 s mark
+            stderr.seek(0)
+            dumped = stderr.read()
+        self.assertIn("Timeout (0:00:00.2", dumped)
+        self.assertIn('in cleanup', dumped, "the stalled call is on a thread's stack")
+        self.assertEqual(sum("past its 0.2s stall mark" in line for line in lines), 1)
 
     def test_spelled_acronyms_are_joined_after_cleanup_and_before_replacements(self):
         voice = app.VoiceToText(config.Config(save_history=False))
