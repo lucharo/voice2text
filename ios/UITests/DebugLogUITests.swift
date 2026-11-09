@@ -41,6 +41,13 @@ import XCTest
     XCTAssertTrue(logSwitch.waitForExistence(timeout: 5), app.debugDescription)
   }
 
+  /// The Log row's text ("Log", then "Empty" or a size), however SwiftUI exposes the LabeledContent.
+  var logSize: String {
+    let row = app.descendants(matching: .any)["settings.debugLogSize"].firstMatch
+    guard row.waitForExistence(timeout: 5) else { return "" }
+    return "\(row.label) \(row.value as? String ?? "") " + row.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+  }
+
   func back() { app.navigationBars.buttons.element(boundBy: 0).tap() }
 
   func flip(_ s: XCUIElement) { s.switches.firstMatch.exists ? s.switches.firstMatch.tap() : s.tap() }
@@ -55,7 +62,7 @@ import XCTest
     launch()
     openKeyboardSettings()
     XCTAssertEqual(logSwitch.value as? String, "0", "off by default")
-    XCTAssertTrue(app.staticTexts["Empty"].exists)
+    XCTAssertTrue(logSize.contains("Empty"), "log row: \(logSize)")
     flip(logSwitch)
     XCTAssertEqual(logSwitch.value as? String, "1")
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'On until'")).firstMatch.exists)
@@ -99,7 +106,7 @@ import XCTest
 
     // the app now has a log to export; then the switch goes off again for the other tests
     openKeyboardSettings()
-    XCTAssertFalse(app.staticTexts["Empty"].exists, "nothing was recorded")
+    XCTAssertFalse(logSize.contains("Empty"), "nothing was recorded; log row: \(logSize)")
     XCTAssertTrue(app.buttons["settings.debugLogExport"].isEnabled)
     shot("22-debug-log-recorded")
     flip(logSwitch)
