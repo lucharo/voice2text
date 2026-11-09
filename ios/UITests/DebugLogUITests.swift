@@ -125,8 +125,13 @@ import XCTest
     while text == "Teh keyboard ", Date() < swiped { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     XCTAssertNotEqual(text, "Teh keyboard ", "the swipe typed nothing")
     shot("21-debug-log-dot-in-bar")
-    app.buttons["v2t.dismiss"].tap()  // the keyboard closes and writes what it holds
+    // the keyboard writes what it holds within a second; closing the app then takes the keyboard down. Not the
+    // bar's hide button: in the Simulator that turns on iOS's keyboard minimisation, which parks the keyboard
+    // below the screen for every test after this one
     sleep(2)
+    app.terminate()
+    app.launchEnvironment["V2T_RESET_KEYBOARD_LOG"] = nil  // keep the log just made
+    app.launch()
 
     // the app now has a log to export; then the switch goes off again for the other tests
     openKeyboardSettings()
