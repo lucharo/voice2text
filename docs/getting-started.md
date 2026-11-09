@@ -4,15 +4,18 @@
 
 - A Mac with Apple Silicon. v2t runs on [MLX](https://github.com/ml-explore/mlx), so Intel Macs,
   Linux and Windows are out of scope.
-- [uv](https://docs.astral.sh/uv/) and Python 3.11 or later.
+- [uv](https://docs.astral.sh/uv/) and Python 3.11 to 3.13.
 - A few gigabytes of disk for the two models, downloaded once from Hugging Face on first launch.
 
 ## Install the engine
 
 ```bash
-uv tool install voice2text
+uv tool install --python 3.13 voice2text
 v2t
 ```
+
+Keep `--python 3.13`: Core ML's native library has no Python 3.14 build, and uv ignores a
+package's upper Python limit when it installs a tool.
 
 The first launch downloads Parakeet and the cleanup model, then loads them from the local cache
 in about 2 s on every later start. Leave `v2t` running in the terminal. It is ready when the log
@@ -22,7 +25,7 @@ starts with `idle`.
 Prefer Whisper for transcription? Add the extra, quoted so zsh leaves the brackets alone:
 
 ```bash
-uv tool install 'voice2text[whisper]'
+uv tool install --python 3.13 'voice2text[whisper]'
 ```
 
 Then set `backend = "whisper"` in the [config](reference/config.md).

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Install on Python 3.13.** coremltools 9.0 has no native library on Python 3.14, and uv ignores a package's upper Python limit when it installs a tool, so a plain `uv tool install` could give an engine that cannot start. The install commands now pass `--python 3.13`, and on 3.14 v2t stops at startup and prints the reinstall command.
 - **A Globe Key row in the menu.** While Fn is the hotkey and macOS's "Press 🌐 key to" is not "Do Nothing", pressing Fn can open the emoji picker, and dictated text can land in its search field. The menu now shows a row that opens Keyboard settings, and it goes away once the setting is changed.
 
 ## 0.5.23

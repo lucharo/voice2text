@@ -23,7 +23,7 @@ cask "voice2text" do
 
   caveats <<~EOS
     Voice2Text.app is only the menu-bar shell. Install the engine once:
-      uv tool install voice2text
+      uv tool install --python 3.13 voice2text
     then start it from the menu bar and grant Microphone and Accessibility.
   EOS
 end
