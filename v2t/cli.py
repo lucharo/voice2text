@@ -656,7 +656,7 @@ def _setup() -> int:
     package = {"whisper": "'voice2text[whisper]'", "qwen3-asr": "'voice2text[qwen]'"}.get(
         backend, "voice2text"
     )
-    print(f"run:  v2t   (install with: uv tool install {package})")
+    print(f"run:  v2t   (install with: uv tool install --python 3.13 {package})")
     return 0
 
 

@@ -1440,6 +1440,26 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertIn("reinstall voice2text", str(caught.exception))
 
+    def test_coreml_without_its_native_library_says_to_reinstall_on_python_3_13(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for name in coreml.FILES:
+                (folder / name).touch()
+
+            with (
+                mock.patch.dict(
+                    sys.modules,
+                    {
+                        "coremltools": types.ModuleType("coremltools"),
+                        "coremltools.libcoremlpython": None,
+                    },
+                ),
+                self.assertRaises(SystemExit) as caught,
+            ):
+                coreml.CoreMLParakeet(folder)
+
+        self.assertIn("uv tool install --reinstall --python 3.13 voice2text", str(caught.exception))
+
     def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
         windows: list[tuple[tuple, np.dtype]] = []
         core_ml = self._coreml_with_window(
@@ -1823,7 +1843,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             backends.make_stt("qwen3-asr")
 
-        self.assertIn("uv tool install 'voice2text[qwen]'", str(caught.exception))
+        self.assertIn("uv tool install --python 3.13 'voice2text[qwen]'", str(caught.exception))
 
     def test_config_accepts_the_qwen3_asr_backend_and_its_template_names_it(self):
         config._validate(config.Config(backend="qwen3-asr"))  # no SystemExit
@@ -3188,7 +3208,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_setup([])
 
-        self.assertIn("uv tool install voice2text", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 voice2text", output.getvalue())
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
@@ -3795,7 +3815,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_setup([])
 
-        self.assertIn("uv tool install 'voice2text[whisper]'", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 'voice2text[whisper]'", output.getvalue())
 
     def test_setup_offers_qwen3_asr_and_names_its_extra(self):
         output = io.StringIO()
@@ -3806,7 +3826,7 @@ class V2TSmokeTests(unittest.TestCase):
             cli.cmd_setup([])
 
         self.assertEqual(config.load().backend, "qwen3-asr")
-        self.assertIn("uv tool install 'voice2text[qwen]'", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 'voice2text[qwen]'", output.getvalue())
 
     def test_menubar_install_builds_a_grantable_native_app(self):
         destination = Path(self.tempdir.name) / "Voice2Text.app"

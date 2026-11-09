@@ -258,7 +258,7 @@ If waiting under a second after you let go does not bother you, probably: on rea
 makes about half the mistakes. Install the extra and set the backend:
 
 ```bash
-uv tool install 'voice2text[qwen]'
+uv tool install --python 3.13 'voice2text[qwen]'
 v2t config set transcription.backend qwen3-asr
 ```
 
