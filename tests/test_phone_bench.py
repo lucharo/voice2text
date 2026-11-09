@@ -168,6 +168,38 @@ class PhoneToBenchExport(unittest.TestCase):
                 self.assertIn("1 items have no chunk_in", str(e.exception))
 
 
+class PhoneToBenchIds(unittest.TestCase):
+    def convert(self, rows):
+        import phone_to_bench as ptb
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "phone-jobs" / "j").mkdir(parents=True)
+            write(root / "phone-jobs" / "j" / "j.a.jsonl", rows)
+            with mock.patch.object(ptb.grid, "EVAL", root), mock.patch.object(ptb.cb, "MODELS", root / "m"), \
+                 mock.patch.object(ptb.cb, "WISPR_MODELS", root / "w"), \
+                 mock.patch.object(ptb.config, "read_dictionary", return_value=([], [])):
+                out = ptb.convert("j", "a", "phone-x")
+                return out, sorted(p.relative_to(root).as_posix() for p in root.glob("[mw]/*/*/*.jsonl"))
+
+    @staticmethod
+    def row(iid, key=None):
+        r = {"event": "clean", "id": iid, "chunk_in": ["hi"], "chunk_out": ["Hi."], "chunk_s": [0.5]}
+        return {**r, "key": key} if key else r
+
+    def test_prompt_search_ids_land_under_their_sets(self):
+        _out, files = self.convert([self.row("e22/x"), self.row("wispr/y")])
+
+        self.assertEqual(files, ["m/phone-x/earnings22/parakeet-v3.jsonl", "w/phone-x/wispr/parakeet-v3.jsonl"])
+
+    def test_items_with_no_reference_or_from_several_rounds_are_refused(self):
+        for rows, msg in (([self.row("pieces/n/x")], "no references for: pieces"),
+                          ([self.row("e22/x", "1|e22/x"), self.row("e22/x", "2|e22/x")], "more than one round")):
+            with self.subTest(msg=msg), self.assertRaises(SystemExit) as e:
+                self.convert(rows)
+            self.assertIn(msg, str(e.exception))
+
+
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
         with tempfile.TemporaryDirectory() as d:

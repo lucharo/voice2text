@@ -51,11 +51,19 @@ def convert(job: str, arm: str, name: str) -> dict[str, list[dict]]:
     if failed := [r["id"] for r in rows if "chunk_in" not in r]:
         raise SystemExit(f"{len(failed)} items have no chunk_in (failed on the phone, or an arm without a prompt "
                          f"file), e.g. {failed[0]}: rerun them first")
+    # one row per item: a job run for several rounds has to be exported a round at a time
+    ids = [r["id"] for r in rows]
+    if len(set(ids)) != len(ids):
+        raise SystemExit(f"{job}.{arm} has items in more than one round: export a single-round job")
+    known = {"e22": "earnings22", **{s: s for s in (*cb.SETS, cb.WISPR)}}  # prompt_search.py writes e22/<id>
+    if bad := sorted({i.split("/", 1)[0] for i in ids} - set(known)):
+        raise SystemExit(f"{job}.{arm} has items the Mac scorers have no references for: {', '.join(bad)}")
     by_set: dict[str, list[dict]] = {}
     for r in rows:
         ins, outs = r["chunk_in"], r["chunk_out"]
         clean, stats = guarded(ins, outs, r.get("chunk_limited", [False] * len(ins)), vocabulary)
-        set_name, cid = r["id"].split("/", 1)
+        prefix, cid = r["id"].split("/", 1)
+        set_name = known[prefix]
         by_set.setdefault(set_name, []).append({
             "id": cid, "raw": " ".join(ins), "model": " ".join(outs),
             "clean": config.apply_replacements(clean, replacements),
