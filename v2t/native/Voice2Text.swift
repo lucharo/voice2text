@@ -859,6 +859,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(openMicrophone), image: statusDot(microphone))
         add(accessibility ? "Accessibility · Granted" : "Accessibility · Click to grant",
             action: #selector(openAccessibility), image: statusDot(accessibility))
+        if globeKeyOpensSomething {
+            let row = add("Globe Key · Click to set Do Nothing", action: #selector(openKeyboardSettings), image: statusDot(false))
+            row.toolTip = "Until \"Press 🌐 key to\" is Do Nothing, pressing Fn can also open the emoji picker or switch input source, and dictated text can land there."
+        }
         if ["permission-error", "awaiting-accessibility"].contains(phase) {
             add("Reset Permissions", action: #selector(resetPermissions), image: symbol("arrow.counterclockwise"))
         }
@@ -918,6 +922,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var microphoneGranted: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    /// Fn is the hotkey and macOS still gives a tap of it another job: "Press 🌐 key to"
+    /// is "Do Nothing" only at AppleFnUsageType 0, and the key is unset until changed.
+    /// Read each time the menu is drawn, so the row goes once the setting is changed.
+    private var globeKeyOpensSomething: Bool {
+        guard settings["hotkey.key"] as? String ?? "fn" == "fn" else { return false }
+        let domain = "com.apple.HIToolbox" as CFString
+        CFPreferencesAppSynchronize(domain)
+        return CFPreferencesCopyAppValue("AppleFnUsageType" as CFString, domain) as? Int != 0
     }
 
     @discardableResult
@@ -1025,6 +1039,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         _ = AXIsProcessTrustedWithOptions(prompt)
         rendered = ""
         render()
+    }
+
+    @objc private func openKeyboardSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// One picker, drawn from the rows the engine sent: the label, then in small

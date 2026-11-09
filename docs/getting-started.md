@@ -40,7 +40,7 @@ change one setting:
 
 - System Settings → Keyboard → *Press 🌐 key to* → **Do Nothing**.
 
-v2t warns in its log while that setting is anything else. Prefer Right Command? Set
+v2t warns in its log while that setting is anything else, and the menu app shows a **Globe Key** row that opens it. Prefer Right Command? Set
 `key = "cmd_r"` under `[hotkey]`.
 
 ## Dictate
