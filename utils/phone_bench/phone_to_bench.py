@@ -56,11 +56,19 @@ def convert(job: str, arm: str, name: str) -> dict[str, list[dict]]:
             "id": cid, "raw": " ".join(ins), "model": " ".join(outs),
             "clean": config.apply_replacements(clean, replacements),
             "seconds": sum(r["chunk_s"]), "stats": stats, "thermal": r.get("thermal")})
+    # a folder holds one export: refuse to mix it with another job, arm or dictionary under the same name
+    import hashlib
+    source = {"model": name, "source": f"phone job {job}, arm {arm}",
+              "dictionary": hashlib.sha256(json.dumps([list(vocabulary), [list(x) for x in replacements]]).encode()).hexdigest()[:16]}
+    for root in {cb.WISPR_MODELS if s == cb.WISPR else cb.MODELS for s in by_set}:
+        cfg = root / name / "config.json"
+        if cfg.exists() and json.loads(cfg.read_text()) != source:
+            raise SystemExit(f"{root / name} holds another export ({cfg.read_text().strip()}): use another name or move it aside")
     for set_name, out in by_set.items():
         root = cb.WISPR_MODELS if set_name == cb.WISPR else cb.MODELS
         path = grid.private_dir(root / name / set_name) / "parakeet-v3.jsonl"
         path.write_text("".join(json.dumps(x) + "\n" for x in out))
-        (root / name / "config.json").write_text(json.dumps({"model": name, "source": f"phone job {job}, arm {arm}"}) + "\n")
+        (root / name / "config.json").write_text(json.dumps(source) + "\n")
     return by_set
 
 

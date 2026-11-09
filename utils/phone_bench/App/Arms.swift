@@ -102,7 +102,9 @@ func makeArm(_ s: ArmSpec) throws -> Arm {
     let chat = try opt["prompt"].map { name -> ChatPrompt in
       let url = documents.appendingPathComponent("prompts/\(name)")
       guard FileManager.default.fileExists(atPath: url.path) else { throw BenchError("arm \(s.id): Documents/prompts/\(name) is missing; run phone_push.py") }
-      return try JSONDecoder().decode(ChatPrompt.self, from: Data(contentsOf: url))
+      let chat = try JSONDecoder().decode(ChatPrompt.self, from: Data(contentsOf: url))
+      guard chat.examples.allSatisfy({ $0.count == 2 }) else { throw BenchError("arm \(s.id): every example in \(name) needs [raw, clean]") }
+      return chat
     }
     return MLXCleanup(dir: try need(), name: s.model!, chat: chat, cpu: opt["device"] == "cpu", withSpeech: opt["speech"] == "true")
   case "anemll": return AnemllCleanup(dir: try need(), name: s.model!)

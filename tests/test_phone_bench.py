@@ -139,6 +139,26 @@ class PhoneToBench(unittest.TestCase):
         self.assertEqual(stats, {"chunks": 3, "guarded": 1, "limited": 1})
 
 
+class PhoneToBenchExport(unittest.TestCase):
+    def test_an_export_never_lands_on_another_one(self):
+        import phone_to_bench as ptb
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            jobs = root / "phone-jobs"
+            for job in ("j1", "j2"):
+                (jobs / job).mkdir(parents=True)
+                write(jobs / job / f"{job}.a.jsonl", [{"event": "clean", "id": "earnings22/x", "chunk_in": ["hi"],
+                                                     "chunk_out": ["Hi."], "chunk_s": [0.5]}])
+            with mock.patch.object(ptb.grid, "EVAL", root), mock.patch.object(ptb.cb, "MODELS", root / "m"), \
+                 mock.patch.object(ptb.cb, "WISPR_MODELS", root / "w"), \
+                 mock.patch.object(ptb.config, "read_dictionary", return_value=([], [])):
+                ptb.convert("j1", "a", "phone-x")
+                ptb.convert("j1", "a", "phone-x")  # the same export again is fine
+                with self.assertRaises(SystemExit):
+                    ptb.convert("j2", "a", "phone-x")
+
+
 class ItemCount(unittest.TestCase):
     def test_offset_limit_and_rounds_match_the_app(self):
         with tempfile.TemporaryDirectory() as d:
