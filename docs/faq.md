@@ -112,6 +112,18 @@ half the time of the 2B.
 - For more speed, use `v2t --no-cleanup`; for better punctuation on long dictations, `Qwen3.5-4B`
   ([cleanup models](reference/config.md#cleanup-models)).
 
+## A dictation took much longer than usual to paste. Which step was slow?
+
+`~/.v2t/run/v2t.log` times each step: `Transcribed … (0.25s after release …)` is the speech model,
+`Cleaned 2171 characters (28.09s)` is cleanup, and `Pasted (0.48s …)` is the paste.
+
+When it is cleanup, it may be a stall whose cause is not known yet
+([#168](https://github.com/lucharo/voice2text/issues/168)). On 8 November 2026 a 3-minute dictation
+took 28.1 s to clean up in an engine that had run for about 19 hours; a fresh process cleaned the same
+text in 1.7 s. Since 0.5.23, a cleanup past 5 s plus 1 s per 200 characters writes every
+thread's stack to the log, followed by a warning containing "stall mark". Those lines show where the
+engine was stuck: add them to #168.
+
 ## Does cleanup make the transcript more accurate?
 
 No: at best it leaves your words as you said them. Cleanup reads only the text, so it cannot fix a
