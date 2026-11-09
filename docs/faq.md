@@ -103,13 +103,14 @@ permission per app identity, so the copy that asked last takes it from the other
 
 ## How long does cleanup take?
 
-About half a second at the median with the default `Qwen3.5-2B`, and nine in ten finish within
-about 2 s, measured on 201 real dictations on an M4 Pro.
+About half a second at the median with `Qwen3.5-2B`, and nine in ten finish within about 2 s,
+measured on 201 real dictations on an M4 Pro. The default after 0.5.22, `Qwen3.5-0.8B`, takes about
+half the time of the 2B.
 
 - Since 0.5.0 the fixed part of the prompt is processed once and reused, and the model checks
   several guessed words per step: the median went from 1.27 s to 0.51 s.
-- For more speed, use `Qwen3.5-0.8B` ([cleanup models](reference/config.md#cleanup-models)) or
-  `v2t --no-cleanup`.
+- For more speed, use `v2t --no-cleanup`; for better punctuation on long dictations, `Qwen3.5-4B`
+  ([cleanup models](reference/config.md#cleanup-models)).
 
 ## Does cleanup make the transcript more accurate?
 
@@ -128,7 +129,7 @@ v2t reads both models from disk and prepares them before the first dictation. Ac
 starts on an M4 Pro (28 September to 15 October 2026):
 
 - **Parakeet**, the speech model: 1.7 s typical, 5.8 s for nine starts in ten, 15.6 s at worst.
-- **Cleanup** (`Qwen3.5-2B`): 4.4 s typical.
+- **Cleanup** (`Qwen3.5-2B`, the default then): 4.4 s typical.
 
 That comes to about 6 s before the menu says **Ready**. These starts used Parakeet on MLX, now
 `backend = "parakeet"`, which arrives as one 2.5 GB file converted to 8-bit at each load. The

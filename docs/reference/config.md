@@ -58,7 +58,7 @@ url = "http://localhost:11434"
 | `transcription.preview_language` | `auto`, `en`, `es`, `fr`, `de`, … | The language Nemotron is told to expect; `auto` lets it tell. One of its 25 European languages |
 | `cleanup.enabled` | `true`, `false` | Run the cleanup model at all |
 | `cleanup.engine` | `mlx`, `ollama` | In-process MLX, or a running Ollama |
-| `cleanup.model` | repo id or Ollama tag | Blank means `Qwen3.5-2B-4bit` or `qwen3:4b-instruct-2507-q4_K_M` |
+| `cleanup.model` | repo id or Ollama tag | Blank means `Qwen3.5-0.8B-4bit` or `qwen3:4b-instruct-2507-q4_K_M` |
 | `cleanup.mode` | `casual`, `strict` | See [casual or strict](../guide.md#casual-or-strict-cleanup) |
 | `hotkey.key` | `fn`, `cmd_r`, `cmd_l`, `alt_r`, `alt_l`, `ctrl_r`, `ctrl_l` | The push-to-talk key |
 | `audio.sample_rate` | Hz | Recording rate |
@@ -74,10 +74,14 @@ HTTP. Measured on 208 real dictations in casual mode on an M4 Pro:
 
 | Model | Words kept (median / worst 10%) | Note |
 |---|--:|---|
-| `Qwen3.5-0.8B-4bit` | 96% / 86% | Fastest, about half the time of the default |
-| `Qwen2.5-1.5B-Instruct-4bit` | 92% / 82% | The previous default |
-| **`Qwen3.5-2B-4bit`** | **98% / 93%** | The default; about 0.5 s per dictation at the median |
-| `Qwen3.5-4B-4bit` | 96% / 90% | Slower and no more faithful |
+| **`Qwen3.5-0.8B-4bit`** | **96% / 86%** | The default after 0.5.22; about half the time of the 2B |
+| `Qwen2.5-1.5B-Instruct-4bit` | 92% / 82% | An earlier default |
+| `Qwen3.5-2B-4bit` | 98% / 93% | The default up to 0.5.22 |
+| `Qwen3.5-4B-4bit` | 96% / 90% | Slower; punctuates real dictations best |
+
+After 0.5.22 cleanup no longer counts the fillers and repeats it may drop against its length check, and
+with that an LLM judge scored the 0.8B level with the 2B on earnings calls and on 208 real dictations
+(4.38 against 4.37 and 3.74 against 3.75 out of 5), and the 4B higher on the dictations (4.06).
 
 Any `mlx-community/…` model works; it downloads on the next launch. Use a model that does not
 emit `<think>` blocks, or its reasoning gets pasted.

@@ -4,7 +4,7 @@
 
 1. **Record.** The microphone opens when you press the key.
 2. **Transcribe.** Parakeet turns the audio into text, on the Neural Engine, while you are still talking.
-3. **Clean up.** A small local LLM (`Qwen3.5-2B` by default) adds punctuation and drops the
+3. **Clean up.** A small local LLM (`Qwen3.5-0.8B` by default) adds punctuation and drops the
    "um"s. It may not add or remove content: a chunk whose length drifts too far is pasted raw.
 4. **Paste.** The text goes in at your cursor, and your previous clipboard is put back.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Cleanup keeps more of its punctuation, and the smaller model is the default.** Cleanup sends a passage back to the words as heard when the cleaned text comes out much shorter, so it cannot cut content. That check counted the um, uh and repeated words cleanup is allowed to drop, so a passage it shortened only by dropping them came back raw, punctuation and all: 17 of 150 earnings-call clips with Qwen3.5 0.8B. It no longer counts them, which took the 0.8B's punctuation score on those clips from 63.5 to 67.4 and left a third as many fillers, with the same words. With that, an LLM judge scored Qwen3.5 0.8B level with the 2B (4.38 against 4.37 out of 5 on earnings calls, 3.74 against 3.75 on 208 real dictations) at about half the time and 0.5 GB less memory, so it is now the default. Its 0.65 GB downloads on the next launch. To keep the 2B, choose **Qwen3.5 2B** under **Cleanup Model** in the menu or set `model = "mlx-community/Qwen3.5-2B-4bit"` under `[cleanup]`. **Qwen3.5 4B** punctuated real dictations best (4.06) (#129).
+
 ## 0.5.22
 
 - **The cleanup count in the pill ticks evenly.** Once a second the menu app redraws the pill, and that redraw read the count off the clock and rounded it up, so a tenth showed early: one tenth stayed up for about 50 ms and the next for 150 ms. The count now moves only on the pill's own animation frames, which start half a tenth after the cleanup does. In a copy of the pill redrawn once a second like the menu app does, every tenth stayed up 96 to 104 ms in four runs; before, three of the four runs had a tenth up for 42 to 73 ms followed by one up for 127 to 158 ms.
