@@ -69,6 +69,9 @@ import V2TCleanup
     return (parts.filter { !$0.isEmpty }.joined(separator: " "), kept)
   }
 
+  /// Stop was tapped: no segment still queued is sent from now on, while the last piece is transcribed.
+  func stop() { closed = true }
+
   /// Waits for the segments sent so far; for tests, standing in for the time a recording takes.
   func idle() async { await tasks.last?.value }
 

@@ -63,7 +63,9 @@ private actor Model {
     live.offer(pieces: ["one two three. four", "five six. seven"])
     live.offer(pieces: ["one two three. four", "five six. seven", "eight nine. ten"])
 
-    // Stop comes before either segment reached the model
+    // Stop comes before either segment reached the model; the tail is then transcribed before finish
+    live.stop()
+    await Task.yield()
     let result = await live.finish("one two three. four five six. seven eight nine. ten", terms: [])
 
     #expect(await model.asked == ["one two three. four five six. seven eight nine. ten"])

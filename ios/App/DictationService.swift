@@ -295,6 +295,7 @@ import SwiftUI
     stopMeter()
     let stoppedAt = ContinuousClock.now
     live?.stopFeeding()
+    liveCleanup?.stop()  // a segment still queued is cleaned with the tail, not sent while the tail is decoded
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()
