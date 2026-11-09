@@ -27,7 +27,8 @@ class ReportTests(unittest.TestCase):
     def events(self):
         ev = [{"t": 0, "e": "appear"}, {"t": 1, "e": "host", "kind": "text", "before": ""}]
         # "teh " autocorrected to "The ", delete, original picked back
-        e, t = typed(10, "teh"); ev += e
+        e, t = typed(10, "teh")
+        ev += e
         ev += [{"t": t, "e": "key", "text": " "}, {"t": t, "e": "autocorrect", "from": "teh", "to": "The"},
                {"t": t, "e": "del"}, {"t": t, "e": "del"}, {"t": t, "e": "del"}, {"t": t, "e": "ins", "text": "The"}, {"t": t, "e": "ins", "text": " "},
                {"t": t + 300, "e": "act", "a": "delete"}, {"t": t + 300, "e": "revert-offer", "from": "teh", "to": "The"}, {"t": t + 300, "e": "del"},
@@ -38,10 +39,12 @@ class ReportTests(unittest.TestCase):
             ev.append({"t": t + 700, "e": "del"})
         ev += [{"t": t + 700, "e": "ins", "text": "teh "}]
         # "form " finished, deleted, retyped as "from "
-        e, t = typed(t + 1000, "form"); ev += e
+        e, t = typed(t + 1000, "form")
+        ev += e
         ev.append({"t": t, "e": "ins", "text": " "})
         ev += [{"t": t + 100 + i, "e": "del"} for i in range(5)]
-        e, t = typed(t + 400, "from"); ev += e
+        e, t = typed(t + 400, "from")
+        ev += e
         ev.append({"t": t, "e": "ins", "text": " "})
         # a swipe 200 ms after a tap, deleted at once: a likely misread
         ev += [{"t": t + 300, "e": "up", "n": 9, "verdict": "swipe", "ms": 100},
