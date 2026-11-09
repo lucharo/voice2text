@@ -20,6 +20,7 @@ private actor Model {
 
     live.offer(pieces: ["so the plan is fine. we ship it on"])  // "fine." ends inside the piece
     live.offer(pieces: ["so the plan is fine. we ship it on", "monday. then we rest"])
+    await live.idle()  // the recording goes on long enough for both to be cleaned
     let result = await live.finish("so the plan is fine. we ship it on monday. then we rest", terms: ["Claude"])
 
     #expect(await model.asked == ["so the plan is fine.", "we ship it on monday.", "then we rest"])
@@ -33,6 +34,7 @@ private actor Model {
     let live = LiveCleanup(terms: [], minimumWords: 3) { text, _ in await model.clean(text) }
 
     live.offer(pieces: ["one two three. four", "five six"])
+    await live.idle()
     let result = await live.finish("one two three. four five six", terms: [])
 
     #expect(await model.asked == ["one two three.", "one two three. four five six"])
@@ -46,12 +48,26 @@ private actor Model {
 
     live.offer(pieces: ["one two three. four", "five six. seven"])
     live.offer(pieces: ["one two three. four", "five six. seven", "eight nine. ten"])
+    await live.idle()
     let result = await live.finish("one two three. four five six. seven eight nine. ten", terms: [])
 
     // the first segment failed in the background and is retried alone; the second is kept; then the tail
     #expect(await model.asked == ["one two three. four five six.", "seven eight nine.", "one two three. four five six.", "ten"])
     #expect(result.text == "one two three. four five six. SEVEN EIGHT NINE. TEN")  // the retry was refused too
     #expect(result.cleanedWhileRecording == 1)
+  }
+
+  @Test func segmentsStillQueuedAtStopAreCleanedWithTheRestInOneRequest() async {
+    let model = Model()
+    let live = LiveCleanup(terms: [], minimumWords: 3) { text, _ in await model.clean(text) }
+    live.offer(pieces: ["one two three. four", "five six. seven"])
+    live.offer(pieces: ["one two three. four", "five six. seven", "eight nine. ten"])
+
+    // Stop comes before either segment reached the model
+    let result = await live.finish("one two three. four five six. seven eight nine. ten", terms: [])
+
+    #expect(await model.asked == ["one two three. four five six. seven eight nine. ten"])
+    #expect(result.cleanedWhileRecording == 0)
   }
 
   @Test func newDictionaryTermsOrAnotherTranscriptMeanCleanEverythingNow() async {
