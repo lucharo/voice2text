@@ -16,6 +16,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var debugSkip: String?
   /// The bar as last logged, so only changes are written.
   private var loggedBar: [String] = []
+  /// The field a dictation went into: from then on the log keeps no text read back from it (the text before the
+  /// cursor, the bar's words, picked words), since that text holds the dictated words.
+  private var dictatedField: UUID?
+  /// True while nothing read back from the current field may be logged.
+  private var fieldRedacted: Bool { dictatedField != nil && dictatedField == textDocumentProxy.documentIdentifier }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -82,7 +87,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     bar.onPick = { [weak self] word, slot in
       guard let self else { return }
       let emoji = engine.emojiSuggestion == word
-      dlog("pick", [.init("slot", .i(slot)), .init("word", .s(word)), .init("emoji", .b(emoji))])
+      dlog("pick", [.init("slot", .i(slot))] + (fieldRedacted ? [] : [.init("word", .s(word))]) + [.init("emoji", .b(emoji))])
       edit { $0.pick(word) }
       if emoji { EmojiStore.record(word, toned: tonedEmoji) }  // the bar's emoji joins the panel's recents
     }
@@ -129,9 +134,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       guard let self else { return }
       // the log keeps a dictation's length, not its words: History already holds them, in the app
       dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
-      proxy.redacted = true
+      dictatedField = textDocumentProxy.documentIdentifier
       edit { $0.insertFinished(text) }
-      proxy.redacted = false
     }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
   }
@@ -281,6 +285,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     dlog("appear", [.init("fullAccess", .b(hasFullAccess)), .init("store", .s(debugLog?.directory == KeyboardLogStore.localDirectory ? "keyboard" : "group")),
                     .init("layout", .s(language.rawValue)), .init("languages", .list(engine.suggester.lexicons.map { .s($0.language) })),
                     .init("width", .d(Double(view.bounds.width))), .init("form", .s("\(keyboardView.layout.form)")),
+                    .init("wall", .s(Date().ISO8601Format())),  // anchors the uptime clock, which restarts with the phone
                     .init("version", .s(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))])
     loggedField = nil  // the field gets its line again, after this one
   }
@@ -292,10 +297,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     debugLog = log
     keyboardView.debugLog = log
     proxy.log = log
+    proxy.redact = { [weak self] in self?.fieldRedacted == true }
     loggedBar = []
     debugSkip = nil
     engine.onEvent = log.map { log in
-      { event in
+      { [weak self] event in
+        // the words of a field a dictation went into may be dictated ones: the decision is kept, the words not
+        if self?.fieldRedacted == true { log.log(event.name, [.init("redacted", .b(true))]); return }
         switch event {
         case .autocorrected(let o, let r): log.log("autocorrect", [.init("from", .s(o)), .init("to", .s(r))])
         case .revertOffered(let o, let r): log.log("revert-offer", [.init("from", .s(o)), .init("to", .s(r))])
@@ -317,6 +325,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// The host changed the text or moved the cursor: the text before the cursor, as far as the engine reads it
   /// (TypingContext's last 160 characters).
   private func logHost(_ kind: String) {
+    if fieldRedacted { dlog("host", [.init("kind", .s(kind)), .init("redacted", .b(true))]); return }
     dlog("host", [.init("kind", .s(kind)), .init("before", .s(String((textDocumentProxy.documentContextBeforeInput ?? "").suffix(160))))])
   }
 
@@ -415,6 +424,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       let words = suggestions.map(\.word) + [pending ?? ""]
       if words != loggedBar {
         loggedBar = words
+        if fieldRedacted { log.log("bar", [.init("count", .i(suggestions.count)), .init("redacted", .b(true))]); return }
         log.log("bar", [.init("words", .list(suggestions.map { .s($0.word) })), .init("kinds", .list(suggestions.map { .s("\($0.kind)") })),
                         .init("bold", pending.map { .s($0) } ?? .null)])
       }
@@ -497,6 +507,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
     // the words before the swipe pick the language and promote the words that usually come next
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
+    // decided now: by the time the decode returns, focus may have moved out of a field the log must skip
+    let loggable = debugLog?.isOn == true
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
       let scored = decoder.decodeScored(trace, context: context, limit: 4)
@@ -505,9 +517,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
         guard let self else { return }
         let applies = !words.isEmpty && self.inputEpoch == epoch && self.emojiSearch == nil
           && self.textDocumentProxy.documentIdentifier == document
-        self.dlog("swipe", [.init("points", .i(trace.count)), .init("trace", .list(KeyboardDebugLog.sample(trace, limit: 48).map { .pt($0) })),
+        if loggable { self.dlog("swipe", [.init("points", .i(trace.count)), .init("trace", .list(KeyboardDebugLog.sample(trace, limit: 48).map { .pt($0) })),
                             .init("candidates", .list(scored.map { .obj([.init("w", .s($0.word)), .init("s", .d($0.score))]) })),
-                            .init("applied", .b(applies)), .init("decodeMs", .d(ms))])
+                            .init("applied", .b(applies)), .init("decodeMs", .d(ms))]) }
         guard applies else { return }
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }
@@ -554,7 +566,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func makeEmojiPanel() -> EmojiPanel {
     let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
     p.onEmoji = { [weak self] e in
-      self?.dlog("emoji", [.init("e", .s(e)), .init("from", .s("panel"))])
+      self?.dlog("emoji", [.init("emoji", .s(e)), .init("from", .s("panel"))])
       self?.edit("emoji") { $0.emoji(e) }
     }
     p.onDelete = { [weak self] in self?.edit { $0.delete() } }
@@ -585,7 +597,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
                            tone: { [weak self] list in self.map { EmojiStore.shown(list, toned: $0.tonedEmoji) } ?? list })
     s.onPick = { [weak self] e in
       guard let self else { return }
-      dlog("emoji", [.init("e", .s(e)), .init("from", .s("search"))])
+      dlog("emoji", [.init("emoji", .s(e)), .init("from", .s("search"))])
       edit("emoji") { $0.emoji(e) }
       EmojiStore.record(e, toned: tonedEmoji)
     }
@@ -667,12 +679,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 final class ProxyAdapter: TextProxy {
   private weak var controller: UIInputViewController?
   var log: KeyboardDebugLog?
-  /// Inserts are logged by length only (dictated text).
-  var redacted = false
+  /// True in a field a dictation went into: inserts are logged by length only.
+  var redact: () -> Bool = { false }
   init(_ c: UIInputViewController) { controller = c }
   var documentContextBeforeInput: String? { controller?.textDocumentProxy.documentContextBeforeInput }
   func insertText(_ text: String) {
-    if let log, log.isOn { log.log("ins", redacted ? [.init("chars", .i(text.count))] : [.init("text", .s(text))]) }
+    if let log, log.isOn { log.log("ins", redact() ? [.init("chars", .i(text.count))] : [.init("text", .s(text))]) }
     controller?.textDocumentProxy.insertText(text)
   }
   func deleteBackward() {

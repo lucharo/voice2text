@@ -16,7 +16,7 @@ struct DebugLogTests {
   }
 
   func lines(_ dir: URL) -> [[String: Any]] {
-    String(decoding: KeyboardDebugLog.merged(in: dir), as: UTF8.self).split(separator: "\n").map {
+    String(decoding: (try? KeyboardDebugLog.merged(in: dir)) ?? Data(), as: UTF8.self).split(separator: "\n").map {
       (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] ?? ["unparsable": String($0)]
     }
   }
@@ -96,6 +96,18 @@ struct DebugLogTests {
     #expect(kept == Array(kept.first!...499))
     KeyboardDebugLog.clear(in: dir)
     #expect(KeyboardDebugLog.files(in: dir).isEmpty)
+  }
+
+  @Test func clearDropsEventsStillWaitingToBeWritten() {
+    let dir = tempDir(), clock = TestClock()
+    let log = KeyboardDebugLog(directory: dir, clock: { clock.now })
+    log.start(until: Date().addingTimeInterval(3600))
+    log.log("key", [LogField("text", .s("before"))])
+    clock.now += 10  // the buffered event is now 10 s old
+    KeyboardDebugLog.clear(in: dir)  // the app clears while the keyboard still holds it
+    log.log("key", [LogField("text", .s("after"))])
+    log.flush(wait: true)
+    #expect(lines(dir).map { $0["text"] as? String } == ["after"])
   }
 
   @Test func flushesOnItsOwnAfterTheDelay() async throws {

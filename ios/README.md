@@ -93,9 +93,13 @@ shares both files joined; Clear log deletes them.
 - **Privacy.** Local only. Never recorded: fields whose content type asks for a password, a new password, a
   one-time code or card details (iOS already swaps in its own keyboard for secure fields; `keyboardType` has no
   password or card value, so it marks nothing on its own). A `skip` line names the reason, then nothing until
-  the field changes. Dictation is recorded by length only: its words are in History already. The text before the
-  cursor is recorded only as far as the engine reads it (`TypingContext`, the last 160 characters), when the host
-  app changes it.
+  the field changes. Dictation is recorded by length only: its words are in History already. From the first
+  dictation in a field until the field changes, nothing read back from that field is recorded either (the text
+  before the cursor, the bar's words, words picked or corrected, text inserted, all by count only), since it
+  holds the dictated words. The text before the cursor is recorded only as far as the engine reads it
+  (`TypingContext`, the last 160 characters), when the host app changes it.
+- **Clear log** also leaves a `cleared` time in the folder, so events the keyboard still holds from before it are
+  dropped rather than written to a fresh file. Export rereads if the keyboard rotates the files mid-read.
 - **Without Full Access** iOS keeps the App Group, and so the switch, from the keyboard: it reads off and nothing
   is recorded. If the keyboard can read the switch but not write to the App Group, it writes to its own
   container, which the app cannot export.
@@ -115,7 +119,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 
 | `e` | Fields | When |
 | --- | --- | --- |
-| `appear`, `disappear` | full access, store, layout, languages, width, form, build | the keyboard opens or closes |
+| `appear`, `disappear` | full access, store, layout, languages, width, form, wall (the clock time), build | the keyboard opens or closes |
 | `field` | keyboardType, contentType, autocorrect, capitalization, return | a new text field |
 | `skip`, `resume`, `auto-off` | reason | a field the log never records; the 24 hours are up |
 | `down` | n (finger), key, p, fingers down | a finger lands |
@@ -128,7 +132,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `autocorrect`, `revert-offer`, `revert` | from, to, how (bar, address) | a correction; offered back after delete; undone |
 | `ins`, `del` | text (chars for dictation) | the keyboard edited the document |
 | `host` | kind, before | the app changed the text or moved the cursor |
-| `page`, `emoji`, `dictation` | page, form, width; e, from; chars, words | |
+| `page`, `emoji`, `dictation` | page, form, width; emoji, from; chars, words | |
 
 ### Which model this iPhone gets
 

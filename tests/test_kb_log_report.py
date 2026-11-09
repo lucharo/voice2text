@@ -29,7 +29,7 @@ class ReportTests(unittest.TestCase):
         # "teh " autocorrected to "The ", delete, original picked back
         e, t = typed(10, "teh")
         ev += e
-        ev += [{"t": t, "e": "key", "text": " "}, {"t": t, "e": "autocorrect", "from": "teh", "to": "The"},
+        ev += [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "teh", "to": "The"},
                {"t": t, "e": "del"}, {"t": t, "e": "del"}, {"t": t, "e": "del"}, {"t": t, "e": "ins", "text": "The"}, {"t": t, "e": "ins", "text": " "},
                {"t": t + 300, "e": "act", "a": "delete"}, {"t": t + 300, "e": "revert-offer", "from": "teh", "to": "The"}, {"t": t + 300, "e": "del"},
                {"t": t + 600, "e": "bar", "words": ["teh", "the"], "kinds": ["typed", "correction"], "bold": None},
@@ -84,6 +84,48 @@ class ReportTests(unittest.TestCase):
               {"t": 1, "e": "ins", "text": "merino "}] + [{"t": 2, "e": "del"}] * 7 + [{"t": 3, "e": "ins", "text": "marimo "}]
         r = rep.analyse(ev)
         self.assertEqual((dict(r.corrections_reverted), r.misses), ({"retyped": 1}, []))
+
+    def test_trackpad_move_left_then_retype_is_the_right_word(self):
+        # "form word ", cursor back over " word " (6), delete "form" and type "from": a miss of form, not of word
+        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "ins", "text": "form word "}, {"t": 2, "e": "cursor", "by": -6}]
+        ev += [{"t": 3, "e": "del"}] * 4 + [{"t": 4, "e": "ins", "text": "from "}]
+        self.assertEqual(rep.analyse(ev).misses, [("form", "from")])
+
+    def test_deleting_a_joined_emoji_takes_it_whole(self):
+        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "ins", "text": "form 👩🏽‍💻"}]
+        ev += [{"t": 2, "e": "del"}] * 6 + [{"t": 3, "e": "ins", "text": "from "}]  # the emoji, space and "form"
+        self.assertEqual(rep.analyse(ev).misses, [("form", "from")])
+
+    def test_shift_between_offer_and_pick_is_one_revert(self):
+        ev = [{"t": 0, "e": "autocorrect", "from": "teh", "to": "The"},
+              {"t": 1, "e": "act", "a": "delete"}, {"t": 1, "e": "revert-offer", "from": "teh", "to": "The"},
+              {"t": 2, "e": "act", "a": "shift"}, {"t": 3, "e": "pick", "slot": 0, "word": "teh"},
+              {"t": 3, "e": "revert", "from": "teh", "to": "The", "how": "bar"}]
+        self.assertEqual(dict(rep.analyse(ev).corrections_reverted), {"bar": 1})
+
+    def test_deleting_a_full_stop_after_a_swipe_keeps_the_swipe(self):
+        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "swipe", "candidates": [{"w": "hello", "s": 0}], "applied": True},
+              {"t": 2, "e": "ins", "text": "hello"}, {"t": 2, "e": "swiped", "word": "hello", "alternatives": []},
+              {"t": 3, "e": "ins", "text": "."}, {"t": 4, "e": "del"}]
+        self.assertEqual([s.outcome for s in rep.analyse(ev).swipes], ["kept"])
+
+    def test_two_swipes_before_the_first_decode_keep_their_own_timings(self):
+        ev = [{"t": 0, "e": "up", "verdict": "swipe", "ms": 500}, {"t": 600, "e": "up", "verdict": "swipe", "ms": 100},
+              {"t": 700, "e": "swipe", "candidates": [{"w": "a", "s": 0}], "applied": False},
+              {"t": 800, "e": "swipe", "candidates": [{"w": "b", "s": 0}], "applied": False}]
+        self.assertEqual([s.ms for s in rep.analyse(ev).swipes], [500, 100])
+
+    def test_a_phone_restart_splits_the_clock(self):
+        keys = lambda t0: [{"t": t0 + 200 * i, "e": "key", "text": "a"} for i in range(6)]  # noqa: E731
+        r = rep.analyse(keys(5_000_000) + keys(1_000))
+        self.assertEqual(len(r.kps), 2)
+        self.assertTrue(all(k > 0 for k in r.kps))
+        self.assertAlmostEqual(r.span_s, 2.0)
+
+    def test_a_typed_line_separator_and_a_torn_character(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "keyboard.jsonl").write_bytes('{"t":1,"e":"key","text":"\u2028"}\n'.encode() + b'{"t":2,"e":"key","text":"\xc3')
+            self.assertEqual([e["text"] for e in rep.read_events(Path(d))], ["\u2028"])
 
     def test_offer_left_alone_counts_as_not_taken(self):
         ev = [{"t": 0, "e": "autocorrect", "from": "fo", "to": "for"},

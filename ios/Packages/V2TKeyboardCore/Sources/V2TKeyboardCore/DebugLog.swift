@@ -36,6 +36,9 @@ public struct LogField: Sendable, Equatable {
 public final class KeyboardDebugLog: @unchecked Sendable {
   public static let fileName = "keyboard.jsonl"
   public static let rotatedName = "keyboard.1.jsonl"
+  /// Written by `clear`: the wall-clock time of the last Clear log. Events from before it that the keyboard still
+  /// holds in memory or in its write queue are dropped rather than written to a fresh file.
+  public static let clearedName = "cleared"
   /// 4 MB a file, about 40,000 events; two files at most.
   public static let defaultMaxFileBytes = 4 << 20
 
@@ -56,6 +59,7 @@ public final class KeyboardDebugLog: @unchecked Sendable {
   private let queue = DispatchQueue(label: "v2t.keyboard-log", qos: .utility)
 
   private struct Pending {
+    /// Seconds of uptime.
     let t: TimeInterval
     let event: String
     let fields: [LogField]
@@ -150,9 +154,12 @@ public final class KeyboardDebugLog: @unchecked Sendable {
 
   private func write(_ batch: [Pending]) {
     guard !batch.isEmpty else { return }
+    // events from before the app's last Clear log stay cleared
+    let wallOffset = Date().timeIntervalSince1970 - clock()
+    let cleared = (try? String(contentsOf: directory.appending(path: Self.clearedName), encoding: .utf8)).flatMap(Double.init) ?? 0
     var out = ""
     out.reserveCapacity(batch.count * 96)
-    for p in batch {
+    for p in batch where p.t + wallOffset > cleared {
       out += "{\"t\":"
       Self.number(p.t * 1000, decimals: 1, into: &out)
       out += ",\"e\":"
@@ -169,7 +176,7 @@ public final class KeyboardDebugLog: @unchecked Sendable {
     try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
     let file = directory.appending(path: Self.fileName)
     if !fm.fileExists(atPath: file.path) { fm.createFile(atPath: file.path, contents: nil) }
-    guard let h = try? FileHandle(forWritingTo: file) else { return }
+    guard !out.isEmpty, let h = try? FileHandle(forWritingTo: file) else { return }
     let size = (try? h.seekToEnd()) ?? 0
     try? h.write(contentsOf: Data(out.utf8))
     try? h.close()
@@ -192,13 +199,25 @@ public final class KeyboardDebugLog: @unchecked Sendable {
     files(in: directory).reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
   }
 
-  public static func clear(in directory: URL) {
+  public static func clear(in directory: URL, now: Date = Date()) {
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try? String(now.timeIntervalSince1970).write(to: directory.appending(path: clearedName), atomically: true, encoding: .utf8)
     for f in files(in: directory) { try? FileManager.default.removeItem(at: f) }
   }
 
-  /// Both files joined, oldest first: what Export shares.
-  public static func merged(in directory: URL) -> Data {
-    files(in: directory).reduce(into: Data()) { $0.append((try? Data(contentsOf: $1)) ?? Data()) }
+  /// Both files joined, oldest first: what Export shares. The keyboard may rotate the files while they are read
+  /// (the newest one then vanishes between listing and reading), so a read that fails starts again; after three
+  /// tries it throws rather than share a log with a hole in it.
+  public static func merged(in directory: URL) throws -> Data {
+    var lastError: Error?
+    for _ in 0..<3 {
+      do {
+        return try files(in: directory).reduce(into: Data()) { $0.append(try Data(contentsOf: $1)) }
+      } catch {
+        lastError = error
+      }
+    }
+    throw lastError ?? CocoaError(.fileReadUnknown)
   }
 
   // MARK: helpers

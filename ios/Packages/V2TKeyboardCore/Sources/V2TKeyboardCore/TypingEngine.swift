@@ -68,6 +68,17 @@ public final class TypingEngine {
     case picked(word: String, replaced: String)
     /// A swipe typed `word`, with `alternatives` waiting in the bar.
     case swiped(word: String, alternatives: [String])
+
+    /// The event's name, without its words.
+    public var name: String {
+      switch self {
+      case .autocorrected: "autocorrect"
+      case .revertOffered: "revert-offer"
+      case .reverted: "revert"
+      case .picked: "picked"
+      case .swiped: "swiped"
+      }
+    }
   }
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.

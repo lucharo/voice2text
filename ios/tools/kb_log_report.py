@@ -26,6 +26,7 @@ import argparse
 import json
 import statistics
 import sys
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,36 @@ SLOTS = ["left", "middle", "right"]
 FAST_TYPING_MS = 350  # TouchArbiter.fastTypingWindow
 SHORT_SWIPE_MS = 300
 BURST_GAP_MS = 2000
+# actions that type or edit, as KeyboardViewController logs them; shift, pages and the globe do neither
+TYPING_ACTS = {"space", "returnKey", "tab"}
+EDITING_ACTS = TYPING_ACTS | {"delete", "deleteWord"}
+ZWJ = "\u200d"
+
+
+def is_extender(ch: str) -> bool:
+    """A code point that belongs to the character before it: combining marks, variation selectors, skin tones,
+    the keycap mark."""
+    return unicodedata.category(ch) in ("Mn", "Me") or "\ufe00" <= ch <= "\ufe0f" or "\U0001f3fb" <= ch <= "\U0001f3ff" or ch == "\u20e3"
+
+
+def drop_last_character(text: str) -> str:
+    """Removes the last user-perceived character, as UITextDocumentProxy.deleteBackward does (a Swift Character),
+    near enough for emoji: a toned or joined emoji, a flag, an accented letter."""
+    if not text:
+        return text
+    last = text[-1]
+    text = text[:-1]
+    while text and is_extender(last):
+        last = text[-1]
+        text = text[:-1]
+    while len(text) >= 2 and text[-1] == ZWJ:  # a joined sequence goes as one: the joiner, its extenders, its base
+        text = text[:-1]
+        while text and is_extender(text[-1]):
+            text = text[:-1]
+        text = text[:-1]
+    if "\U0001f1e6" <= last <= "\U0001f1ff" and text and "\U0001f1e6" <= text[-1] <= "\U0001f1ff":
+        text = text[:-1]  # a flag is two regional indicators
+    return text
 
 
 def read_events(path: Path) -> list[dict]:
@@ -43,13 +74,14 @@ def read_events(path: Path) -> list[dict]:
         files = sorted(path.glob("*.jsonl"))
     events = []
     for f in files:
-        for line in f.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
-                try:
+        # lines end at LF only: a typed U+2028 stays inside its JSON string
+        for raw in f.read_bytes().split(b"\n"):
+            try:
+                line = raw.decode("utf-8").strip()
+                if line:
                     events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass  # a line cut short by the keyboard being killed mid-write
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass  # a line cut short by the keyboard being killed mid-write
     return events
 
 
@@ -115,10 +147,22 @@ class Document:
                     self.finished.append((start, word))
             self.text += ch
 
+    def move(self, by: int) -> None:
+        """The space-bar trackpad moved the cursor (the host sends no update for it). Left: the text before the
+        cursor is known, it gets shorter. Right: the characters passed are unknown, so start again from nothing."""
+        if by < 0:
+            for _ in range(-by):
+                self.text = drop_last_character(self.text)
+            n = len(self.text)
+            self.deleted = {k: v for k, v in self.deleted.items() if k <= n}
+            self.finished = [(st, w) for st, w in self.finished if st + len(w) <= n]
+        else:
+            self.reset("")
+
     def delete(self) -> None:
         if not self.text:
             return
-        self.text = self.text[:-1]
+        self.text = drop_last_character(self.text)
         n = len(self.text)
         while self.finished and self.finished[-1][0] + len(self.finished[-1][1]) > n:
             start, word = self.finished.pop()
@@ -132,13 +176,15 @@ def analyse(events: list[dict]) -> Report:
     r = Report(events=len(events))
     if not events:
         return r
-    r.span_s = (events[-1]["t"] - events[0]["t"]) / 1000
     doc = Document()
     open_swipe: Swipe | None = None  # the last swipe's word, until it is kept or lost
+    swipe_end = 0  # where the open swipe's word ends in the document
     pending_offer: dict | None = None
     last_bar: dict | None = None
     last_tap_up: float | None = None
-    last_swipe_up: dict | None = None
+    swipe_lifts: list[dict] = []  # lifted swipes waiting for their decode, in order (the decoder is one queue)
+    last_t: float | None = None
+    segment_start = events[0].get("t", 0)
     key_times: list[float] = []
     corrected: Counter = Counter()  # (replacement, original), lowercase
     reverted_by_keyboard: Counter = Counter()
@@ -151,6 +197,12 @@ def analyse(events: list[dict]) -> Report:
 
     for ev in events:
         e, t = ev.get("e"), ev.get("t", 0)
+        if last_t is not None and t < last_t - 1000:
+            # uptime went back: the phone restarted. Times before and after cannot be compared
+            r.span_s += (last_t - segment_start) / 1000
+            segment_start = t
+            key_times.append(float("nan"))  # ends the typing burst
+        last_t = t
         if e == "appear":
             r.sessions += 1
         elif e == "skip":
@@ -167,9 +219,12 @@ def analyse(events: list[dict]) -> Report:
                     settle_swipe("kept")
         elif e == "del":
             doc.delete()
-            if open_swipe is not None:
+            if open_swipe is not None and len(doc.text) < swipe_end:  # into the word, not just a mark after it
                 settle_swipe("deleted")
-        elif e == "key":
+        elif e == "cursor":
+            doc.move(ev.get("by", 0))
+            settle_swipe("kept")
+        elif e == "key" or (e == "act" and ev.get("a") in TYPING_ACTS):
             r.keys += 1
             key_times.append(t)
         elif e == "down":
@@ -180,7 +235,7 @@ def analyse(events: list[dict]) -> Report:
                 r.taps += 1
                 last_tap_up = t
             elif ev.get("verdict") == "swipe":
-                last_swipe_up = {"ms": ev.get("ms"), "after_tap_ms": (t - ev.get("ms", 0) - last_tap_up) if last_tap_up is not None else None}
+                swipe_lifts.append({"ms": ev.get("ms"), "after_tap_ms": (t - ev.get("ms", 0) - last_tap_up) if last_tap_up is not None else None})
         elif e == "rollover":
             r.rollovers += 1
             last_tap_up = t
@@ -188,9 +243,9 @@ def analyse(events: list[dict]) -> Report:
             settle_swipe("kept")
             cands = ev.get("candidates", [])
             s = Swipe(t=t, word=cands[0]["w"] if cands else None, candidates=cands, applied=bool(ev.get("applied")))
-            if last_swipe_up:
-                s.ms, s.after_tap_ms = last_swipe_up["ms"], last_swipe_up["after_tap_ms"]
-                last_swipe_up = None
+            if swipe_lifts:
+                lift = swipe_lifts.pop(0)
+                s.ms, s.after_tap_ms = lift["ms"], lift["after_tap_ms"]
             if not cands:
                 s.outcome = "empty"
             elif not s.applied:
@@ -200,6 +255,7 @@ def analyse(events: list[dict]) -> Report:
             if r.swipes and r.swipes[-1].applied:
                 r.swipes[-1].word = ev.get("word")
                 open_swipe = r.swipes[-1]
+                swipe_end = len(doc.text)
         elif e == "bar":
             last_bar = ev
         elif e == "pick":
@@ -227,11 +283,15 @@ def analyse(events: list[dict]) -> Report:
                 r.reverted_examples.append(f"{ev.get('from')} -> {ev.get('to')} ({ev.get('how')})")
             pending_offer = None
             continue
-        if pending_offer is not None and e in ("key", "act", "pick") and not (e == "pick" and ev.get("word") == pending_offer.get("from")):
+        edits = e in ("key", "emoji", "dictation") or (e == "act" and ev.get("a") in EDITING_ACTS) \
+            or (e == "pick" and pending_offer is not None and ev.get("word") != pending_offer.get("from"))
+        if pending_offer is not None and edits:
             # the original was offered back after a delete, and the next thing done was something else
             r.corrections_reverted["offered, left"] += 1
             pending_offer = None
     settle_swipe("kept")
+    if last_t is not None:
+        r.span_s += (last_t - segment_start) / 1000
     # a corrected word deleted and the original typed again is a correction taken back, not a miss; the
     # keyboard's own reverts (from the bar, in an address) show up the same way in the text and are counted above
     for old, new in doc.misses:
@@ -247,11 +307,12 @@ def analyse(events: list[dict]) -> Report:
     # keys per second within bursts
     burst: list[float] = []
     for t in key_times + [float("inf")]:
-        if burst and t - burst[-1] > BURST_GAP_MS:
-            if len(burst) >= 5:
+        if burst and not (0 <= t - burst[-1] <= BURST_GAP_MS):  # a gap, or a restart (nan)
+            if len(burst) >= 5 and burst[-1] > burst[0]:
                 r.kps.append((len(burst) - 1) / ((burst[-1] - burst[0]) / 1000))
             burst = []
-        burst.append(t)
+        if t == t and t != float("inf"):
+            burst.append(t)
     return r
 
 
