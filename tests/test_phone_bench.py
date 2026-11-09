@@ -157,6 +157,15 @@ class PhoneToBenchExport(unittest.TestCase):
                 ptb.convert("j1", "a", "phone-x")  # the same export again is fine
                 with self.assertRaises(SystemExit):
                     ptb.convert("j2", "a", "phone-x")
+                (root / "m" / "phone-y" / "earnings22").mkdir(parents=True)  # results with no record
+                write(root / "m" / "phone-y" / "earnings22" / "parakeet-v3.jsonl", [{"id": "x"}])
+                with self.assertRaises(SystemExit):
+                    ptb.convert("j1", "a", "phone-y")
+                with open(jobs / "j1" / "j1.a.jsonl", "a") as f:  # an item that failed on the phone
+                    f.write(json.dumps({"event": "clean", "id": "earnings22/z", "errors": ["boom"]}) + "\n")
+                with self.assertRaises(SystemExit) as e:
+                    ptb.convert("j1", "a", "phone-x")
+                self.assertIn("1 items have no chunk_in", str(e.exception))
 
 
 class ItemCount(unittest.TestCase):

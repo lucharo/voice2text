@@ -44,9 +44,13 @@ def guarded(ins: list[str], outs: list[str], limited: list[bool], vocabulary) ->
 def convert(job: str, arm: str, name: str) -> dict[str, list[dict]]:
     vocabulary, replacements = config.read_dictionary()
     rows = [r for r in phone_common.read_rows(grid.EVAL / "phone-jobs" / job / f"{job}.{arm}.jsonl")
-            if r.get("event") == "clean" and "chunk_in" in r]
+            if r.get("event") == "clean"]
     if not rows:
-        raise SystemExit(f"no rows with chunk_in in {job}.{arm}.jsonl: run the arm with a prompt file")
+        raise SystemExit(f"no cleanup rows in {job}.{arm}.jsonl")
+    # an item that failed on the phone has no chunks to score; leaving it out would hide the failure
+    if failed := [r["id"] for r in rows if "chunk_in" not in r]:
+        raise SystemExit(f"{len(failed)} items have no chunk_in (failed on the phone, or an arm without a prompt "
+                         f"file), e.g. {failed[0]}: rerun them first")
     by_set: dict[str, list[dict]] = {}
     for r in rows:
         ins, outs = r["chunk_in"], r["chunk_out"]
@@ -64,11 +68,15 @@ def convert(job: str, arm: str, name: str) -> dict[str, list[dict]]:
         cfg = root / name / "config.json"
         if cfg.exists() and json.loads(cfg.read_text()) != source:
             raise SystemExit(f"{root / name} holds another export ({cfg.read_text().strip()}): use another name or move it aside")
+        if not cfg.exists() and any((root / name).glob("*/*.jsonl")):
+            raise SystemExit(f"{root / name} holds results with no record of what made them: move it aside first")
     for set_name, out in by_set.items():
         root = cb.WISPR_MODELS if set_name == cb.WISPR else cb.MODELS
+        # the record first, so a stop half way leaves results that say where they came from
+        grid.private_dir(root / name)
+        (root / name / "config.json").write_text(json.dumps(source) + "\n")
         path = grid.private_dir(root / name / set_name) / "parakeet-v3.jsonl"
         path.write_text("".join(json.dumps(x) + "\n" for x in out))
-        (root / name / "config.json").write_text(json.dumps(source) + "\n")
     return by_set
 
 
