@@ -131,27 +131,21 @@ public final class KeyboardDebugLog: @unchecked Sendable {
     if full {
       flush()
     } else if schedule {
-      queue.asyncAfter(deadline: .now() + flushDelay) { [weak self] in self?.write(self?.take() ?? []) }
+      DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + flushDelay) { [weak self] in self?.flush() }
     }
   }
 
   /// Hands what is buffered to the writer; `wait` blocks until it is on disk (tests, the keyboard closing).
   public func flush(wait: Bool = false) {
-    let batch = take()
-    if wait {
-      queue.sync { write(batch) }
-    } else if !batch.isEmpty {
-      queue.async { self.write(batch) }
-    }
-  }
-
-  private func take() -> [Pending] {
+    // taken and queued under one lock, so batches reach the writer in the order they were taken, whoever
+    // flushes (a full buffer, the timer, the keyboard closing), and each stays at most flushCount events
     lock.lock()
-    defer { lock.unlock() }
     flushScheduled = false
-    let b = pending
+    let batch = pending
     pending = []
-    return b
+    if !batch.isEmpty { queue.async { self.write(batch) } }
+    lock.unlock()
+    if wait { queue.sync {} }
   }
 
   private func write(_ batch: [Pending]) {

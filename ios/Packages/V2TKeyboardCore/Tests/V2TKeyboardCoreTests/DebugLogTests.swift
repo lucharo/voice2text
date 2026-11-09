@@ -166,6 +166,31 @@ struct DebugLogTests {
     #expect(!e.composingResynced)  // typed here
   }
 
+  @Test func aCorrectionOfAWordReadBackStaysReadBack() throws {
+    let p = FakeProxy()
+    p.text = "te"
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [try Fixtures.english.get()], layout: KeyboardLayout(width: 402, language: .english)))
+    e.resync()
+    e.character("h")
+    e.space()  // "teh" -> "the"
+    #expect(e.holdsReadBackText)
+    e.delete()  // the original is offered back
+    #expect(e.holdsReadBackText)
+    e.space()
+    e.character("a")
+    #expect(!e.holdsReadBackText)
+  }
+
+  @Test func overlappingFlushesKeepTheOrder() {
+    let dir = tempDir()
+    let log = KeyboardDebugLog(directory: dir, flushCount: 3, flushDelay: 0.001)
+    log.start(until: Date().addingTimeInterval(60))
+    for i in 0..<300 { log.log("key", [LogField("i", .i(i))]) }
+    log.flush(wait: true)
+    #expect(lines(dir).compactMap { $0["i"] as? Int } == Array(0..<300))
+  }
+
+
   /// The logging call itself, on the calling thread (the keyboard's main thread): buffered, no file access.
   @Test func oneLogCallCostsMicroseconds() {
     let log = KeyboardDebugLog(directory: tempDir())

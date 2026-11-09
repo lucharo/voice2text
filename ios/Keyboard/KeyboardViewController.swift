@@ -25,7 +25,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var typedSinceHost = false
   /// True while nothing read back from the current field may be logged.
   private var fieldRedacted: Bool {
-    !typedSinceHost || engine.composingResynced || documentID.map(dictatedFields.contains) ?? false
+    !typedSinceHost || engine.holdsReadBackText || documentID.map(dictatedFields.contains) ?? false
   }
   /// The field's identifier, nil while the keyboard closes. Swift declares `documentIdentifier` non-optional, but
   /// iOS hands back nil then, and reading it straight crashes the keyboard (as the debug log UI test found).
@@ -517,7 +517,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     var decoder = MultiSwipeDecoder(decoders)
     decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()
-    let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
+    let epoch = inputEpoch, document = documentID
     // the words before the swipe pick the language and promote the words that usually come next
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
     // decided now: by the time the decode returns, focus may have moved out of a field the log must skip
@@ -529,7 +529,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         let applies = !words.isEmpty && self.inputEpoch == epoch && self.emojiSearch == nil
-          && self.textDocumentProxy.documentIdentifier == document
+          && document != nil && self.documentID == document  // nil once the keyboard has closed
         if loggable { self.dlog("swipe", [.init("points", .i(trace.count)), .init("trace", .list(KeyboardDebugLog.sample(trace, limit: 48).map { .pt($0) })),
                             .init("candidates", .list(scored.map { .obj([.init("w", .s($0.word)), .init("s", .d($0.score))]) })),
                             .init("applied", .b(applies)), .init("decodeMs", .d(ms))]) }

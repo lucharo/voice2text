@@ -157,6 +157,12 @@ class ReportTests(unittest.TestCase):
               {"t": 900, "e": "up", "verdict": "swipe", "ms": 700}, {"t": 1000, "e": "swipe", "candidates": [{"w": "b", "s": 0}], "applied": False}]
         self.assertEqual([s.ms for s in rep.analyse(ev).swipes], [700])
 
+    def test_an_empty_swipe_leaves_the_last_swipe_open(self):
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "swipe", "candidates": [{"w": "hello", "s": 0}], "applied": True},
+              {"t": 2, "e": "ins", "text": "hello"}, {"t": 2, "e": "swiped", "word": "hello", "alternatives": []},
+              {"t": 3, "e": "swipe", "candidates": [], "applied": False}, {"t": 4, "e": "del"}]
+        self.assertEqual([s.outcome for s in rep.analyse(ev).swipes], ["deleted", "empty"])
+
     def test_offer_left_alone_counts_as_not_taken(self):
         ev = [{"t": 0, "e": "autocorrect", "from": "fo", "to": "for"},
               {"t": 1, "e": "act", "a": "delete"}, {"t": 1, "e": "revert-offer", "from": "fo", "to": "for"},

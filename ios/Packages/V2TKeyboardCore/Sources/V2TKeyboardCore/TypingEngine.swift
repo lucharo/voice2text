@@ -86,8 +86,13 @@ public final class TypingEngine {
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
-    didSet { if lastCorrection == nil { correctionThenMark = nil } }
+    didSet { if lastCorrection == nil { correctionThenMark = nil; correctionReadBack = false } }
   }
+  /// The last correction was made to a word read back from the document, not typed here.
+  private var correctionReadBack = false
+  /// The engine holds text it read back from the document rather than keys typed here: the word being typed, or
+  /// a correction of such a word (still offered back after a delete). The debug log keeps it out (#162).
+  public var holdsReadBackText: Bool { composingResynced || (lastCorrection != nil && correctionReadBack) }
   /// The address marks typed straight after an autocorrect ("." or "+", "+!" as more follow): a letter or an
   /// address mark next means the word was part of an address ("exmaple.com", "teh+!tag@", "https://"), so it
   /// is undone; a space keeps it ("teh?! ").
@@ -501,6 +506,7 @@ public final class TypingEngine {
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
     lastCorrection = (original, fix)
+    correctionReadBack = composingResynced
     onEvent?(.autocorrected(original: original, replacement: fix))
     return true
   }

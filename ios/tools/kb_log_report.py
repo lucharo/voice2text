@@ -247,7 +247,8 @@ def analyse(events: list[dict]) -> Report:
             if swipe_lifts:
                 swipe_lifts.pop(0)  # lifted in emoji search, never decoded
         elif e == "swipe":
-            settle_swipe("kept")
+            if ev.get("applied"):  # a swipe that typed nothing leaves the last one's word as it was
+                settle_swipe("kept")
             cands = ev.get("candidates", [])
             s = Swipe(t=t, word=cands[0]["w"] if cands else None, candidates=cands, applied=bool(ev.get("applied")))
             if swipe_lifts:
