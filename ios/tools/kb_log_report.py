@@ -187,6 +187,7 @@ def analyse(events: list[dict]) -> Report:
     segment_start = events[0].get("t", 0)
     key_times: list[float] = []
     corrected: Counter = Counter()  # (replacement, original), lowercase
+    offered_left: Counter = Counter()  # the same pairs, for offers counted as left
     reverted_by_keyboard: Counter = Counter()
 
     def settle_swipe(outcome: str) -> None:
@@ -239,6 +240,9 @@ def analyse(events: list[dict]) -> Report:
         elif e == "rollover":
             r.rollovers += 1
             last_tap_up = t
+        elif e == "swipe" and "ignored" in ev:
+            if swipe_lifts:
+                swipe_lifts.pop(0)  # lifted in emoji search, never decoded
         elif e == "swipe":
             settle_swipe("kept")
             cands = ev.get("candidates", [])
@@ -288,6 +292,7 @@ def analyse(events: list[dict]) -> Report:
         if pending_offer is not None and edits:
             # the original was offered back after a delete, and the next thing done was something else
             r.corrections_reverted["offered, left"] += 1
+            offered_left[(str(pending_offer.get("to")).lower(), str(pending_offer.get("from")).lower())] += 1
             pending_offer = None
     settle_swipe("kept")
     if last_t is not None:
@@ -301,6 +306,11 @@ def analyse(events: list[dict]) -> Report:
         elif corrected[pair] > 0:
             corrected[pair] -= 1
             r.corrections_reverted["retyped"] += 1
+            if offered_left[pair] > 0:  # offered back, left, then typed again: one taking back, not two
+                offered_left[pair] -= 1
+                r.corrections_reverted["offered, left"] -= 1
+                if r.corrections_reverted["offered, left"] == 0:
+                    del r.corrections_reverted["offered, left"]
         else:
             r.misses.append((old, new))
 

@@ -127,6 +127,20 @@ class ReportTests(unittest.TestCase):
             Path(d, "keyboard.jsonl").write_bytes('{"t":1,"e":"key","text":"\u2028"}\n'.encode() + b'{"t":2,"e":"key","text":"\xc3')
             self.assertEqual([e["text"] for e in rep.read_events(Path(d))], ["\u2028"])
 
+    def test_offer_left_then_original_retyped_is_one_taking_back(self):
+        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "autocorrect", "from": "teh", "to": "The"},
+              {"t": 1, "e": "ins", "text": "The "}, {"t": 2, "e": "act", "a": "delete"},
+              {"t": 2, "e": "revert-offer", "from": "teh", "to": "The"}, {"t": 2, "e": "del"}]
+        ev += [{"t": 3, "e": "act", "a": "delete"}, {"t": 3, "e": "del"}] * 3 + [{"t": 4, "e": "key", "text": "T"}, {"t": 4, "e": "ins", "text": "Teh "}]
+        r = rep.analyse(ev)
+        self.assertEqual((dict(r.corrections_reverted), r.misses), ({"retyped": 1}, []))
+
+    def test_a_swipe_in_emoji_search_does_not_shift_the_next_swipes_timing(self):
+        ev = [{"t": 0, "e": "up", "verdict": "swipe", "ms": 90}, {"t": 1, "e": "swipe", "ignored": "emoji search"},
+              {"t": 900, "e": "up", "verdict": "swipe", "ms": 700},
+              {"t": 1000, "e": "swipe", "candidates": [{"w": "b", "s": 0}], "applied": False}]
+        self.assertEqual([s.ms for s in rep.analyse(ev).swipes], [700])
+
     def test_offer_left_alone_counts_as_not_taken(self):
         ev = [{"t": 0, "e": "autocorrect", "from": "fo", "to": "for"},
               {"t": 1, "e": "act", "a": "delete"}, {"t": 1, "e": "revert-offer", "from": "fo", "to": "for"},

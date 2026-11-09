@@ -16,11 +16,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var debugSkip: String?
   /// The bar as last logged, so only changes are written.
   private var loggedBar: [String] = []
-  /// The field a dictation went into: from then on the log keeps no text read back from it (the text before the
+  /// The fields a dictation went into: from then on the log keeps no text read back from them (the text before the
   /// cursor, the bar's words, picked words), since that text holds the dictated words.
-  private var dictatedField: UUID?
+  private var dictatedFields = Set<UUID>()
   /// True while nothing read back from the current field may be logged.
-  private var fieldRedacted: Bool { dictatedField != nil && dictatedField == textDocumentProxy.documentIdentifier }
+  private var fieldRedacted: Bool { dictatedFields.contains(textDocumentProxy.documentIdentifier) }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -134,7 +134,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       guard let self else { return }
       // the log keeps a dictation's length, not its words: History already holds them, in the app
       dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
-      dictatedField = textDocumentProxy.documentIdentifier
+      dictatedFields.insert(textDocumentProxy.documentIdentifier)
       edit { $0.insertFinished(text) }
     }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
@@ -500,7 +500,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
-    guard emojiSearch == nil else { return }  // search takes taps only
+    // search takes taps only; the line tells the report this lifted swipe has no decode coming
+    guard emojiSearch == nil else { dlog("swipe", [.init("ignored", .s("emoji search"))]); return }
     var decoder = MultiSwipeDecoder(decoders)
     decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()

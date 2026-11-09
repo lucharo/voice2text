@@ -154,6 +154,12 @@ public final class KeyboardDebugLog: @unchecked Sendable {
 
   private func write(_ batch: [Pending]) {
     guard !batch.isEmpty else { return }
+    // Clear log and Export (in the app) and this write (in the keyboard) take turns on the folder, so a clear
+    // never lands between reading its marker and appending, and an export never sees a rotation half done
+    Self.coordinate(directory, writing: true) { appendCoordinated(batch) }
+  }
+
+  private func appendCoordinated(_ batch: [Pending]) {
     // events from before the app's last Clear log stay cleared
     let wallOffset = Date().timeIntervalSince1970 - clock()
     let cleared = (try? String(contentsOf: directory.appending(path: Self.clearedName), encoding: .utf8)).flatMap(Double.init) ?? 0
@@ -201,24 +207,34 @@ public final class KeyboardDebugLog: @unchecked Sendable {
 
   public static func clear(in directory: URL, now: Date = Date()) {
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    try? String(now.timeIntervalSince1970).write(to: directory.appending(path: clearedName), atomically: true, encoding: .utf8)
-    for f in files(in: directory) { try? FileManager.default.removeItem(at: f) }
+    coordinate(directory, writing: true) {
+      try? String(now.timeIntervalSince1970).write(to: directory.appending(path: clearedName), atomically: true, encoding: .utf8)
+      for f in files(in: directory) { try? FileManager.default.removeItem(at: f) }
+    }
   }
 
-  /// Both files joined, oldest first: what Export shares. The keyboard may rotate the files while they are read
-  /// (the newest one then vanishes between listing and reading), so a read that fails starts again; after three
-  /// tries it throws rather than share a log with a hole in it.
+  /// Both files joined, oldest first: what Export shares, read while the keyboard cannot rotate them.
   public static func merged(in directory: URL) throws -> Data {
-    var lastError: Error?
-    for _ in 0..<3 {
-      do {
-        return try files(in: directory).reduce(into: Data()) { $0.append(try Data(contentsOf: $1)) }
-      } catch {
-        lastError = error
-      }
+    var result: Result<Data, Error> = .success(Data())
+    coordinate(directory, writing: false) {
+      result = Result { try files(in: directory).reduce(into: Data()) { $0.append(try Data(contentsOf: $1)) } }
     }
-    throw lastError ?? CocoaError(.fileReadUnknown)
+    return try result.get()
   }
+
+  /// Runs `body` with the folder to itself across processes (NSFileCoordinator, as PersonalDictionary does for the
+  /// dictionary): writers one at a time, readers apart from writers. Without a coordinator it runs anyway.
+  static func coordinate(_ directory: URL, writing: Bool, _ body: () -> Void) {
+    var error: NSError?
+    var ran = false
+    if writing {
+      NSFileCoordinator().coordinate(writingItemAt: directory, options: .forMerging, error: &error) { _ in ran = true; body() }
+    } else {
+      NSFileCoordinator().coordinate(readingItemAt: directory, options: [], error: &error) { _ in ran = true; body() }
+    }
+    if !ran { body() }
+  }
+
 
   // MARK: helpers
 
