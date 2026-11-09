@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import V2TKeyboardCore
 
 @main struct V2TApp: App {
@@ -20,6 +21,11 @@ import V2TKeyboardCore
     Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
     // UI tests start the emoji keyboard from a known skin tone (0 yellow); the keyboard's own tones give way to it
     if let t = env["V2T_SKIN_TONE"].flatMap(Int.init) { Settings.shared.emojiSkinTone = SkinTone(rawValue: t) }
+    // the debug log UI test starts with the log off and empty
+    if env["V2T_RESET_KEYBOARD_LOG"] == "1" {
+      Settings.shared.keyboardDebugLogUntil = nil
+      if let dir = KeyboardLogStore.groupDirectory { KeyboardDebugLog.clear(in: dir) }
+    }
     let h = History(), d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
@@ -524,6 +530,7 @@ struct KeyboardSettingsView: View {
       } footer: {
         Text("Every emoji with skin tones shows this tone until you pick another for it: touch and hold an emoji in the v2t keyboard. iOS keeps the Apple keyboard's skin tones to itself, so v2t cannot follow them.")
       }
+      KeyboardLogSection()
     }
     .navigationTitle("Keyboard")
     .onChange(of: layout) { Settings.shared.layoutLanguage = layout; saveLanguages() }
@@ -536,5 +543,66 @@ struct KeyboardSettingsView: View {
 
   private func saveLanguages() {
     Settings.shared.suggestionLanguages = bilingual ? [layout, layout == .english ? .spanish : .english] : [layout]
+  }
+}
+
+/// The opt-in keyboard debug log (#162): the switch, when it turns itself off, Export and Clear log.
+struct KeyboardLogSection: View {
+  @State private var until = KeyboardLogSection.activeUntil
+  @State private var size = 0
+  private let dir = KeyboardLogStore.groupDirectory
+
+  static var activeUntil: Date? { Settings.shared.keyboardDebugLogUntil.flatMap { $0 > Date() ? $0 : nil } }
+
+  var body: some View {
+    Section {
+      Toggle("Keyboard debug log", isOn: Binding(get: { until != nil }, set: { on in
+        let u = on ? Date().addingTimeInterval(KeyboardLogStore.lifetime) : nil
+        Settings.shared.keyboardDebugLogUntil = u
+        until = u
+      }))
+      .accessibilityIdentifier("settings.debugLog")
+      if let until {
+        Text("On until \(until.formatted(date: .abbreviated, time: .shortened)). A red dot in the keyboard's suggestion bar shows it is recording.")
+          .font(.footnote).foregroundStyle(.secondary)
+        if Settings.shared.keyboardFullAccessSeen == nil {
+          Text("The keyboard records only with Full Access: without it, iOS keeps this switch from the keyboard.").font(.footnote)
+        }
+      }
+      LabeledContent("Log", value: size == 0 ? "Empty" : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+        .accessibilityIdentifier("settings.debugLogSize")
+      ShareLink(item: KeyboardLogExport(), preview: SharePreview("v2t keyboard log")) {
+        Label("Export", systemImage: "square.and.arrow.up")
+      }
+      .disabled(size == 0)
+      .accessibilityIdentifier("settings.debugLogExport")
+      Button("Clear log", role: .destructive) {
+        if let dir { KeyboardDebugLog.clear(in: dir) }
+        size = 0
+      }
+      .disabled(size == 0)
+      .accessibilityIdentifier("settings.debugLogClear")
+    } header: {
+      Text("Debugging")
+    } footer: {
+      Text("Records what you type with the v2t keyboard (keys, swipes, suggestions, corrections) to a file on this \(UIDevice.current.model), never in password, one-time-code or card fields, and turns itself off after 24 hours.")
+    }
+    .onAppear {
+      until = Self.activeUntil
+      size = dir.map(KeyboardDebugLog.size(in:)) ?? 0
+    }
+  }
+}
+
+/// The log's two files joined into one, oldest events first, for the share sheet.
+struct KeyboardLogExport: Transferable {
+  static var transferRepresentation: some TransferRepresentation {
+    FileRepresentation(exportedContentType: .plainText) { _ in
+      guard let dir = KeyboardLogStore.groupDirectory else { throw CocoaError(.fileNoSuchFile) }
+      let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))
+      let url = FileManager.default.temporaryDirectory.appending(path: "v2t-keyboard-log-\(stamp).jsonl")
+      try KeyboardDebugLog.merged(in: dir).write(to: url)
+      return SentTransferredFile(url)
+    }
   }
 }

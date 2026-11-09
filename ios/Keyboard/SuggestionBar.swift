@@ -8,7 +8,8 @@ final class SuggestionBar: UIView {
   static let height: CGFloat = 44
   /// Width of the hide-keyboard button at the bar's trailing end.
   static let dismissWidth: CGFloat = 40
-  var onPick: ((String) -> Void)?
+  /// A slot was tapped: its word and its index (0 left, 1 the middle, 2 right).
+  var onPick: ((String, Int) -> Void)?
   var onDismiss: (() -> Void)?
   /// Off on the iPad, whose bottom row has its own hide-keyboard key.
   var showsDismiss = true { didSet { dismiss.isHidden = !showsDismiss; dismissDivider.isHidden = !showsDismiss; setNeedsLayout() } }
@@ -17,6 +18,9 @@ final class SuggestionBar: UIView {
   private let dividers = (0..<2).map { _ in UIView() }
   private let dismiss = UIButton(type: .system)
   private let dismissDivider = UIView()
+  /// The keyboard debug log is recording (#162): a small red dot at the bar's leading corner.
+  var showsDebugDot = false { didSet { debugDot.isHidden = !showsDebugDot } }
+  private let debugDot = UIView()
   private var words: [String] = []
   private let emojiFont = EmojiFont()
 
@@ -29,7 +33,7 @@ final class SuggestionBar: UIView {
       s.accessibilityIdentifier = "v2t.suggestion.\(i)"
       s.addAction(UIAction { [weak self] _ in
         guard let self, i < self.words.count else { return }
-        self.onPick?(self.words[i])
+        self.onPick?(self.words[i], i)
       }, for: .touchUpInside)
       addSubview(s)
     }
@@ -44,6 +48,13 @@ final class SuggestionBar: UIView {
     dismiss.accessibilityLabel = "Hide keyboard"
     dismiss.addAction(UIAction { [weak self] _ in self?.onDismiss?() }, for: .touchUpInside)
     addSubview(dismiss)
+    debugDot.backgroundColor = .systemRed
+    debugDot.layer.cornerRadius = 3
+    debugDot.isHidden = true
+    debugDot.isAccessibilityElement = true
+    debugDot.accessibilityIdentifier = "v2t.debugLog"
+    debugDot.accessibilityLabel = "Keyboard debug log is on"
+    addSubview(debugDot)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -57,6 +68,7 @@ final class SuggestionBar: UIView {
     for (i, d) in dividers.enumerated() { d.frame = CGRect(x: inset + CGFloat(i + 1) * w, y: 11, width: hairline, height: 22) }
     dismissDivider.frame = CGRect(x: end, y: 11, width: hairline, height: 22)
     dismiss.frame = CGRect(x: end, y: 0, width: Self.dismissWidth, height: bounds.height)
+    debugDot.frame = CGRect(x: 3, y: 3, width: 6, height: 6)
   }
 
   /// Shows up to three suggestions: the word as typed in quotes (when it is not the best guess), then the

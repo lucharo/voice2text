@@ -21,6 +21,10 @@ final class KeyboardView: UIView {
   /// The user tapped shift (rather than a sentence start): number keys show and type their second marks.
   var shiftManual = false { didSet { if shiftManual != oldValue { relabel() } } }
   var returnLabel = "return" { didSet { relabel() } }
+  /// The debug log (#162), when it is on: every finger's landing, lift and the arbiter's verdict.
+  var debugLog: KeyboardDebugLog?
+  /// Numbers the fingers in the debug log.
+  private var touchCount = 0
 
   private var keyLayers: [String: CALayer] = [:]
   private var keyElements: [KeyElement] = []
@@ -42,6 +46,9 @@ final class KeyboardView: UIView {
     var lastTrackX: CGFloat = 0
     var timer: Timer?
     var repeats = 0
+    /// The debug log's number for this finger, and when it landed.
+    var number = 0
+    var began: TimeInterval = 0
     init(key: Key) { self.key = key }
   }
   private var tracks: [ObjectIdentifier: Track] = [:]
@@ -268,6 +275,13 @@ final class KeyboardView: UIView {
       let track = Track(key: key)
       tracks[id] = track
       arbiter.began(id, key: key, at: p, time: touch.timestamp, canSwipe: canSwipe(key))
+      if let log = debugLog, log.isOn {
+        touchCount += 1
+        track.number = touchCount
+        track.began = touch.timestamp
+        log.log("down", [.init("n", .i(touchCount)), .init("key", .s(key.id)), .init("p", .pt(p)), .init("fingers", .i(tracks.count))],
+                at: touch.timestamp)
+      }
       delegate?.keyboardViewKeyDown(self)
       switch key.action {
       case .character:
@@ -346,14 +360,19 @@ final class KeyboardView: UIView {
     let id = ObjectIdentifier(touch)
     guard let track = tracks.removeValue(forKey: id) else { return }
     release(track, id)
+    let logging = debugLog?.isOn == true && track.number > 0
+    let mode = logging ? arbiter.mode(of: id) : nil, path = logging ? arbiter.points(of: id) : []
     if cancelled {
       if arbiter.mode(of: id) == .swiping { clearTrail() }
       arbiter.cancelled(id)
       if track.trackpad { setTrackpad(false) }
+      if logging { logLift(track, touch, verdict: "cancelled", path: path) }
       return
     }
     // older fingers still down type first (rollover), then this one
-    apply(arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp))
+    let events = arbiter.ended(id, at: touch.location(in: self), time: touch.timestamp)
+    if logging { logLift(track, touch, mode: mode, path: path, events: events, id: id) }
+    apply(events)
     if track.trackpad { setTrackpad(false); return }
     if !track.alternatives.isEmpty {
       // older fingers typed just above may have used up an automatic capital. A letter key's menu is the same
@@ -363,6 +382,32 @@ final class KeyboardView: UIView {
       let pick = track.key.startsSwipe && now.count == track.alternatives.count ? now[track.chosen] : track.alternatives[track.chosen]
       delegate?.keyboardView(self, typed: pick, at: nil)
     }
+  }
+
+  /// The debug log's line for a finger lifting: where it landed and lifted, its path and how long it was down,
+  /// and what the arbiter made of it. Fingers it typed early first get a "rollover" line each.
+  private func logLift(_ track: Track, _ touch: UITouch, mode: TouchArbiter<ObjectIdentifier>.Mode? = nil, verdict: String? = nil,
+                       path: [CGPoint], events: [TouchArbiter<ObjectIdentifier>.Event] = [], id: ObjectIdentifier? = nil) {
+    guard let log = debugLog else { return }
+    for case .tapped(let key, let at, let other) in events where other != id {
+      log.log("rollover", [.init("n", .i(tracks[other]?.number ?? 0)), .init("key", .s(key.id)), .init("p", .pt(at)),
+                           .init("by", .i(track.number))], at: touch.timestamp)
+    }
+    let p = touch.location(in: self)
+    let v: String = verdict ?? {
+      switch mode {
+      case .tap?, .press?: "tap"
+      case .swiping?: "swipe"
+      case .held?: track.trackpad ? "trackpad" : "accent"
+      case .spent?: "rolled"  // already typed by an older finger's rollover, or a swipe dropped by a page change
+      case nil: "unknown"
+      }
+    }()
+    let start = path.first ?? p
+    log.log("up", [.init("n", .i(track.number)), .init("key", .s(track.key.id)), .init("liftKey", .s(layout.key(at: p)?.id ?? "")),
+                   .init("p", .pt(p)), .init("ms", .d((touch.timestamp - track.began) * 1000)),
+                   .init("travel", .d(Double(hypot(p.x - start.x, p.y - start.y)))), .init("verdict", .s(v)),
+                   .init("path", .list(KeyboardDebugLog.sample(path + [p], limit: 24).map { .pt($0) }))], at: touch.timestamp)
   }
 
   /// Takes down a finger's balloon, pressed look and timer.
@@ -397,6 +442,7 @@ final class KeyboardView: UIView {
         }
       case .swipeStarted(let id):
         if let track = tracks[id] { track.timer?.invalidate(); track.timer = nil }
+        if let log = debugLog, log.isOn, let n = tracks[id]?.number, n > 0 { log.log("swipe-start", [.init("n", .i(n))]) }
         if previewOwner == id { hidePreview() }
       case .swiped(let trace, _):
         clearTrail()

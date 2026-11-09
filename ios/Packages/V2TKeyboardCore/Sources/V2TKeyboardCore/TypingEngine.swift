@@ -51,6 +51,24 @@ public final class TypingEngine {
   /// The emoji as the user last picked it (the keywords list base forms): the bar offers 👍🏽 for "thumbs"
   /// once 👍🏽 was picked, or is the default tone. Nil offers the base form.
   public var emojiShown: ((String) -> String)?
+  /// What the engine decided, for the keyboard's debug log (#162): nil when nobody listens.
+  public var onEvent: ((Event) -> Void)?
+
+  /// Decisions the debug log records: what autocorrect changed, what the user took back, what a tap on the bar
+  /// replaced, what a swipe typed.
+  public enum Event: Equatable, Sendable {
+    /// A word ended and autocorrect put `replacement` in place of `original`.
+    case autocorrected(original: String, replacement: String)
+    /// Delete after a correction removed its space: the bar now offers `original` back.
+    case revertOffered(original: String, replacement: String)
+    /// The correction was undone: `how` is "bar" (the original picked from the bar) or "address" (the word
+    /// turned out to be part of a web or email address).
+    case reverted(original: String, replacement: String, how: String)
+    /// A suggestion tapped in the bar replaced `replaced` (the word as typed, or the swiped word).
+    case picked(word: String, replaced: String)
+    /// A swipe typed `word`, with `alternatives` waiting in the bar.
+    case swiped(word: String, alternatives: [String])
+  }
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
@@ -172,6 +190,7 @@ public final class TypingEngine {
     if let c = lastCorrection, before.hasSuffix(c.replacement + " ") {
       proxy.deleteBackward()
       revertOffer = c.original
+      onEvent?(.revertOffered(original: c.original, replacement: c.replacement))
       // a text replacement is the user's own text: reopened, it is not a word to autocorrect again
       let replaced = replacements[Self.shortcutKey(c.original)] == c.replacement
       if !replaced, c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
@@ -300,6 +319,10 @@ public final class TypingEngine {
   public func pick(_ word: String) {
     let replacing: Int
     if let s = lastSwipe { replacing = s.word.count } else if revertOffer == word, let ph = revertPhrase, before.hasSuffix(ph) { replacing = ph.count } else { replacing = composing.count }
+    if let onEvent {
+      if revertOffer == word, let c = lastCorrection { onEvent(.reverted(original: c.original, replacement: c.replacement, how: "bar")) }
+      else { onEvent(.picked(word: word, replaced: lastSwipe?.word ?? literal)) }
+    }
     for _ in 0..<replacing { proxy.deleteBackward() }
     if revertOffer == word || word == literal { learn(word) }
     proxy.insertText(word + " ")
@@ -326,6 +349,7 @@ public final class TypingEngine {
     lastCorrection = nil
     revertOffer = nil
     lastSwipe = (word, Array(words.dropFirst()))
+    onEvent?(.swiped(word: word, alternatives: Array(words.dropFirst())))
     composing = []
     noteLanguage()
   }
@@ -395,6 +419,7 @@ public final class TypingEngine {
   func undoCorrectionBeforeMark() {
     defer { correctionThenMark = nil }
     guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }
+    onEvent?(.reverted(original: c.original, replacement: c.replacement, how: "address"))
     for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
     proxy.insertText(c.original + m)
   }
@@ -461,6 +486,7 @@ public final class TypingEngine {
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
     lastCorrection = (original, fix)
+    onEvent?(.autocorrected(original: original, replacement: fix))
     return true
   }
 
