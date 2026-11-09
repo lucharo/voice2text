@@ -101,6 +101,18 @@ permission per app identity, so the copy that asked last takes it from the other
   old grant.
 - One prompt right after a fresh install is expected.
 
+## Why does the install command say `--python 3.13`?
+
+coremltools 9.0, which runs the default transcription backend, has no native library on Python 3.14.
+v2t's package metadata stops at 3.13, but uv ignores a package's upper Python limit when it installs
+a tool and uses its default Python, so the command names the version.
+
+If v2t is already installed on 3.14, it stops at startup and prints the fix:
+
+```bash
+uv tool install --reinstall --python 3.13 voice2text
+```
+
 ## How long does cleanup take?
 
 About half a second at the median with `Qwen3.5-2B`, and nine in ten finish within about 2 s,
@@ -258,7 +270,7 @@ If waiting under a second after you let go does not bother you, probably: on rea
 makes about half the mistakes. Install the extra and set the backend:
 
 ```bash
-uv tool install 'voice2text[qwen]'
+uv tool install --python 3.13 'voice2text[qwen]'
 v2t config set transcription.backend qwen3-asr
 ```
 

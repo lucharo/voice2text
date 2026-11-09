@@ -808,7 +808,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if phase == "no-engine" {
             // A prebuilt shell (brew cask) with no engine to run: name the one command.
-            let hint = "Run: uv tool install voice2text"
+            let hint = "Run: uv tool install --python 3.13 voice2text"
             add(hint, enabled: false).attributedTitle = secondary(hint)
         }
         if let other {

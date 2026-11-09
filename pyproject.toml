@@ -4,7 +4,7 @@ version = "0.5.23"
 description = "Local, MLX-first voice-to-text with LLM cleanup"
 readme = "README.md"
 license = "GPL-2.0-only"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "sounddevice",
     "numpy<2.4",

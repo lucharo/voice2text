@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Install on Python 3.13.** coremltools 9.0 has no native library on Python 3.14, and uv ignores a package's upper Python limit when it installs a tool, so a plain `uv tool install` could give an engine that cannot start. The install commands now pass `--python 3.13`, and on 3.14 v2t stops at startup and prints the reinstall command.
+
 ## 0.5.23
 
 - **Cleanup keeps more of its punctuation, and the smaller model is the default.** Cleanup sends a passage back to the words as heard when the cleaned text comes out much shorter, so it cannot cut content. That check counted the um, uh and repeated words cleanup is allowed to drop, so a passage it shortened only by dropping them came back raw, punctuation and all: 17 of 150 earnings-call clips with Qwen3.5 0.8B. It no longer counts them, which took the 0.8B's punctuation score on those clips from 63.5 to 67.4 and left a third as many fillers, with the same words. With that, an LLM judge scored Qwen3.5 0.8B level with the 2B (4.38 against 4.37 out of 5 on earnings calls, 3.74 against 3.75 on 208 real dictations) at about half the time and 0.5 GB less memory, so it is now the default. Its 0.65 GB downloads on the next launch. To keep the 2B, choose **Qwen3.5 2B** under **Cleanup Model** in the menu or set `model = "mlx-community/Qwen3.5-2B-4bit"` under `[cleanup]`. **Qwen3.5 4B** punctuated real dictations best (4.06) (#129).

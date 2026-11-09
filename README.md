@@ -20,7 +20,7 @@ Speech-to-text as boring technology: just another peripheral.
 **Docs: [v2t.luischav.es](https://v2t.luischav.es/)**
 
 ```bash
-uv tool install voice2text
+uv tool install --python 3.13 voice2text
 v2t
 ```
 
