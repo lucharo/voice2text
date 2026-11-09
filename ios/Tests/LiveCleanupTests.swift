@@ -13,7 +13,39 @@ private actor Model {
   }
 }
 
+/// A model that holds its answer for `held` until `release()`, to put Stop in the middle of a request.
+private actor HeldModel {
+  let held: String
+  var asked: [String] = []
+  private var gate: CheckedContinuation<Void, Never>?
+  init(held: String) { self.held = held }
+  func clean(_ text: String) async -> (text: String, answered: Bool) {
+    asked.append(text)
+    if text == held { await withCheckedContinuation { gate = $0 } }
+    return (text.uppercased(), true)
+  }
+  func release() { gate?.resume(); gate = nil }
+  var isHolding: Bool { gate != nil }
+}
+
 @MainActor struct LiveCleanupTests {
+  @Test func stopDuringARequestKeepsItsAnswerAndCleansTheQueuedSegmentWithTheRest() async {
+    let model = HeldModel(held: "one two three. four five six.")
+    let live = LiveCleanup(terms: [], minimumWords: 3) { text, _ in await model.clean(text) }
+    live.offer(pieces: ["one two three. four", "five six. seven"])
+    while !(await model.isHolding) { await Task.yield() }  // the first segment is with the model
+    live.offer(pieces: ["one two three. four", "five six. seven", "eight nine. ten"])  // the second waits its turn
+
+    live.stop()
+    await model.release()
+    let result = await live.finish("one two three. four five six. seven eight nine. ten", terms: [])
+
+    // the request under way at Stop is kept; the queued segment was never sent and goes with the tail
+    #expect(await model.asked == ["one two three. four five six.", "seven eight nine. ten"])
+    #expect(result.text == "ONE TWO THREE. FOUR FIVE SIX. SEVEN EIGHT NINE. TEN")
+    #expect(result.cleanedWhileRecording == 1)
+  }
+
   @Test func settledSentencesAreCleanedWhileRecordingAndOnlyTheRestAfterStop() async {
     let model = Model()
     let live = LiveCleanup(terms: ["Claude"], minimumWords: 3) { text, _ in await model.clean(text) }
