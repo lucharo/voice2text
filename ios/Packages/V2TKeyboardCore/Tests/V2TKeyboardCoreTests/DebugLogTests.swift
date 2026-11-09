@@ -116,7 +116,10 @@ struct DebugLogTests {
     let log = KeyboardDebugLog(directory: dir, flushDelay: 0.05)
     log.start(until: Date().addingTimeInterval(60))
     log.log("key", [LogField("text", .s("a"))])
-    try await Task.sleep(for: .milliseconds(400))
+    // nothing else flushes: the line can only come from the timer. Polled, since a loaded Mac can run the
+    // utility-queue timer well after its 0.05 s
+    let deadline = ContinuousClock.now + .seconds(5)
+    while lines(dir).isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     #expect(lines(dir).count == 1)
   }
 
