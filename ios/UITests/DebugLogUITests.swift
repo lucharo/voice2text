@@ -26,11 +26,18 @@ import XCTest
     _ = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ready. Transcription runs on this'")).firstMatch.waitForExistence(timeout: 120)
   }
 
+  /// Scrolls the list until `element` sits clear of the bottom edge: `reveal` stops at a row that is only just
+  /// on screen, where a tap lands on the home indicator.
+  func scrollIntoView(_ element: XCUIElement) {
+    let bottom = app.windows.firstMatch.frame.maxY - 120
+    for _ in 0..<8 where !(element.exists && element.isHittable && element.frame.maxY < bottom) { app.swipeUp(velocity: .slow) }
+  }
+
   func openKeyboardSettings() {
     let link = app.buttons["Languages and typing"]
-    reveal(link, in: app)
+    scrollIntoView(link)
     link.tap()
-    reveal(logSwitch, in: app)
+    scrollIntoView(logSwitch)
     XCTAssertTrue(logSwitch.waitForExistence(timeout: 5), app.debugDescription)
   }
 
@@ -59,6 +66,9 @@ import XCTest
     for _ in 0..<6 where !(field.exists && field.isHittable) { app.swipeDown(velocity: .slow) }
     field.tap()
     for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
+      // a fresh Simulator shows Apple's keyboard tips first; each has a Continue button over the globe
+      let tip = app.buttons["Continue"].firstMatch
+      if tip.exists { tip.tap(); continue }
       let globe = app.buttons["Next keyboard"]
       if globe.exists { globe.tap() }
     }
