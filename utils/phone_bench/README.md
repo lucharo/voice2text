@@ -8,7 +8,7 @@ Runtimes ("arms") one app can alternate:
 
 | runtime | set | what runs | model |
 | --- | --- | --- | --- |
-| `mlx` | cleanup | an LLM on the GPU through mlx-swift-lm | folder in Documents/models |
+| `mlx` | cleanup | an LLM through mlx-swift-lm (`options.prompt: <file>` for a chat prompt in `prompts/`, `options.device: cpu` for the CPU, `options.speech: "true"` to keep Parakeet loaded too so `mb` covers both) | folder in Documents/models |
 | `anemll` | cleanup | an ANEMLL Core ML LLM on the Neural Engine | folder in Documents/models |
 | `afm` | cleanup | Apple Foundation Models (`options.wrap: "true"` for the wrapped prompt, `options.prompt: <file>` for a prompt file in `prompts/` next to the job) | built in |
 | `parakeet-coreml` | speech | Parakeet TDT v3 through FluidAudio on Core ML | bundled in Res/models |
@@ -134,6 +134,11 @@ A prompt file (`prompts/<name>.json`, also copied by `phone_push.py`) holds `ins
 goes where `{text}` is), `cap` and `min_cap` (the response cap is max(min_cap, cap × the chunk's words)) and
 `chunk_words` (which `chunks_by` entry to use). An arm with one also writes `chunk_in`, `chunk_out` and `chunk_s`
 per item, so the Mac can apply the app's guards chunk by chunk. `prompt_search.py` writes these jobs.
+
+A chat prompt file for the `mlx` arm holds `system` and `examples` ([raw, clean] pairs), as the Mac app builds
+them. `phone_to_bench.py <job> <arm> <name>` applies the app's guards to an arm's rows and writes them where
+`utils/asr_grid/cleanup_eval.py` and `cleanup_judge.py` score them beside the Mac models (#174). Qwen3.5 on
+`device: cpu` crashes on its first forward pass: its gated-delta layers call a custom Metal kernel.
 
 ## Searching for a better cleanup prompt (#126)
 

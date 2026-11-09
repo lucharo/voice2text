@@ -66,8 +66,8 @@ def load_job(path: Path) -> dict:
             errs.append(f"arm {a['id']}: runtime {rt} runs on the {SETS[rt]} set, not {job['set']}")
         elif RUNTIMES[rt] and not a.get("model"):
             errs.append(f"arm {a['id']}: runtime {rt} needs a model")
-        elif "prompt" in a.get("options", {}) and (rt != "afm" or not _safe(a["options"]["prompt"])):
-            errs.append(f"arm {a['id']}: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime")
+        elif "prompt" in a.get("options", {}) and (rt not in ("afm", "mlx") or not _safe(a["options"]["prompt"])):
+            errs.append(f"arm {a['id']}: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm or mlx runtime")
     if errs:
         raise SystemExit(f"{path}: " + "; ".join(errs))
     return job

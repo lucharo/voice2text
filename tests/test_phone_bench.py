@@ -99,14 +99,15 @@ class PromptJobs(unittest.TestCase):
             "arm b: runtime afm runs on the cleanup set, not speech",
         ])
         bad = {**self.AFM, "inputs": "x/in.jsonl", "arms": [
-            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
-            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+            {"id": "a", "runtime": "anemll", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}},
+            {"id": "c", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}}]}
         with self.assertRaises(SystemExit) as e:
             self.load(bad)
         self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
             "inputs is a file name (letters, digits, . _ -) for the cleanup set",
-            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
-            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm or mlx runtime",
+            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm or mlx runtime",
         ])
 
     def test_inputs_may_not_be_a_file_the_job_writes(self):
@@ -121,6 +122,82 @@ class PromptJobs(unittest.TestCase):
         (Path(self.dir.name) / "in.jsonl").write_text("".join(json.dumps({"id": str(i), "chunks": ["x"]}) + "\n" for i in range(7)))
 
         self.assertEqual(pc.item_count({**self.AFM, "limit": 5}, job_path=self.path), 5)
+
+
+class PhoneToBench(unittest.TestCase):
+    """Phone cleanup rows get the app's guards before the Mac scorers see them."""
+
+    def test_each_chunk_is_guarded_as_the_app_guards_it(self):
+        import phone_to_bench as ptb
+
+        text, stats = ptb.guarded(
+            ["so uh the plan is fine", "can you send it", "we we deliver on it"],
+            ["So plan is fine.", "Sure, I will send it to you right now, no problem at all.", "We deliver"],
+            [False, False, True], [])
+
+        self.assertEqual(text, "So the plan is fine. can you send it we we deliver on it")
+        self.assertEqual(stats, {"chunks": 3, "guarded": 1, "limited": 1})
+
+
+class PhoneToBenchExport(unittest.TestCase):
+    def test_an_export_never_lands_on_another_one(self):
+        import phone_to_bench as ptb
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            jobs = root / "phone-jobs"
+            for job in ("j1", "j2"):
+                (jobs / job).mkdir(parents=True)
+                write(jobs / job / f"{job}.a.jsonl", [{"event": "clean", "id": "earnings22/x", "chunk_in": ["hi"],
+                                                     "chunk_out": ["Hi."], "chunk_s": [0.5]}])
+            with mock.patch.object(ptb.grid, "EVAL", root), mock.patch.object(ptb.cb, "MODELS", root / "m"), \
+                 mock.patch.object(ptb.cb, "WISPR_MODELS", root / "w"), \
+                 mock.patch.object(ptb.config, "read_dictionary", return_value=([], [])):
+                ptb.convert("j1", "a", "phone-x")
+                ptb.convert("j1", "a", "phone-x")  # the same export again is fine
+                with self.assertRaises(SystemExit):
+                    ptb.convert("j2", "a", "phone-x")
+                (root / "m" / "phone-y" / "earnings22").mkdir(parents=True)  # results with no record
+                write(root / "m" / "phone-y" / "earnings22" / "parakeet-v3.jsonl", [{"id": "x"}])
+                with self.assertRaises(SystemExit):
+                    ptb.convert("j1", "a", "phone-y")
+                with open(jobs / "j1" / "j1.a.jsonl", "a") as f:  # an item that failed on the phone
+                    f.write(json.dumps({"event": "clean", "id": "earnings22/z", "errors": ["boom"]}) + "\n")
+                with self.assertRaises(SystemExit) as e:
+                    ptb.convert("j1", "a", "phone-x")
+                self.assertIn("1 items have no chunk_in", str(e.exception))
+
+
+class PhoneToBenchIds(unittest.TestCase):
+    def convert(self, rows):
+        import phone_to_bench as ptb
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "phone-jobs" / "j").mkdir(parents=True)
+            write(root / "phone-jobs" / "j" / "j.a.jsonl", rows)
+            with mock.patch.object(ptb.grid, "EVAL", root), mock.patch.object(ptb.cb, "MODELS", root / "m"), \
+                 mock.patch.object(ptb.cb, "WISPR_MODELS", root / "w"), \
+                 mock.patch.object(ptb.config, "read_dictionary", return_value=([], [])):
+                out = ptb.convert("j", "a", "phone-x")
+                return out, sorted(p.relative_to(root).as_posix() for p in root.glob("[mw]/*/*/*.jsonl"))
+
+    @staticmethod
+    def row(iid, key=None):
+        r = {"event": "clean", "id": iid, "chunk_in": ["hi"], "chunk_out": ["Hi."], "chunk_s": [0.5]}
+        return {**r, "key": key} if key else r
+
+    def test_prompt_search_ids_land_under_their_sets(self):
+        _out, files = self.convert([self.row("e22/x"), self.row("wispr/y")])
+
+        self.assertEqual(files, ["m/phone-x/earnings22/parakeet-v3.jsonl", "w/phone-x/wispr/parakeet-v3.jsonl"])
+
+    def test_items_with_no_reference_or_from_several_rounds_are_refused(self):
+        for rows, msg in (([self.row("pieces/n/x")], "no references for: pieces"),
+                          ([self.row("e22/x", "1|e22/x"), self.row("e22/x", "2|e22/x")], "more than one round")):
+            with self.subTest(msg=msg), self.assertRaises(SystemExit) as e:
+                self.convert(rows)
+            self.assertIn(msg, str(e.exception))
 
 
 class ItemCount(unittest.TestCase):
