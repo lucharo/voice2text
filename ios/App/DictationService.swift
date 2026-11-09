@@ -59,6 +59,8 @@ import SwiftUI
   private var live: LiveTranscription?
   /// The speech language when the current recording began: its pieces, its History entry (#112).
   private var language = ""
+  /// Cleans the current recording's settled sentences while it is recorded, when cleanup is on.
+  private var liveCleanup: LiveCleanup?
 
   /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
   init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil) {
@@ -196,6 +198,8 @@ import SwiftUI
     stopMeter()
     live?.abandon()
     live = nil
+    liveCleanup?.abandon()
+    liveCleanup = nil
     recorder.coolDown()
     publishMicrophone()
     heartbeat?.invalidate()
@@ -254,6 +258,14 @@ import SwiftUI
     live = LiveTranscription(source: recorder, isReady: { [weak self] in self?.engineState == .ready }) { [engine] in
       try await engine.transcribe($0, language: language)
     }
+    liveCleanup = nil
+    if Settings.shared.cleanupEnabled, recommendation.cleanup == .appleIntelligence {
+      dictionary.reload()  // the keyboard may have added words since
+      let cleaner = Cleaner(kind: recommendation.cleanup)
+      let cleanup = LiveCleanup(terms: dictionary.terms) { await cleaner.cleanReporting($0, terms: $1) }
+      liveCleanup = cleanup
+      live?.onPieces = { cleanup.offer(pieces: $0) }
+    }
     live?.start()
     publish(.listening)
     levels = []
@@ -286,18 +298,21 @@ import SwiftUI
     let samples = recorder.end()
     publish(.transcribing)
     extendWarmth()
-    let id = recording, request = requestId, live = live, language = language
+    let id = recording, request = requestId, live = live, language = language, liveCleanup = liveCleanup
     self.live = nil
+    self.liveCleanup = nil
     pendingTranscriptions += 1
     Task {
-      await finish(samples, id: id, request: request, language: language, live: live, stoppedAt: stoppedAt)
+      await finish(samples, id: id, request: request, language: language, live: live, liveCleanup: liveCleanup, stoppedAt: stoppedAt)
       pendingTranscriptions -= 1
     }
   }
 
   private func finish(
-    _ samples: [Float], id: Int, request: String, language: String, live: LiveTranscription?, stoppedAt: ContinuousClock.Instant
+    _ samples: [Float], id: Int, request: String, language: String, live: LiveTranscription?, liveCleanup: LiveCleanup?,
+    stoppedAt: ContinuousClock.Instant
   ) async {
+    defer { liveCleanup?.abandon() }  // an early return (a stray tap, no text) leaves nothing cleaning
     // only the latest recording owns the state: a reset session may already be listening again
     defer { if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) } }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
@@ -326,11 +341,19 @@ import SwiftUI
       let heard = text
       dictionary.reload()  // the keyboard may have added words since
       var cleanup: Duration?
+      var cleanedWhileRecording: Int?
       if Settings.shared.cleanupEnabled, recommendation.cleanup == .appleIntelligence {
         // only from .transcribing: a session cooled down meanwhile (.needsApp) or a newer recording keeps its state
         if id == recording, state == .transcribing { publish(.cleaningUp) }
         let t0 = ContinuousClock.now
-        text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms)
+        if let liveCleanup {
+          // the settled sentences were cleaned while recording: only the rest is cleaned now
+          let result = await liveCleanup.finish(text, terms: dictionary.terms)
+          text = result.text
+          cleanedWhileRecording = result.cleanedWhileRecording
+        } else {
+          text = await Cleaner(kind: recommendation.cleanup).clean(text, terms: dictionary.terms)
+        }
         cleanup = ContinuousClock.now - t0
       }
       text = dictionary.applyReplacements(text)
@@ -343,7 +366,7 @@ import SwiftUI
       }
       let timings = DictationTimings(
         audio: Double(samples.count) / 16_000, speech: speech.seconds, cleanup: cleanup?.seconds,
-        total: (ContinuousClock.now - stoppedAt).seconds, piecesWhileRecording: pieces)
+        total: (ContinuousClock.now - stoppedAt).seconds, piecesWhileRecording: pieces, cleanedWhileRecording: cleanedWhileRecording)
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language, timings: timings))
       dictationLog.log("text ready \(timings.summary, privacy: .public)")
     } catch {

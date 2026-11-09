@@ -24,6 +24,8 @@ struct DictationTimings: Codable, Equatable, Sendable {
   var total: Double
   /// Pieces transcribed while recording (#112).
   var piecesWhileRecording: Int = 0
+  /// Segments cleaned while recording and kept; nil when cleanup did not run, or before cleanup while recording.
+  var cleanedWhileRecording: Int? = nil
 
   /// One line for History: "Ready in 1.4 s · speech 0.1 s, cleanup 1.2 s · 45 s spoken".
   var summary: String {

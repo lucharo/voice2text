@@ -48,6 +48,9 @@ public actor PieceTranscriber {
   /// Samples received so far that were already decoded in pieces.
   public var decodedSamples: Int { cutTotal }
 
+  /// The text of each piece decoded so far, in order (empty pieces left out), for cleanup while recording.
+  public var pieceTexts: [String] { texts }
+
   /// Appends newly recorded audio and decodes every piece whose cut is now known. Returns once that is done.
   public func add(_ samples: [Float]) async {
     await enqueue { me in await me.append(samples) }

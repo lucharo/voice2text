@@ -19,13 +19,21 @@ struct Cleaner: Sendable {
   /// `mode`: casual (the app's setting, with the spoken-words guard) or strict ("thorough": drops fillers and
   /// false starts, length guard only, as on the Mac), the latter for the cleanup comparison (#122).
   func clean(_ text: String, terms: [String], mode: CleanupMode = .casual) async -> String {
-    guard kind == .appleIntelligence else { log.info("cleanup skipped: not recommended on this iPhone"); return text }
+    await cleanReporting(text, terms: terms, mode: mode).text
+  }
+
+  /// `clean`, also saying whether the model answered for every chunk: false when one timed out, failed (in
+  /// the background Apple rate-limits the model, `LanguageModelError.rateLimited`) or was cancelled and so
+  /// kept its words as heard, or when cleanup could not run at all.
+  func cleanReporting(_ text: String, terms: [String], mode: CleanupMode = .casual) async -> (text: String, answered: Bool) {
+    guard kind == .appleIntelligence else { log.info("cleanup skipped: not recommended on this iPhone"); return (text, false) }
     #if canImport(FoundationModels)
     let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
-    guard case .available = model.availability else { log.info("cleanup skipped: Apple Intelligence unavailable"); return text }
+    guard case .available = model.availability else { log.info("cleanup skipped: Apple Intelligence unavailable"); return (text, false) }
     var parts: [String] = []
+    var answered = true
     for chunk in chunkText(text) {
-      if Task.isCancelled { parts.append(chunk); continue }  // a cancelled comparison stops asking the model
+      if Task.isCancelled { parts.append(chunk); answered = false; continue }  // a cancelled run stops asking the model
       let instructions = CleanupPrompt.messages(for: chunk, mode: mode, vocabulary: terms)[0].content
       let words = chunk.split(separator: " ").count
       let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: max(64, words * 3))
@@ -43,6 +51,7 @@ struct Cleaner: Sendable {
         }
       } catch {
         parts.append(chunk)
+        answered = false
         continue
       }
       let c = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,9 +63,9 @@ struct Cleaner: Sendable {
     }
     let out = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
     log.info("cleanup ran: \(parts.count, privacy: .public) chunks, \(terms.count, privacy: .public) terms, changed \(out != text, privacy: .public)")
-    return out
+    return (out, answered)
     #else
-    return text
+    return (text, false)
     #endif
   }
 }

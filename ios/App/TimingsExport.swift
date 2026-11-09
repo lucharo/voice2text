@@ -7,13 +7,13 @@ import V2TCleanup
 enum TimingsCSV {
   /// One row per dictation that has timings, oldest first; no text, so it is safe to paste anywhere.
   static func make(_ items: [Dictation]) -> String {
-    var out = "date,language,audio_s,speech_s,cleanup_s,total_s,pieces_while_recording\n"
+    var out = "date,language,audio_s,speech_s,cleanup_s,total_s,pieces_while_recording,cleaned_while_recording\n"
     let iso = ISO8601DateFormatter()
     for d in items.reversed() {
       guard let t = d.timings else { continue }
       let cleanup = t.cleanup.map { String(format: "%.3f", $0) } ?? ""
       out += "\(iso.string(from: d.date)),\(d.language),\(String(format: "%.2f", t.audio)),\(String(format: "%.3f", t.speech)),"
-        + "\(cleanup),\(String(format: "%.3f", t.total)),\(t.piecesWhileRecording)\n"
+        + "\(cleanup),\(String(format: "%.3f", t.total)),\(t.piecesWhileRecording),\(t.cleanedWhileRecording.map(String.init) ?? "")\n"
     }
     return out
   }

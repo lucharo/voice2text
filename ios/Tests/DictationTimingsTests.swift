@@ -61,7 +61,8 @@ import Testing
 @MainActor struct TimingsExportTests {
   @Test func csvHasOneRowPerTimedDictationOldestFirstAndNoText() {
     let old = Dictation(text: "secret one", date: Date(timeIntervalSince1970: 1_793_527_200), language: "en",
-                        timings: DictationTimings(audio: 45.2, speech: 0.08, cleanup: 1.24, total: 1.4, piecesWhileRecording: 3))
+                        timings: DictationTimings(audio: 45.2, speech: 0.08, cleanup: 1.24, total: 1.4, piecesWhileRecording: 3,
+                                                  cleanedWhileRecording: 2))
     let untimed = Dictation(text: "before #123", date: Date(timeIntervalSince1970: 1_793_527_300), language: "en")
     let new = Dictation(text: "secret two", date: Date(timeIntervalSince1970: 1_793_527_400), language: "es",
                         timings: DictationTimings(audio: 6.3, speech: 0.09, cleanup: nil, total: 0.1))
@@ -69,9 +70,9 @@ import Testing
     let csv = TimingsCSV.make([new, untimed, old])  // History keeps newest first
 
     #expect(csv == """
-      date,language,audio_s,speech_s,cleanup_s,total_s,pieces_while_recording
-      2026-11-01T10:00:00Z,en,45.20,0.080,1.240,1.400,3
-      2026-11-01T10:03:20Z,es,6.30,0.090,,0.100,0
+      date,language,audio_s,speech_s,cleanup_s,total_s,pieces_while_recording,cleaned_while_recording
+      2026-11-01T10:00:00Z,en,45.20,0.080,1.240,1.400,3,2
+      2026-11-01T10:03:20Z,es,6.30,0.090,,0.100,0,
 
       """)
   }
