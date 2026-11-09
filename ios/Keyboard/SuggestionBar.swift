@@ -23,6 +23,9 @@ final class SuggestionBar: UIView {
   private let debugDot = UIView()
   private var words: [String] = []
   private let emojiFont = EmojiFont()
+  /// A short note over the slots ("Done in 1.4 s"), gone after a moment or at the next key touch.
+  private let notice = UILabel()
+  private var noticeTimer: Timer?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -55,6 +58,37 @@ final class SuggestionBar: UIView {
     debugDot.accessibilityIdentifier = "v2t.debugLog"
     debugDot.accessibilityLabel = "Keyboard debug log is on"
     addSubview(debugDot)
+    notice.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+    notice.textColor = .secondaryLabel
+    notice.textAlignment = .center
+    notice.isHidden = true
+    notice.accessibilityIdentifier = "v2t.notice"
+    addSubview(notice)
+  }
+
+  /// Shows `text` in place of the suggestions for `seconds`, or until `clearNotice()`.
+  func showNotice(_ text: String, for seconds: TimeInterval = 2) {
+    notice.text = text
+    setNotice(visible: true)
+    noticeTimer?.invalidate()
+    noticeTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated { self?.clearNotice() }
+    }
+  }
+
+  func clearNotice() {
+    noticeTimer?.invalidate()
+    noticeTimer = nil
+    guard !notice.isHidden else { return }
+    UIView.animate(withDuration: 0.2) { self.setNotice(visible: false) } completion: { _ in
+      if self.noticeTimer == nil { self.notice.isHidden = true }  // unless a new notice came meanwhile
+    }
+  }
+
+  private func setNotice(visible: Bool) {
+    if visible { notice.isHidden = false }
+    notice.alpha = visible ? 1 : 0
+    for v in slots as [UIView] + dividers { v.alpha = visible ? 0 : 1 }  // hidden slots take no taps
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -69,6 +103,7 @@ final class SuggestionBar: UIView {
     dismissDivider.frame = CGRect(x: end, y: 11, width: hairline, height: 22)
     dismiss.frame = CGRect(x: end, y: 0, width: Self.dismissWidth, height: bounds.height)
     debugDot.frame = CGRect(x: 3, y: 3, width: 6, height: 6)
+    notice.frame = CGRect(x: inset, y: 0, width: end - inset, height: bounds.height)
   }
 
   /// Shows up to three suggestions: the word as typed in quotes (when it is not the best guess), then the

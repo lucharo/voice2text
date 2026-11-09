@@ -61,6 +61,8 @@ import XCTest
     for _ in 0..<2 where !key("letters-q").exists {
       field.tap()
       for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
+        // a fresh Simulator's Apple keyboard first shows a one-time introduction with a Continue button, as in EmojiUITests
+        if app.buttons["Continue"].exists { app.buttons["Continue"].tap(); continue }
         if app.buttons["Next keyboard"].exists { app.buttons["Next keyboard"].tap() }
       }
     }
@@ -77,8 +79,13 @@ import XCTest
     while ((field.value as? String) ?? "").lowercased().contains("keyboard") == false, Date() < deadline {
       RunLoop.current.run(until: Date().addingTimeInterval(0.5))
     }
+    // for a moment the bar says how long the wait after Done took. The app sends the text before it reports
+    // idle, so the notice comes once the panel closes, just after the text (it clears after 2 s: look now)
+    let notice = app.staticTexts["v2t.notice"]
+    let sawNotice = notice.waitForExistence(timeout: 1.5) && notice.label.hasPrefix("Done in ")
     shot("14-dictated-text")
     XCTAssertTrue(((field.value as? String) ?? "").lowercased().contains("keyboard"), "field: \(field.value ?? "nil")")
+    XCTAssertTrue(sawNotice, "no 'Done in' notice once the text was typed")
     XCTAssertTrue(((field.value as? String) ?? "").contains("iPhone Simulator"), "replacement not applied: \(field.value ?? "nil")")
 
     // the keyboard has now opened with Full Access, so both setup steps read done after a relaunch

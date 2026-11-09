@@ -37,6 +37,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// The user cancelled the current dictation: it shows no panel while it is still listening or transcribing;
   /// cleared once the app is idle again.
   private var cancelled = false
+  /// When Done was tapped for the dictation whose wait just ended, if the panel closed before its text came.
+  private var waitEndedFrom: Date?
+  /// Seconds from Done to the text, held while the panel is still up: the app sends the text before it
+  /// reports idle, so "Done in 1.4 s" waits for the keys and the bar to come back.
+  private var doneIn: TimeInterval?
   private var heightConstraint: NSLayoutConstraint?
   private var keysHeightConstraint: NSLayoutConstraint?
   private let haptics = UIImpactFeedbackGenerator(style: .light)
@@ -145,6 +150,15 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
       if let id = documentID { dictatedFields.insert(id) }
       edit { $0.insertFinished(text) }
+      // the text usually comes while the panel still shows the wait; the stop time is then the panel's
+      // (stoppedAt is set only once Done was tapped or the wait shown, so it may still read .listening when the
+      // app went straight to idle)
+      let from = panel.isHidden ? waitEndedFrom : (cancelled ? nil : panel.stoppedAt)
+      waitEndedFrom = nil
+      if let from {  // stop times are cleared per request, so any wait, however long, is this dictation's
+        doneIn = Date().timeIntervalSince(from)
+        if panel.isHidden { showDoneIn() }  // otherwise once the panel closes
+      }
     }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
   }
@@ -160,8 +174,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     emojiSearch?.refresh()
     dictation.attach()
     if let p = Settings.shared.previewRecording {
-      panel.preview = true
-      showDictation(DictationState(rawValue: p).flatMap { $0 == .listening ? nil : $0 } ?? .listening)
+      if p == "done" {
+        bar.showNotice(DictationState.doneLabel(elapsed: 1.4), for: 600)  // UI tests: the bar once the text is in
+      } else {
+        panel.preview = true
+        showDictation(DictationState(rawValue: p).flatMap { $0 == .listening ? nil : $0 } ?? .listening)
+      }
     }
     // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
     if hasFullAccess { Settings.shared.keyboardFullAccessSeen = Date() }
@@ -417,6 +435,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private func edit(_ name: String = "key", _ body: (TypingEngine) -> Void) {
     let t0 = CACurrentMediaTime()
     if name != "swipe-apply" { inputEpoch += 1 }  // a swipe's own word leaves the next queued swipe valid
+    bar.clearNotice()  // typing again (by touch or VoiceOver): the suggestions come back
     engineEditing = true
     body(engine)
     engineEditing = false
@@ -445,6 +464,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   // MARK: KeyboardViewDelegate
 
   func keyboardViewKeyDown(_ v: KeyboardView) {
+    bar.clearNotice()  // any key touch, shift and page keys too, brings the suggestions back
     if hasFullAccess { haptics.impactOccurred(intensity: 0.6) }
     UIDevice.current.playInputClick()
   }
@@ -464,6 +484,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, action: KeyAction) {
+    bar.clearNotice()  // every key action, VoiceOver's shift and page keys included, brings the suggestions back
     dlog("act", [.init("a", .s("\(action)"))])
     if let s = emojiSearch {
       switch action {
@@ -653,20 +674,39 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   // MARK: dictation
 
   private func startDictation() {
+    // a new request, whether or not its listening state is ever seen here (the app hand-off): no old timing
+    waitEndedFrom = nil
+    doneIn = nil
     dictation.toggle()
   }
 
   /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
   private func showDictation(_ state: DictationState) {
     let active = [.listening, .transcribing, .cleaningUp].contains(state)
+    if state == .listening { waitEndedFrom = nil; doneIn = nil }
+    // the wait after Done ended before its text came: keep when it began, for the bar's total
+    if !active, !panel.isHidden, !cancelled { waitEndedFrom = panel.stoppedAt }
     if !active { cancelled = false }
-    guard (active && !cancelled) || panel.preview else { setPanel(visible: false); return }
+    guard (active && !cancelled) || panel.preview else {
+      setPanel(visible: false)
+      showDoneIn()
+      return
+    }
     view.layoutIfNeeded()
     let layout = keyboardView.layout
     let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
     panel.show(state, bottomRow: keyboardView.convert(row, to: panel))
     // show() can find the app gone and hide the panel at once (onStateChange): then the keys must come back
     setPanel(visible: !panel.isHidden)
+    showDoneIn()
+  }
+
+  /// "Done in 1.4 s" in the bar, once, when the text is in and the panel has closed.
+  private func showDoneIn() {
+    guard let seconds = doneIn, panel.isHidden else { return }
+    doneIn = nil
+    waitEndedFrom = nil  // this dictation's stop time is spent
+    bar.showNotice(DictationState.doneLabel(elapsed: seconds))
   }
 
   /// While the panel covers them, the keys and the bar are hidden from VoiceOver and focus moves to Done.
