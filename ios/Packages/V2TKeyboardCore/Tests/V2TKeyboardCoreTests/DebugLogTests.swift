@@ -103,8 +103,9 @@ struct DebugLogTests {
     let log = KeyboardDebugLog(directory: dir, clock: { clock.now })
     log.start(until: Date().addingTimeInterval(3600))
     log.log("key", [LogField("text", .s("before"))])
-    clock.now += 10  // the buffered event is now 10 s old
+    Thread.sleep(forTimeInterval: 0.02)
     KeyboardDebugLog.clear(in: dir)  // the app clears while the keyboard still holds it
+    Thread.sleep(forTimeInterval: 0.02)
     log.log("key", [LogField("text", .s("after"))])
     log.flush(wait: true)
     #expect(lines(dir).map { $0["text"] as? String } == ["after"])

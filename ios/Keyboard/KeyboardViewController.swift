@@ -19,8 +19,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// The fields a dictation went into: from then on the log keeps no text read back from them (the text before the
   /// cursor, the bar's words, picked words), since that text holds the dictated words.
   private var dictatedFields = Set<UUID>()
+  /// A key was typed since the keyboard opened or the host app changed the text or moved the cursor. Until then
+  /// the bar's words come from text the keyboard did not type (a dictation before the keyboard reopened, a paste),
+  /// so they are not recorded.
+  private var typedSinceHost = false
   /// True while nothing read back from the current field may be logged.
-  private var fieldRedacted: Bool { dictatedFields.contains(textDocumentProxy.documentIdentifier) }
+  private var fieldRedacted: Bool { !typedSinceHost || dictatedFields.contains(textDocumentProxy.documentIdentifier) }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -288,6 +292,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
                     .init("wall", .s(Date().ISO8601Format())),  // anchors the uptime clock, which restarts with the phone
                     .init("version", .s(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))])
     loggedField = nil  // the field gets its line again, after this one
+    typedSinceHost = false
   }
 
   /// The field the log last described, so each field gets one line.
@@ -322,11 +327,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     log.log(event, fields())
   }
 
-  /// The host changed the text or moved the cursor: the text before the cursor, as far as the engine reads it
-  /// (TypingContext's last 160 characters).
+  /// The host changed the text or moved the cursor: how much text is before the cursor, as far as the engine
+  /// reads it (TypingContext's last 160 characters), but not the text: it may hold dictated words, and a keyboard
+  /// reopened after a dictation has no way to tell (#162).
   private func logHost(_ kind: String) {
-    if fieldRedacted { dlog("host", [.init("kind", .s(kind)), .init("redacted", .b(true))]); return }
-    dlog("host", [.init("kind", .s(kind)), .init("before", .s(String((textDocumentProxy.documentContextBeforeInput ?? "").suffix(160))))])
+    typedSinceHost = false
+    dlog("host", [.init("kind", .s(kind)), .init("chars", .i(min(160, (textDocumentProxy.documentContextBeforeInput ?? "").count)))])
   }
 
   /// Fields the log never records. iOS never shows a third-party keyboard in a secure text field (it swaps in its
@@ -439,6 +445,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, typed text: String, at point: CGPoint?) {
+    typedSinceHost = true
     dlog("key", [.init("text", .s(text)), .init("p", point.map { .pt($0) } ?? .null), .init("search", .b(emojiSearch != nil))])
     if let s = emojiSearch {
       s.type(text)

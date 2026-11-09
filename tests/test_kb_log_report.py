@@ -25,7 +25,7 @@ def typed(t, word):
 
 class ReportTests(unittest.TestCase):
     def events(self):
-        ev = [{"t": 0, "e": "appear"}, {"t": 1, "e": "host", "kind": "text", "before": ""}]
+        ev = [{"t": 0, "e": "appear"}, {"t": 1, "e": "host", "kind": "text", "chars": 0}]
         # "teh " autocorrected to "The ", delete, original picked back
         e, t = typed(10, "teh")
         ev += e
@@ -80,19 +80,19 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(r.kps), 1)  # no gap over 2 s
 
     def test_correction_deleted_and_typed_again_is_retyped_not_a_miss(self):
-        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "autocorrect", "from": "marimo", "to": "merino"},
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "autocorrect", "from": "marimo", "to": "merino"},
               {"t": 1, "e": "ins", "text": "merino "}] + [{"t": 2, "e": "del"}] * 7 + [{"t": 3, "e": "ins", "text": "marimo "}]
         r = rep.analyse(ev)
         self.assertEqual((dict(r.corrections_reverted), r.misses), ({"retyped": 1}, []))
 
     def test_trackpad_move_left_then_retype_is_the_right_word(self):
         # "form word ", cursor back over " word " (6), delete "form" and type "from": a miss of form, not of word
-        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "ins", "text": "form word "}, {"t": 2, "e": "cursor", "by": -6}]
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "ins", "text": "form word "}, {"t": 2, "e": "cursor", "by": -6}]
         ev += [{"t": 3, "e": "del"}] * 4 + [{"t": 4, "e": "ins", "text": "from "}]
         self.assertEqual(rep.analyse(ev).misses, [("form", "from")])
 
     def test_deleting_a_joined_emoji_takes_it_whole(self):
-        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "ins", "text": "form 👩🏽‍💻"}]
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "ins", "text": "form 👩🏽‍💻"}]
         ev += [{"t": 2, "e": "del"}] * 6 + [{"t": 3, "e": "ins", "text": "from "}]  # the emoji, space and "form"
         self.assertEqual(rep.analyse(ev).misses, [("form", "from")])
 
@@ -104,7 +104,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(dict(rep.analyse(ev).corrections_reverted), {"bar": 1})
 
     def test_deleting_a_full_stop_after_a_swipe_keeps_the_swipe(self):
-        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "swipe", "candidates": [{"w": "hello", "s": 0}], "applied": True},
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "swipe", "candidates": [{"w": "hello", "s": 0}], "applied": True},
               {"t": 2, "e": "ins", "text": "hello"}, {"t": 2, "e": "swiped", "word": "hello", "alternatives": []},
               {"t": 3, "e": "ins", "text": "."}, {"t": 4, "e": "del"}]
         self.assertEqual([s.outcome for s in rep.analyse(ev).swipes], ["kept"])
@@ -128,7 +128,7 @@ class ReportTests(unittest.TestCase):
             self.assertEqual([e["text"] for e in rep.read_events(Path(d))], ["\u2028"])
 
     def test_offer_left_then_original_retyped_is_one_taking_back(self):
-        ev = [{"t": 0, "e": "host", "before": ""}, {"t": 1, "e": "autocorrect", "from": "teh", "to": "The"},
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "autocorrect", "from": "teh", "to": "The"},
               {"t": 1, "e": "ins", "text": "The "}, {"t": 2, "e": "act", "a": "delete"},
               {"t": 2, "e": "revert-offer", "from": "teh", "to": "The"}, {"t": 2, "e": "del"}]
         ev += [{"t": 3, "e": "act", "a": "delete"}, {"t": 3, "e": "del"}] * 3 + [{"t": 4, "e": "key", "text": "T"}, {"t": 4, "e": "ins", "text": "Teh "}]
@@ -139,6 +139,18 @@ class ReportTests(unittest.TestCase):
         ev = [{"t": 0, "e": "up", "verdict": "swipe", "ms": 90}, {"t": 1, "e": "swipe", "ignored": "emoji search"},
               {"t": 900, "e": "up", "verdict": "swipe", "ms": 700},
               {"t": 1000, "e": "swipe", "candidates": [{"w": "b", "s": 0}], "applied": False}]
+        self.assertEqual([s.ms for s in rep.analyse(ev).swipes], [700])
+
+    def test_a_later_independent_change_after_a_bar_revert_is_a_miss(self):
+        ev = [{"t": 0, "e": "host", "chars": 0}, {"t": 1, "e": "autocorrect", "from": "teh", "to": "The"}, {"t": 1, "e": "ins", "text": "The "},
+              {"t": 2, "e": "revert", "from": "teh", "to": "The", "how": "bar"}] + [{"t": 2, "e": "del"}] * 4 + [{"t": 2, "e": "ins", "text": "teh "}]
+        ev += [{"t": 3, "e": "ins", "text": "The "}] + [{"t": 4, "e": "del"}] * 4 + [{"t": 5, "e": "ins", "text": "Teh "}]
+        r = rep.analyse(ev)
+        self.assertEqual((dict(r.corrections_reverted), r.misses), ({"bar": 1}, [("The", "Teh")]))
+
+    def test_a_skip_drops_lifts_whose_decode_went_unrecorded(self):
+        ev = [{"t": 0, "e": "up", "verdict": "swipe", "ms": 90}, {"t": 1, "e": "skip", "reason": "card"}, {"t": 2, "e": "resume"},
+              {"t": 900, "e": "up", "verdict": "swipe", "ms": 700}, {"t": 1000, "e": "swipe", "candidates": [{"w": "b", "s": 0}], "applied": False}]
         self.assertEqual([s.ms for s in rep.analyse(ev).swipes], [700])
 
     def test_offer_left_alone_counts_as_not_taken(self):

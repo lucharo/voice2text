@@ -61,6 +61,8 @@ public final class KeyboardDebugLog: @unchecked Sendable {
   private struct Pending {
     /// Seconds of uptime.
     let t: TimeInterval
+    /// Wall-clock seconds when it was logged, to compare with the app's Clear log time.
+    var wall = Date().timeIntervalSince1970
     let event: String
     let fields: [LogField]
   }
@@ -161,11 +163,10 @@ public final class KeyboardDebugLog: @unchecked Sendable {
 
   private func appendCoordinated(_ batch: [Pending]) {
     // events from before the app's last Clear log stay cleared
-    let wallOffset = Date().timeIntervalSince1970 - clock()
     let cleared = (try? String(contentsOf: directory.appending(path: Self.clearedName), encoding: .utf8)).flatMap(Double.init) ?? 0
     var out = ""
     out.reserveCapacity(batch.count * 96)
-    for p in batch where p.t + wallOffset > cleared {
+    for p in batch where p.wall > cleared {
       out += "{\"t\":"
       Self.number(p.t * 1000, decimals: 1, into: &out)
       out += ",\"e\":"

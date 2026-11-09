@@ -208,8 +208,10 @@ def analyse(events: list[dict]) -> Report:
             r.sessions += 1
         elif e == "skip":
             r.skipped_fields[ev.get("reason", "?")] += 1
+            swipe_lifts.clear()  # their decodes land while the log is paused, unrecorded
         elif e == "host":
-            doc.reset(ev.get("before", ""))
+            # the keyboard logs only how much text is before the cursor: a placeholder keeps positions right
+            doc.reset("█" * ev.get("chars", 0))
             settle_swipe("kept")
         elif e == "ins":
             # dictation is logged by length only: a placeholder keeps the positions right and forms no word
@@ -303,6 +305,7 @@ def analyse(events: list[dict]) -> Report:
         pair = (old.lower(), new.lower())
         if reverted_by_keyboard[pair] > 0:
             reverted_by_keyboard[pair] -= 1
+            corrected[pair] -= 1  # that correction is accounted for
         elif corrected[pair] > 0:
             corrected[pair] -= 1
             r.corrections_reverted["retyped"] += 1

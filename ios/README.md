@@ -96,8 +96,9 @@ shares both files joined; Clear log deletes them.
   the field changes. Dictation is recorded by length only: its words are in History already. From the first
   dictation in a field until the field changes, nothing read back from that field is recorded either (the text
   before the cursor, the bar's words, words picked or corrected, text inserted, all by count only), since it
-  holds the dictated words. The text before the cursor is recorded only as far as the engine reads it
-  (`TypingContext`, the last 160 characters), when the host app changes it.
+  holds the dictated words. The text the host app changes is recorded by length only (up to the 160 characters
+  `TypingContext` reads), and the bar's words only once a key has been typed since the keyboard opened or the
+  host changed the text: a keyboard reopened after a dictation cannot tell dictated text from typed.
 - **Clear log** also leaves a `cleared` time in the folder, so events the keyboard still holds from before it are
   dropped rather than written to a fresh file. Export rereads if the keyboard rotates the files mid-read.
 - **Without Full Access** iOS keeps the App Group, and so the switch, from the keyboard: it reads off and nothing
@@ -131,7 +132,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `bar`, `pick` | words, kinds, bold; slot, word, emoji | the bar changed; a slot was tapped |
 | `autocorrect`, `revert-offer`, `revert` | from, to, how (bar, address) | a correction; offered back after delete; undone |
 | `ins`, `del` | text (chars for dictation) | the keyboard edited the document |
-| `host` | kind, before | the app changed the text or moved the cursor |
+| `host` | kind, chars (text before the cursor, up to 160) | the app changed the text or moved the cursor |
 | `page`, `emoji`, `dictation` | page, form, width; emoji, from; chars, words | |
 
 ### Which model this iPhone gets
