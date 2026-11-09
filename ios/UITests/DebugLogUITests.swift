@@ -76,7 +76,7 @@ import XCTest
     addTeardownBlock { @MainActor in
       let app = XCUIApplication()
       app.terminate()
-      app.launchEnvironment["V2T_RESET_KEYBOARD_LOG"] = "1"
+      app.launchEnvironment["V2T_KEYBOARD_LOG_OFF"] = "1"  // off, its file kept for kb_log_report.py
       app.launch()
       app.terminate()
     }
@@ -91,7 +91,11 @@ import XCTest
 
     // the keyboard: its dot shows, and what is typed is recorded
     for _ in 0..<6 where !(field.exists && field.isHittable) { app.swipeDown(velocity: .slow) }
-    field.tap()
+    // a tap while the list still glides after the swipe can miss the field: tap until a keyboard shows
+    for _ in 0..<3 where !(key("letters-q").exists || app.keyboards.firstMatch.exists) {
+      field.tap()
+      _ = key("letters-q").waitForExistence(timeout: 2) || app.keyboards.firstMatch.waitForExistence(timeout: 1)
+    }
     for _ in 0..<5 where !key("letters-q").waitForExistence(timeout: 3) {
       // a fresh Simulator shows Apple's keyboard tips first; each has a Continue button over the globe
       let tip = app.buttons["Continue"].firstMatch

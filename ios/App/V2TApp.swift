@@ -21,7 +21,8 @@ import V2TKeyboardCore
     Settings.shared.previewGlobeKey = env["V2T_PREVIEW_GLOBE"].map { $0 == "1" }
     // UI tests start the emoji keyboard from a known skin tone (0 yellow); the keyboard's own tones give way to it
     if let t = env["V2T_SKIN_TONE"].flatMap(Int.init) { Settings.shared.emojiSkinTone = SkinTone(rawValue: t) }
-    // the debug log UI test starts with the log off and empty
+    // the debug log UI test starts with the log off and empty, and leaves it off
+    if env["V2T_KEYBOARD_LOG_OFF"] == "1" { Settings.shared.keyboardDebugLogUntil = nil }
     if env["V2T_RESET_KEYBOARD_LOG"] == "1" {
       Settings.shared.keyboardDebugLogUntil = nil
       if let dir = KeyboardLogStore.groupDirectory { KeyboardDebugLog.clear(in: dir) }
