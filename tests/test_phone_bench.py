@@ -99,14 +99,15 @@ class PromptJobs(unittest.TestCase):
             "arm b: runtime afm runs on the cleanup set, not speech",
         ])
         bad = {**self.AFM, "inputs": "x/in.jsonl", "arms": [
-            {"id": "a", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}},
-            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}}]}
+            {"id": "a", "runtime": "anemll", "model": "m", "options": {"prompt": "p.json"}},
+            {"id": "b", "runtime": "afm", "options": {"prompt": "../p.json"}},
+            {"id": "c", "runtime": "mlx", "model": "m", "options": {"prompt": "p.json"}}]}
         with self.assertRaises(SystemExit) as e:
             self.load(bad)
         self.assertEqual(str(e.exception).split(": ", 1)[1].split("; "), [
             "inputs is a file name (letters, digits, . _ -) for the cleanup set",
-            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
-            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm runtime",
+            "arm a: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm or mlx runtime",
+            "arm b: prompt is a file name in prompts/ (letters, digits, . _ -), for the afm or mlx runtime",
         ])
 
     def test_inputs_may_not_be_a_file_the_job_writes(self):

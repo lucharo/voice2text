@@ -98,7 +98,13 @@ func makeArm(_ s: ArmSpec) throws -> Arm {
     return m
   }
   switch s.runtime {
-  case "mlx": return MLXCleanup(dir: try need(), name: s.model!)
+  case "mlx":
+    let chat = try opt["prompt"].map { name -> ChatPrompt in
+      let url = documents.appendingPathComponent("prompts/\(name)")
+      guard FileManager.default.fileExists(atPath: url.path) else { throw BenchError("arm \(s.id): Documents/prompts/\(name) is missing; run phone_push.py") }
+      return try JSONDecoder().decode(ChatPrompt.self, from: Data(contentsOf: url))
+    }
+    return MLXCleanup(dir: try need(), name: s.model!, chat: chat, cpu: opt["device"] == "cpu", withSpeech: opt["speech"] == "true")
   case "anemll": return AnemllCleanup(dir: try need(), name: s.model!)
   case "afm":
     let prompt = try opt["prompt"].map { name -> AFMPrompt in
@@ -149,22 +155,48 @@ let warmText = "um so I think we should uh ship it"
 
 // MARK: - cleanup arms
 
+/// A chat prompt for the MLX arm (`prompt: <file>` in Documents/prompts): the system text and (raw, clean)
+/// example turns, as the Mac app builds them (backends.cleanup_messages), so both arms get today's prompt.
+struct ChatPrompt: Codable {
+  let system: String
+  let examples: [[String]]
+}
+
+/// An LLM on the GPU through mlx-swift-lm. Options: `prompt: <file>` (ChatPrompt) instead of the bundled
+/// chat.json; `device: cpu` runs it on the CPU, which iOS allows in the background where it gives an app no
+/// GPU; `speech: true` also keeps the bundled Parakeet Core ML model loaded, so `mb` shows both together.
+/// With a prompt file, rows keep each chunk's input, output, seconds and first-token time.
 final class MLXCleanup: Arm, @unchecked Sendable {
   let set = ItemSet.cleanup
-  let dir: URL, prompt: CleanupPrompt
+  let dir: URL, prompt: CleanupPrompt, chat: ChatPrompt?, cpu: Bool, withSpeech: Bool
   var container: ModelContainer?
-  init(dir: URL, name: String) { self.dir = dir; prompt = try! CleanupPrompt(model: name) }
+  var speech: ParakeetCoreML?
+  init(dir: URL, name: String, chat: ChatPrompt? = nil, cpu: Bool = false, withSpeech: Bool = false) {
+    self.dir = dir; prompt = try! CleanupPrompt(model: name); self.chat = chat; self.cpu = cpu; self.withSpeech = withSpeech
+  }
+
+  /// `body` on the arm's device: the CPU when asked, else MLX's default (the GPU).
+  func onDevice<R>(_ body: () async throws -> R) async throws -> R {
+    cpu ? try await Device.withDefaultDevice(Device(.cpu), body) : try await body()
+  }
 
   func load() async throws -> [String: Any] {
     MLX.GPU.set(cacheLimit: 256 * 1024 * 1024)
-    container = try await loadModelContainer(from: dir, using: #huggingFaceTokenizerLoader())
-    _ = try await clean(warmText)
-    return [:]
+    if withSpeech {
+      let p = ParakeetCoreML()
+      _ = try await p.load()
+      speech = p
+    }
+    try await onDevice {
+      container = try await loadModelContainer(from: dir, using: #huggingFaceTokenizerLoader())
+      _ = try await clean(warmText)
+    }
+    return ["device": cpu ? "cpu" : "gpu", "speech_loaded": withSpeech]
   }
 
   func clean(_ text: String) async throws -> (String, Double, Int, Bool) {
-    var msgs: [Chat.Message] = [.system(prompt.system)]
-    for e in prompt.examples { msgs.append(.user(e[0])); msgs.append(.assistant(e[1])) }
+    var msgs: [Chat.Message] = [.system(chat?.system ?? prompt.system)]
+    for e in chat?.examples ?? prompt.examples { msgs.append(.user(e[0])); msgs.append(.assistant(e[1])) }
     msgs.append(.user(text))
     let maxT = CleanupPrompt.maxTokens(text)
     return try await container!.perform { ctx in
@@ -181,16 +213,23 @@ final class MLXCleanup: Arm, @unchecked Sendable {
   }
 
   func process(_ item: Item) async throws -> [String: Any] {
-    var outs: [String] = [], ttft = 0.0, toks = 0, limited = 0
-    for (k, c) in item.chunks.enumerated() {
-      let (o, tf, n, lim) = try await clean(c)
-      outs.append(o); toks += n; limited += lim ? 1 : 0
-      if k == 0 { ttft = tf }
+    var outs: [String] = [], ttft = 0.0, toks = 0, limited = 0, secs: [Double] = [], ttfts: [Double] = [], lims: [Bool] = []
+    try await onDevice {
+      for (k, c) in item.chunks.enumerated() {
+        let t = ContinuousClock.now
+        let (o, tf, n, lim) = try await clean(c)
+        outs.append(o); toks += n; limited += lim ? 1 : 0; lims.append(lim)
+        secs.append((ContinuousClock.now - t).seconds); ttfts.append(tf)
+        if k == 0 { ttft = tf }
+      }
     }
-    return ["clean": outs.joined(separator: " "), "ttft": ttft, "tokens": toks, "limited": limited, "chunks": item.chunks.count, "errors": [String]()]
+    var row: [String: Any] = ["clean": outs.joined(separator: " "), "ttft": ttft, "tokens": toks, "limited": limited,
+                              "chunks": item.chunks.count, "errors": [String]()]
+    if chat != nil { row["chunk_in"] = item.chunks; row["chunk_out"] = outs; row["chunk_s"] = secs; row["chunk_ttft"] = ttfts; row["chunk_limited"] = lims }
+    return row
   }
 
-  func unload() { container = nil; MLX.GPU.clearCache() }
+  func unload() { container = nil; speech?.unload(); speech = nil; MLX.GPU.clearCache() }
 }
 
 final class AnemllCleanup: Arm, @unchecked Sendable {
