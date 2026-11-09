@@ -23,6 +23,9 @@ final class RecordingPanel: UIView {
   private let done = UIButton(type: .system)
   private var timer: Timer?
   private var started = Date()
+  /// When Done was tapped (or the wait was first shown): the wait after it ticks from here, and the
+  /// controller reads it once the text is in, for "Done in 1.4 s".
+  private(set) var stoppedAt: Date?
   private var levels: [Float] = []
   private(set) var state: DictationState = .idle
   private var ticks = 0
@@ -50,7 +53,10 @@ final class RecordingPanel: UIView {
 
     done.configuration = Self.filled(title: "Done", symbol: "checkmark", color: .systemBlue)
     done.accessibilityIdentifier = "v2t.recording.done"
-    done.addAction(UIAction { [weak self] _ in self?.onStop?() }, for: .touchUpInside)
+    done.addAction(UIAction { [weak self] _ in
+      self?.stoppedAt = Date()  // the tap itself, before the app hears of it
+      self?.onStop?()
+    }, for: .touchUpInside)
     var c = UIButton.Configuration.filled()
     c.title = "Cancel"
     c.baseBackgroundColor = Palette.key
@@ -79,6 +85,9 @@ final class RecordingPanel: UIView {
   /// Shows the panel for `state`, with its buttons laid over the keyboard's `bottomRow`.
   func show(_ state: DictationState, bottomRow: CGRect) {
     if isHidden || state != self.state { started = state == .listening ? Date() : started }
+    // a new recording forgets the last wait; Done's own tap re-shows .listening and must keep its time
+    if state == .listening, isHidden || self.state != .listening { stoppedAt = nil }
+    if state != .listening, stoppedAt == nil { stoppedAt = Date() }
     self.state = state
     self.bottomRow = bottomRow
     isHidden = false
@@ -100,6 +109,7 @@ final class RecordingPanel: UIView {
 
   func hide() {
     isHidden = true
+    stoppedAt = nil  // the controller took it before hiding; a later wait (the app hand-off) starts afresh
     timer?.invalidate()
     timer = nil
     levels = []
@@ -134,8 +144,14 @@ final class RecordingPanel: UIView {
       if preview { levels = Self.fakeLevels(Date().timeIntervalSince(started)) } else if let read = DictationChannel.readLevels() { levels = read }
       let s = Int(Date().timeIntervalSince(started))
       status.text = String(format: "%d:%02d", s / 60, s % 60)
+      status.accessibilityLabel = nil
+      status.accessibilityValue = nil
     } else {
-      status.text = state.waitingLabel
+      let elapsed = Date().timeIntervalSince(stoppedAt ?? Date())
+      status.text = state.waitingLabel(elapsed: elapsed)
+      // VoiceOver gets the stage as the label and the time as the value, read when it lands there
+      status.accessibilityLabel = state.waitingLabel
+      status.accessibilityValue = DictationState.seconds(elapsed, locale: .current)
     }
     setNeedsLayout()
   }

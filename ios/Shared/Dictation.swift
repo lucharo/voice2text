@@ -14,6 +14,21 @@ public enum DictationState: String, Sendable {
 
   /// What the keyboard's recording panel says while the app works after Done (#123).
   public var waitingLabel: String { self == .cleaningUp ? "Cleaning up…" : "Transcribing…" }
+
+  /// The same, with the time since Done ticking in tenths, to show how quick it is: "Cleaning up 0.8 s".
+  public func waitingLabel(elapsed: Double, locale: Locale = .current) -> String {
+    "\(self == .cleaningUp ? "Cleaning up" : "Transcribing") \(Self.seconds(elapsed, locale: locale))"
+  }
+
+  /// What the suggestion bar says for a moment once the text is in: "Done in 1.4 s".
+  public static func doneLabel(elapsed: Double, locale: Locale = .current) -> String { "Done in \(seconds(elapsed, locale: locale))" }
+
+  /// Seconds in tenths, with the locale's decimal mark ("0.8 s", "0,8 s"); rounded down, so the ticking
+  /// count never runs ahead of the clock.
+  static func seconds(_ s: Double, locale: Locale) -> String {
+    let tenths = (max(0, s) * 10).rounded(.down) / 10
+    return "\(tenths.formatted(.number.precision(.fractionLength(1)).locale(locale))) s"
+  }
 }
 
 /// The microphone the app records from, as the keyboard and the app show it (beside a mic icon) while dictating.

@@ -43,6 +43,19 @@ import Testing
   @Test func theKeyboardNamesEachStageAfterDone() {
     #expect([DictationState.transcribing, .cleaningUp].map(\.waitingLabel) == ["Transcribing…", "Cleaning up…"])
   }
+
+  @Test func theWaitTicksInTenthsSinceDone() {
+    let en = Locale(identifier: "en_GB"), es = Locale(identifier: "es_ES")
+
+    let labels = [
+      DictationState.transcribing.waitingLabel(elapsed: 0, locale: en),
+      DictationState.cleaningUp.waitingLabel(elapsed: 0.86, locale: en),  // rounded down: never ahead of the clock
+      DictationState.cleaningUp.waitingLabel(elapsed: 12.04, locale: es),
+      DictationState.doneLabel(elapsed: 1.45, locale: en),
+    ]
+
+    #expect(labels == ["Transcribing 0.0 s", "Cleaning up 0.8 s", "Cleaning up 12,0 s", "Done in 1.4 s"])
+  }
 }
 
 @MainActor struct TimingsExportTests {
