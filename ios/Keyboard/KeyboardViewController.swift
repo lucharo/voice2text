@@ -25,8 +25,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var typedSinceHost = false
   /// True while nothing read back from the current field may be logged.
   private var fieldRedacted: Bool {
-    !typedSinceHost || engine.composingResynced || dictatedFields.contains(textDocumentProxy.documentIdentifier)
+    !typedSinceHost || engine.composingResynced || documentID.map(dictatedFields.contains) ?? false
   }
+  /// The field's identifier, nil while the keyboard closes. Swift declares `documentIdentifier` non-optional, but
+  /// iOS hands back nil then, and reading it straight crashes the keyboard (as the debug log UI test found).
+  private var documentID: UUID? { (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -140,7 +143,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       guard let self else { return }
       // the log keeps a dictation's length, not its words: History already holds them, in the app
       dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
-      dictatedFields.insert(textDocumentProxy.documentIdentifier)
+      if let id = documentID { dictatedFields.insert(id) }
       edit { $0.insertFinished(text) }
     }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
@@ -383,8 +386,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     if [.URL, .emailAddress].contains(type) { t.capitalization = .none }
     engine.traits = t
     applyDebugSkip()
-    if let log = debugLog, log.isOn, p.documentIdentifier != loggedField {
-      loggedField = p.documentIdentifier
+    if let log = debugLog, log.isOn, let id = documentID, id != loggedField {
+      loggedField = id
       log.log("field", [.init("keyboardType", .i(type.rawValue)), .init("contentType", .s(p.textContentType??.rawValue ?? "")),
                         .init("autocorrect", .b(t.autocorrect)), .init("capitalization", .s("\(t.capitalization)")),
                         .init("return", .i((p.returnKeyType ?? .default).rawValue))])
