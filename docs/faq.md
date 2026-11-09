@@ -36,6 +36,15 @@ The usual cause is a Bluetooth headset whose microphone another app (often Teams
 and watch System Settings → Sound → Input; if the meter does not move, pick another input there.
 The audio is still at `~/.v2t/run/last-recording.wav` for `v2t transcribe`.
 
+## Why does pressing Fn open the emoji picker?
+
+macOS gives the Fn (🌐) key its own job unless System Settings → Keyboard → *Press 🌐 key to* is
+**Do Nothing**. The picker takes focus, so dictated text can land in its search box. While that
+setting is anything else and Fn is your hotkey, the menu shows a **Globe Key** row that opens it.
+
+To keep emoji close at hand, open the picker with Ctrl+Cmd+Space. Or keep Fn for emoji and choose
+Right Command under **Settings → Hotkey** in the menu; the row then goes away.
+
 ## Can I redo a dictation?
 
 Yes. v2t keeps the last recording at `~/.v2t/run/last-recording.wav`, replaced by each new one, so
