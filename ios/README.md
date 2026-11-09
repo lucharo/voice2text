@@ -99,9 +99,12 @@ shares both files joined; Clear log deletes them.
 - **Without Full Access** iOS keeps the App Group, and so the switch, from the keyboard: it reads off and nothing
   is recorded. If the keyboard can read the switch but not write to the App Group, it writes to its own
   container, which the app cannot export.
-- **Cost.** `log()` only appends to a buffer under a lock (0.5 µs a call on the Mac); a background queue encodes
-  and appends to the file every 64 events or second. On the Mac, per key with every event a key logs, against
-  the 8 ms budget: see `DebugLogTests.perKeyCostWithTheLogOn`.
+- **Cost.** `log()` only appends to a buffer under a lock (0.15 µs a call on the Mac, release build); a
+  background queue encodes and appends to the file every 64 events or second. Per key on the Mac (release build,
+  English, key + engine + bar, the two arms interleaved, load average 54 to 85 from other builds), against the
+  8 ms budget: log off mean 0.95, p95 2.43, p99 3.48 ms; log on 0.97, 2.46 and 3.28 ms
+  (`swift test -c release -Xswiftc -enable-testing --filter perKeyCost`). The difference is within the noise.
+  Phone untested.
 - **Fetch.** `ios/tools/fetch_kb_log.sh` copies the log off a connected iPhone (`xcrun devicectl device copy from
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
   reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
