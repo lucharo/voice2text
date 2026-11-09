@@ -212,6 +212,11 @@ public struct MultiSwipeDecoder: Sendable {
   /// Each language's words carry that language's prior, so a Spanish word does not take an English swipe
   /// unless the sentence is Spanish, and the words that often follow the previous one are promoted.
   public func decode(_ trace: [CGPoint], context: String = "", limit: Int = 4) -> [String] {
+    decodeScored(trace, context: context, limit: limit).map(\.word)
+  }
+
+  /// `decode`'s words with their scores (nats, higher is better), for the keyboard's debug log.
+  public func decodeScored(_ trace: [CGPoint], context: String = "", limit: Int = 4) -> [SwipeDecoder.Candidate] {
     let ctx = TypingContext(before: context)
     let priors = languagePrior.priors(decoders.map(\.lexicon), primary: decoders.first?.layout.language.rawValue, context: ctx)
     let merged = zip(decoders, priors).flatMap { d, p in
@@ -221,6 +226,6 @@ public struct MultiSwipeDecoder: Sendable {
     // alternatives far behind the best are noise ("gift", "fount", "glint" under "going"): leave them out
     let floor = (merged.first?.score ?? 0) - alternativeMargin
     var seen = Set<String>()
-    return Array(merged.filter { $0.score >= floor }.map(\.word).filter { seen.insert($0.lowercased()).inserted }.prefix(limit))
+    return Array(merged.filter { $0.score >= floor && seen.insert($0.word.lowercased()).inserted }.prefix(limit))
   }
 }

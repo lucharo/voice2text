@@ -33,7 +33,10 @@ public final class TypingEngine {
   /// iPad keyboard's number and punctuation keys type their second mark.
   public private(set) var shiftManual = false
   /// Keys of the word under construction, since the last word boundary.
-  public private(set) var composing: [TypedKey] = []
+  public private(set) var composing: [TypedKey] = [] { didSet { if composing.isEmpty { composingResynced = false } } }
+  /// The word under construction began as text already in the document (read back by `resync`), not as keys
+  /// typed here: the debug log keeps its letters out, since they may be dictated ones (#162).
+  public private(set) var composingResynced = false
   /// Words the user insisted on (reverted an autocorrect, or picked as typed); never autocorrected.
   public var learned: Set<String> = [] {
     // kept lowercase with straight apostrophes, as `learn` stores them, so either apostrophe matches
@@ -51,11 +54,45 @@ public final class TypingEngine {
   /// The emoji as the user last picked it (the keywords list base forms): the bar offers 👍🏽 for "thumbs"
   /// once 👍🏽 was picked, or is the default tone. Nil offers the base form.
   public var emojiShown: ((String) -> String)?
+  /// What the engine decided, for the keyboard's debug log (#162): nil when nobody listens.
+  public var onEvent: ((Event) -> Void)?
+
+  /// Decisions the debug log records: what autocorrect changed, what the user took back, what a tap on the bar
+  /// replaced, what a swipe typed.
+  public enum Event: Equatable, Sendable {
+    /// A word ended and autocorrect put `replacement` in place of `original`.
+    case autocorrected(original: String, replacement: String)
+    /// Delete after a correction removed its space: the bar now offers `original` back.
+    case revertOffered(original: String, replacement: String)
+    /// The correction was undone: `how` is "bar" (the original picked from the bar) or "address" (the word
+    /// turned out to be part of a web or email address).
+    case reverted(original: String, replacement: String, how: String)
+    /// A suggestion tapped in the bar replaced `replaced` (the word as typed, or the swiped word).
+    case picked(word: String, replaced: String)
+    /// A swipe typed `word`, with `alternatives` waiting in the bar.
+    case swiped(word: String, alternatives: [String])
+
+    /// The event's name, without its words.
+    public var name: String {
+      switch self {
+      case .autocorrected: "autocorrect"
+      case .revertOffered: "revert-offer"
+      case .reverted: "revert"
+      case .picked: "picked"
+      case .swiped: "swiped"
+      }
+    }
+  }
 
   /// The last autocorrect, while the text still ends with it, so a delete can offer the original back.
   public private(set) var lastCorrection: (original: String, replacement: String)? {
-    didSet { if lastCorrection == nil { correctionThenMark = nil } }
+    didSet { if lastCorrection == nil { correctionThenMark = nil; correctionReadBack = false } }
   }
+  /// The last correction was made to a word read back from the document, not typed here.
+  private var correctionReadBack = false
+  /// The engine holds text it read back from the document rather than keys typed here: the word being typed, or
+  /// a correction of such a word (still offered back after a delete). The debug log keeps it out (#162).
+  public var holdsReadBackText: Bool { composingResynced || (lastCorrection != nil && correctionReadBack) }
   /// The address marks typed straight after an autocorrect ("." or "+", "+!" as more follow): a letter or an
   /// address mark next means the word was part of an address ("exmaple.com", "teh+!tag@", "https://"), so it
   /// is undone; a space keeps it ("teh?! ").
@@ -172,10 +209,12 @@ public final class TypingEngine {
     if let c = lastCorrection, before.hasSuffix(c.replacement + " ") {
       proxy.deleteBackward()
       revertOffer = c.original
+      onEvent?(.revertOffered(original: c.original, replacement: c.replacement))
       // a text replacement is the user's own text: reopened, it is not a word to autocorrect again
       let replaced = replacements[Self.shortcutKey(c.original)] == c.replacement
       if !replaced, c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
         composing = c.replacement.map { TypedKey($0) }
+        composingResynced = correctionReadBack  // the reopened word is still the one read back
       } else {
         revertPhrase = c.replacement
       }
@@ -300,6 +339,10 @@ public final class TypingEngine {
   public func pick(_ word: String) {
     let replacing: Int
     if let s = lastSwipe { replacing = s.word.count } else if revertOffer == word, let ph = revertPhrase, before.hasSuffix(ph) { replacing = ph.count } else { replacing = composing.count }
+    if let onEvent {
+      if revertOffer == word, let c = lastCorrection { onEvent(.reverted(original: c.original, replacement: c.replacement, how: "bar")) }
+      else { onEvent(.picked(word: word, replaced: lastSwipe?.word ?? literal)) }
+    }
     for _ in 0..<replacing { proxy.deleteBackward() }
     if revertOffer == word || word == literal { learn(word) }
     proxy.insertText(word + " ")
@@ -326,6 +369,7 @@ public final class TypingEngine {
     lastCorrection = nil
     revertOffer = nil
     lastSwipe = (word, Array(words.dropFirst()))
+    onEvent?(.swiped(word: word, alternatives: Array(words.dropFirst())))
     composing = []
     noteLanguage()
   }
@@ -374,6 +418,7 @@ public final class TypingEngine {
     lastCorrection = nil
     revertOffer = nil
     composing = Self.trailingWord(before)
+    composingResynced = !composing.isEmpty
     refreshShift()
   }
 
@@ -395,6 +440,7 @@ public final class TypingEngine {
   func undoCorrectionBeforeMark() {
     defer { correctionThenMark = nil }
     guard let m = correctionThenMark, let c = lastCorrection, before.hasSuffix(c.replacement + m) else { return }
+    onEvent?(.reverted(original: c.original, replacement: c.replacement, how: "address"))
     for _ in 0..<(c.replacement.count + m.count) { proxy.deleteBackward() }
     proxy.insertText(c.original + m)
   }
@@ -461,6 +507,8 @@ public final class TypingEngine {
     for _ in 0..<composing.count { proxy.deleteBackward() }
     proxy.insertText(fix)
     lastCorrection = (original, fix)
+    correctionReadBack = composingResynced
+    onEvent?(.autocorrected(original: original, replacement: fix))
     return true
   }
 

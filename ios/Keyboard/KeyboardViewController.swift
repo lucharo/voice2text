@@ -9,6 +9,27 @@ let latencyLog = Logger(subsystem: "es.luischav.v2t.keyboard", category: "latenc
 final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate {
   private var language: KeyboardLanguage = .english
   private var engine: TypingEngine!
+  private var proxy: ProxyAdapter!
+  /// The opt-in debug log (#162), while the app's switch is on.
+  private var debugLog: KeyboardDebugLog?
+  /// Why the log is paused in this field ("password", "one-time-code", "card"), nil while it records.
+  private var debugSkip: String?
+  /// The bar as last logged, so only changes are written.
+  private var loggedBar: [String] = []
+  /// The fields a dictation went into: from then on the log keeps no text read back from them (the text before the
+  /// cursor, the bar's words, picked words), since that text holds the dictated words.
+  private var dictatedFields = Set<UUID>()
+  /// A key was typed since the keyboard opened or the host app changed the text or moved the cursor. Until then
+  /// the bar's words come from text the keyboard did not type (a dictation before the keyboard reopened, a paste),
+  /// so they are not recorded.
+  private var typedSinceHost = false
+  /// True while nothing read back from the current field may be logged.
+  private var fieldRedacted: Bool {
+    !typedSinceHost || engine.holdsReadBackText || documentID.map(dictatedFields.contains) ?? false
+  }
+  /// The field's identifier, nil while the keyboard closes. Swift declares `documentIdentifier` non-optional, but
+  /// iOS hands back nil then, and reading it straight crashes the keyboard (as the debug log UI test found).
+  private var documentID: UUID? { (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID }
   private var decoders: [SwipeDecoder] = []
   private var keyboardView: KeyboardView!
   private let bar = SuggestionBar()
@@ -54,7 +75,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     language = Settings.shared.layoutLanguage
     let lexicons = Settings.shared.suggestionLanguages.compactMap { LexiconStore.load($0) }
     let layout = makeLayout(width: max(320, view.bounds.width), page: .letters)
-    let proxy = ProxyAdapter(self)
+    proxy = ProxyAdapter(self)
     engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: lexicons, layout: layout))
     engine.learned = userWords()
     engine.onLearn = { Settings.shared.learn($0) }
@@ -72,9 +93,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     keyboardView = KeyboardView(layout: layout)
     keyboardView.delegate = self
     keyboardView.clipsToBounds = false
-    bar.onPick = { [weak self] word in
+    bar.onPick = { [weak self] word, slot in
       guard let self else { return }
       let emoji = engine.emojiSuggestion == word
+      dlog("pick", [.init("slot", .i(slot))] + (fieldRedacted ? [] : [.init("word", .s(word))]) + [.init("emoji", .b(emoji))])
       edit { $0.pick(word) }
       if emoji { EmojiStore.record(word, toned: tonedEmoji) }  // the bar's emoji joins the panel's recents
     }
@@ -117,13 +139,20 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
     ])
-    dictation.onText = { [weak self] text in self?.edit { $0.insertFinished(text) } }
+    dictation.onText = { [weak self] text in
+      guard let self else { return }
+      // the log keeps a dictation's length, not its words: History already holds them, in the app
+      dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
+      if let id = documentID { dictatedFields.insert(id) }
+      edit { $0.insertFinished(text) }
+    }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
   }
 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     reloadSettings()
+    applyDebugLog()
     applyTraits()
     engine.resync()
     refresh()
@@ -141,6 +170,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
     dictation.detach()
+    dlog("disappear")
+    debugLog?.flush(wait: true)  // iOS may end a closed keyboard before a queued write runs
   }
 
   override func viewDidLayoutSubviews() {
@@ -208,6 +239,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   private func relayout(page: KeyboardPage) {
     let layout = makeLayout(width: view.bounds.width, page: page)
+    dlog("page", [.init("page", .s("\(page)")), .init("form", .s("\(layout.form)")), .init("width", .d(Double(layout.width)))])
     keyboardView.setLayout(layout)
     bar.showsDismiss = !layout.form.isPad
     heightConstraint?.constant = barHeight + layout.height
@@ -228,6 +260,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     inputEpoch += 1
     applyTraits()
     engine.resync()
+    logHost("text")
     refresh()
   }
 
@@ -237,7 +270,106 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     guard !engineEditing else { return }
     inputEpoch += 1
     engine.resync()
+    logHost("selection")
     refresh()
+  }
+
+  // MARK: debug log
+
+  /// Starts or stops the debug log as the app's switch says. The keyboard reads the switch from the App Group,
+  /// which iOS opens to it only with Full Access: without it the switch reads off and nothing is recorded. When it
+  /// can read the switch but not write there, the log goes to the keyboard's own container instead.
+  private func applyDebugLog() {
+    guard let until = Settings.shared.keyboardDebugLogUntil, until > Date() else {
+      debugLog?.stop()
+      setDebugLog(nil)
+      return
+    }
+    if debugLog == nil {
+      let group = hasFullAccess ? KeyboardLogStore.groupDirectory : nil
+      let writable = group.map { (try? FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)) != nil } ?? false
+      setDebugLog(KeyboardDebugLog(directory: writable ? group! : KeyboardLogStore.localDirectory))
+    }
+    debugLog?.start(until: until)
+    dlog("appear", [.init("fullAccess", .b(hasFullAccess)), .init("store", .s(debugLog?.directory == KeyboardLogStore.localDirectory ? "keyboard" : "group")),
+                    .init("layout", .s(language.rawValue)), .init("languages", .list(engine.suggester.lexicons.map { .s($0.language) })),
+                    .init("width", .d(Double(view.bounds.width))), .init("form", .s("\(keyboardView.layout.form)")),
+                    .init("wall", .s(Date().ISO8601Format())),  // anchors the uptime clock, which restarts with the phone
+                    .init("version", .s(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""))])
+    loggedField = nil  // the field gets its line again, after this one
+    typedSinceHost = false
+  }
+
+  /// The field the log last described, so each field gets one line.
+  private var loggedField: UUID?
+
+  private func setDebugLog(_ log: KeyboardDebugLog?) {
+    debugLog = log
+    keyboardView.debugLog = log
+    proxy.log = log
+    proxy.redact = { [weak self] in self?.fieldRedacted == true }
+    loggedBar = []
+    debugSkip = nil
+    engine.onEvent = log.map { log in
+      { [weak self] event in
+        // the words of a field a dictation went into may be dictated ones: the decision is kept, the words not
+        if self?.fieldRedacted == true { log.log(event.name, [.init("redacted", .b(true))]); return }
+        switch event {
+        case .autocorrected(let o, let r): log.log("autocorrect", [.init("from", .s(o)), .init("to", .s(r))])
+        case .revertOffered(let o, let r): log.log("revert-offer", [.init("from", .s(o)), .init("to", .s(r))])
+        case .reverted(let o, let r, let how): log.log("revert", [.init("from", .s(o)), .init("to", .s(r)), .init("how", .s(how))])
+        case .picked(let w, let replaced): log.log("picked", [.init("word", .s(w)), .init("replaced", .s(replaced))])
+        case .swiped(let w, let alts): log.log("swiped", [.init("word", .s(w)), .init("alternatives", .list(alts.map { .s($0) }))])
+        }
+      }
+    }
+    bar.showsDebugDot = log?.isOn == true && debugSkip == nil
+  }
+
+  /// One debug log line, when the log is on; `fields` is only built then.
+  private func dlog(_ event: String, _ fields: @autoclosure () -> [LogField] = [], at t: TimeInterval? = nil) {
+    guard let log = debugLog, log.isOn else { return }
+    log.log(event, fields(), at: t)
+  }
+
+  /// The host changed the text or moved the cursor: how much text is before the cursor, as far as the engine
+  /// reads it (TypingContext's last 160 characters), but not the text: it may hold dictated words, and a keyboard
+  /// reopened after a dictation has no way to tell (#162).
+  private func logHost(_ kind: String) {
+    typedSinceHost = false
+    dlog("host", [.init("kind", .s(kind)), .init("chars", .i(min(160, (textDocumentProxy.documentContextBeforeInput ?? "").count)))])
+  }
+
+  /// Fields the log never records. iOS never shows a third-party keyboard in a secure text field (it swaps in its
+  /// own), so these are the fields that ask for a password, a one-time code or card details through their content
+  /// type. keyboardType has no password or card value, so it marks nothing on its own.
+  static func unloggedReason(_ p: UITextDocumentProxy) -> String? {
+    if p.isSecureTextEntry == true { return "secure" }
+    guard let type = p.textContentType ?? nil else { return nil }
+    switch type {
+    case .password, .newPassword: return "password"
+    case .oneTimeCode: return "one-time-code"
+    case .creditCardNumber, .creditCardSecurityCode, .creditCardExpiration, .creditCardExpirationMonth, .creditCardExpirationYear,
+         .creditCardName, .creditCardGivenName, .creditCardMiddleName, .creditCardFamilyName, .creditCardType:
+      return "card"
+    default: return nil
+    }
+  }
+
+  /// Pauses the log in a field it must not record, and resumes it after.
+  private func applyDebugSkip() {
+    guard let log = debugLog else { return }
+    let reason = Self.unloggedReason(textDocumentProxy)
+    guard reason != debugSkip else { return }
+    if let reason {
+      log.log("skip", [.init("reason", .s(reason))])  // the last line before the pause: says why, records nothing of the field
+      log.suspend(true)
+    } else {
+      log.suspend(false)
+      log.log("resume")
+    }
+    debugSkip = reason
+    bar.showsDebugDot = log.isOn
   }
 
   private func applyTraits() {
@@ -253,6 +385,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     t.autocorrect = p.autocorrectionType != .no && ![.URL, .emailAddress, .webSearch, .twitter].contains(type)
     if [.URL, .emailAddress].contains(type) { t.capitalization = .none }
     engine.traits = t
+    applyDebugSkip()
+    if let log = debugLog, log.isOn, let id = documentID, id != loggedField {
+      loggedField = id
+      log.log("field", [.init("keyboardType", .i(type.rawValue)), .init("contentType", .s(p.textContentType??.rawValue ?? "")),
+                        .init("autocorrect", .b(t.autocorrect)), .init("capitalization", .s("\(t.capitalization)")),
+                        .init("return", .i((p.returnKeyType ?? .default).rawValue))])
+    }
     keyboardView.returnLabel = Self.returnLabel(p.returnKeyType ?? .default, language)
     let numeric = [.numberPad, .decimalPad, .numbersAndPunctuation, .phonePad, .asciiCapableNumberPad].contains(type)
     if let page = KeyboardPage.forField(numeric: numeric, current: keyboardView.layout.page, emojiSearch: emojiSearch != nil) {
@@ -289,7 +428,18 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // search has its own shift, off unless tapped, and types the shifted mark only (EmojiIndex folds case)
     keyboardView.shift = emojiSearch == nil ? engine.shift : (searchShift ? .on : .off)
     keyboardView.shiftManual = emojiSearch == nil ? engine.shiftManual : true
-    bar.show(engine.suggestions(), pending: engine.pendingAutocorrection)
+    let suggestions = engine.suggestions(), pending = engine.pendingAutocorrection
+    bar.show(suggestions, pending: pending)
+    bar.showsDebugDot = debugLog?.isOn == true  // off once the 24 hours are up, and in fields it skips
+    if let log = debugLog, log.isOn {
+      let words = suggestions.map(\.word) + [pending ?? ""]
+      if words != loggedBar {
+        loggedBar = words
+        if fieldRedacted { log.log("bar", [.init("count", .i(suggestions.count)), .init("redacted", .b(true))]); return }
+        log.log("bar", [.init("words", .list(suggestions.map { .s($0.word) })), .init("kinds", .list(suggestions.map { .s("\($0.kind)") })),
+                        .init("bold", pending.map { .s($0) } ?? .null)])
+      }
+    }
   }
 
   // MARK: KeyboardViewDelegate
@@ -300,6 +450,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, typed text: String, at point: CGPoint?) {
+    typedSinceHost = true
+    dlog("key", [.init("text", .s(text)), .init("p", point.map { .pt($0) } ?? .null), .init("search", .b(emojiSearch != nil))])
     if let s = emojiSearch {
       s.type(text)
       if searchShift { searchShift = false; refresh() }
@@ -312,6 +464,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, action: KeyAction) {
+    dlog("act", [.init("a", .s("\(action)"))])
     if let s = emojiSearch {
       switch action {
       case .space:
@@ -342,12 +495,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardViewDelete(_ v: KeyboardView, wholeWord: Bool) {
+    dlog("act", [.init("a", .s(wholeWord ? "deleteWord" : "delete"))])
     if let s = emojiSearch { s.deleteBackward(); return }
     edit { wholeWord ? $0.deleteWord() : $0.delete() }
   }
 
   func keyboardView(_ v: KeyboardView, moveCursor by: Int) {
     guard emojiSearch == nil else { return }  // the space-bar trackpad must not move the document's cursor
+    dlog("cursor", [.init("by", .i(by))])
     inputEpoch += 1
     engineEditing = true
     textDocumentProxy.adjustTextPosition(byCharacterOffset: by)
@@ -357,19 +512,28 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardView(_ v: KeyboardView, swiped trace: [CGPoint]) {
-    guard emojiSearch == nil else { return }  // search takes taps only
+    // search takes taps only; the line tells the report this lifted swipe has no decode coming
+    guard emojiSearch == nil else { dlog("swipe", [.init("ignored", .s("emoji search"))]); return }
     var decoder = MultiSwipeDecoder(decoders)
     decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()
-    let epoch = inputEpoch, document = textDocumentProxy.documentIdentifier
+    let epoch = inputEpoch, document = documentID
     // the words before the swipe pick the language and promote the words that usually come next
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
+    // decided now: by the time the decode returns, focus may have moved out of a field the log must skip
+    let loggable = debugLog?.isOn == true, liftedAt = ProcessInfo.processInfo.systemUptime
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
-      let words = decoder.decode(trace, context: context, limit: 4)
+      let scored = decoder.decodeScored(trace, context: context, limit: 4)
+      let words = scored.map(\.word), ms = (CACurrentMediaTime() - t0) * 1000
       DispatchQueue.main.async { [weak self] in
-        guard let self, !words.isEmpty, self.inputEpoch == epoch, self.emojiSearch == nil,
-              self.textDocumentProxy.documentIdentifier == document else { return }
+        guard let self else { return }
+        let applies = !words.isEmpty && self.inputEpoch == epoch && self.emojiSearch == nil
+          && document != nil && self.documentID == document  // nil once the keyboard has closed
+        if loggable { self.dlog("swipe", [.init("points", .i(trace.count)), .init("trace", .list(KeyboardDebugLog.sample(trace, limit: 48).map { .pt($0) })),
+                            .init("candidates", .list(scored.map { .obj([.init("w", .s($0.word)), .init("s", .d($0.score))]) })),
+                            .init("applied", .b(applies)), .init("decodeMs", .d(ms))], at: liftedAt) }
+        guard applies else { return }
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }
     }
@@ -414,7 +578,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   private func makeEmojiPanel() -> EmojiPanel {
     let p = EmojiPanel(categories: EmojiStore.categories(), history: EmojiStore.load())
-    p.onEmoji = { [weak self] e in self?.edit("emoji") { $0.emoji(e) } }
+    p.onEmoji = { [weak self] e in
+      self?.dlog("emoji", [.init("emoji", .s(e)), .init("from", .s("panel"))])
+      self?.edit("emoji") { $0.emoji(e) }
+    }
     p.onDelete = { [weak self] in self?.edit { $0.delete() } }
     p.onSearch = { [weak self] in self?.startEmojiSearch() }
     p.onLetters = { [weak self] in
@@ -443,6 +610,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
                            tone: { [weak self] list in self.map { EmojiStore.shown(list, toned: $0.tonedEmoji) } ?? list })
     s.onPick = { [weak self] e in
       guard let self else { return }
+      dlog("emoji", [.init("emoji", .s(e)), .init("from", .s("search"))])
       edit("emoji") { $0.emoji(e) }
       EmojiStore.record(e, toned: tonedEmoji)
     }
@@ -520,12 +688,22 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 }
 
 /// UITextDocumentProxy as the engine's TextProxy.
+/// With the debug log on, records every insert and delete it makes in the document.
 final class ProxyAdapter: TextProxy {
   private weak var controller: UIInputViewController?
+  var log: KeyboardDebugLog?
+  /// True in a field a dictation went into: inserts are logged by length only.
+  var redact: () -> Bool = { false }
   init(_ c: UIInputViewController) { controller = c }
   var documentContextBeforeInput: String? { controller?.textDocumentProxy.documentContextBeforeInput }
-  func insertText(_ text: String) { controller?.textDocumentProxy.insertText(text) }
-  func deleteBackward() { controller?.textDocumentProxy.deleteBackward() }
+  func insertText(_ text: String) {
+    if let log, log.isOn { log.log("ins", redact() ? [.init("chars", .i(text.count))] : [.init("text", .s(text))]) }
+    controller?.textDocumentProxy.insertText(text)
+  }
+  func deleteBackward() {
+    if let log, log.isOn { log.log("del") }
+    controller?.textDocumentProxy.deleteBackward()
+  }
 }
 
 /// Loads the bundled lexicons, memory-mapped.

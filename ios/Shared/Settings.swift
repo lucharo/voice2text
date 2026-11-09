@@ -85,6 +85,13 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue, forKey: "previewGlobeKey") }
   }
 
+  /// When the keyboard debug log switches itself off; nil while it is off (#162). The app's switch sets it to 24
+  /// hours from now.
+  var keyboardDebugLogUntil: Date? {
+    get { (defaults.object(forKey: "keyboardDebugLogUntil") as? Double).map(Date.init(timeIntervalSince1970:)) }
+    set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardDebugLogUntil") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }
