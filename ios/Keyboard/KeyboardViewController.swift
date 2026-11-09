@@ -327,9 +327,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   /// One debug log line, when the log is on; `fields` is only built then.
-  private func dlog(_ event: String, _ fields: @autoclosure () -> [LogField] = []) {
+  private func dlog(_ event: String, _ fields: @autoclosure () -> [LogField] = [], at t: TimeInterval? = nil) {
     guard let log = debugLog, log.isOn else { return }
-    log.log(event, fields())
+    log.log(event, fields(), at: t)
   }
 
   /// The host changed the text or moved the cursor: how much text is before the cursor, as far as the engine
@@ -521,7 +521,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // the words before the swipe pick the language and promote the words that usually come next
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
     // decided now: by the time the decode returns, focus may have moved out of a field the log must skip
-    let loggable = debugLog?.isOn == true
+    let loggable = debugLog?.isOn == true, liftedAt = ProcessInfo.processInfo.systemUptime
     decodeQueue.async {
       defer { latencyLog.log("swipe-decode \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms") }
       let scored = decoder.decodeScored(trace, context: context, limit: 4)
@@ -532,7 +532,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
           && document != nil && self.documentID == document  // nil once the keyboard has closed
         if loggable { self.dlog("swipe", [.init("points", .i(trace.count)), .init("trace", .list(KeyboardDebugLog.sample(trace, limit: 48).map { .pt($0) })),
                             .init("candidates", .list(scored.map { .obj([.init("w", .s($0.word)), .init("s", .d($0.score))]) })),
-                            .init("applied", .b(applies)), .init("decodeMs", .d(ms))]) }
+                            .init("applied", .b(applies)), .init("decodeMs", .d(ms))], at: liftedAt) }
         guard applies else { return }
         self.edit("swipe-apply") { $0.swipe(Array(words.prefix(4))) }
       }

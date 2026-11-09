@@ -61,7 +61,7 @@ public final class KeyboardDebugLog: @unchecked Sendable {
   private struct Pending {
     /// Seconds of uptime.
     let t: TimeInterval
-    /// Wall-clock seconds when it was logged, to compare with the app's Clear log time.
+    /// Wall-clock seconds when it happened, to compare with the app's Clear log time.
     var wall = Date().timeIntervalSince1970
     let event: String
     let fields: [LogField]
@@ -123,7 +123,8 @@ public final class KeyboardDebugLog: @unchecked Sendable {
       flush()
       return
     }
-    pending.append(Pending(t: t ?? now, event: event, fields: fields))
+    // the wall time of when it happened (a touch's own time), not of when it was logged: Clear log compares it
+    pending.append(Pending(t: t ?? now, wall: Date().timeIntervalSince1970 - (now - (t ?? now)), event: event, fields: fields))
     let full = pending.count >= flushCount
     let schedule = !full && !flushScheduled
     if schedule { flushScheduled = true }

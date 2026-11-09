@@ -214,6 +214,7 @@ public final class TypingEngine {
       let replaced = replacements[Self.shortcutKey(c.original)] == c.replacement
       if !replaced, c.replacement.allSatisfy({ $0.isLetter || Self.isApostrophe($0) }) {
         composing = c.replacement.map { TypedKey($0) }
+        composingResynced = correctionReadBack  // the reopened word is still the one read back
       } else {
         revertPhrase = c.replacement
       }

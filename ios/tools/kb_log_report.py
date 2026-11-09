@@ -204,6 +204,8 @@ def analyse(events: list[dict]) -> Report:
             r.span_s += (last_t - segment_start) / 1000
             segment_start = t
             key_times.append(float("nan"))  # ends the typing burst
+            last_tap_up = None
+            swipe_lifts.clear()
         last_t = t
         if e == "appear":
             r.sessions += 1

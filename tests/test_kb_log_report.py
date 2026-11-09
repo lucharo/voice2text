@@ -126,6 +126,13 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(all(k > 0 for k in r.kps))
         self.assertAlmostEqual(r.span_s, 2.0)
 
+    def test_a_restart_forgets_the_last_tap_and_waiting_lifts(self):
+        ev = [{"t": 9_000_000, "e": "up", "verdict": "tap", "ms": 40}, {"t": 9_000_100, "e": "up", "verdict": "swipe", "ms": 50},
+              {"t": 1_000, "e": "up", "verdict": "swipe", "ms": 600},
+              {"t": 1_100, "e": "swipe", "candidates": [{"w": "a", "s": 0}], "applied": False}]
+        s = rep.analyse(ev).swipes
+        self.assertEqual((s[0].ms, s[0].after_tap_ms), (600, None))
+
     def test_a_typed_line_separator_and_a_torn_character(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, "keyboard.jsonl").write_bytes('{"t":1,"e":"key","text":"\u2028"}\n'.encode() + b'{"t":2,"e":"key","text":"\xc3')

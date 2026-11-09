@@ -176,6 +176,8 @@ struct DebugLogTests {
     #expect(e.holdsReadBackText)
     e.delete()  // the original is offered back
     #expect(e.holdsReadBackText)
+    e.character("m")  // typing on reopens the corrected word: still read back
+    #expect(e.holdsReadBackText)
     e.space()
     e.character("a")
     #expect(!e.holdsReadBackText)
