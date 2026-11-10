@@ -42,7 +42,9 @@ jobs:
         run: ios/setup.sh
       - name: Test the keyboard engines
         working-directory: ios/Packages/V2TKeyboardCore
-        run: swift test -c release -Xswiftc -enable-testing  # QualityEval takes 6 minutes in debug, 36 s here
+        # The suite includes timer and latency checks. Keep the accuracy benchmarks
+        # from competing with them for CPU; retain every test and its limits.
+        run: swift test -c release -Xswiftc -enable-testing --no-parallel
       - name: Import the Apple Distribution identity into a throwaway keychain
         env:
           APPLE_DISTRIBUTION_P12: ${{ secrets.APPLE_DISTRIBUTION_P12 }}
