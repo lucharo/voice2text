@@ -9,7 +9,7 @@ settings:
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: ${V2T_TEAM}
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.0.1"
     CURRENT_PROJECT_VERSION: "3"  # for local uploads only; raise it above the last upload first. CI numbers its own (.github/workflows/testflight.yml)
 packages:
   FluidAudio:
