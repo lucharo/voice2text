@@ -3,15 +3,15 @@
 - A keyboard that types like Apple's, with a v2t mic key: tap it, talk, tap **Done**, and v2t types
   the text where your cursor was.
 - v2t transcribes speech on the device, and the audio never leaves it.
-- It is test software: so far, only invited testers can install it.
+- It is free on the [App Store](https://apps.apple.com/app/id6831059370).
 
-!!! note "Who can install it"
+!!! note "Where to get it"
 
-    v2t for iPhone is in internal testing on TestFlight. Only testers the maintainer adds to the app's
-    App Store Connect team can install it. It has no public TestFlight link and no App Store listing
-    yet. Every change to the app goes to TestFlight; this page describes it as of 6 November 2026.
-    Send problems through TestFlight's
-    **Send Beta Feedback** or as a [GitHub issue](https://github.com/lucharo/voice2text/issues).
+    Install v2t from the [App Store](https://apps.apple.com/app/id6831059370). Every change goes to TestFlight first, for the testers
+    the maintainer invites, and reaches the App Store in a later release. This page describes the app
+    as of 6 November 2026. Send problems as a
+    [GitHub issue](https://github.com/lucharo/voice2text/issues), or through TestFlight's
+    **Send Beta Feedback** if you test it there.
 
 ## Will it work on my device?
 
@@ -44,7 +44,7 @@ section shows what your device got and why, says so when your iPhone model is un
 
 ## Set up
 
-1. Install v2t from TestFlight, open it and tap **Download** next to **Speech model** (about 630 MB,
+1. Install v2t from the [App Store](https://apps.apple.com/app/id6831059370), open it and tap **Download** next to **Speech model** (about 630 MB,
    once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
 2. Tap **Add the v2t keyboard**. It opens Settings: go to **v2t** › **Keyboards** and turn on
    **v2t**. (General › Keyboard › Keyboards › Add New Keyboard does the same.)
