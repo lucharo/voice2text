@@ -463,7 +463,7 @@ depend on the Mac, so compare models on the same machine.
 ## What would v2t on an iPhone use?
 
 The iPhone and iPad app lives in [`ios/`](https://github.com/lucharo/voice2text/tree/main/ios)
-([#75](https://github.com/lucharo/voice2text/issues/75)). It is in internal TestFlight testing (see
+([#75](https://github.com/lucharo/voice2text/issues/75)). It is on the App Store (see
 [iPhone and iPad](iphone.md)), and build 1 ran on an iPhone 17 Pro. This answer covers phones with
 Apple Intelligence; the others get Parakeet v3 and no model cleanup (the [model table in ios/README.md](https://github.com/lucharo/voice2text/blob/main/ios/README.md#which-model-this-iphone-gets)).
 
@@ -506,7 +506,7 @@ to match Apple's swipe yet.
 
 ## Which iPhones and iPads does v2t work on, and how fast is it?
 
-It needs iOS 26 or later and, for now, an invitation to the internal TestFlight. Only two iPhones
+It needs iOS 26 or later and is free on the [App Store](https://apps.apple.com/app/id6831059370). Only two iPhones
 have been checked. The speech and cleanup models were measured on an iPhone 16 Pro in a separate
 benchmark app
 ([#85](https://github.com/lucharo/voice2text/issues/85),
