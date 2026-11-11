@@ -2356,6 +2356,120 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(statuses[1], "p", "the partial grows a piece at a time")
         paste.assert_called_once_with("p p p")
 
+    # Three pieces: the first ends with a sentence end inside it after 86 words, the
+    # second only at its own end, the third comes after release.
+    _EARLY_PIECES = ("word " * 85 + "stop. after", "more " * 10 + "done.", "last bit.")
+
+    def _texts_stt(self, voice, texts: list[str]):
+        """A Core ML-shaped STT whose pieces decode to `texts` in order; a preview of
+        the audio after the last piece decodes to 'tail'."""
+        stt = mock.Mock(
+            spec=["streaming", "sample_rate", "pieces", "decode"],
+            streaming=True, sample_rate=16000,
+        )
+        first, second, _last = self._PIECE_SIZES
+        held = {}
+        queue_ = list(texts)
+
+        def decode(piece):
+            live = held.setdefault("live", voice.live)
+            if piece.size in (first, second) or live is None or live.done.is_set():
+                return queue_.pop(0)
+            return "tail"
+
+        stt.pieces.side_effect = lambda: backends.PieceDecoder(decode, 16000)
+        voice.stt = stt
+
+    def _recording_cleaner(self, voice, calls: list, fail_while_held: bool = False):
+        """A cleaner that capitalises 'word' and notes (text, still recording?); with
+        `fail_while_held`, its first call while recording raises."""
+        cleaner = mock.Mock(model_id="fake-cleaner")
+
+        def cleanup(text, mode):
+            held = voice.live is not None and not voice.live.done.is_set()
+            calls.append((text, held))
+            if held and fail_while_held and len(calls) == 1:
+                raise RuntimeError("model busy")
+            cleaner.last_stats = {"chunks": 1, "guarded": 0, "limited": 0}
+            return text.replace("word", "Word"), None, 0.25
+
+        cleaner.cleanup.side_effect = cleanup
+        voice.cleaner = cleaner
+
+    def test_settled_sentences_are_cleaned_while_recording_and_only_the_rest_after(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        self._texts_stt(voice, list(self._EARLY_PIECES))
+        calls: list = []
+        self._recording_cleaner(voice, calls)
+
+        _statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        segment = "word " * 85 + "stop."
+        rest = "after " + "more " * 10 + "done. last bit."
+        self.assertEqual(calls, [(segment, True), (rest, False)])
+        paste.assert_called_once_with(segment.replace("word", "Word") + " " + rest)
+        record = config.read_history()[-1]
+        self.assertEqual(
+            {k: record[k] for k in ("cleanup_chunks", "cleanup_s", "cleaned_while_recording", "early_cleanup_s")},
+            {"cleanup_chunks": 2, "cleanup_s": 0.25, "cleaned_while_recording": 86, "early_cleanup_s": 0.25},
+        )
+        self.assertTrue(
+            any("86 words cleaned while recording" in line for line in lines), lines
+        )
+
+    def test_a_transcript_that_no_longer_starts_with_the_cleaned_sentences_is_cleaned_whole(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        self._texts_stt(voice, list(self._EARLY_PIECES))
+        calls: list = []
+        self._recording_cleaner(voice, calls)
+        # the pieces' joined text with a word re-decoded differently at the start
+        with mock.patch.object(
+            backends.PieceDecoder, "finish",
+            lambda decoder: "Word " + " ".join(decoder.texts[0].split()[1:]) + " more last bit.",
+        ):
+            _statuses, paste, _lines = self._hold_long(voice, [None, None, None])
+
+        whole = "Word " + "word " * 84 + "stop. after more last bit."
+        self.assertEqual(calls[-1], (whole, False))
+        paste.assert_called_once_with(whole.replace("word", "Word"))
+        self.assertNotIn("cleaned_while_recording", config.read_history()[-1])
+
+    def test_a_segment_that_fails_while_recording_leaves_everything_for_after_release(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        # the second piece holds a segment of its own, which must not be cleaned early
+        pieces = ("word " * 85 + "stop. after", "more " * 85 + "done. again", "last bit.")
+        self._texts_stt(voice, list(pieces))
+        calls: list = []
+        self._recording_cleaner(voice, calls, fail_while_held=True)
+
+        _statuses, paste, lines = self._hold_long(voice, [None, None, None])
+
+        raw = " ".join(pieces)
+        self.assertEqual(calls, [("word " * 85 + "stop.", True), (raw, False)])
+        paste.assert_called_once_with(raw.replace("word", "Word"))
+        self.assertTrue(any("Cleanup while recording off" in line for line in lines))
+
+    def test_cleanup_stream_takes_settled_text_up_to_a_sentence_end_inside_a_piece(self):
+        stream = backends.CleanupStream(minimum_words=3)
+        # under the minimum, then a sentence end only at a piece's own end
+        self.assertIsNone(stream.next(["one two."]))
+        self.assertIsNone(stream.next(["one two three four."]))
+        # the latest sentence end inside a piece closes the segment
+        self.assertEqual(
+            stream.next(["one two. three four. five", "six."]), "one two. three four."
+        )
+        self.assertEqual(stream.taken, "one two. three four.".split())
+        self.assertIsNone(stream.next(["one two. three four. five", "six."]), "nothing new")
+        self.assertEqual(stream.rest("one two. three four. five six. seven"), "five six. seven")
+        self.assertIsNone(stream.rest("One two. three four. five six."), "re-decoded")
+        self.assertIsNone(stream.rest("one two."), "shorter than what was taken")
+
     def test_a_short_recording_is_one_decode_on_release(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()

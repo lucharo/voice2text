@@ -683,6 +683,60 @@ def chunk_text(text: str, max_words: int = CHUNK_WORDS) -> list[str]:
     return chunks
 
 
+_STREAM_SENTENCE_ENDS = (".", "!", "?", "…")
+
+
+class CleanupStream:
+    """Which part of a dictation transcribed in pieces may be cleaned before Stop.
+
+    The Mac twin of the iPhone's `CleanupStream` (#165). A segment is taken once the
+    settled text after the last segment holds at least `minimum_words` words and reaches
+    a sentence end *inside* a piece. A sentence end at a piece's own end does not count:
+    the speech model often closes a piece with a full stop where the cut fell
+    mid-sentence (#126: 71 to 262 extra sentence ends in 1,452 cuts), and cleanup is
+    what repairs that, so it must see both sides of the cut. Each segment is then
+    cleaned on its own, through the same chunking and guards as a whole dictation.
+    """
+
+    # The iPhone's segment size: the smallest Apple's model was measured at without a
+    # formatting loss against the 120-word chunk (#126's prompt search, 80-word arm).
+    MINIMUM_WORDS = 80
+
+    def __init__(self, minimum_words: int = MINIMUM_WORDS):
+        self.minimum_words = minimum_words
+        self.taken: list[str] = []  # words handed out so far; the final text must begin with them
+
+    def next(self, pieces: list[str]) -> str | None:
+        """The next segment to clean, given every piece's text so far, or None when
+        there is not yet enough settled text ending at a sentence end inside a piece."""
+        words: list[str] = []
+        piece_ends: set[int] = set()  # word counts at which a piece ends
+        for piece in pieces:
+            words += piece.split()
+            piece_ends.add(len(words))
+        start = len(self.taken)
+        if len(words) <= start or words[:start] != self.taken:
+            return None
+        end = len(words)
+        while end > start:
+            if end not in piece_ends and words[end - 1].endswith(_STREAM_SENTENCE_ENDS):
+                break
+            end -= 1
+        if end - start < self.minimum_words:
+            return None
+        segment = words[start:end]
+        self.taken += segment
+        return " ".join(segment)
+
+    def rest(self, text: str) -> str | None:
+        """What is left to clean of the dictation's final text, or None when that text
+        does not begin with the segments handed out (clean all of it then)."""
+        words = text.split()
+        if words[: len(self.taken)] != self.taken:
+            return None
+        return " ".join(words[len(self.taken) :])
+
+
 def within_length_guard(raw: str, clean: str, mode: str) -> bool:
     low, high = LENGTH_GUARD[mode]
     raw_words = len(_WORDS.findall(raw))
