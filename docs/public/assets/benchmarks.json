@@ -1,0 +1,252 @@
+{
+  "schema": 1,
+  "status": "Recorded in October 2026. Charts reproduce published results, not new runs.",
+  "groups": [
+    {
+      "id": "mac-speech",
+      "label": "Mac speech",
+      "title": "Transcription on a Mac",
+      "context": "M4 Pro · 150 clips per dataset · Open ASR Leaderboard scorer",
+      "note": "Four human-labelled English datasets, shown separately. No consensus-scored dictations, combined score or cross-run latency ranking. Not every benchmarked model is an app option; see the configuration reference.",
+      "source": "https://github.com/lucharo/voice2text/issues/85#issuecomment-6485101617",
+      "sourceLabel": "October 2026 speech results",
+      "datasets": [
+        {
+          "id": "clean",
+          "label": "LibriSpeech clean",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "clean"
+        },
+        {
+          "id": "other",
+          "label": "LibriSpeech other",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "other"
+        },
+        {
+          "id": "earnings",
+          "label": "Earnings22",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "earnings"
+        },
+        {
+          "id": "ami",
+          "label": "AMI, room microphone",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "ami"
+        }
+      ],
+      "rows": [
+        {
+          "name": "Parakeet v3 · Core ML",
+          "badge": "Mac default",
+          "clean": 1.68,
+          "other": 4.06,
+          "earnings": 9.92,
+          "ami": 29.19
+        },
+        {
+          "name": "Nemotron Unified · fp16",
+          "clean": 1.71,
+          "other": 3.35,
+          "earnings": 9.57,
+          "ami": 28.43
+        },
+        {
+          "name": "Qwen3-ASR 1.7B · 8-bit",
+          "clean": 1.26,
+          "other": 3.65,
+          "earnings": 8.53,
+          "ami": 28.23
+        },
+        {
+          "name": "Cohere Transcribe 2B",
+          "clean": 1.29,
+          "other": 2.33,
+          "earnings": 8.74,
+          "ami": 26
+        },
+        {
+          "name": "Parakeet Unified EN",
+          "clean": 1.45,
+          "other": 2.9,
+          "earnings": 8.04,
+          "ami": 32.74
+        }
+      ]
+    },
+    {
+      "id": "iphone-speech",
+      "label": "iPhone speech",
+      "title": "Transcription on an iPhone",
+      "context": "iPhone 16 Pro · 450 clips · one round · FluidAudio · leaderboard scorer",
+      "note": "150 clips each from LibriSpeech clean, other and FLEURS Spanish. Offline int8 arms alternated in 50-clip blocks, plugged in, with thermal state fair to serious. Decode excludes recording, model loading and cleanup.",
+      "source": "https://github.com/lucharo/voice2text/issues/85#issuecomment-6485101617",
+      "sourceLabel": "Matched iPhone speech results",
+      "datasets": [
+        {
+          "id": "pooled",
+          "label": "All 450 clips",
+          "metric": "Pooled word error rate",
+          "unit": "%",
+          "field": "pooled",
+          "latency": "decodeMs",
+          "latencyLabel": "Median decode",
+          "latencyUnit": "ms"
+        },
+        {
+          "id": "clean",
+          "label": "LibriSpeech clean",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "clean"
+        },
+        {
+          "id": "other",
+          "label": "LibriSpeech other",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "other"
+        },
+        {
+          "id": "spanish",
+          "label": "FLEURS Spanish",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "spanish"
+        }
+      ],
+      "rows": [
+        {
+          "name": "Parakeet v3 · int8",
+          "pooled": 3.37,
+          "clean": 1.9,
+          "other": 3.91,
+          "spanish": 4.13,
+          "decodeMs": 103
+        },
+        {
+          "name": "Nemotron Unified · int8",
+          "pooled": 2.83,
+          "clean": 1.68,
+          "other": 3.35,
+          "spanish": 3.36,
+          "decodeMs": 105
+        }
+      ]
+    },
+    {
+      "id": "iphone-cleanup",
+      "label": "iPhone cleanup",
+      "title": "Cleanup time on an iPhone",
+      "context": "iPhone 16 Pro · 600 paired transcript inputs · Qwen2.5-0.5B",
+      "note": "Core ML LUT6 and MLX 4-bit are different weight formats. The first 536 pairs were interleaved in 100-clip blocks; 64 Core ML results finished on resume. This compares these pipelines, not engines in isolation; heat and prior work affect timing.",
+      "source": "https://github.com/lucharo/voice2text/issues/67#issuecomment-6485264663",
+      "sourceLabel": "Completed 600-pair cleanup comparison",
+      "datasets": [
+        {
+          "id": "complete",
+          "label": "Complete cleanup",
+          "metric": "Median time per input",
+          "unit": "s",
+          "field": "cleanupSeconds"
+        },
+        {
+          "id": "first-token",
+          "label": "First token",
+          "metric": "Median first-token time",
+          "unit": "s",
+          "field": "firstTokenSeconds"
+        }
+      ],
+      "rows": [
+        {
+          "name": "Core ML · ANEMLL LUT6 · ANE",
+          "cleanupSeconds": 1.81,
+          "firstTokenSeconds": 1.46
+        },
+        {
+          "name": "MLX · 4-bit · GPU",
+          "cleanupSeconds": 0.85,
+          "firstTokenSeconds": 0.69
+        }
+      ]
+    },
+    {
+      "id": "cleanup-fidelity",
+      "label": "Cleanup fidelity",
+      "title": "Does cleanup keep the words?",
+      "context": "iPhone 16 Pro · iOS 26.5.2 · 600 Parakeet transcripts · 150 per dataset",
+      "note": "Whisper-normalized WER, unlike the speech charts. Formatted Earnings22 also counts case and punctuation. Apple's model uses dictation framing and permissive transformation guardrails; the word guard is a separate step. Cleanup did not improve every score.",
+      "source": "https://github.com/lucharo/voice2text/issues/67#issuecomment-6444626974",
+      "sourceLabel": "Apple Foundation Models cleanup results",
+      "datasets": [
+        {
+          "id": "clean",
+          "label": "LibriSpeech clean",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "clean"
+        },
+        {
+          "id": "other",
+          "label": "LibriSpeech other",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "other"
+        },
+        {
+          "id": "ami",
+          "label": "AMI, room microphone",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "ami"
+        },
+        {
+          "id": "earnings",
+          "label": "Earnings22",
+          "metric": "Word error rate",
+          "unit": "%",
+          "field": "earnings"
+        },
+        {
+          "id": "earnings-formatted",
+          "label": "Earnings22, formatted",
+          "metric": "Formatted word error rate",
+          "unit": "%",
+          "field": "earningsFormatted"
+        }
+      ],
+      "rows": [
+        {
+          "name": "Raw Parakeet transcript",
+          "clean": 1.94,
+          "other": 4.21,
+          "ami": 33.33,
+          "earnings": 10.78,
+          "earningsFormatted": 25.68
+        },
+        {
+          "name": "Apple FM · without word guard",
+          "clean": 4.03,
+          "other": 4.85,
+          "ami": 37.57,
+          "earnings": 11.16,
+          "earningsFormatted": 26.92
+        },
+        {
+          "name": "Apple FM · with word guard",
+          "clean": 1.94,
+          "other": 4.28,
+          "ami": 34.08,
+          "earnings": 10.78,
+          "earningsFormatted": 26.19
+        }
+      ]
+    }
+  ]
+}

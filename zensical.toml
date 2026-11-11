@@ -5,12 +5,14 @@ site_description = "Voice-as-an-Interface, done simply: local push-to-talk dicta
 site_author = "Luis Chaves Rodriguez"
 repo_url = "https://github.com/lucharo/voice2text"
 repo_name = "lucharo/voice2text"
-edit_uri = "edit/main/docs/"
+docs_dir = "docs/public"
+edit_uri = "edit/main/docs/public/"
+extra_css = ["stylesheets/docs.css"]
+extra_javascript = ["javascripts/benchmarks.js"]
 
 nav = [
   { "voice2text" = "index.md" },
   { "Getting started" = "getting-started.md" },
-  { "How it works" = "how-it-works.md" },
   { "Guide" = "guide.md" },
   { "iPhone and iPad" = "iphone.md" },
   { "Benchmarks" = "benchmarks.md" },
@@ -18,9 +20,8 @@ nav = [
     { "CLI" = "reference/cli.md" },
     { "config.toml" = "reference/config.md" },
   ] },
-  { "FAQ" = "faq.md" },
+  { "Help" = "faq.md" },
   { "Privacy" = "privacy.md" },
-  { "Maintainers" = "maintainers/index.md" },
 ]
 
 [project.theme]
