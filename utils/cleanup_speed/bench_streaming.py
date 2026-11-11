@@ -60,11 +60,12 @@ CUTS = {
 }
 
 
-def rebuild_pieces(raw: str, audio_s: float, backend: str) -> list[tuple[float, str]]:
+def rebuild_pieces(raw: str, audio_s: float, backend: str, sample_rate: int) -> list[tuple[float, str]]:
     """(when the piece is decoded, its words): the raw words cut every piece_s at the
-    dictation's own speaking rate, each known search_s after its mark. Under whole_s
-    the recording is one piece, decoded at Stop."""
-    if CUTS[backend] is None:
+    dictation's own speaking rate, each known search_s after its mark. Under whole_s,
+    and when the capture rate is not the model's 16 kHz (the app then streams nothing,
+    VoiceToText.can_stream), the recording is one piece, decoded at Stop."""
+    if CUTS[backend] is None or sample_rate != 16000:
         return [(audio_s, raw)]
     piece_s, search_s, whole_s = CUTS[backend]
     words = raw.split()
@@ -178,7 +179,7 @@ def main(argv: list[str]) -> int:
     OUT.mkdir(parents=True, exist_ok=True, mode=0o700)
     con = sqlite3.connect(f"file:{HISTORY}?mode=ro", uri=True)
     rows = con.execute(
-        "select id, audio_s, raw, coalesce(mode, 'casual'), backend from transcriptions "
+        "select id, audio_s, raw, coalesce(mode, 'casual'), backend, sample_rate from transcriptions "
         "where outcome = 'pasted' and raw is not null and audio_s >= ? order by id desc",
         (a.min_audio,),
     ).fetchall()[: a.limit]
@@ -191,8 +192,8 @@ def main(argv: list[str]) -> int:
     engine.cleanup(rows[0][2][:600], rows[0][3])  # warm-up: compile kernels, build prefix
 
     results = []
-    for n, (row_id, audio_s, raw, mode, backend) in enumerate(rows, 1):
-        pieces = rebuild_pieces(raw, audio_s, backend)
+    for n, (row_id, audio_s, raw, mode, backend, sample_rate) in enumerate(rows, 1):
+        pieces = rebuild_pieces(raw, audio_s, backend, sample_rate)
         b_text, b_s, b_chunks = batch(engine, raw, mode)
         s = streaming(engine, raw, pieces, audio_s, mode)
         results.append({
