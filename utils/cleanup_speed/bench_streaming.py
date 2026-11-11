@@ -51,11 +51,12 @@ def q(values: list[float], p: float) -> float:
 
 # Each backend's piece rule (PieceDecoder's piece_s, search_s, whole_s): the Core ML default
 # cuts 12 s pieces from the start (coreml.PIECE_S); Parakeet on MLX decodes whole under
-# WHOLE_FILE_S, then cuts 30 s pieces.
+# WHOLE_FILE_S, then cuts 30 s pieces; Whisper has no piece decoder (None: one piece at Stop).
 CUTS = {
     "parakeet-coreml": (coreml.PIECE_S, coreml.PIECE_SEARCH_S, 0.0),
     "parakeet": (backends.PIECE_S, backends.PIECE_SEARCH_S, backends.WHOLE_FILE_S),
     "qwen3-asr": (backends.PIECE_S, backends.PIECE_SEARCH_S, 0.0),
+    "whisper": None,
 }
 
 
@@ -63,6 +64,8 @@ def rebuild_pieces(raw: str, audio_s: float, backend: str) -> list[tuple[float, 
     """(when the piece is decoded, its words): the raw words cut every piece_s at the
     dictation's own speaking rate, each known search_s after its mark. Under whole_s
     the recording is one piece, decoded at Stop."""
+    if CUTS[backend] is None:
+        return [(audio_s, raw)]
     piece_s, search_s, whole_s = CUTS[backend]
     words = raw.split()
     if audio_s < max(whole_s, piece_s + search_s):
@@ -70,7 +73,7 @@ def rebuild_pieces(raw: str, audio_s: float, backend: str) -> list[tuple[float, 
     per_piece = max(1, round(len(words) * piece_s / audio_s))
     pieces = []
     for n, i in enumerate(range(0, len(words), per_piece), 1):
-        at = n * piece_s + search_s
+        at = max(whole_s, n * piece_s + search_s)  # no cut before whole_s
         pieces.append((at if at < audio_s else audio_s, " ".join(words[i : i + per_piece])))
     return pieces
 
@@ -87,8 +90,9 @@ def streaming(engine, raw: str, pieces: list[tuple[float, str]], audio_s: float,
     stream = backends.CleanupStream()
     parts, during, chunks, clock = [], 0.0, 0, 0.0
     for k, (at, _text) in enumerate(pieces, 1):
-        if at >= audio_s:
-            break  # decoded at Stop
+        # the processing thread decodes a piece once it is free; from Stop on nothing is cleaned early
+        if max(clock, at) >= audio_s:
+            break
         segment = stream.next([t for _at, t in pieces[:k]])
         if segment is None:
             continue
@@ -110,6 +114,7 @@ def streaming(engine, raw: str, pieces: list[tuple[float, str]], audio_s: float,
         "text": " ".join(parts).strip(),
         "during_s": during,
         "after_s": overhang + after,
+        "total_s": during + after,
         "chunks": chunks + after_chunks,
         "after_chunks": after_chunks,
         "early_words": len(stream.taken),
@@ -119,7 +124,7 @@ def streaming(engine, raw: str, pieces: list[tuple[float, str]], audio_s: float,
 def report(results: list[dict], model: str) -> None:
     b_after = [r["batch_s"] for r in results]
     s_after = [r["stream_after_s"] for r in results]
-    s_total = [r["stream_after_s"] + r["stream_during_s"] for r in results]
+    s_total = [r["stream_total_s"] for r in results]
     early = [r["early_words"] / r["words"] for r in results]
     same = sum(r["identical"] for r in results)
     sims = [r["similarity"] for r in results]
@@ -193,7 +198,7 @@ def main(argv: list[str]) -> int:
         results.append({
             "id": row_id, "audio_s": audio_s, "words": len(raw.split()), "pieces": len(pieces),
             "batch_s": b_s, "batch_chunks": b_chunks,
-            "stream_during_s": s["during_s"], "stream_after_s": s["after_s"],
+            "stream_during_s": s["during_s"], "stream_after_s": s["after_s"], "stream_total_s": s["total_s"],
             "stream_chunks": s["chunks"], "early_words": s["early_words"],
             "identical": s["text"] == b_text,
             "similarity": difflib.SequenceMatcher(None, b_text.split(), s["text"].split()).ratio(),
