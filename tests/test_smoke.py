@@ -2381,13 +2381,14 @@ class V2TSmokeTests(unittest.TestCase):
         voice.stt = stt
 
     def _recording_cleaner(self, voice, calls: list, fail_while_held: bool = False):
-        """A cleaner that capitalises 'word' and notes (text, still recording?)."""
+        """A cleaner that capitalises 'word' and notes (text, still recording?); with
+        `fail_while_held`, its first call while recording raises."""
         cleaner = mock.Mock(model_id="fake-cleaner")
 
         def cleanup(text, mode):
             held = voice.live is not None and not voice.live.done.is_set()
             calls.append((text, held))
-            if held and fail_while_held:
+            if held and fail_while_held and len(calls) == 1:
                 raise RuntimeError("model busy")
             cleaner.last_stats = {"chunks": 1, "guarded": 0, "limited": 0}
             return text.replace("word", "Word"), None, 0.25
@@ -2441,13 +2442,15 @@ class V2TSmokeTests(unittest.TestCase):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         lock = config.acquire_instance_lock()
         self.addCleanup(lock.close)
-        self._texts_stt(voice, list(self._EARLY_PIECES))
+        # the second piece holds a segment of its own, which must not be cleaned early
+        pieces = ("word " * 85 + "stop. after", "more " * 85 + "done. again", "last bit.")
+        self._texts_stt(voice, list(pieces))
         calls: list = []
         self._recording_cleaner(voice, calls, fail_while_held=True)
 
         _statuses, paste, lines = self._hold_long(voice, [None, None, None])
 
-        raw = " ".join(self._EARLY_PIECES)
+        raw = " ".join(pieces)
         self.assertEqual(calls, [("word " * 85 + "stop.", True), (raw, False)])
         paste.assert_called_once_with(raw.replace("word", "Word"))
         self.assertTrue(any("Cleanup while recording off" in line for line in lines))
