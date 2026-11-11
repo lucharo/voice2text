@@ -385,6 +385,30 @@ class LiveTranscription:
         self.done.set()
 
 
+class EarlyCleanup:
+    """The settled sentences of a recording cleaned while it is still going, so after
+    Stop only the rest is cleaned (the iPhone's #165). Runs on the processing thread,
+    which owns the cleanup model, between pieces."""
+
+    def __init__(self):
+        self.stream = backends.CleanupStream()
+        self.parts: list[str] = []  # each segment's cleaned text, in order
+        self.stats: dict = {}  # the cleaner's last_stats, summed over the segments
+        self.seconds = 0.0  # cleanup time spent while recording
+
+    def clean(self, cleaner, pieces: list[str], mode: str) -> None:
+        """Clean the next settled segment, if one is ready."""
+        segment = self.stream.next(pieces)
+        if segment is None:
+            return
+        cleaned, _ttft, seconds = cleaner.cleanup(segment, mode)
+        self.seconds += seconds
+        self.parts.append(cleaned or segment)
+        stats = getattr(cleaner, "last_stats", None)
+        for key, n in (stats if isinstance(stats, dict) else {}).items():
+            self.stats[key] = self.stats.get(key, 0) + n
+
+
 class VoiceToText:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -1077,6 +1101,8 @@ class VoiceToText:
                 stream.start()
                 tail_previews = False
             logged = 0  # samples heard when the log last said so (Nemotron)
+            # off for the recording once a segment fails: then it is all cleaned after Stop
+            early = EarlyCleanup() if self.cleaner is not None else None
             while True:
                 if self.stopping and not live.done.is_set():
                     live.cancel()  # shutdown mid-recording drops it, as before
@@ -1090,6 +1116,14 @@ class VoiceToText:
                     previewed = 0
                     if not live.done.is_set() and stream is None:
                         self._show_partial(pieces.text, pieces.decoded_samples)
+                    if early is not None and not live.done.is_set():
+                        try:
+                            early.clean(self.cleaner, pieces.texts, self.cfg.mode)
+                        except Exception as error:
+                            logger.warning(
+                                f"Cleanup while recording off for this recording: {error}"
+                            )
+                            early = None
                 elif (
                     tail_previews
                     and not live.done.is_set()
@@ -1163,7 +1197,12 @@ class VoiceToText:
                 self._no_speech(live.duration, levels, stt_s)
                 return
             self._deliver(
-                raw_text, live.duration, stt_s, streamed=streamed, levels=levels
+                raw_text,
+                live.duration,
+                stt_s,
+                streamed=streamed,
+                levels=levels,
+                early=early,
             )
         except Exception as error:
             with self.lifecycle_lock:
@@ -1240,39 +1279,71 @@ class VoiceToText:
         stt_s: float,
         streamed: bool,
         levels: dict | None = None,
+        early: EarlyCleanup | None = None,
     ) -> None:
-        """Clean up, paste and record one transcription. Raises on failure."""
+        """Clean up, paste and record one transcription. Raises on failure.
+
+        With `early`, the segments it cleaned while recording are kept and only the
+        rest of `raw_text` is cleaned now, unless the text no longer begins with them.
+        """
         if self.cancel_requested:
             return
         levels = levels or {}
         cleaned_text, cleanup_s, stats = raw_text, 0.0, {}
+        extra: dict = {}
         if self.cleaner is not None:
             self._set_state("cleaning")
+            rest = early.stream.rest(raw_text) if early and early.parts else None
+            if early and early.parts and rest is None:
+                logger.warning(
+                    "The transcript changed under the sentences cleaned while recording; "
+                    "cleaning all of it"
+                )
+            to_clean = raw_text if rest is None else rest
             logger.info("Cleaning up...")
-            stall_s = cleanup_stall_s(raw_text)
+            stall_s = cleanup_stall_s(to_clean)
             # Once past the stall mark, Python writes every thread's stack to stderr,
             # which the menu app keeps in v2t.log; the watchdog is cancelled on time.
             faulthandler.dump_traceback_later(stall_s)
             try:
                 try:
-                    cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(
-                        raw_text, self.cfg.mode
-                    )
+                    if to_clean:
+                        cleaned_text, _ttft, cleanup_s = self.cleaner.cleanup(
+                            to_clean, self.cfg.mode
+                        )
+                        stats = getattr(self.cleaner, "last_stats", None)
+                    else:  # Stop fell right after a cleaned sentence
+                        cleaned_text, cleanup_s, stats = "", 0.0, {}
                 finally:
                     faulthandler.cancel_dump_traceback_later()
+                if not isinstance(stats, dict):  # engines without chunk stats
+                    stats = {}
+                if to_clean and not cleaned_text:
+                    raise RuntimeError("empty response")
+                if rest is not None and early is not None:
+                    cleaned_text = " ".join([*early.parts, cleaned_text]).strip()
+                    stats = {
+                        key: stats.get(key, 0) + early.stats.get(key, 0)
+                        for key in {*stats, *early.stats}
+                    }
+                    extra = {
+                        "cleaned_while_recording": len(early.stream.taken),
+                        "early_cleanup_s": round(early.seconds, 3),
+                    }
                 if cleanup_s > stall_s:
                     logger.warning(
                         f"Cleanup took {cleanup_s:.1f}s, past its {stall_s:.1f}s stall mark: "
                         "the thread stacks above show where each thread was"
                     )
-                if not cleaned_text:
-                    raise RuntimeError("empty response")
                 logger.info(
-                    f"Cleaned {len(cleaned_text)} characters ({cleanup_s:.2f}s)"
+                    f"Cleaned {len(cleaned_text)} characters ({cleanup_s:.2f}s"
+                    + (
+                        f" after release; {len(early.stream.taken)} words cleaned while "
+                        f"recording in {early.seconds:.2f}s)"
+                        if extra and early is not None
+                        else ")"
+                    )
                 )
-                stats = getattr(self.cleaner, "last_stats", None)
-                if not isinstance(stats, dict):  # engines without chunk stats
-                    stats = {}
                 if stats.get("guarded") or stats.get("limited"):
                     logger.warning(
                         f"Cleanup kept raw text for {stats.get('guarded', 0)} chunk(s) "
@@ -1330,6 +1401,7 @@ class VoiceToText:
             raw=raw_text,
             clean=cleaned_text,
             outcome="pasted",
+            **extra,
         )
 
     def process_next(self, timeout: float | None = None) -> bool:
