@@ -1,6 +1,6 @@
 import XCTest
 
-/// The screens the iPhone guide (docs/iphone.md) shows that no other test reaches: the app's handoff screen after
+/// The screens the iPhone guide (docs/public/iphone.md) shows that no other test reaches: the app's handoff screen after
 /// the keyboard's mic opened it, and the card saying which model this device gets. A synthetic clip
 /// (V2T_FIXTURE_AUDIO) stands in for the microphone, so nothing records the room.
 @MainActor final class GuideShotsUITests: XCTestCase {

@@ -7,7 +7,7 @@ The iPad gets its own keyboard layouts, including the full keyboard with a numbe
 Status: internal TestFlight testing, with no public invitation. Builds 1 to 3 went to TestFlight on 5 November 2026
 (build 3 is main as of #110), and build 1 ran on an iPhone 17 Pro. Nothing has run on an iPad: the iPad layouts have
 only been rendered off-screen (the installed Simulator runtime offers no iPad). The user guide is
-[docs/iphone.md](../docs/iphone.md), published at <https://v2t.luischav.es/iphone/>.
+[iPhone guide](../docs/public/iphone.md), published at <https://v2t.luischav.es/iphone/>.
 
 ## Build and test
 
@@ -30,7 +30,7 @@ certificate or the App Store Connect key is renewed. Profiles come from App Stor
 profile with the same name needs no change.
 
 Pushing an `ios-v<version>` tag submits that version's newest TestFlight build for App Store review
-([appstore.yml](../.github/workflows/appstore.yml); [Maintainers](../docs/maintainers/index.md#iphone-app) has the details).
+([appstore.yml](../.github/workflows/appstore.yml); [Maintainers](../docs/public/maintainers/index.md#iphone-app) has the details).
 
 To upload from a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
 "v2t App Store" and "v2t keyboard App Store" profiles (App Store Connect API `GET /v1/profiles`, `profileContent`,

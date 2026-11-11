@@ -1,7 +1,7 @@
 """Chart for the docs: each speech model's errors against its wait, on real dictations
 and on far-field meetings.
 
-    .venv/bin/python utils/asr_grid/plot_models.py     # -> docs/images/models.svg
+    .venv/bin/python utils/asr_grid/plot_models.py     # -> docs/public/images/models.svg
 
 Numbers only, from the grid's finished cells: word error rate over the `wispr` set (208
 of the maintainer's dictations, scored against silver.py's transcripts) and over
@@ -24,7 +24,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import grid  # noqa: E402
 
-OUT = grid.REPO / "docs/images/models.svg"
+OUT = grid.REPO / "docs/public/images/models.svg"
 # system -> label; `default` and `qwen` get their own shape and colour
 SYSTEMS = {
     "parakeet-v3-coreml": "Parakeet v3, Core ML (default)",

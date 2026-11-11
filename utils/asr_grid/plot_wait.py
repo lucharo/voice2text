@@ -1,6 +1,6 @@
 """Chart for the README: wait after release against dictation length, Parakeet v3.
 
-    python utils/asr_grid/plot_wait.py                 # -> docs/images/wait-vs-length.svg
+    python utils/asr_grid/plot_wait.py                 # -> docs/public/images/wait-vs-length.svg
 
 One dot per dictation in the grid's `wispr` results (numbers only, no text): the
 whole-file read after release for every length, and from 60 s up the wait v2t has
@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import grid  # noqa: E402
 
-OUT = grid.REPO / "docs/images/wait-vs-length.svg"
+OUT = grid.REPO / "docs/public/images/wait-vs-length.svg"
 W, H = 760, 400
 L, R, T, B = 58, 20, 40, 46
 X0, X1 = math.log10(1), math.log10(1000)

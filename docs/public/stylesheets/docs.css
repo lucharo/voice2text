@@ -1,0 +1,62 @@
+.v2t-bench {
+  --bench-blue: #2459d3;
+  --bench-line: #dde3ed;
+  --bench-muted: #596579;
+  --bench-track: #edf1f7;
+  --bench-bg: #fff;
+  margin: 1.8rem 0 2rem;
+  font-variant-numeric: tabular-nums;
+}
+[data-md-color-scheme="slate"] .v2t-bench {
+  --bench-blue: #82aaff;
+  --bench-line: #3b465b;
+  --bench-muted: #b4bfd2;
+  --bench-track: #2d3547;
+  --bench-bg: #1e2533;
+}
+.bench-tabs { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+.bench-status { color: var(--bench-muted); font-size: .62rem; margin: -.4rem 0 1rem !important; }
+.bench-tab {
+  min-height: 44px; padding: .5rem .7rem; border: 1px solid var(--bench-line);
+  border-radius: 5px; font-size: .68rem; font-weight: 600; cursor: pointer;
+  background: var(--bench-bg); color: var(--md-default-fg-color);
+}
+.bench-tab[aria-pressed="true"] { color: #fff; background: #2459d3; border-color: #2459d3; }
+.bench-tab:hover { border-color: var(--bench-blue); }
+.bench-tab:focus-visible, .bench-select:focus-visible { outline: 3px solid var(--bench-blue); outline-offset: 3px; }
+.bench-panel { border: 1px solid var(--bench-line); border-radius: 8px; padding: 1.15rem 1.25rem; background: var(--bench-bg); }
+.bench-context { margin: 0 0 .4rem !important; color: var(--bench-muted); font-size: .63rem; }
+.md-typeset .bench-title { margin: .2rem 0 1rem; font-size: 1.12rem; font-weight: 700; line-height: 1.3; letter-spacing: -.025em; }
+.bench-controls { margin: .4rem 0 1.2rem; color: var(--bench-muted); font-size: .65rem; }
+.bench-controls label { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.bench-select { min-height: 44px; max-width: 100%; border: 1px solid var(--bench-line); border-radius: 4px; padding: .35rem 1.6rem .35rem .6rem; background: var(--bench-bg); color: var(--md-default-fg-color); font: inherit; }
+.bench-chart + .bench-chart { margin-top: 1.65rem; }
+.md-typeset .bench-metric { margin: .3rem 0 .1rem; font-size: .78rem; font-weight: 700; }
+.bench-direction { margin: 0 0 .8rem !important; color: var(--bench-muted); font-size: .6rem; }
+.bench-bar-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 3rem; gap: .6rem; align-items: center; min-height: 2.3rem; }
+.bench-row-label { font-size: .65rem; line-height: 1.35; }
+.bench-badge { display: block; color: var(--bench-blue); font-size: .52rem; font-weight: 600; }
+.bench-track { height: .8rem; background: var(--bench-track); border-left: 1px solid var(--bench-line); }
+.bench-fill { height: 100%; background: var(--bench-blue); }
+.bench-value { text-align: right; white-space: nowrap; font-size: .72rem; }
+.bench-axis { display: flex; justify-content: space-between; margin: .55rem 3.6rem 0 12.6rem; color: var(--bench-muted); font-size: .5rem; }
+.bench-note { margin: 1rem 0 .45rem !important; color: var(--bench-muted); font-size: .6rem; line-height: 1.55; }
+.bench-source { font-size: .62rem; font-weight: 600; }
+.md-typeset details.bench-data { margin: 1.3rem 0 0; padding: .55rem .7rem; border: 1px solid var(--bench-line); border-radius: 4px; box-shadow: none; font-size: .62rem; }
+.md-typeset details.bench-data summary { margin: 0; padding: 0; background: none; }
+.md-typeset details.bench-data summary::before, .md-typeset details.bench-data summary::after { display: none; }
+.bench-table-scroll { overflow-x: auto; margin-top: .65rem; }
+.md-typeset .bench-data table { display: table; width: 100%; margin: 0; font-size: .62rem; border-color: var(--bench-line); }
+.bench-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.bench-loading { padding: 1rem; border: 1px solid var(--bench-line); color: var(--bench-muted); }
+.md-typeset img[src*="dictation-flow"] { padding: .4rem; background: white; border-radius: 5px; }
+@media (max-width: 700px) {
+  /* Short pages do not need a floating contents button over their text or charts. */
+  .md-sidebar-button__wrapper { display: none; }
+  .bench-panel { padding: .8rem; }
+  .bench-bar-row { grid-template-columns: minmax(0, 1fr) 3rem; gap: .3rem .5rem; margin: .7rem 0; }
+  .bench-row-label { grid-column: 1 / -1; font-size: .7rem; }
+  .bench-axis { margin-left: 0; margin-right: 3.5rem; }
+  .bench-badge { display: inline; margin-left: .4rem; }
+  .bench-tab { flex: 1 1 42%; }
+}
