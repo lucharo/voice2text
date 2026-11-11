@@ -80,4 +80,4 @@ The log times transcription, cleanup and pasting separately. For an unusually sl
 
 ---
 <!-- doc-audit:last-reviewed -->
-_Last reviewed: 2026-11-05 · commit `4d5dcb4` · verified against code._
+_Last reviewed: 2026-11-11 · commit `641c3a0` · verified against code._

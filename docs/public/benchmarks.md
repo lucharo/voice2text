@@ -38,4 +38,4 @@ keystroke latency have not been benchmarked.
 
 ---
 <!-- doc-audit:last-reviewed -->
-_Last reviewed: 2026-11-06 · commit `2b4ec6f` · verified against code._
+_Last reviewed: 2026-11-11 · commit `641c3a0` · verified against code._

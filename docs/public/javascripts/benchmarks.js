@@ -90,6 +90,10 @@
         history.replaceState(null, "", next);
       };
       const render = () => {
+        const active = root.contains(document.activeElement) ? document.activeElement : null;
+        const focusedGroup = active?.dataset.benchGroup;
+        const focusedDataset = active?.classList.contains("bench-select");
+        let focusTarget;
         root.replaceChildren();
         const tabs = element("div", "bench-tabs");
         tabs.setAttribute("role", "group");
@@ -97,6 +101,8 @@
         for (const item of data.groups) {
           const button = element("button", "bench-tab", item.label);
           button.type = "button";
+          button.dataset.benchGroup = item.id;
+          if (focusedGroup === item.id) focusTarget = button;
           button.setAttribute("aria-pressed", String(item.id === group.id));
           button.addEventListener("click", () => { group = item; dataset = item.datasets[0]; updateURL(); render(); });
           tabs.append(button);
@@ -106,6 +112,7 @@
         const controls = element("div", "bench-controls");
         const label = element("label", "", "Compare ");
         const select = element("select", "bench-select");
+        if (focusedDataset) focusTarget = select;
         select.setAttribute("aria-label", "Dataset or measurement");
         for (const item of group.datasets) {
           const option = element("option", "", item.label);
@@ -125,6 +132,7 @@
         panel.append(source);
         root.append(tabs, element("p", "bench-status", data.status), panel);
         root.dataset.ready = "true";
+        focusTarget?.focus({ preventScroll: true });
       };
       render();
     } catch (error) {
