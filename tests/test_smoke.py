@@ -2270,7 +2270,7 @@ class V2TSmokeTests(unittest.TestCase):
         order: list = []
         self._pieces_or_tail(voice, lambda audio: "tail", pieces=order)
 
-        statuses, paste, lines = self._hold_long(voice, [None, None, None])
+        statuses, paste, lines = self._hold_long(voice, [None, "piece tail", None])
 
         self.assertEqual(order, list(self._PIECE_SIZES), "each piece once, the first at 60 s")
         self.assertEqual(statuses[1], "piece tail", "the first piece plus a preview of the rest")
