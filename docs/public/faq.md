@@ -76,7 +76,7 @@ The [release guide](maintainers/index.md#how-do-i-promote-a-testflight-build-to-
 
 ## Which step made a dictation slow?
 
-The log times transcription, cleanup and pasting separately. For an unusually slow cleanup, include the **stall mark** warning and nearby thread stacks in [#168](https://github.com/lucharo/voice2text/issues/168), after removing personal text. That investigation is still open.
+The log times transcription, cleanup and pasting separately. Transcription runs while you speak, so after you stop only the last piece is left. Cleanup also runs while you speak once 80 or more words have settled up to a sentence end, so on a long dictation only the rest is cleaned after you stop, and the log line then says how many words were cleaned while recording; a short dictation is still cleaned whole after you stop ([#183](https://github.com/lucharo/voice2text/pull/183)). For an unusually slow cleanup, include the **stall mark** warning and nearby thread stacks in [#168](https://github.com/lucharo/voice2text/issues/168), after removing personal text. That investigation is still open.
 
 ---
 <!-- doc-audit:last-reviewed -->

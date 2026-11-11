@@ -40,7 +40,8 @@ to the grid.
 
 | | model | notes |
 |---|---|---|
-| STT (default) | `mlx-community/parakeet-tdt-0.6b-v3` | multilingual (EN/ES/FR/DE…), fastest on Apple Silicon |
+| STT (default) | `FluidInference/parakeet-tdt-0.6b-v3-coreml` | backend `parakeet-coreml`: Parakeet v3 on the Neural Engine, 12 s pieces while you speak |
+| STT (MLX) | `mlx-community/parakeet-tdt-0.6b-v3` | backend `parakeet`: the same model on MLX, multilingual (EN/ES/FR/DE…) |
 | STT (alt) | `mlx-community/parakeet-tdt-0.6b-v2` | English-only, slightly higher EN accuracy |
 | STT (fallback) | `mlx-community/whisper-large-v3-turbo` | the old default; best for rare languages/accents |
 | cleanup (default) | `mlx:mlx-community/Qwen3.5-0.8B-4bit` | in-process, non-thinking; half the time of the 2B, judged level with it (#129) |
@@ -66,4 +67,4 @@ to the grid.
 
 - These clips measure speed only. Accuracy comes from the ASR grid ([`utils/asr_grid`](../utils/asr_grid/README.md)); how to time fairly on a loaded Mac, and how to benchmark on an iPhone, are in [`internal/README.md`](../internal/README.md#benchmarks).
 
-See `results/` for collected runs.
+See `results/` for collected runs. Those files predate the Core ML speech default and the Qwen3.5 0.8B cleanup default, so neither default has a column there; `utils/cleanup_speed/bench_streaming.py` times the shipped cleanup on your own history, batch against cleaning while you speak.
