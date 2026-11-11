@@ -9,7 +9,8 @@ through the shipped cleanup two ways, interleaved per dictation so machine load 
   the last arrives, each cleaned "while recording"; after Stop only ``rest`` is cleaned.
 
 History keeps the joined transcript, not each piece's text, so pieces are rebuilt by cutting
-the words at the dictation's own speaking rate every ``backends.PIECE_S`` seconds. Real cuts
+the words at the dictation's own speaking rate with its backend's piece rule (``CUTS``), and the
+cleanups are laid on a clock so a segment still cleaning at Stop counts toward the wait. Real cuts
 fall in pauses, so real pieces end at sentence ends more often than these; the segment
 boundaries are therefore approximate, the per-chunk model cost is not.
 
@@ -37,7 +38,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from v2t import backends, config  # noqa: E402
+from v2t import backends, config, coreml  # noqa: E402
 
 HISTORY = Path.home() / ".v2t/history/history.sqlite"
 OUT = Path.home() / ".v2t/eval/cleanup-stream"
@@ -48,11 +49,30 @@ def q(values: list[float], p: float) -> float:
     return ordered[min(len(ordered) - 1, int(round(p * (len(ordered) - 1))))]
 
 
-def rebuild_pieces(raw: str, audio_s: float) -> list[str]:
-    """The raw words cut every PIECE_S seconds at the dictation's own speaking rate."""
+# Each backend's piece rule (PieceDecoder's piece_s, search_s, whole_s): the Core ML default
+# cuts 12 s pieces from the start (coreml.PIECE_S); Parakeet on MLX decodes whole under
+# WHOLE_FILE_S, then cuts 30 s pieces.
+CUTS = {
+    "parakeet-coreml": (coreml.PIECE_S, coreml.PIECE_SEARCH_S, 0.0),
+    "parakeet": (backends.PIECE_S, backends.PIECE_SEARCH_S, backends.WHOLE_FILE_S),
+    "qwen3-asr": (backends.PIECE_S, backends.PIECE_SEARCH_S, 0.0),
+}
+
+
+def rebuild_pieces(raw: str, audio_s: float, backend: str) -> list[tuple[float, str]]:
+    """(when the piece is decoded, its words): the raw words cut every piece_s at the
+    dictation's own speaking rate, each known search_s after its mark. Under whole_s
+    the recording is one piece, decoded at Stop."""
+    piece_s, search_s, whole_s = CUTS[backend]
     words = raw.split()
-    per_piece = max(1, round(len(words) * backends.PIECE_S / max(audio_s, 1e-6)))
-    return [" ".join(words[i : i + per_piece]) for i in range(0, len(words), per_piece)]
+    if audio_s < max(whole_s, piece_s + search_s):
+        return [(audio_s, raw)]
+    per_piece = max(1, round(len(words) * piece_s / audio_s))
+    pieces = []
+    for n, i in enumerate(range(0, len(words), per_piece), 1):
+        at = n * piece_s + search_s
+        pieces.append((at if at < audio_s else audio_s, " ".join(words[i : i + per_piece])))
+    return pieces
 
 
 def batch(engine, raw: str, mode: str) -> tuple[str, float, int]:
@@ -60,16 +80,22 @@ def batch(engine, raw: str, mode: str) -> tuple[str, float, int]:
     return text, seconds, engine.last_stats["chunks"]
 
 
-def streaming(engine, raw: str, pieces: list[str], mode: str) -> dict:
+def streaming(engine, raw: str, pieces: list[tuple[float, str]], audio_s: float, mode: str) -> dict:
+    """Clean as the app does: after each piece decoded before Stop, the next settled
+    segment, one at a time, on a clock in audio seconds; at Stop, whatever segment is
+    still being cleaned finishes, then the rest."""
     stream = backends.CleanupStream()
-    parts, during, chunks = [], 0.0, 0
-    for k in range(1, len(pieces)):  # every piece but the last arrives while recording
-        segment = stream.next(pieces[:k])
+    parts, during, chunks, clock = [], 0.0, 0, 0.0
+    for k, (at, _text) in enumerate(pieces, 1):
+        if at >= audio_s:
+            break  # decoded at Stop
+        segment = stream.next([t for _at, t in pieces[:k]])
         if segment is None:
             continue
         text, _ttft, seconds = engine.cleanup(segment, mode)
         parts.append(text or segment)
         during += seconds
+        clock = max(clock, at) + seconds
         chunks += engine.last_stats["chunks"]
     rest = stream.rest(raw)
     if rest is None:
@@ -79,10 +105,11 @@ def streaming(engine, raw: str, pieces: list[str], mode: str) -> dict:
         text, _ttft, after = engine.cleanup(rest, mode)
         parts.append(text or rest)
         after_chunks = engine.last_stats["chunks"]
+    overhang = max(0.0, clock - audio_s)  # a segment still cleaning at Stop
     return {
         "text": " ".join(parts).strip(),
         "during_s": during,
-        "after_s": after,
+        "after_s": overhang + after,
         "chunks": chunks + after_chunks,
         "after_chunks": after_chunks,
         "early_words": len(stream.taken),
@@ -101,8 +128,8 @@ def report(results: list[dict], model: str) -> None:
         f"# Batch vs streaming cleanup, {date.today().isoformat()}",
         "",
         f"{len(results)} dictations from history, {min(r['audio_s'] for r in results):.0f} to "
-        f"{max(r['audio_s'] for r in results):.0f} s of audio, {model}, pieces rebuilt every "
-        f"{backends.PIECE_S:.0f} s at each dictation's speaking rate. "
+        f"{max(r['audio_s'] for r in results):.0f} s of audio, {model}, pieces rebuilt with each "
+        f"dictation's backend cuts at its speaking rate. "
         f"1-minute load average {min(loads):.0f} to {max(loads):.0f} on {os.cpu_count()} cores.",
         "",
         "| seconds | p50 | p90 | max | mean |",
@@ -146,7 +173,7 @@ def main(argv: list[str]) -> int:
     OUT.mkdir(parents=True, exist_ok=True, mode=0o700)
     con = sqlite3.connect(f"file:{HISTORY}?mode=ro", uri=True)
     rows = con.execute(
-        "select id, audio_s, raw, coalesce(mode, 'casual') from transcriptions "
+        "select id, audio_s, raw, coalesce(mode, 'casual'), backend from transcriptions "
         "where outcome = 'pasted' and raw is not null and audio_s >= ? order by id desc",
         (a.min_audio,),
     ).fetchall()[: a.limit]
@@ -159,10 +186,10 @@ def main(argv: list[str]) -> int:
     engine.cleanup(rows[0][2][:600], rows[0][3])  # warm-up: compile kernels, build prefix
 
     results = []
-    for n, (row_id, audio_s, raw, mode) in enumerate(rows, 1):
-        pieces = rebuild_pieces(raw, audio_s)
+    for n, (row_id, audio_s, raw, mode, backend) in enumerate(rows, 1):
+        pieces = rebuild_pieces(raw, audio_s, backend)
         b_text, b_s, b_chunks = batch(engine, raw, mode)
-        s = streaming(engine, raw, pieces, mode)
+        s = streaming(engine, raw, pieces, audio_s, mode)
         results.append({
             "id": row_id, "audio_s": audio_s, "words": len(raw.split()), "pieces": len(pieces),
             "batch_s": b_s, "batch_chunks": b_chunks,

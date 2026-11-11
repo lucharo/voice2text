@@ -34,11 +34,13 @@ def main() -> int:
     raw = dict(con.execute("select id, raw from transcriptions"))
     con.close()
     path = DIR / "judgments.jsonl"
-    cached = {}
+    cached = {}  # judgment key -> {"texts": {text_id: scores}, "best": text_id}
     if path.exists():
-        cached = {r["key"]: r for r in map(json.loads, path.read_text().splitlines()) if r}
+        rows = (json.loads(line) for line in path.read_text().splitlines() if line)
+        cached = {r["key"]: r for r in rows if "texts" in r}
     key, spent = cj.azure_key(), 0.0
-    judged = []
+    identical = sum(r["identical"] for r in results)
+    judged, rejected = [], 0  # judged: (batch scores, stream scores, best arm)
     with path.open("a") as f:
         for r in results:
             if r["identical"]:
@@ -53,39 +55,48 @@ def main() -> int:
                 problem = cj.check(grades, labels)
                 if problem:
                     print(f"id {r['id']}: reply not used ({problem})")
+                    rejected += 1
                     continue
                 by_label = {g["label"]: {c: g[c] for c in cj.CRITERIA} for g in grades["versions"]}
+                text_of = {lab: texts[a] for lab, a in zip(labels, order)}
+                # kept per text, as cleanup_judge does, so a rerun maps scores to whichever arm has the text now
                 cached[k] = {
                     "key": k, "id": r["id"], "model": cj.MODEL,
-                    "scores": {a: by_label[lab] for lab, a in zip(labels, order)},
-                    "best": dict(zip(labels, order))[grades["best"]],
+                    "texts": {cj.text_id(text_of[lab]): scores for lab, scores in by_label.items()},
+                    "best": cj.text_id(text_of[grades["best"]]),
                 }
                 f.write(json.dumps(cached[k]) + "\n")
                 f.flush()
-            judged.append(cached[k])
+            j = cached[k]
+            b, s_ = cj.text_id(texts["batch"]), cj.text_id(texts["stream"])
+            judged.append((j["texts"][b], j["texts"][s_], "stream" if j["best"] == s_ else "batch"))
     path.chmod(0o600)
 
+    differ = len(results) - identical
     lines = [
-        f"{len(judged)} of {len(results)} dictations differ between batch and streaming cleanup "
-        f"({len(results) - len(judged)} identical, not sent); judge {cj.MODEL}, ${spent:.2f} this run.",
-        "",
-        "| criterion | batch mean | streaming mean | streaming higher / lower / same |",
-        "|---|--:|--:|--:|",
+        f"{differ} of {len(results)} dictations differ between batch and streaming cleanup "
+        f"({identical} identical, not sent); {len(judged)} judged, {rejected} replies not used; "
+        f"judge {cj.MODEL}, ${spent:.2f} this run.",
     ]
-    for c in (*cj.CRITERIA, "all"):
-        def score(j, arm):
-            s = j["scores"][arm]
-            return statistics.fmean(s.values()) if c == "all" else s[c]
-        b = [score(j, "batch") for j in judged]
-        s = [score(j, "stream") for j in judged]
-        higher = sum(y > x for x, y in zip(b, s))
-        lower = sum(y < x for x, y in zip(b, s))
-        lines.append(
-            f"| {c} | {statistics.fmean(b):.2f} | {statistics.fmean(s):.2f} | "
-            f"{higher} / {lower} / {len(judged) - higher - lower} |"
-        )
-    wins = sum(j["best"] == "stream" for j in judged)
-    lines += ["", f"Judge would rather paste: streaming {wins}, batch {len(judged) - wins}."]
+    if judged:
+        lines += [
+            "",
+            "| criterion | batch mean | streaming mean | streaming higher / lower / same |",
+            "|---|--:|--:|--:|",
+        ]
+        for c in (*cj.CRITERIA, "all"):
+            def score(scores):
+                return statistics.fmean(scores.values()) if c == "all" else scores[c]
+            b = [score(x) for x, _y, _w in judged]
+            s = [score(y) for _x, y, _w in judged]
+            higher = sum(y > x for x, y in zip(b, s))
+            lower = sum(y < x for x, y in zip(b, s))
+            lines.append(
+                f"| {c} | {statistics.fmean(b):.2f} | {statistics.fmean(s):.2f} | "
+                f"{higher} / {lower} / {len(judged) - higher - lower} |"
+            )
+        wins = sum(w == "stream" for _x, _y, w in judged)
+        lines += ["", f"Judge would rather paste: streaming {wins}, batch {len(judged) - wins}."]
     (DIR / "judge-report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
