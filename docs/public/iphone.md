@@ -20,6 +20,15 @@
 - **Recommended:** an iPhone that can run Apple Intelligence: the iPhone 15 Pro and Pro Max, the
   iPhone 16 and 17 families, 16e, 17e, Air, Duo, and 18 Pro and Pro Max. These get the more
   accurate speech model and cleanup.
+- **Transcription only, untested:** the iPhone 13 and 14 families, iPhone 15 and 15 Plus, and iPhone
+  SE (3rd generation). Dictation works, without cleanup, but no one has tested it on these phones;
+  the app says "Not yet tested on this iPhone model".
+- **Dictation not supported yet:** the iPhone 11, 11 Pro and 11 Pro Max, iPhone SE (2nd generation),
+  and the iPhone 12, 12 mini, 12 Pro and 12 Pro Max. These phones have not passed a test run. The app
+  offers no model download and says "Dictation isn't supported on this iPhone yet. The keyboard still
+  works for typing."; the keyboard's mic opens that message. The same goes for the iPad mini (5th
+  generation), iPad Air (3rd and 4th generation), iPad (8th, 9th and 10th generation), iPad Pro 11-inch
+  (1st and 2nd generation) and iPad Pro 12.9-inch (3rd and 4th generation).
 - **Measured so far:** the speech and cleanup models on one iPhone 16 Pro, in a separate benchmark
   app, and the app itself on an iPhone 17 Pro (TestFlight build 1). No result from build
   3, the one described here, has been reported from a phone yet. No other iPhone model has been
@@ -32,7 +41,8 @@ one choice:
 | This device | Speech model | Cleanup |
 | --- | --- | --- |
 | Can run Apple Intelligence | NVIDIA Nemotron-Labs Unified ASR 0.6B (627 MB download) | Apple Intelligence, when it is turned on in Settings |
-| Cannot (iPhone 15 and 15 Plus, and older) | NVIDIA Parakeet TDT 0.6B v3 (630 MB download) | None, only your dictionary's replacements |
+| Cannot (iPhone 15 and 15 Plus, the iPhone 13 and 14 families, SE 3rd generation) | NVIDIA Parakeet TDT 0.6B v3 (630 MB download) | None, only your dictionary's replacements |
+| iPhone 11 and 12 families, SE 2nd generation | None: dictation is not supported yet | None |
 
 Older phones get Parakeet, which makes a few more mistakes (see
 [Benchmarks](benchmarks.md#on-the-iphone)), because the int8 build of Nemotron's sibling model
