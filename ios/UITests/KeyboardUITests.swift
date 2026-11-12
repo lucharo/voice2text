@@ -83,6 +83,22 @@ import XCTest
     XCTAssertEqual(text, "Teh ")
   }
 
+  func testKeepingAWordNoListKnowsSaysItWentIntoTheDictionary() {
+    launch()
+    showKeyboard()
+    type("the marimo")
+    XCTAssertTrue(suggestion("“marimo”").waitForExistence(timeout: 3))
+    suggestion("“marimo”").tap()
+    let notice = app.staticTexts["v2t.notice"]
+    XCTAssertTrue(notice.waitForExistence(timeout: 3))
+    XCTAssertEqual(notice.label, "Added “marimo” to your dictionary")
+    shot("04b-added-to-dictionary")
+    // the next key brings the suggestions back
+    type("a")
+    XCTAssertTrue(suggestion("“a”").waitForExistence(timeout: 3) || suggestion("a").waitForExistence(timeout: 1))
+    XCTAssertFalse(notice.exists)
+  }
+
   func testOneFingerSwipeTypesAWord() {
     launch()
     showKeyboard()

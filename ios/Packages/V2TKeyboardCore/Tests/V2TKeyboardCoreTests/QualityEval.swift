@@ -139,6 +139,7 @@ enum QualityEval {
     var suggestAcronym: Double?
     var alternativeMargin: Double?
     var minCompletionPrefix: Double?
+    var completionLead: Double?
 
     func apply(_ d: SwipeDecoder) {
       if let v = frequencyWeight { d.frequencyWeight = v }
@@ -162,6 +163,7 @@ enum QualityEval {
       if let v = suggestBigram { s.bigramWeight = v }
       if let v = suggestAcronym { s.acronymPenalty = v }
       if let v = minCompletionPrefix { s.minCompletionPrefix = Int(v) }
+      if let v = completionLead { s.completionLead = v }
       return s
     }
   }

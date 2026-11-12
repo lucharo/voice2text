@@ -10,7 +10,9 @@ import Testing
 ///
 /// Keys: fw/pn/ac the swipe frequency weight and proper-noun and acronym penalties, other the prior of a
 /// language other than the layout's, sb/sbg the swipe and suggestion bigram weights, sf the suggestion
-/// frequency weight, sac the suggestion acronym penalty. `V2T_LEXICON_DIR` points at other lexicons.
+/// frequency weight, sac the suggestion acronym penalty, mcp the letters typed before completions are offered,
+/// lead the nats a completion must beat a correction by for autocorrect to leave the word as unfinished.
+/// `V2T_LEXICON_DIR` points at other lexicons.
 struct QualityTuning {
   static let env = ProcessInfo.processInfo.environment
 
@@ -32,6 +34,7 @@ struct QualityTuning {
         case "sac": c.suggestAcronym = v
         case "am": c.alternativeMargin = v
         case "mcp": c.minCompletionPrefix = v
+        case "lead": c.completionLead = v
         default: Issue.record("unknown key \(p[0])")
         }
       }

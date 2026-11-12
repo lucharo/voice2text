@@ -176,6 +176,73 @@ class ReportTests(unittest.TestCase):
               {"t": 2, "e": "key", "text": "m"}]
         self.assertEqual(dict(rep.analyse(ev).corrections_reverted), {"offered, left": 1})
 
+    def test_touches_near_a_screen_edge_are_timed_apart_from_the_rest(self):
+        # a 402 pt keyboard: "a" at x 25 and delete at x 380 are within 30 pt of an edge, "t" and a delete at x 365 are not
+        ev = [{"t": 0, "e": "appear", "width": 402},
+              {"t": 100, "e": "down", "n": 1, "key": "letters-t", "p": [170, 30], "fingers": 1},
+              {"t": 160, "e": "up", "n": 1, "key": "letters-t", "p": [170, 30], "verdict": "tap", "ms": 60},
+              {"t": 180, "e": "key", "text": "t"},
+              {"t": 300, "e": "down", "n": 2, "key": "letters-a", "p": [25, 80], "fingers": 1},
+              {"t": 360, "e": "up", "n": 2, "key": "letters-a", "p": [25, 80], "verdict": "tap", "ms": 60},
+              {"t": 398, "e": "key", "text": "a"},
+              {"t": 500, "e": "down", "n": 3, "key": "delete", "p": [365, 130], "fingers": 1},
+              {"t": 519, "e": "act", "a": "delete"},
+              {"t": 560, "e": "up", "n": 3, "key": "delete", "p": [365, 130], "verdict": "tap", "ms": 60},
+              # held near the edge: the first delete is timed, its repeats are not
+              {"t": 700, "e": "down", "n": 4, "key": "delete", "p": [380, 130], "fingers": 1},
+              {"t": 796, "e": "act", "a": "delete"}, {"t": 900, "e": "act", "a": "delete"},
+              {"t": 950, "e": "up", "n": 4, "key": "delete", "p": [380, 130], "verdict": "tap", "ms": 250},
+              # space is not a character key
+              {"t": 1000, "e": "down", "n": 5, "key": "space", "p": [240, 190], "fingers": 1},
+              {"t": 1060, "e": "up", "n": 5, "key": "space", "p": [240, 190], "verdict": "tap", "ms": 60},
+              {"t": 1080, "e": "act", "a": "space"}]
+        r = rep.analyse(ev)
+        self.assertEqual(r.key_delivery, {"edge": [38], "middle": [20]})
+        self.assertEqual(r.delete_delivery, {"edge": [96], "middle": [19]})
+        self.assertEqual(rep.json_report(r)["touch_delivery_ms"],
+                         {"keys": {"middle": {"median": 20, "n": 1}, "edge": {"median": 38, "n": 1}},
+                          "delete": {"middle": {"median": 19, "n": 1}, "edge": {"median": 96, "n": 1}}})
+        self.assertIn("delete, touch to delete: elsewhere median 19 ms (1), within 30 pt of a screen edge median 96 ms (1)", rep.text_report(r))
+
+    def test_keys_typed_by_a_rollover_are_not_timed(self):
+        # finger 2 lifts first: its lift types finger 1's "t" (the rollover), then its own "h"
+        for order in (("rollover", "up"), ("up", "rollover")):
+            lines = {"rollover": {"t": 150, "e": "rollover", "n": 1, "key": "letters-t", "p": [170, 30], "by": 2},
+                     "up": {"t": 150, "e": "up", "n": 2, "key": "letters-h", "p": [240, 90], "verdict": "tap", "ms": 30}}
+            ev = [{"t": 0, "e": "appear", "width": 402},
+                  {"t": 100, "e": "down", "n": 1, "key": "letters-t", "p": [170, 30], "fingers": 1},
+                  {"t": 120, "e": "down", "n": 2, "key": "letters-h", "p": [240, 90], "fingers": 2},
+                  lines[order[0]], lines[order[1]],
+                  {"t": 170, "e": "key", "text": "t"}, {"t": 185, "e": "key", "text": "h"},
+                  {"t": 300, "e": "up", "n": 1, "key": "letters-t", "p": [170, 30], "verdict": "rolled", "ms": 200},
+                  # the next plain tap is timed again
+                  {"t": 400, "e": "down", "n": 3, "key": "letters-e", "p": [95, 40], "fingers": 1},
+                  {"t": 460, "e": "up", "n": 3, "key": "letters-e", "p": [95, 40], "verdict": "tap", "ms": 60},
+                  {"t": 481, "e": "key", "text": "e"}]
+            self.assertEqual(rep.analyse(ev).key_delivery, {"edge": [], "middle": [21]}, order)
+
+    def test_touches_are_not_timed_without_the_keyboards_width(self):
+        ev = [{"t": 300, "e": "down", "n": 2, "key": "letters-a", "p": [25, 80], "fingers": 1},
+              {"t": 360, "e": "up", "n": 2, "key": "letters-a", "p": [25, 80], "verdict": "tap", "ms": 60},
+              {"t": 398, "e": "key", "text": "a"}]
+        r = rep.analyse(ev)
+        self.assertEqual((r.key_delivery, r.delete_delivery), ({"edge": [], "middle": []}, {"edge": [], "middle": []}))
+        self.assertNotIn("Touch delivery", rep.text_report(r))
+
+    def test_bar_time_is_from_a_character_key_to_its_bar(self):
+        ev = [{"t": 0, "e": "appear", "width": 402},
+              {"t": 100, "e": "key", "text": "t"}, {"t": 100, "e": "ins", "text": "t"},
+              {"t": 103, "e": "bar", "words": ["t", "the", "to"], "kinds": ["typed", "completion", "completion"], "bold": None},
+              {"t": 200, "e": "key", "text": "h"}, {"t": 200, "e": "ins", "text": "h"},
+              {"t": 212, "e": "bar", "words": ["th", "the", "this"], "kinds": ["typed", "completion", "completion"], "bold": None},
+              # a bar that follows a space, not a character key, is not timed
+              {"t": 300, "e": "act", "a": "space"}, {"t": 300, "e": "ins", "text": " "},
+              {"t": 340, "e": "bar", "words": ["a", "the", "my"], "kinds": ["prediction"] * 3, "bold": None}]
+        r = rep.analyse(ev)
+        self.assertEqual(r.bar_ms, [3, 12])
+        self.assertEqual(rep.json_report(r)["bar_ms"], {"median": 7.5, "p95": 3, "over_frame": 1, "n": 2})
+        self.assertIn("over 8 ms 1 of 2 (50%)", rep.text_report(r))
+
     def test_reads_a_folder_oldest_file_first_and_skips_a_torn_line(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, "keyboard.1.jsonl").write_text('{"t":1,"e":"key","text":"a"}\n')

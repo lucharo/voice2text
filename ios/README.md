@@ -114,7 +114,14 @@ shares both files joined; Clear log deletes them.
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
   reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
   `uv run ios/tools/kb_log_report.py <that folder>` reports autocorrections kept and taken back, words deleted and
-  retyped, swipes kept, bar taps by slot, taps read as swipes (#140) and keys per second; `--json` for the numbers.
+  retyped, swipes kept, bar taps by slot, taps read as swipes (#140), keys per second, how long after a touch the
+  keyboard acted on it (near a screen edge against elsewhere) and how long the bar took after a key; `--json` for
+  the numbers. It takes the app's Export file too.
+- **Replay.** `V2T_KB_LOG=<file> swift test -c release -Xswiftc -enable-testing --filter LogReplayEval 2>&1 | grep '^replay'`
+  (in `Packages/V2TKeyboardCore`) types the log again through the engine as it is now, touch points included, and
+  prints for each finished word what the build that wrote the log did and what this one does. On an unchanged
+  engine it prints `moved 0`. Text the log holds by length only (the host's, dictations) is replayed as blocks, and
+  the first word typed after it is left out.
 
 Each line has `t` (milliseconds of system uptime, the clock of touch timestamps) and `e`, the event:
 
@@ -126,7 +133,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `down` | n (finger), key, p, fingers down | a finger lands |
 | `up` | n, key, liftKey, p, ms, travel, verdict (tap, swipe, accent, trackpad, rolled, cancelled), path (24 points) | it lifts |
 | `rollover`, `swipe-start` | n, key, p, by | a finger typed early by a newer one lifting; a finger becomes a swipe |
-| `key`, `act`, `cursor` | text and p; action; by | a character, another key, the space-bar trackpad |
+| `key`, `act`, `cursor` | text, p and search (typed into emoji search); action and search; by | a character, another key, the space-bar trackpad |
 | `swipe` | points, trace (48 points), candidates (word, score), applied, decodeMs | a swipe decoded |
 | `swiped`, `picked` | word, alternatives; word, replaced | the engine typed a swipe; a bar tap replaced a word |
 | `bar`, `pick` | words, kinds, bold; slot, word, emoji | the bar changed; a slot was tapped |
@@ -134,6 +141,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `ins`, `del` | text (chars for dictation) | the keyboard edited the document |
 | `host` | kind, chars (text before the cursor, up to 160) | the app changed the text or moved the cursor |
 | `page`, `emoji`, `dictation` | page, form, width; emoji, from; chars, words | |
+| `edge-gates` | recognisers (on the keyboard's window; -1 with no window), released (those told not to hold touches back) | the keyboard appeared |
 
 ### Which model this iPhone gets
 
