@@ -31,17 +31,22 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   /// goes by these times, not by when the sync ran, so an edit made offline does not beat a later one made
   /// elsewhere. A difference between the file and the sync state with no change behind it is the sync's own
   /// download and never counts as an edit.
+  ///
+  /// Each change names the line it leaves (nil for a deletion), and a key keeps one change per line: the merge
+  /// takes the change whose line is the one on disk, so a write that failed after its change was noted (a full
+  /// disk) never dates the line still there, and that line keeps the time it was written.
   struct Change: Codable, Equatable, Sendable {
     var time: Date
     var by: String
+    var line: String?
   }
 
   /// The changes since the app last synced with iCloud, by entry key. Read, written and cleared only inside
   /// `transaction`.
   var changesFile: URL { file.deletingPathExtension().appendingPathExtension("changes.json") }
 
-  var changes: [String: Change] {
-    (try? JSONDecoder().decode([String: Change].self, from: Data(contentsOf: changesFile))) ?? [:]
+  var changes: [String: [Change]] {
+    (try? JSONDecoder().decode([String: [Change]].self, from: Data(contentsOf: changesFile))) ?? [:]
   }
 
   static var defaultFile: URL? {
@@ -104,12 +109,12 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
       let keys = Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }
       if !keys.isEmpty {
         var c = changes
-        for k in keys { c[k] = Change(time: now(), by: writer) }
+        for k in keys { c[k, default: []] = c[k, default: []].filter { $0.line != new[k] } + [Change(time: now(), by: writer, line: new[k])] }
         try JSONEncoder().encode(c).write(to: changesFile, options: .atomic)
       }
     }
-    text = newText
     try newText.write(to: file, atomically: true, encoding: .utf8)
+    text = newText
   }
 
   /// One usable line of the file: a term, or a replacement. Comments, blanks and a replacement missing a side

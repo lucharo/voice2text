@@ -270,6 +270,64 @@ final class Clock {
     #expect(cloud.records == ["term:fluide": .init(line: "Fluide", time: at(15), source: by("iPad16,3"))])
   }
 
+  /// An entry deleted at 10 and added again at 30 on one device, with no sync between, beats a deletion made at 20
+  /// elsewhere, though the file ends as it was at the last sync.
+  @Test func aReAdditionBeatsAnEarlierDeletionElsewhereThoughTheFileLooksUnchanged() async throws {
+    let phone = try Device("Claude\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+
+    clock.at(10); try phone.dictionary.remove("Claude")
+    clock.at(30); try phone.dictionary.addTerm("Claude")
+    clock.at(20); try pad.dictionary.remove("Claude")
+    await pad.sync.sync().value
+    clock.at(40); await phone.sync.sync().value
+
+    #expect(phone.lines == ["Claude"])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: at(30), source: by("iPhone17,1"))])
+  }
+
+  /// An entry added and deleted again between two syncs still deletes the copy another device made earlier.
+  @Test func anEntryAddedAndDeletedBetweenSyncsDeletesItElsewhere() async throws {
+    let phone = try Device("", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(5); try pad.dictionary.addTerm("Claude")
+    await pad.sync.sync().value
+
+    clock.at(10); try phone.dictionary.addTerm("Claude")
+    clock.at(12); try phone.dictionary.remove("Claude")
+    await phone.sync.sync().value
+    clock.at(20); await pad.sync.sync().value
+
+    #expect(pad.lines == [])
+    #expect(cloud.records == ["term:claude": .init(line: nil, time: at(12), source: by("iPhone17,1"))])
+  }
+
+  /// A write that failed (a full disk) leaves the entry as it was, with its earlier change time: the edit it failed
+  /// to make is not dated onto the old line, so the old line still loses to a later edit elsewhere.
+  @Test func aFailedWriteKeepsTheTimeOfTheChangeStillOnDisk() async throws {
+    let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(10); try phone.dictionary.save("ai => A.I.\n")
+    let file = phone.dictionary.file.path()
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: file)
+    clock.at(30); let failed = (try? phone.dictionary.save("ai => A.I.!\n")) == nil
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file)
+    guard failed else { Issue.record("the dictionary write did not fail"); return }
+
+    clock.at(20); try pad.dictionary.save("ai => Ai\n")
+    await pad.sync.sync().value
+    clock.at(40); await phone.sync.sync().value
+
+    #expect(phone.dictionary.text == "ai => Ai\n")
+    #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(20), source: by("iPad16,3"))])
+  }
+
   /// The keyboard keeps words while the app applies a download, each reading and writing back the one array: no
   /// word from either side is lost.
   @Test func wordsTheKeyboardKeepsDuringADownloadAllStay() async {

@@ -34,21 +34,25 @@ enum DictionaryMerge {
   /// written, so it is `unversioned` and loses to whatever iCloud holds. With no last sync (`synced` nil: the
   /// first on this device, also after sync was off from the start), every entry is `unversioned`, since nothing
   /// tells an old entry from one just added.
-  static func local(_ text: String, synced: Records?, changes: [String: PersonalDictionary.Change], device: String) -> Records {
+  ///
+  /// A change counts only when its line is the one on disk now, and then it counts even when that line equals
+  /// the last sync's (an entry deleted and added again since), and for an entry neither the file nor the last
+  /// sync holds (added and deleted again since): either way it is this device's latest word on that entry.
+  static func local(_ text: String, synced: Records?, changes: [String: [PersonalDictionary.Change]], device: String) -> Records {
     let current = entries(text)
-    let record = { (k: String, line: String?) in
-      changes[k].map { Record(line: line, time: $0.time, source: Source(device: device, app: $0.by)) }
-        ?? Record(line: line, time: unversioned)
-    }
     guard let synced else {
       return current.mapValues { Record(line: $0, time: unversioned) }
     }
     var out: Records = [:]
-    for (k, line) in current {
-      out[k] = synced[k]?.line == line ? synced[k]! : record(k, line)
-    }
-    for (k, old) in synced where current[k] == nil {
-      out[k] = old.line == nil ? old : record(k, nil)
+    for k in Set(current.keys).union(synced.keys).union(changes.keys) {
+      let line = current[k]
+      if let change = changes[k]?.last(where: { $0.line == line }) {
+        out[k] = Record(line: line, time: change.time, source: Source(device: device, app: change.by))
+      } else if let old = synced[k], old.line == line {
+        out[k] = old
+      } else if line != nil || synced[k] != nil {
+        out[k] = Record(line: line, time: unversioned)
+      }
     }
     return out
   }
@@ -88,7 +92,7 @@ enum DictionaryMerge {
   }
 
   /// The whole merge: the new file text, and the records both this device's sync state and iCloud then hold.
-  static func run(text: String, synced: Records?, remote: Records, changes: [String: PersonalDictionary.Change],
+  static func run(text: String, synced: Records?, remote: Records, changes: [String: [PersonalDictionary.Change]],
                   device: String) -> (text: String, records: Records) {
     let records = merge(local(text, synced: synced, changes: changes, device: device), remote)
     return (apply(records, to: text), records)
