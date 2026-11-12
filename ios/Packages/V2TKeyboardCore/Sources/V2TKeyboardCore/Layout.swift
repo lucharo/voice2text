@@ -24,6 +24,13 @@ public enum KeyboardPage: Hashable, Sendable {
   public static func forField(numeric: Bool, current: KeyboardPage, emojiSearch: Bool) -> KeyboardPage? {
     numeric && current == .letters && !emojiSearch ? .numbers : nil
   }
+
+  /// The page after the host app changed the text: letters when it emptied a field that had text (a sent
+  /// message, the next sentence of a typing exercise), as Apple's keyboard does; nil leaves the page alone.
+  /// Never in a numeric field, whose page is numbers, or while emoji search owns the keys.
+  public static func afterHostEdit(emptied: Bool, numeric: Bool, current: KeyboardPage, emojiSearch: Bool) -> KeyboardPage? {
+    emptied && !numeric && current != .letters && !emojiSearch ? .letters : nil
+  }
 }
 
 /// Which of Apple's keyboards the layout follows: the iPhone one; the iPad one (delete and return on the

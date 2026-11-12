@@ -303,6 +303,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     applyTraits()
     engine.resync()
     logHost("text")
+    // the app emptied a field that had text (a sent message, an exercise's next sentence): back to letters
+    let emptied = documentHadText && !textDocumentProxy.hasText
+    if let page = KeyboardPage.afterHostEdit(emptied: emptied, numeric: fieldNumeric, current: keyboardView.layout.page,
+                                             emojiSearch: emojiSearch != nil) {
+      relayout(page: page)
+    }
     refresh()
   }
 
@@ -436,6 +442,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     }
     keyboardView.returnLabel = Self.returnLabel(p.returnKeyType ?? .default, language)
     let numeric = [.numberPad, .decimalPad, .numbersAndPunctuation, .phonePad, .asciiCapableNumberPad].contains(type)
+    fieldNumeric = numeric
     if let page = KeyboardPage.forField(numeric: numeric, current: keyboardView.layout.page, emojiSearch: emojiSearch != nil) {
       relayout(page: page)
     }
@@ -467,7 +474,13 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     latencyLog.log("\(name, privacy: .public) \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms")
   }
 
+  /// Whether the field held text at the last refresh, and whether its keyboard type is a numeric one: what
+  /// `KeyboardPage.afterHostEdit` needs when the host changes the text.
+  private var documentHadText = false
+  private var fieldNumeric = false
+
   private func refresh() {
+    documentHadText = textDocumentProxy.hasText
     // search has its own shift, off unless tapped, and types the shifted mark only (EmojiIndex folds case)
     keyboardView.shift = emojiSearch == nil ? engine.shift : (searchShift ? .on : .off)
     keyboardView.shiftManual = emojiSearch == nil ? engine.shiftManual : true

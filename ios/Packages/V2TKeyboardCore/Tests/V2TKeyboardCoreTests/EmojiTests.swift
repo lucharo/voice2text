@@ -218,6 +218,15 @@ struct EmojiTests {
     #expect(KeyboardPage.forField(numeric: false, current: .letters, emojiSearch: false) == nil)
   }
 
+  @Test func aFieldTheHostEmptiedGoesBackToLetters() {
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .numbers, emojiSearch: false) == .letters)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .symbols, emojiSearch: false) == .letters)
+    #expect(KeyboardPage.afterHostEdit(emptied: false, numeric: false, current: .numbers, emojiSearch: false) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: true, current: .numbers, emojiSearch: false) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .numbers, emojiSearch: true) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .letters, emojiSearch: false) == nil)
+  }
+
   // MARK: typing
 
   func engine(_ start: String = "") throws -> (TypingEngine, FakeProxy) {
