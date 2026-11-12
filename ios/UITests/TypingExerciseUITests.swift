@@ -111,7 +111,7 @@ import XCTest
       app.buttons["v2t.exercise.next"].tap()
     }
     XCTAssertTrue(app.descendants(matching: .any)["v2t.exercise.summary"].waitForExistence(timeout: 5))
-    XCTAssertTrue(app.staticTexts["10"].exists, app.debugDescription)
+    XCTAssertEqual(app.staticTexts["v2t.exercise.sentencesDone"].label, "Sentences, 10")
     shot("32-typing-exercise-summary")
     // the keyboard writes what it holds within a second; closing the app then takes the keyboard down
     sleep(2)
