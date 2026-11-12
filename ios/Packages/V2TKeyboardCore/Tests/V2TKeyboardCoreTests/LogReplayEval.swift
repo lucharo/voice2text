@@ -268,12 +268,15 @@ enum LogReplayEval {
                  // "go nw " finished, "nw" deleted and "now" typed: three words finished for two in the field
                  word("go", t: 3100), word("nw", t: 3200), word("now", t: 3300, deleted: true),
                  // "ok go now ": a word typed before the sentence's first
-                 word("ok", t: 4100), word("go", t: 4200), word("now", t: 4300)]
+                 word("ok", t: 4100), word("go", t: 4200), word("now", t: 4300),
+                 // "go now ", the second word not replayed (typed straight after text the log does not hold)
+                 word("go", t: 5100)]
     let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran.","typed":"The fox ran."}"#,
                  #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by.","typed":"Sitby"}"#,
                  #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst "}"#,
                  #"{"t":3000,"e":"exercise","end":3400,"target":"go now","typed":"go now "}"#,
-                 #"{"t":4000,"e":"exercise","end":4400,"target":"go now","typed":"ok go now "}"#]
+                 #"{"t":4000,"e":"exercise","end":4400,"target":"go now","typed":"ok go now "}"#,
+                 #"{"t":5000,"e":"exercise","end":5400,"target":"go now","typed":"go now "}"#]
 
     let scored = scoreExercises(lines, out)
 
@@ -281,6 +284,7 @@ enum LogReplayEval {
       "The fixed by autocorrect true", "fox tapped right false", "ran not scored false",
       "Sit not scored false", "by not scored false",
       "dog made a different wrong word false", "cat left as typed false",
+      "go not scored false", "now not scored false",
       "go not scored false", "now not scored false",
       "go not scored false", "now not scored false",
     ])
@@ -311,6 +315,16 @@ enum LogReplayEval {
     let lines = [#"{"t":50,"e":"exercise","end":2000,"target":"The quiz starts at eight, so be quick.","typed":"The quiz starts at eight, so be slow"}"#]
 
     #expect(scoreExercises(lines, out).map(\.score) == Array(repeating: .notScored, count: 8))
+  }
+
+  @Test static func aCorrectionTakenBackBeforeNextLeavesTheSentenceUnscored() {
+    var out = Outcome()
+    // "bt" corrected to "by", then the original picked back from the bar: as many words, but not the same ones
+    out.words = [Word(typed: "Sit", previous: nil, logged: nil, now: nil, bar: [], t: 100),
+                 Word(typed: "bt", previous: nil, logged: "by", now: "by", bar: [], t: 200)]
+    let lines = [#"{"t":50,"e":"exercise","end":400,"target":"Sit by.","typed":"Sit bt."}"#]
+
+    #expect(scoreExercises(lines, out).map(\.score) == [.notScored, .notScored])
   }
 
   @Test static func aLastWordLeftUnfinishedAtNextIsTheOnlyOneNotScored() {
