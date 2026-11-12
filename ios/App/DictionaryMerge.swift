@@ -13,14 +13,7 @@ enum DictionaryMerge {
   typealias Records = [String: Record]
 
   /// The file's entries by key; of two lines with one key, the first counts, as the first is what `remove` drops.
-  static func entries(_ text: String) -> [String: String] {
-    var out: [String: String] = [:]
-    for raw in text.split(whereSeparator: \.isNewline) {
-      guard let item = PersonalDictionary.item(raw) else { continue }
-      if out[item.key] == nil { out[item.key] = item.line }
-    }
-    return out
-  }
+  static func entries(_ text: String) -> [String: String] { PersonalDictionary.entryLines(text) }
 
   /// The time of an entry this device had before it ever synced: older than any change made anywhere, so a
   /// deletion or edit already in iCloud wins over it, while an entry iCloud has never seen still goes up.

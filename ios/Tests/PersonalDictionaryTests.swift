@@ -100,6 +100,18 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: app.file).text == "# mine\nClaude Code\nai => A.I.\n")
   }
 
+  /// An entry deleted in the draft stays deleted though iCloud edited it while the editor was open, and one edited
+  /// in the draft keeps the draft's version.
+  @Test func theTextEditorKeepsItsOwnDeletionsAndEditsOverOnesMadeElsewhere() throws {
+    let app = try dictionary("Claude\nai => AI\nfluid => Fluid\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("Claude\nai => A.I.\nfluid => Fluido\n")
+
+    try app.saveEdit("Claude\nfluid => Fluide\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "Claude\nfluid => Fluide\n")
+  }
+
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
   @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
     let file = try dictionary("").file

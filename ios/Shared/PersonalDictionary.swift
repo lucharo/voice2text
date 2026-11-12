@@ -37,13 +37,18 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   /// Saves the "Edit as text" draft, which started as `snapshot`: an unchanged draft writes nothing, lines
   /// another copy added to the file meanwhile (a word kept on the keyboard, an entry from iCloud) are kept at the
   /// end, and lines it removed meanwhile (an entry deleted on another device) stay removed unless the draft
-  /// changed them. An entry edited elsewhere is both: its old line goes, its new one is kept.
+  /// changed them. An entry edited elsewhere is both: its old line goes, its new one is kept. An entry the draft
+  /// added, edited or deleted keeps the draft's version, whatever happened to it elsewhere.
   func saveEdit(_ draft: String, from snapshot: String) throws {
     try transaction {
       guard draft != snapshot else { return }
       let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) } }
       let before = Set(lines(snapshot)), mine = Set(lines(draft)), current = Set(lines(text))
-      let added = lines(text).filter { !$0.isEmpty && !before.contains($0) && !mine.contains($0) }
+      let was = Self.entryLines(snapshot), now = Self.entryLines(draft)
+      let touched = Set(was.keys).union(now.keys).filter { was[$0] != now[$0] }
+      let added = lines(text).filter { line in
+        !line.isEmpty && !before.contains(line) && !mine.contains(line) && !(Self.item(line).map { touched.contains($0.key) } ?? false)
+      }
       let removed = before.intersection(mine).subtracting(current).subtracting([""])
       var t = removed.isEmpty ? draft
         : draft.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
@@ -102,6 +107,16 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     let heard = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
     let written = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
     return heard.isEmpty || written.isEmpty ? nil : Item(line: line, kind: .replacement(heard: heard, written: written))
+  }
+
+  /// Each entry's line by key; of two lines with one key, the first, as everywhere else.
+  static func entryLines(_ text: String) -> [String: String] {
+    var out: [String: String] = [:]
+    for raw in text.split(whereSeparator: \.isNewline) {
+      guard let item = item(raw) else { continue }
+      if out[item.key] == nil { out[item.key] = item.line }
+    }
+    return out
   }
 
   var entries: (terms: [String], replacements: [(heard: String, written: String)]) {
