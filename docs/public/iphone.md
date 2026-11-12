@@ -148,7 +148,7 @@ flowchart LR
 - **Dictionary** has two lists. **Spell exactly** holds names and jargon: cleanup spells them as
   written, and the keyboard never autocorrects them. **Replace** turns what v2t heard into what you
   want written (whole words, any capitalisation); it runs after cleanup, whether cleanup is on or
-  off. The file format is the Mac app's, so you can paste your Mac dictionary into **Edit as text**.
+  off. The longest heard side applies first, and a second line for the same heard side is ignored. The file format is the Mac app's, so you can paste your Mac dictionary into **Edit as text**.
   **Sync with iCloud**, at the bottom, keeps the dictionary and the words you keep on the keyboard
   the same on your iPhones and iPads, through your own iCloud account; it is on unless you turn it
   off. A word you delete on one device goes from the others too. Comment lines in the file stay on

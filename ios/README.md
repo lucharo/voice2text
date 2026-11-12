@@ -93,7 +93,9 @@ iOS gives keyboards no microphone, so the app records:
   the Dictionary screen is off. Only the app syncs, at launch, on return to the foreground, when iCloud brings a
   change and after an edit in the app; the keyboard never talks to iCloud, and a word it keeps while the app is
   closed goes up at the next sync. Each entry is last writer wins, with deletions kept so a device that still has
-  an entry cannot bring it back; learned words are a union, since none can be removed. Comment lines stay on the
+  an entry cannot bring it back; a device's first sync counts the entries it already had as older than any change
+  in iCloud. Learned words are a union, since none can be removed, updated under a file coordinator the keyboard
+  shares. Comment lines stay on the
   device, and the per-entry sync state is `dictionary.sync.json` beside `dictionary.txt` in the App Group,
   written in the same file transaction. Apple limits an app to 1 MB of values: past that nothing is written and
   the screen says why. History, the speech model and audio are never synced.
