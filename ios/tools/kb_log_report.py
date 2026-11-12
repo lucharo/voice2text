@@ -240,6 +240,7 @@ def analyse(events: list[dict]) -> Report:
             # the keyboard logs only how much text is before the cursor: a placeholder keeps positions right
             doc.reset("█" * ev.get("chars", 0))
             settle_swipe("kept")
+            key_at = None
         elif e == "ins":
             # dictation is logged by length only: a placeholder keeps the positions right and forms no word
             doc.insert(ev["text"] if "text" in ev else "█" * ev.get("chars", 0))
@@ -254,6 +255,7 @@ def analyse(events: list[dict]) -> Report:
         elif e == "cursor":
             doc.move(ev.get("by", 0))
             settle_swipe("kept")
+            key_at = None
         elif e == "key" or (e == "act" and ev.get("a") in TYPING_ACTS):
             r.keys += 1
             key_times.append(t)
@@ -265,6 +267,7 @@ def analyse(events: list[dict]) -> Report:
             if delete_down is not None and 0 <= t - delete_down[0] < 500:  # the first delete, not a held one's repeats
                 r.delete_delivery[delete_down[1]].append(t - delete_down[0])
             delete_down = None
+            key_at = None  # the bar a delete brings back is not the last character's
         elif e == "down":
             if ev.get("fingers", 0) > 1:  # counts the finger landing too
                 r.multi_finger_downs += 1

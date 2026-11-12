@@ -243,6 +243,14 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rep.json_report(r)["bar_ms"], {"median": 7.5, "p95": 3, "over_frame": 1, "n": 2})
         self.assertIn("over 8 ms 1 of 2 (50%)", rep.text_report(r))
 
+    def test_a_bar_after_a_delete_is_not_timed_as_the_last_characters(self):
+        # two full stops leave the bar as it was (no bar line); the delete that follows brings predictions back
+        ev = [{"t": 0, "e": "appear", "width": 402},
+              {"t": 100, "e": "key", "text": "."}, {"t": 100, "e": "ins", "text": "."},
+              {"t": 250, "e": "act", "a": "delete"}, {"t": 250, "e": "del"},
+              {"t": 252, "e": "bar", "words": ["a", "the", "my"], "kinds": ["prediction"] * 3, "bold": None}]
+        self.assertEqual(rep.analyse(ev).bar_ms, [])
+
     def test_reads_a_folder_oldest_file_first_and_skips_a_torn_line(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, "keyboard.1.jsonl").write_text('{"t":1,"e":"key","text":"a"}\n')

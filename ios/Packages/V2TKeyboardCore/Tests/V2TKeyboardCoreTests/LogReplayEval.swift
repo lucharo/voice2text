@@ -18,7 +18,9 @@ import Testing
 /// in the field, dictated text and anything in a field a dictation went into are recorded by length only, and a
 /// cursor move says how far, not past what. The replay puts blocks there, so nothing before them reads as a
 /// word, and leaves out the first word typed after them (`not replayed`): it may have joined letters the log
-/// does not hold. A correction the log records without its words is marked `?` and not compared. Keys pressed in
+/// does not hold. Words kept in an earlier session of the log stay kept in later ones; words kept before the log
+/// began are unknown. An iPad's sessions are left out: its layout depends on an orientation the log does not
+/// record. A correction the log records without its words is marked `?` and not compared. Keys pressed in
 /// emoji search are skipped; logs written before `act` lines carried `search` do not mark search's space, delete
 /// and return, so a search in one of those reads as typing.
 enum LogReplayEval {
@@ -40,6 +42,8 @@ enum LogReplayEval {
     var emptyBars = 0, boundaries = 0
     /// Words typed straight after text the log does not hold.
     var notReplayed = 0
+    /// Keyboard sessions left out: an iPad's, whose layout depends on an orientation the log does not record.
+    var sessionsSkipped = 0
   }
 
   /// Runs every keyboard session of the log (one per `appear` line) through a fresh engine.
@@ -52,6 +56,9 @@ enum LogReplayEval {
     var unknownStart = false
     // a correction the log names before the line that ends its word here (a swipe commits the word, then is logged)
     var early: (from: String, to: String)?
+    // words the user kept in an earlier session of the log stay kept, as Settings.learnedWords keeps them; words
+    // kept before the log began are not in it
+    var learned = Set<String>()
     func boundary(_ e: TypingEngine, _ body: () -> Void) {
       let typed = e.literal
       guard !typed.isEmpty else { body(); return }
@@ -84,10 +91,18 @@ enum LogReplayEval {
       guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let name = o["e"] as? String else { continue }
       let now = (o["t"] as? Double ?? 0) / 1000
       if name == "appear" {
+        guard (o["form"] as? String ?? "phone") == "phone" else {
+          engine = nil  // the touches cannot be placed on the right keys
+          out.sessionsSkipped += 1
+          continue
+        }
         let languages = (o["languages"] as? [String] ?? ["en"]).compactMap { lexicons[$0] }
         let layout = KeyboardLayout(width: CGFloat(o["width"] as? Double ?? 402), language: KeyboardLanguage(rawValue: o["layout"] as? String ?? "en") ?? .english)
         proxy = FakeProxy()
-        engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: languages, layout: layout))
+        let e = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: languages, layout: layout))
+        e.learned = learned
+        e.onLearn = { learned.insert($0) }
+        engine = e
         open = nil
         unknownStart = false
         early = nil
@@ -171,7 +186,7 @@ enum LogReplayEval {
     let moved = known.filter { $0.logged != $0.now }.count
     print("replay-summary words \(out.words.count), autocorrected logged \(known.filter { $0.logged != nil }.count) now \(known.filter { $0.now != nil }.count), moved \(moved); corrected to a word the log does not name \(out.words.count - known.count)")
     print("replay-summary key presses in a word \(out.composingKeys), with a pending correction the bar did not show \(out.hiddenPending)")
-    print("replay-summary word boundaries \(out.boundaries), left the bar empty \(out.emptyBars); words not replayed \(out.notReplayed)")
+    print("replay-summary word boundaries \(out.boundaries), left the bar empty \(out.emptyBars); words not replayed \(out.notReplayed); iPad sessions not replayed \(out.sessionsSkipped)")
     #expect(!out.words.isEmpty)
   }
 }
