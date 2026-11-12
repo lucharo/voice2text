@@ -128,7 +128,8 @@ the keyboard's, and Clear log deletes them too.
 - **Exercises.** `kb_log_report.py` reads the `exercise` lines from an export or a fetched folder and adds an
   Exercises section: for the keyboard's events between each line's `t` and `end`, the sentence's words that
   ended up different, how many autocorrections made the sentence's word and how many another word (or could not
-  be placed: after the host moved the cursor), keys per second, and, from taps in words typed with no delete
+  be placed: after the host moved the cursor, or in a sentence whose text at Next has a different number of words,
+  where every word after the gap would meet the wrong target), keys per second, and, from taps in words typed with no delete
   whose letter matches the sentence's at that place, the mean offset of the finger's landing point from its key's
   centre per letter, in key widths, and for taps that typed another letter, which (meant, hit, count). Key
   centres follow `KeyboardLayout.buildPhone`'s rules (`phone_letter_centres`, checked against the Swift layout
@@ -136,7 +137,8 @@ the keyboard's, and Clear log deletes them too.
   `replay-exercise` lines when the log has exercises: each sentence word typed while it was on screen as tapped
   right, fixed by autocorrect, made a different wrong word or left as typed, whether the bar showed the
   sentence's word, and a `replay-exercise-summary`. A word typed after a delete, and every word of a sentence
-  whose word count differs, is counted as not scored.
+  whose finished words or text at Next differ in number from it, is counted as not scored. Both tools match a
+  sentence only with keyboard events from the same boot of the phone (the `wall` time less the uptime).
 - **Fetch.** `ios/tools/fetch_kb_log.sh` copies the log off a connected iPhone (`xcrun devicectl device copy from
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
   reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
