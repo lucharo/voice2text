@@ -155,19 +155,22 @@ enum NoisyTyping {
   }
 
   /// Each sentence typed in a fresh field, word by word with a space after each, with the words before it as
-  /// context and sentence capitals as the keyboard sets them. Sentences are typed 50 at a time in parallel, each
-  /// with its own engine and suggester; the counts do not depend on the order.
+  /// context and sentence capitals as the keyboard sets them. `parallel` types 50 sentences at a time on every core,
+  /// each with its own engine and suggester (the counts do not depend on the order): for the tuning harness, which
+  /// runs alone. In the whole suite it would starve DebugLogTests' per-key timing (p99 9 to 10 ms against 8).
   static func row(_ name: String, _ sentences: [Sentence], keyboards: [String: [Character: CGRect]], lexicons: [Lexicon],
-                  layout: KeyboardLayout, touches: Touches = .real, configure: (Suggester) -> Void = { _ in }) -> Result {
+                  layout: KeyboardLayout, touches: Touches = .real, parallel: Bool = false,
+                  configure: (Suggester) -> Void = { _ in }) -> Result {
     let chunks = stride(from: 0, to: sentences.count, by: 50).map { Array(sentences[$0..<min($0 + 50, sentences.count)]) }
     var parts = [Result](repeating: Result(name: name), count: chunks.count)
     let lock = NSLock()
-    DispatchQueue.concurrentPerform(iterations: chunks.count) { i in
+    func typeChunk(_ i: Int) {
       let r = type(name, chunks[i], keyboards: keyboards, lexicons: lexicons, layout: layout, touches: touches, configure: configure)
       lock.lock()
       parts[i] = r
       lock.unlock()
     }
+    if parallel { DispatchQueue.concurrentPerform(iterations: chunks.count, execute: typeChunk) } else { chunks.indices.forEach(typeChunk) }
     var r = Result(name: name, touches: touches)
     for p in parts {
       r.sentences += p.sentences; r.words += p.words; r.taps += p.taps; r.offLetterKeys += p.offLetterKeys
@@ -363,8 +366,8 @@ struct NoisyTypingTuning {
     let popups = sentences.filter { NoisyTyping.fullSizeWithPopups($0.source) }
     NoisyTyping.printHeader()
     for (name, apply) in RealTypoTuning.settings(Self.env["V2T_TYPO_TUNE"]!) {
-      NoisyTyping.printRow(NoisyTyping.row("\(name) | \(split), all", sentences, keyboards: keyboards, lexicons: [en], layout: layout, configure: apply), label: "noisytune")
-      NoisyTyping.printRow(NoisyTyping.row("\(name) | \(split), full-size, key popups", popups, keyboards: keyboards, lexicons: [en], layout: layout, configure: apply), label: "noisytune")
+      NoisyTyping.printRow(NoisyTyping.row("\(name) | \(split), all", sentences, keyboards: keyboards, lexicons: [en], layout: layout, parallel: true, configure: apply), label: "noisytune")
+      NoisyTyping.printRow(NoisyTyping.row("\(name) | \(split), full-size, key popups", popups, keyboards: keyboards, lexicons: [en], layout: layout, parallel: true, configure: apply), label: "noisytune")
     }
   }
 }
