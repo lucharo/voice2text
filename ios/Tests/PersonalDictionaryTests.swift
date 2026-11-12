@@ -112,6 +112,18 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: app.file).text == "Claude\nfluid => Fluide\n")
   }
 
+  /// Deleting the first of two lines for one heard side in the draft makes the second the rule; iCloud deleting
+  /// that entry while the editor was open does not take the draft's chosen line with it.
+  @Test func theTextEditorKeepsTheLineItChoseForAnEntryDeletedElsewhere() throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("")
+
+    try app.saveEdit("AI => A.I.\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "AI => A.I.\n")
+  }
+
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
   @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
     let file = try dictionary("").file

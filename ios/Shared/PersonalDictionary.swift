@@ -57,10 +57,11 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
       let before = Set(lines(snapshot)), mine = Set(lines(draft)), current = Set(lines(text))
       let was = Self.entryLines(snapshot), now = Self.entryLines(draft)
       let touched = Set(was.keys).union(now.keys).filter { was[$0] != now[$0] }
+      let isTouched = { (line: String) in Self.item(line).map { touched.contains($0.key) } ?? false }
       let added = lines(text).filter { line in
-        !line.isEmpty && !before.contains(line) && !mine.contains(line) && !(Self.item(line).map { touched.contains($0.key) } ?? false)
+        !line.isEmpty && !before.contains(line) && !mine.contains(line) && !isTouched(line)
       }
-      let removed = before.intersection(mine).subtracting(current).subtracting([""])
+      let removed = before.intersection(mine).subtracting(current).subtracting([""]).filter { !isTouched($0) }
       var t = removed.isEmpty ? draft
         : draft.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
           .filter { !removed.contains($0.trimmingCharacters(in: .whitespaces)) }.joined(separator: "\n")
