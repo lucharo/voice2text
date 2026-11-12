@@ -6,6 +6,7 @@ import V2TKeyboardCore
   @StateObject private var history: History
   @StateObject private var dictionary: PersonalDictionary
   @StateObject private var dictation: DictationService
+  @StateObject private var iCloud: ICloudSync
 
   init() {
     // UI tests pick the keyboard layout through the launch environment
@@ -33,6 +34,7 @@ import V2TKeyboardCore
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
     _dictation = StateObject(wrappedValue: DictationService(recommendation: .current, history: h, dictionary: d))
+    _iCloud = StateObject(wrappedValue: ICloudSync(dictionary: d))
   }
 
   var body: some Scene {
@@ -41,6 +43,10 @@ import V2TKeyboardCore
         .environmentObject(history)
         .environmentObject(dictionary)
         .environmentObject(dictation)
+        .environmentObject(iCloud)
+        // UI tests that start with nothing learned (V2T_LAYOUT) run without iCloud: the Simulator's store keeps
+        // what an earlier test synced and would bring it back
+        .task { if ProcessInfo.processInfo.environment["V2T_LAYOUT"] == nil { iCloud.start() } }
         .onOpenURL { url in
           if url.scheme == "v2t", url.host == "dictate" { dictation.handleKeyboardLaunch() }
         }
@@ -444,6 +450,7 @@ struct KeyboardHandoffView: View {
 /// Mac app; "Edit as text" opens the file itself.
 struct DictionaryView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
+  @EnvironmentObject var iCloud: ICloudSync
   @Environment(\.scenePhase) private var scenePhase
   @State private var term = ""
   @State private var heard = ""
@@ -493,6 +500,7 @@ struct DictionaryView: View {
       }
 
       Section { NavigationLink("Edit as text") { DictionaryTextView() } }
+      Section { ICloudSyncRow() }
     }
     .navigationTitle("Dictionary")
     .onAppear { dictionary.reload() }
@@ -504,21 +512,23 @@ struct DictionaryView: View {
   }
 
   func addTerm() {
-    do { try dictionary.addTerm(term); term = "" } catch { self.error = error.localizedDescription }
+    do { try dictionary.addTerm(term); term = ""; iCloud.sync() } catch { self.error = error.localizedDescription }
   }
 
   func addReplacement() {
-    do { try dictionary.addReplacement(heard: heard, written: written); heard = ""; written = "" } catch { self.error = error.localizedDescription }
+    do { try dictionary.addReplacement(heard: heard, written: written); heard = ""; written = ""; iCloud.sync() } catch { self.error = error.localizedDescription }
   }
 
   func remove(_ offsets: IndexSet, from items: [PersonalDictionary.Item]) {
     for i in offsets { try? dictionary.remove(items[i].line) }
+    iCloud.sync()
   }
 }
 
 /// The dictionary file as text, for pasting a list from the Mac app.
 struct DictionaryTextView: View {
   @EnvironmentObject var dictionary: PersonalDictionary
+  @EnvironmentObject var iCloud: ICloudSync
   @State private var draft = ""
   @State private var snapshot = ""
   var body: some View {
@@ -527,7 +537,7 @@ struct DictionaryTextView: View {
       .padding(.horizontal, 8)
       .navigationTitle("Dictionary file")
       .onAppear { dictionary.reload(); draft = dictionary.text; snapshot = draft }
-      .onDisappear { try? dictionary.saveEdit(draft, from: snapshot) }
+      .onDisappear { try? dictionary.saveEdit(draft, from: snapshot); iCloud.sync() }
   }
 }
 

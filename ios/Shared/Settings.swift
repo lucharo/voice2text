@@ -31,11 +31,26 @@ final class Settings: @unchecked Sendable {
 
   var learnedWords: Set<String> { Set(defaults.stringArray(forKey: "learnedWords") ?? []) }
 
-  func learn(_ word: String) {
-    var w = learnedWords
-    w.insert(word)
-    defaults.set(Array(w).sorted(), forKey: "learnedWords")
+  func learn(_ word: String) { _ = try? learn([word]) }
+
+  /// Adds words to the learned ones and returns them all. The keyboard (a word kept) and the app (words from
+  /// iCloud) each read, add to and write back the one array, so they do it under a file coordinator, which
+  /// serialises them across processes in the App Group as it does the dictionary's writers.
+  @discardableResult func learn(_ words: Set<String>) throws -> Set<String> {
+    var all = Set<String>()
+    var coordinationError: NSError?
+    NSFileCoordinator().coordinate(writingItemAt: Self.learnedWordsLock, options: .forMerging, error: &coordinationError) { _ in
+      let before = learnedWords
+      all = before.union(words)
+      if all != before { defaults.set(Array(all).sorted(), forKey: "learnedWords") }
+    }
+    if let e = coordinationError { throw e }
+    return all
   }
+
+  /// Only coordinated on, never written: the learned words live in the App Group's defaults.
+  static let learnedWordsLock = (FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    ?? FileManager.default.temporaryDirectory).appending(path: "learnedWords")
 
   /// The emoji keyboard's default skin tone, nil for yellow: every emoji with tones shows it until a tone is
   /// picked for that emoji in the keyboard (StoredSkinTone).
@@ -90,6 +105,13 @@ final class Settings: @unchecked Sendable {
   var keyboardDebugLogUntil: Date? {
     get { (defaults.object(forKey: "keyboardDebugLogUntil") as? Double).map(Date.init(timeIntervalSince1970:)) }
     set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardDebugLogUntil") }
+  }
+
+  /// The app syncs the dictionary and learned words through the user's iCloud when this is on (the keyboard
+  /// never talks to iCloud).
+  var iCloudSyncEnabled: Bool {
+    get { defaults.object(forKey: "iCloudSync") as? Bool ?? true }
+    set { defaults.set(newValue, forKey: "iCloudSync") }
   }
 
   /// Apple Intelligence tidies each dictation when this is on and the model is available.

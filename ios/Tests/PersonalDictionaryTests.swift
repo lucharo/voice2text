@@ -21,6 +21,34 @@ struct PersonalDictionaryTests {
     #expect(d.applyReplacements("V two T beats said ai, not maid") == "v2t beats said AI, not maid")
   }
 
+  /// iCloud sync keeps one line per heard side (and per term, ignoring case), so dictation uses only that one too:
+  /// a downloaded copy then turns the same words into the same text.
+  @Test func aSecondLineForTheSameHeardSideOrTermIsIgnored() throws {
+    let d = try dictionary("ai => AI\nAI => A.I.\nClaude\nclaude\n")
+
+    #expect(d.applyReplacements("said ai") == "said AI")
+    #expect(d.entries.terms == ["Claude"])
+    #expect(d.entries.replacements.map { "\($0.heard)|\($0.written)" } == ["ai|AI"])
+  }
+
+  /// Synced devices hold the same rules in different file orders: the longer heard side applies first everywhere.
+  @Test func aLongerHeardSideAppliesFirstWhateverTheFileOrder() throws {
+    let rules = ["york => Yorkshire", "new york => NYC"]
+
+    let texts = try [rules, Array(rules.reversed())].map { try dictionary($0.joined(separator: "\n")).applyReplacements("from new york to york") }
+
+    #expect(texts == ["from NYC to Yorkshire", "from NYC to Yorkshire"])
+  }
+
+  /// Rules of equal length that chain ("foo" becomes "bar", which becomes "baz") apply alphabetically everywhere.
+  @Test func equalLengthRulesApplyAlphabeticallyWhateverTheFileOrder() throws {
+    let rules = ["foo => bar", "bar => baz"]
+
+    let texts = try [rules, Array(rules.reversed())].map { try dictionary($0.joined(separator: "\n")).applyReplacements("foo") }
+
+    #expect(texts == ["bar", "bar"])
+  }
+
   @Test func keyboardWordsCoverTermsAndWrittenSides() throws {
     let d = try dictionary("Claude Code\nfluid => Fluide\n")
     #expect(d.keyboardWords == ["Claude", "Code", "Fluide"])
@@ -58,6 +86,70 @@ struct PersonalDictionaryTests {
     try PersonalDictionary(file: app.file).addTerm("Kian")
     try app.saveEdit("Claude\nFluide\n", from: snapshot)
     #expect(PersonalDictionary(file: app.file).terms == ["Claude", "Fluide", "marimo", "Kian"])
+  }
+
+  /// "Edit as text" left open while iCloud sync deletes one entry and edits another: saving an unrelated change
+  /// keeps the deletion and the edit rather than writing back the draft's stale lines.
+  @Test func theTextEditorKeepsDeletionsAndEditsMadeWhileItWasOpen() throws {
+    let app = try dictionary("# mine\nClaude\nFluide\nai => AI\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("# mine\nClaude\nai => A.I.\n")
+
+    try app.saveEdit("# mine\nClaude Code\nFluide\nai => AI\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "# mine\nClaude Code\nai => A.I.\n")
+  }
+
+  /// An entry deleted in the draft stays deleted though iCloud edited it while the editor was open, and one edited
+  /// in the draft keeps the draft's version.
+  @Test func theTextEditorKeepsItsOwnDeletionsAndEditsOverOnesMadeElsewhere() throws {
+    let app = try dictionary("Claude\nai => AI\nfluid => Fluid\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("Claude\nai => A.I.\nfluid => Fluido\n")
+
+    try app.saveEdit("Claude\nfluid => Fluide\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "Claude\nfluid => Fluide\n")
+  }
+
+  /// Deleting the first of two lines for one heard side in the draft makes the second the rule; iCloud deleting
+  /// that entry while the editor was open does not take the draft's chosen line with it.
+  @Test func theTextEditorKeepsTheLineItChoseForAnEntryDeletedElsewhere() throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("")
+
+    try app.saveEdit("AI => A.I.\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "AI => A.I.\n")
+  }
+
+  /// Two lines for one heard side, the first the rule: iCloud changes that rule while the draft edits another
+  /// entry. The downloaded rule takes the first line's place, so the second line stays a spare and nothing about
+  /// the rule is noted as changed here (a note would send the spare to iCloud over the download).
+  @Test func theTextEditorKeepsADownloadedRuleAheadOfItsSpareLine() throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    let snapshot = app.text
+    let sync = PersonalDictionary(file: app.file)
+    try sync.transaction { try sync.write("ai => Ai\nAI => A.I.\n", asChanges: false) }
+    try? FileManager.default.removeItem(at: app.changesFile)
+
+    try app.saveEdit("ai => AI\nAI => A.I.\nClaude\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "ai => Ai\nAI => A.I.\nClaude\n")
+    #expect(Set(app.changes.keys) == ["term:claude"])
+  }
+
+  /// A second line for the same heard side is a spare: editing it or adding one in the draft is the user's
+  /// change, kept even though the entry's rule (its first line) did not change.
+  @Test(arguments: [
+    ("ai => AI\nAI => A.I!\n", "ai => AI\nAI => A.I!\n"),
+    ("ai => AI\nAI => A.I.\nAi => eh eye\n", "ai => AI\nAI => A.I.\nAi => eh eye\n"),
+  ])
+  func theTextEditorKeepsASpareLineTheDraftEditedOrAdded(draft: String, expected: String) throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    try app.saveEdit(draft, from: app.text)
+    #expect(PersonalDictionary(file: app.file).text == expected)
   }
 
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
