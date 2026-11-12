@@ -94,12 +94,16 @@ iOS gives keyboards no microphone, so the app records:
   read that database, and it counts toward their iCloud storage. Only the app syncs, at launch, on return to the
   foreground, when the iCloud account changes and after an edit in the app; there is no push from iCloud, which
   would need a background mode the app lacks. The keyboard never talks to iCloud, and a word it keeps while the
-  app is closed goes up at the next sync. Each entry is last writer wins, with deletions kept so a device that
-  still has an entry cannot bring it back; a device's first sync counts the entries it already had as older than
-  any change in iCloud. Learned words are a union, since none can be removed, updated under a file coordinator
-  the keyboard shares. Comment lines stay on the device. The per-entry sync state is `dictionary.sync.json`
-  beside `dictionary.txt` in the App Group, and `dictionary.keyboard.json` lists the entries the keyboard added
-  since the last sync; both are written in the dictionary's file transaction. Apple limits a record to 1 MB: an
+  app is closed goes up at the next sync. Each entry is last writer wins by when it was changed, not when its
+  device synced, with deletions kept so a device that still has an entry cannot bring it back; a device's first
+  sync counts the entries it already had as older than any change in iCloud. Saves are conditional on the
+  server's record being the one fetched, and a conflict is merged the same way and saved again. Learned words
+  are a union, since none can be removed, updated under a file coordinator the keyboard shares. Comment lines
+  stay on the device. The per-entry sync state is `dictionary.sync.json` beside `dictionary.txt` in the App
+  Group, and `dictionary.changes.json` notes when each entry was added, edited or deleted since the last sync,
+  and whether by the keyboard or the app; both are written in the dictionary's file transaction, and a
+  difference between the file and the sync state with no note behind it never counts as a change made on this
+  device. Apple limits a record to 1 MB: an
   entry or the learned words past that stop the sync, nothing is written, and the screen says why. History, the
   speech model and audio are never synced.
 
