@@ -92,6 +92,13 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardDebugLogUntil") }
   }
 
+  /// The app syncs the dictionary and learned words through the user's iCloud when this is on (the keyboard
+  /// never talks to iCloud).
+  var iCloudSyncEnabled: Bool {
+    get { defaults.object(forKey: "iCloudSync") as? Bool ?? true }
+    set { defaults.set(newValue, forKey: "iCloudSync") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }

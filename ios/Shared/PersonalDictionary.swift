@@ -61,8 +61,8 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     return try result!.get()
   }
 
-  /// Writes the file; call inside `transaction`.
-  private func write(_ newText: String) throws {
+  /// Writes the file; call inside `transaction`. The app's iCloud sync writes its merge through it too.
+  func write(_ newText: String) throws {
     text = newText
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     try newText.write(to: file, atomically: true, encoding: .utf8)
@@ -78,15 +78,16 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     var id: String { line }
   }
 
-  var items: [Item] {
-    text.split(whereSeparator: \.isNewline).compactMap { raw in
-      let line = raw.trimmingCharacters(in: .whitespaces)
-      if line.isEmpty || line.hasPrefix("#") { return nil }
-      guard let r = line.range(of: "=>") else { return Item(line: line, kind: .term(line)) }
-      let heard = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
-      let written = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
-      return heard.isEmpty || written.isEmpty ? nil : Item(line: line, kind: .replacement(heard: heard, written: written))
-    }
+  var items: [Item] { text.split(whereSeparator: \.isNewline).compactMap(Self.item) }
+
+  /// One line of the file as an item, nil for a comment, a blank or a replacement missing a side.
+  static func item(_ raw: some StringProtocol) -> Item? {
+    let line = raw.trimmingCharacters(in: .whitespaces)
+    if line.isEmpty || line.hasPrefix("#") { return nil }
+    guard let r = line.range(of: "=>") else { return Item(line: line, kind: .term(line)) }
+    let heard = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
+    let written = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+    return heard.isEmpty || written.isEmpty ? nil : Item(line: line, kind: .replacement(heard: heard, written: written))
   }
 
   var entries: (terms: [String], replacements: [(heard: String, written: String)]) {
