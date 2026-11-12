@@ -46,6 +46,8 @@ jobs:
       - run: ios/setup.sh
       - name: Measure per-key latency with debug logging
         working-directory: ios/Packages/V2TKeyboardCore
+        env:
+          V2T_KEY_BUDGET_MS: "8"  # the p99 budget, checked only here: a busy Mac misses it whatever the log does
         run: swift test -c release -Xswiftc -enable-testing --no-parallel --filter perKeyCostWithTheLogOn
 
   upload:

@@ -209,11 +209,14 @@ struct DebugLogTests {
     #expect(perCall < 50)
   }
 
-  /// What logging adds to a key on the Mac, against the README's budget of 8 ms of our own handling per key.
-  /// Types the same sentences with the log off and on, interleaved sentence by sentence so a loaded Mac weighs
-  /// on both alike, with every event the keyboard records for a key (key, proxy edits, engine decisions, a
-  /// changed bar). Release build only, as RealTypoEval:
-  /// `swift test -c release -Xswiftc -enable-testing --filter perKeyCost 2>&1 | grep '^debuglog'`.
+  /// What logging adds to a key on the Mac. Types the same sentences with the log off and on, interleaved
+  /// sentence by sentence (which goes first alternates), with every event the keyboard records for a key (key,
+  /// proxy edits, engine decisions, a changed bar), and compares each key with the same key typed with the log
+  /// off a moment earlier or later: the median of those differences is what the log adds, and a busy Mac slows
+  /// both arms of a pair alike. The p99 against the README's 8 ms budget is a property of the whole machine
+  /// (full-suite runs beside Simulator jobs read 8.4 to 19.4 ms, #195), so it is checked only when
+  /// V2T_KEY_BUDGET_MS is set, as testflight.yml's latency job does on its own runner. Release build only, as
+  /// RealTypoEval: `swift test -c release -Xswiftc -enable-testing --filter perKeyCost 2>&1 | grep '^debuglog'`.
   @Test(.enabled(if: RealTypoEval.optimised, "timings mean nothing in a debug build"))
   func perKeyCostWithTheLogOn() throws {
     let lexicons = [try Fixtures.english.get()]
@@ -244,16 +247,32 @@ struct DebugLogTests {
     }
     var warm: [Double] = [], off: [Double] = [], on: [Double] = []
     for s in sentences.prefix(3) { type(s, nil, into: &warm) }
-    for s in sentences {
-      type(s, nil, into: &off)
-      type(s, log, into: &on)
+    for (i, s) in sentences.enumerated() {
+      if i.isMultiple(of: 2) {
+        type(s, nil, into: &off)
+        type(s, log, into: &on)
+      } else {
+        type(s, log, into: &on)
+        type(s, nil, into: &off)
+      }
     }
     log.flush(wait: true)
     print("debuglog per key, log off: \(RealTypoEval.stats(off))")
     print("debuglog per key, log on:  \(RealTypoEval.stats(on))")
-    let p99 = on.sorted()[on.count * 99 / 100]
-    #expect(p99 < 8, "p99 \(p99) ms over the 8 ms budget")
+    try #require(on.count == off.count)
+    let added = zip(on, off).map { $0 - $1 }.sorted()
+    let medianAdded = added[added.count / 2]
+    print(String(format: "debuglog: added per key, median %.4f ms", medianAdded))
+    #expect(medianAdded < Self.addedBudgetMs, "the log adds \(medianAdded) ms to the median key")
+    if let budget = ProcessInfo.processInfo.environment["V2T_KEY_BUDGET_MS"].flatMap(Double.init) {
+      let p99 = on.sorted()[on.count * 99 / 100]
+      #expect(p99 < budget, "p99 \(p99) ms over the \(budget) ms budget")
+    }
   }
+
+  /// What the log may add to the median key. Measured on a 10-core Mac at load 73 to 93 (12 Nov 2026): 0.003 to
+  /// 0.007 ms; with a 50 µs sleep in each log() call, 0.41 ms; with each call waiting for its write to disk, 10.8 ms.
+  static let addedBudgetMs = 0.1
 }
 
 /// The keyboard's ProxyAdapter in miniature: records inserts and deletes when the log is on.
