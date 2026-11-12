@@ -271,8 +271,10 @@ public final class Suggester: @unchecked Sendable {
     let runs = Self.letterRuns(lower)
     let longest = runs.map(\.count).max() ?? 0
     if longest > stretchedRun { return nil }
-    let oneTapFewer: Set<String>? = longest == stretchedRun
-      ? Set(runs.filter { $0.count == stretchedRun }.map { run in String(lower[..<run.startIndex] + lower[lower.index(after: run.startIndex)...]) })
+    // compared by letters alone, as the lists spell the word with a straight apostrophe or an accent the
+    // typist left to autocorrect ("i’lll": I'll)
+    let oneTapFewer: Set<[UInt8]>? = longest == stretchedRun
+      ? Set(runs.filter { $0.count == stretchedRun }.map { run in Lexicon.fold(String(lower[..<run.startIndex] + lower[lower.index(after: run.startIndex)...])) })
       : nil
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
@@ -280,7 +282,7 @@ public final class Suggester: @unchecked Sendable {
     let rank = ranking(for: typed, context: context)
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
     guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
-    if let oneTapFewer, !oneTapFewer.contains(best.word.lowercased()) { return nil }
+    if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
     // two different words about as likely as each other ("ica": ova against ice): the letters stay
     let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
     if let second = others.map(\.score).max(), best.score - second < runnerUpLead { return nil }

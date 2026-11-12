@@ -64,6 +64,13 @@ struct AutocorrectRulesTests {
     #expect(try suggester().autocorrection(for: taps(word, Self.layout), context: TypingContext(before: "I think the ")) == expected)
   }
 
+  /// The lists spell the word with a straight apostrophe; the typist's may be curly.
+  @Test(arguments: ["you'lll", "you’lll"])
+  func oneTapTooManyIsCorrectedAcrossAnApostrophe(word: String) throws {
+    let typed = taps(word, Self.layout), context = TypingContext(before: "I think ")
+    #expect(try suggester().autocorrection(for: typed, context: context).map(Suggester.straightApostrophes) == "you'll")
+  }
+
   @Test func aRunOneLongerThanADoubleLetterSlipIsNeverCorrected() throws {
     let typed = taps("booook", Self.layout), context = TypingContext(before: "I think the ")
     #expect(try suggester().autocorrection(for: typed, context: context) == nil)
