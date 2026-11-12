@@ -509,7 +509,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   func keyboardView(_ v: KeyboardView, action: KeyAction) {
     bar.clearNotice()  // every key action, VoiceOver's shift and page keys included, brings the suggestions back
-    dlog("act", [.init("a", .s("\(action)"))])
+    dlog("act", [.init("a", .s("\(action)")), .init("search", .b(emojiSearch != nil))])
     if let s = emojiSearch {
       switch action {
       case .space:
@@ -540,7 +540,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   }
 
   func keyboardViewDelete(_ v: KeyboardView, wholeWord: Bool) {
-    dlog("act", [.init("a", .s(wholeWord ? "deleteWord" : "delete"))])
+    dlog("act", [.init("a", .s(wholeWord ? "deleteWord" : "delete")), .init("search", .b(emojiSearch != nil))])
     if let s = emojiSearch { s.deleteBackward(); return }
     edit { wholeWord ? $0.deleteWord() : $0.delete() }
   }

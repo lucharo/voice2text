@@ -18,12 +18,16 @@ import Testing
 /// in the field, dictated text and anything in a field a dictation went into are recorded by length only, and a
 /// cursor move says how far, not past what. The replay puts blocks there, so nothing before them reads as a
 /// word, and leaves out the first word typed after them (`not replayed`): it may have joined letters the log
-/// does not hold.
+/// does not hold. A correction the log records without its words is marked `?` and not compared. Keys pressed in
+/// emoji search are skipped; logs written before `act` lines carried `search` do not mark search's space, delete
+/// and return, so a search in one of those reads as typing.
 enum LogReplayEval {
   static let path = ProcessInfo.processInfo.environment["V2T_KB_LOG"].map { NSString(string: $0).expandingTildeInPath }
 
   struct Word: Equatable {
     var typed: String, previous: String?, logged: String?, now: String?, bar: [String]
+    /// The log says a correction was made here but not to what (a field a dictation went into): not compared.
+    var loggedUnknown = false
   }
 
   struct Outcome {
@@ -113,6 +117,8 @@ enum LogReplayEval {
           if let pending = e.pendingAutocorrection, !e.suggestions().contains(where: { $0.word == pending }) { out.hiddenPending += 1 }
         }
       case "act":
+        // keys pressed while emoji search is open go to its field, not the document
+        if o["search"] as? Bool == true { break }
         switch o["a"] as? String {
         case "space": boundary(e) { e.space(now: now) }
         case "returnKey": boundary(e) { e.returnKey() }
@@ -124,7 +130,10 @@ enum LogReplayEval {
         default: break
         }
       case "autocorrect":
-        guard let from = o["from"] as? String, let to = o["to"] as? String else { break }  // by name only in a redacted field
+        guard let from = o["from"] as? String, let to = o["to"] as? String else {
+          if let i = open { out.words[i].loggedUnknown = true }  // by name only in a redacted field
+          break
+        }
         if let i = open, from == out.words[i].typed { out.words[i].logged = to } else { early = (from, to) }
       case "swiped":
         // the word the swipe typed, after ending the word in progress as the engine does
@@ -154,12 +163,13 @@ enum LogReplayEval {
   @Test(.enabled(if: path != nil)) static func replaysTheLog() throws {
     let lines = try String(contentsOfFile: path!, encoding: .utf8).split(separator: "\n").map(String.init)
     let out = replay(lines, lexicons: ["en": try Fixtures.english.get(), "es": try Fixtures.spanish.get()])
+    let known = out.words.filter { !$0.loggedUnknown }
     for w in out.words {
-      let mark = w.logged == w.now ? " " : "*"
-      print("replay \(mark) \(w.typed) after=\(w.previous ?? "-") logged=\(w.logged ?? "-") now=\(w.now ?? "-") bar=\(w.bar)")
+      let mark = w.loggedUnknown ? "?" : w.logged == w.now ? " " : "*"
+      print("replay \(mark) \(w.typed) after=\(w.previous ?? "-") logged=\(w.loggedUnknown ? "?" : w.logged ?? "-") now=\(w.now ?? "-") bar=\(w.bar)")
     }
-    let moved = out.words.filter { $0.logged != $0.now }.count
-    print("replay-summary words \(out.words.count), autocorrected logged \(out.words.filter { $0.logged != nil }.count) now \(out.words.filter { $0.now != nil }.count), moved \(moved)")
+    let moved = known.filter { $0.logged != $0.now }.count
+    print("replay-summary words \(out.words.count), autocorrected logged \(known.filter { $0.logged != nil }.count) now \(known.filter { $0.now != nil }.count), moved \(moved); corrected to a word the log does not name \(out.words.count - known.count)")
     print("replay-summary key presses in a word \(out.composingKeys), with a pending correction the bar did not show \(out.hiddenPending)")
     print("replay-summary word boundaries \(out.boundaries), left the bar empty \(out.emptyBars); words not replayed \(out.notReplayed)")
     #expect(!out.words.isEmpty)

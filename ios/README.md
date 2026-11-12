@@ -133,7 +133,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `down` | n (finger), key, p, fingers down | a finger lands |
 | `up` | n, key, liftKey, p, ms, travel, verdict (tap, swipe, accent, trackpad, rolled, cancelled), path (24 points) | it lifts |
 | `rollover`, `swipe-start` | n, key, p, by | a finger typed early by a newer one lifting; a finger becomes a swipe |
-| `key`, `act`, `cursor` | text and p; action; by | a character, another key, the space-bar trackpad |
+| `key`, `act`, `cursor` | text, p and search (typed into emoji search); action and search; by | a character, another key, the space-bar trackpad |
 | `swipe` | points, trace (48 points), candidates (word, score), applied, decodeMs | a swipe decoded |
 | `swiped`, `picked` | word, alternatives; word, replaced | the engine typed a swipe; a bar tap replaced a word |
 | `bar`, `pick` | words, kinds, bold; slot, word, emoji | the bar changed; a slot was tapped |
