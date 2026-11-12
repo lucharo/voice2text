@@ -15,21 +15,33 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   let file: URL
   /// Which program writes through this copy: "keyboard" in the keyboard extension, "app" otherwise.
   let writer: String
+  private let now: () -> Date
   @Published private(set) var text: String
 
-  init(file: URL? = PersonalDictionary.defaultFile, writer: String = Bundle.main.bundleURL.pathExtension == "appex" ? "keyboard" : "app") {
+  init(file: URL? = PersonalDictionary.defaultFile, writer: String = Bundle.main.bundleURL.pathExtension == "appex" ? "keyboard" : "app",
+       now: @escaping () -> Date = Date.init) {
     let f = file ?? URL.applicationSupportDirectory.appending(path: "dictionary.txt")
     self.file = f
     self.writer = writer
+    self.now = now
     text = (try? String(contentsOf: f, encoding: .utf8)) ?? Self.header
   }
 
-  /// The keys of entries the keyboard added since the app last synced with iCloud, so the sync can say the
-  /// keyboard added them. Read, written and cleared only inside `transaction`.
-  var keyboardAddedFile: URL { file.deletingPathExtension().appendingPathExtension("keyboard.json") }
+  /// When an entry was added, edited or deleted here, and by which program: the iCloud sync's last-writer-wins
+  /// goes by these times, not by when the sync ran, so an edit made offline does not beat a later one made
+  /// elsewhere. A difference between the file and the sync state with no change behind it is the sync's own
+  /// download and never counts as an edit.
+  struct Change: Codable, Equatable, Sendable {
+    var time: Date
+    var by: String
+  }
 
-  var keyboardAdded: Set<String> {
-    Set((try? JSONDecoder().decode([String].self, from: Data(contentsOf: keyboardAddedFile))) ?? [])
+  /// The changes since the app last synced with iCloud, by entry key. Read, written and cleared only inside
+  /// `transaction`.
+  var changesFile: URL { file.deletingPathExtension().appendingPathExtension("changes.json") }
+
+  var changes: [String: Change] {
+    (try? JSONDecoder().decode([String: Change].self, from: Data(contentsOf: changesFile))) ?? [:]
   }
 
   static var defaultFile: URL? {
@@ -55,8 +67,8 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
       guard draft != snapshot else { return }
       let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) } }
       let before = Set(lines(snapshot)), mine = Set(lines(draft)), current = Set(lines(text))
-      let was = Self.entryLines(snapshot), now = Self.entryLines(draft)
-      let touched = Set(was.keys).union(now.keys).filter { was[$0] != now[$0] }
+      let was = Self.entryLines(snapshot), drafted = Self.entryLines(draft)
+      let touched = Set(was.keys).union(drafted.keys).filter { was[$0] != drafted[$0] }
       let isTouched = { (line: String) in Self.item(line).map { touched.contains($0.key) } ?? false }
       let added = lines(text).filter { line in
         !line.isEmpty && !before.contains(line) && !mine.contains(line) && !isTouched(line)
@@ -83,10 +95,20 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     return try result!.get()
   }
 
-  /// Writes the file; call inside `transaction`. The app's iCloud sync writes its merge through it too.
-  func write(_ newText: String) throws {
-    text = newText
+  /// Writes the file; call inside `transaction`. Each entry the write adds, edits or deletes is noted in
+  /// `changes` first, unless `asChanges` is false: the app's iCloud sync writes its download that way.
+  func write(_ newText: String, asChanges: Bool = true) throws {
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if asChanges {
+      let old = Self.entryLines(text), new = Self.entryLines(newText)
+      let keys = Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }
+      if !keys.isEmpty {
+        var c = changes
+        for k in keys { c[k] = Change(time: now(), by: writer) }
+        try JSONEncoder().encode(c).write(to: changesFile, options: .atomic)
+      }
+    }
+    text = newText
     try newText.write(to: file, atomically: true, encoding: .utf8)
   }
 
@@ -189,9 +211,6 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     var t = text
     if !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
     try write(t + line + "\n")
-    if writer == "keyboard", let key = Self.item(line)?.key {
-      try JSONEncoder().encode(keyboardAdded.union([key]).sorted()).write(to: keyboardAddedFile, options: .atomic)
-    }
   }
 
   var terms: [String] { entries.terms }

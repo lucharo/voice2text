@@ -34,14 +34,16 @@ final class Clock {
   let sync: ICloudSync
 
   init(_ text: String, learned: [String] = [], model: String = "iPhone17,1", cloud: FakeCloud, clock: Clock) throws {
-    dictionary = PersonalDictionary(file: dir.appending(path: "dictionary.txt"))
+    self.clock = clock
+    dictionary = PersonalDictionary(file: dir.appending(path: "dictionary.txt"), now: { clock.now })
     try dictionary.save(text)
     for w in learned { settings.learn(w) }
-    sync = ICloudSync(dictionary: dictionary, settings: settings, cloud: cloud, device: model, now: { clock.now })
+    sync = ICloudSync(dictionary: dictionary, settings: settings, cloud: cloud, device: model)
   }
 
+  let clock: Clock
   /// A copy of this device's dictionary as the keyboard extension holds it.
-  var keyboard: PersonalDictionary { PersonalDictionary(file: dictionary.file, writer: "keyboard") }
+  var keyboard: PersonalDictionary { PersonalDictionary(file: dictionary.file, writer: "keyboard", now: { [clock] in clock.now }) }
   var lines: [String] { dictionary.items.map(\.line) }
 }
 
@@ -73,8 +75,8 @@ final class Clock {
     clock.at(2); await pad.sync.start().value
     clock.at(3); await oldPad.sync.start().value  // has Fluide, and then stays away while it is deleted
 
-    try phone.dictionary.remove("Fluide")
-    clock.at(4); await phone.sync.sync().value
+    clock.at(4); try phone.dictionary.remove("Fluide")
+    await phone.sync.sync().value
     clock.at(5); await pad.sync.sync().value
     clock.at(6); await oldPad.sync.sync().value
     clock.at(7); await phone.sync.sync().value
@@ -92,11 +94,11 @@ final class Clock {
     clock.at(1); await phone.sync.start().value
     clock.at(2); await pad.sync.start().value
 
-    try phone.dictionary.save("ai => A.I.\n")
-    try pad.dictionary.save("AI => Ai\n")
-    clock.at(10); await phone.sync.sync().value
-    clock.at(11); await pad.sync.sync().value
-    clock.at(12); await phone.sync.sync().value
+    clock.at(10); try phone.dictionary.save("ai => A.I.\n")
+    clock.at(11); try pad.dictionary.save("AI => Ai\n")
+    await phone.sync.sync().value
+    await pad.sync.sync().value
+    await phone.sync.sync().value
 
     #expect(phone.dictionary.text == "AI => Ai\n")
     #expect(pad.dictionary.text == "AI => Ai\n")
@@ -108,8 +110,8 @@ final class Clock {
     let phone = try Device("Claude\n", cloud: cloud, clock: clock)
     clock.at(1); await phone.sync.start().value
 
-    try phone.keyboard.addTerm("marimo")
-    clock.at(2); await phone.sync.sync().value
+    clock.at(2); try phone.keyboard.addTerm("marimo")
+    await phone.sync.sync().value
 
     #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast),
                               "term:marimo": .init(line: "marimo", time: at(2), source: by("iPhone17,1", "keyboard"))])
@@ -120,12 +122,12 @@ final class Clock {
   @Test func eachChangeSaysWhichDeviceAndWhetherTheKeyboardOrTheAppMadeIt() async throws {
     let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
     clock.at(1); await pad.sync.start().value
-    try pad.keyboard.addTerm("marimo")
+    clock.at(2); try pad.keyboard.addTerm("marimo")
     try pad.dictionary.addReplacement(heard: "ai", written: "AI")
-    clock.at(2); await pad.sync.sync().value
+    await pad.sync.sync().value
 
-    try pad.dictionary.save("Marimo\nai => AI\n")
-    clock.at(3); await pad.sync.sync().value
+    clock.at(3); try pad.dictionary.save("Marimo\nai => AI\n")
+    await pad.sync.sync().value
 
     #expect(cloud.records == ["term:marimo": .init(line: "Marimo", time: at(3), source: by("iPad16,3")),
                               "replace:ai": .init(line: "ai => AI", time: at(2), source: by("iPad16,3"))])
@@ -170,8 +172,8 @@ final class Clock {
   @Test func commentsAndHeaderLinesSurviveAMergeUntouched() async throws {
     let pad = try Device("Fluide\nKian\n", cloud: cloud, clock: clock)
     clock.at(1); await pad.sync.start().value
-    try pad.dictionary.save("Fluide\n")
-    clock.at(5); await pad.sync.sync().value  // Kian deleted at 5
+    clock.at(5); try pad.dictionary.save("Fluide\n")  // Kian deleted at 5
+    await pad.sync.sync().value
     let phone = try Device("# mine\nClaude\n\n# names\nKian\nbad =>\n", cloud: cloud, clock: clock)
 
     clock.at(6); await phone.sync.start().value  // a first sync: this device's Kian is older than the deletion
@@ -184,8 +186,8 @@ final class Clock {
   @Test func aFirstSyncHonoursADeletionMadeElsewhere() async throws {
     let phone = try Device("Claude\nFluide\n", cloud: cloud, clock: clock)
     clock.at(1); await phone.sync.start().value
-    try phone.dictionary.remove("Fluide")
-    clock.at(2); await phone.sync.sync().value
+    clock.at(2); try phone.dictionary.remove("Fluide")
+    await phone.sync.sync().value
     let pad = try Device("Fluide\nKian\n", cloud: cloud, clock: clock)
 
     clock.at(10); await pad.sync.start().value
@@ -202,14 +204,70 @@ final class Clock {
     clock.at(1); await pad.sync.start().value
     let phone = try Device("marimo\n", cloud: cloud, clock: clock)
     clock.at(2); await phone.sync.start().value
-    try phone.dictionary.remove("marimo")
-    clock.at(3); await phone.sync.sync().value
+    clock.at(3); try phone.dictionary.remove("marimo")
+    await phone.sync.sync().value
 
-    try pad.keyboard.addTerm("marimo")
-    clock.at(4); await pad.sync.sync().value
+    clock.at(4); try pad.keyboard.addTerm("marimo")
+    await pad.sync.sync().value
 
     #expect(pad.lines == ["marimo"])
     #expect(cloud.records == ["term:marimo": .init(line: "marimo", time: at(4), source: by("iPad16,3", "keyboard"))])
+  }
+
+  /// Last writer wins by when an entry was changed, not when its device synced: an edit made offline at 10 loses
+  /// to one made at 20 elsewhere, though it reaches iCloud later.
+  @Test func anOfflineEditLosesToALaterEditSyncedFirst() async throws {
+    let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+
+    clock.at(10); try phone.dictionary.save("ai => A.I.\n")
+    clock.at(20); try pad.dictionary.save("ai => Ai\n")
+    await pad.sync.sync().value
+    clock.at(30); await phone.sync.sync().value
+
+    #expect(phone.dictionary.text == "ai => Ai\n")
+    #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(20), source: by("iPad16,3"))])
+  }
+
+  /// The same for a deletion: one made offline at 10 loses to an edit made at 20 elsewhere.
+  @Test func anOfflineDeletionLosesToALaterEditSyncedFirst() async throws {
+    let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+
+    clock.at(10); try phone.dictionary.remove("ai => AI")
+    clock.at(20); try pad.dictionary.save("ai => Ai\n")
+    await pad.sync.sync().value
+    clock.at(30); await phone.sync.sync().value
+
+    #expect(phone.dictionary.text == "ai => Ai\n")
+    #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(20), source: by("iPad16,3"))])
+  }
+
+  /// A download whose sync state could not be written is still not a change made here: when the entry it
+  /// deleted is added again elsewhere (by a device whose clock reads earlier), the re-addition wins.
+  @Test func aDownloadWhoseSyncStateWasNotWrittenIsNotALocalChange() async throws {
+    let phone = try Device("Fluide\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(10); try pad.dictionary.remove("Fluide")
+    await pad.sync.sync().value
+    let state = phone.sync.stateFile.path()
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: state)
+    clock.at(20); await phone.sync.sync().value  // writes the deletion, then fails to write its sync state
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: state)
+    guard case .failed = phone.sync.status else { Issue.record("the state write did not fail: \(phone.sync.status)"); return }
+
+    clock.at(15); try pad.dictionary.addTerm("Fluide")
+    await pad.sync.sync().value
+    clock.at(30); await phone.sync.sync().value
+
+    #expect(phone.lines == ["Fluide"])
+    #expect(cloud.records == ["term:fluide": .init(line: "Fluide", time: at(15), source: by("iPad16,3"))])
   }
 
   /// The keyboard keeps words while the app applies a download, each reading and writing back the one array: no

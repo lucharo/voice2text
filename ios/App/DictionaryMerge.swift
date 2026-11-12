@@ -28,25 +28,27 @@ enum DictionaryMerge {
   /// deletion or edit already in iCloud wins over it, while an entry iCloud has never seen still goes up.
   static let unversioned = Date.distantPast
 
-  /// The file as records: an entry unchanged since the last sync keeps that sync's time; one added or edited
-  /// since (on this device, the keyboard included) and one deleted since (a tombstone) take `now`. With no last
-  /// sync (`synced` nil: the first on this device, also after sync was off from the start), every entry is
-  /// `unversioned`, since nothing tells an old entry from one just added. A change's source is this `device`, and
-  /// the keyboard for the keys in `keyboardAdded`, the app otherwise (deletions are the app's: the keyboard only adds).
-  static func local(_ text: String, synced: Records?, now: Date, device: String, keyboardAdded: Set<String>) -> Records {
+  /// The file as records: an entry unchanged since the last sync keeps that sync's record; one added, edited or
+  /// deleted since (a tombstone) takes the time and program of its `changes` entry, from when it was made, with
+  /// this `device` as its source. A difference with no change behind it is a download whose sync state was never
+  /// written, so it is `unversioned` and loses to whatever iCloud holds. With no last sync (`synced` nil: the
+  /// first on this device, also after sync was off from the start), every entry is `unversioned`, since nothing
+  /// tells an old entry from one just added.
+  static func local(_ text: String, synced: Records?, changes: [String: PersonalDictionary.Change], device: String) -> Records {
     let current = entries(text)
-    let source = { (k: String) in Source(device: device, app: keyboardAdded.contains(k) ? "keyboard" : "app") }
+    let record = { (k: String, line: String?) in
+      changes[k].map { Record(line: line, time: $0.time, source: Source(device: device, app: $0.by)) }
+        ?? Record(line: line, time: unversioned)
+    }
     guard let synced else {
-      return Dictionary(uniqueKeysWithValues: current.map { k, line in
-        (k, Record(line: line, time: unversioned, source: keyboardAdded.contains(k) ? source(k) : nil))
-      })
+      return current.mapValues { Record(line: $0, time: unversioned) }
     }
     var out: Records = [:]
     for (k, line) in current {
-      out[k] = synced[k]?.line == line ? synced[k]! : Record(line: line, time: now, source: source(k))
+      out[k] = synced[k]?.line == line ? synced[k]! : record(k, line)
     }
-    for (k, record) in synced where current[k] == nil {
-      out[k] = record.line == nil ? record : Record(line: nil, time: now, source: Source(device: device, app: "app"))
+    for (k, old) in synced where current[k] == nil {
+      out[k] = old.line == nil ? old : record(k, nil)
     }
     return out
   }
@@ -86,9 +88,9 @@ enum DictionaryMerge {
   }
 
   /// The whole merge: the new file text, and the records both this device's sync state and iCloud then hold.
-  static func run(text: String, synced: Records?, remote: Records, now: Date, device: String,
-                  keyboardAdded: Set<String>) -> (text: String, records: Records) {
-    let records = merge(local(text, synced: synced, now: now, device: device, keyboardAdded: keyboardAdded), remote)
+  static func run(text: String, synced: Records?, remote: Records, changes: [String: PersonalDictionary.Change],
+                  device: String) -> (text: String, records: Records) {
+    let records = merge(local(text, synced: synced, changes: changes, device: device), remote)
     return (apply(records, to: text), records)
   }
 }
