@@ -31,6 +31,8 @@ profile with the same name needs no change.
 
 Pushing an `ios-v<version>` tag submits that version's newest TestFlight build for App Store review
 ([appstore.yml](../.github/workflows/appstore.yml); [Maintainers](../docs/public/maintainers/index.md#iphone-app) has the details).
+An iOS pull request that changes what a person using the app or keyboard sees adds a line under `Unreleased` in
+[CHANGELOG.md](CHANGELOG.md), and the next version's "What's New" (the tag's message) is written from that section.
 
 To upload from a Mac with the Apple Distribution certificate but no account in Xcode, sign manually instead. Install the
 "v2t App Store" and "v2t keyboard App Store" profiles (App Store Connect API `GET /v1/profiles`, `profileContent`,
