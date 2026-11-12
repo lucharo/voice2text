@@ -345,6 +345,25 @@ class Release(unittest.TestCase):
         self.assertTrue(str(stop.exception).startswith("the App Store Connect key UPLOADKEY cannot create"),
                         str(stop.exception))
 
+    def test_age_rating_questions_apple_accepted_unanswered_are_not_missing(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
+        fake.rating = {"gambling": False, "kidsAgeBand": None, "socialMediaAgeRestricted": None,
+                       "gracRatingClassificationNumber": None}
+
+        out = self.run_release(fake, dry_run=True)
+
+        self.assertIn("dry run: the listing has everything the API can check", out)
+
+    def test_an_unanswered_age_rating_question_is_still_missing(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
+        fake.rating = {"gambling": None, "socialMediaAgeRestricted": None}
+
+        with self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, dry_run=True)
+
+        self.assertEqual(str(stop.exception), "missing before App Review can take it:\n"
+                         "  - age rating (unanswered: gambling)")
+
     def test_dry_run_fails_listing_the_missing_screenshots(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
         fake.screenshots = {"APP_IPHONE_67": 3}

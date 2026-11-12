@@ -54,9 +54,11 @@ RELEASED = {"READY_FOR_DISTRIBUTION", "READY_FOR_SALE"}
 # Screenshot sets App Review accepts for an app that runs on iPhone and iPad (TARGETED_DEVICE_FAMILY "1,2").
 IPHONE_SETS = {"APP_IPHONE_69", "APP_IPHONE_67", "APP_IPHONE_65"}
 IPAD_SETS = {"APP_IPAD_PRO_3GEN_129", "APP_IPAD_PRO_129"}
-# Age rating fields that stay empty on a complete declaration: overrides, the kids band, an optional link.
+# Age rating fields that stay empty on a complete declaration: overrides, the kids band, an optional link. The
+# last two were empty when 1.1 was submitted on 12 Nov 2026 (the run printed "age rating (unanswered:
+# socialMediaAgeRestricted, gracRatingClassificationNumber)") and Apple accepted the submission anyway (#132).
 OPTIONAL_RATING_FIELDS = {"kidsAgeBand", "ageRatingOverride", "ageRatingOverrideV2", "koreaAgeRatingOverride",
-                          "developerAgeRatingInfoUrl"}
+                          "developerAgeRatingInfoUrl", "socialMediaAgeRestricted", "gracRatingClassificationNumber"}
 
 
 class ApiError(Exception):
