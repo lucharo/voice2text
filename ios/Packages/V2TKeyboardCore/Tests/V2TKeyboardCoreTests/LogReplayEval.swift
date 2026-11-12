@@ -23,6 +23,10 @@ import Testing
 /// record. A correction the log records without its words is marked `?` and not compared. Keys pressed in
 /// emoji search are skipped; logs written before `act` lines carried `search` do not mark search's space, delete
 /// and return, so a search in one of those reads as typing.
+///
+/// A log with typing exercise lines (an Export from the app) also prints `replay-exercise` lines: for each word
+/// of an exercise sentence, what this engine made of the word typed while the sentence was on screen
+/// (`scoreExercises`), then a `replay-exercise-summary`.
 enum LogReplayEval {
   static let path = ProcessInfo.processInfo.environment["V2T_KB_LOG"].map { NSString(string: $0).expandingTildeInPath }
 
@@ -30,6 +34,10 @@ enum LogReplayEval {
     var typed: String, previous: String?, logged: String?, now: String?, bar: [String]
     /// The log says a correction was made here but not to what (a field a dictation went into): not compared.
     var loggedUnknown = false
+    /// Milliseconds of uptime of the key that ended the word, and whether delete was pressed since the word
+    /// before it ended: for lining words up with a typing exercise's sentence.
+    var t: Double = 0
+    var deleted = false
   }
 
   struct Outcome {
@@ -59,6 +67,9 @@ enum LogReplayEval {
     // words the user kept in an earlier session of the log stay kept, as Settings.learnedWords keeps them; words
     // kept before the log began are not in it
     var learned = Set<String>()
+    // the line being replayed, and whether delete was pressed since the last word ended
+    var lineT: Double = 0
+    var deletedSince = false
     func boundary(_ e: TypingEngine, _ body: () -> Void) {
       let typed = e.literal
       guard !typed.isEmpty else { body(); return }
@@ -74,7 +85,9 @@ enum LogReplayEval {
       e.onEvent = { if case .autocorrected(_, let replacement) = $0 { applied = replacement } }
       body()
       e.onEvent = nil
-      out.words.append(Word(typed: typed, previous: previous, logged: early?.from == typed ? early?.to : nil, now: applied, bar: bar))
+      out.words.append(Word(typed: typed, previous: previous, logged: early?.from == typed ? early?.to : nil, now: applied, bar: bar,
+                            t: lineT, deleted: deletedSince))
+      deletedSince = false
       early = nil
       open = out.words.count - 1
       out.boundaries += 1
@@ -90,6 +103,7 @@ enum LogReplayEval {
     for line in lines {
       guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let name = o["e"] as? String else { continue }
       let now = (o["t"] as? Double ?? 0) / 1000
+      lineT = o["t"] as? Double ?? 0
       if name == "appear" {
         guard (o["form"] as? String ?? "phone") == "phone" else {
           engine = nil  // the touches cannot be placed on the right keys
@@ -138,8 +152,8 @@ enum LogReplayEval {
         case "space": boundary(e) { e.space(now: now) }
         case "returnKey": boundary(e) { e.returnKey() }
         case "tab": boundary(e) { e.character("\t") }
-        case "delete": e.delete(); open = nil
-        case "deleteWord": e.deleteWord(); open = nil
+        case "delete": e.delete(); open = nil; deletedSince = true
+        case "deleteWord": e.deleteWord(); open = nil; deletedSince = true
         case "shift": e.shiftTap(now: now)
         case "capsLock": e.capsLockTap()
         default: break
@@ -175,6 +189,67 @@ enum LogReplayEval {
     return out
   }
 
+  /// What this engine made of a word typed in a typing exercise (the app's `exercise` lines), against the word
+  /// the sentence asked for. Capitals and curly apostrophes are not told apart.
+  enum Score: String, CaseIterable {
+    case tappedRight = "tapped right", fixed = "fixed by autocorrect", wrongWord = "made a different wrong word"
+    case leftAsTyped = "left as typed", notScored = "not scored"
+  }
+
+  struct Scored {
+    var score: Score, target: String, word: Word?
+    /// The sentence's word was in one of the bar's three slots when the word ended.
+    var inBar: Bool { word.map { w in w.bar.contains { fold($0) == fold(target) } } ?? false }
+  }
+
+  static func fold(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "’", with: "'") }
+
+  /// Each exercise sentence's words against the words this replay finished while the sentence was on screen.
+  /// A sentence whose word count differs (a word left out, run together or not replayed) is not scored, and
+  /// nor is a word typed after a delete: which of the sentence's words it was is a guess.
+  static func scoreExercises(_ lines: [String], _ out: Outcome) -> [Scored] {
+    var scored: [Scored] = []
+    for line in lines {
+      guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], o["e"] as? String == "exercise",
+            let t = o["t"] as? Double, let end = o["end"] as? Double, let target = o["target"] as? String else { continue }
+      let want = TypingExerciseLog.words(target)
+      let typed = out.words.filter { t <= $0.t && $0.t <= end }
+      guard typed.count == want.count else {
+        scored += want.map { Scored(score: .notScored, target: $0, word: nil) }
+        continue
+      }
+      for (w, target) in zip(typed, want) {
+        let final = w.now ?? w.typed
+        let score: Score =
+          w.deleted ? .notScored
+          : fold(final) == fold(target) ? (fold(w.typed) == fold(target) ? .tappedRight : .fixed)
+          : w.now != nil ? .wrongWord : .leftAsTyped
+        scored.append(Scored(score: score, target: target, word: w))
+      }
+    }
+    return scored
+  }
+
+  @Test static func exerciseWordsAreScoredOnlyWhereTheyLineUp() {
+    func word(_ typed: String, now: String? = nil, t: Double, deleted: Bool = false, bar: [String] = []) -> Word {
+      Word(typed: typed, previous: nil, logged: nil, now: now, bar: bar, t: t, deleted: deleted)
+    }
+    var out = Outcome()
+    // "The fox ran." typed as "teh" (corrected), "fox", then a delete before "ran"; "Sit by." with one word run on
+    out.words = [word("teh", now: "the", t: 100, bar: ["teh", "the"]), word("fox", t: 200), word("ran", t: 300, deleted: true),
+                 word("sitby", t: 1100), word("dog", now: "dig", t: 2100), word("cst", t: 2200)]
+    let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran."}"#, #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by."}"#,
+                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat"}"#]
+
+    let scored = scoreExercises(lines, out)
+
+    #expect(scored.map { "\($0.target) \($0.score.rawValue) \($0.inBar)" } == [
+      "The fixed by autocorrect true", "fox tapped right false", "ran not scored false",
+      "Sit not scored false", "by not scored false",
+      "dog made a different wrong word false", "cat left as typed false",
+    ])
+  }
+
   @Test(.enabled(if: path != nil)) static func replaysTheLog() throws {
     let lines = try String(contentsOfFile: path!, encoding: .utf8).split(separator: "\n").map(String.init)
     let out = replay(lines, lexicons: ["en": try Fixtures.english.get(), "es": try Fixtures.spanish.get()])
@@ -187,6 +262,15 @@ enum LogReplayEval {
     print("replay-summary words \(out.words.count), autocorrected logged \(known.filter { $0.logged != nil }.count) now \(known.filter { $0.now != nil }.count), moved \(moved); corrected to a word the log does not name \(out.words.count - known.count)")
     print("replay-summary key presses in a word \(out.composingKeys), with a pending correction the bar did not show \(out.hiddenPending)")
     print("replay-summary word boundaries \(out.boundaries), left the bar empty \(out.emptyBars); words not replayed \(out.notReplayed); iPad sessions not replayed \(out.sessionsSkipped)")
+    let scored = scoreExercises(lines, out)
+    if !scored.isEmpty {
+      for s in scored {
+        print("replay-exercise \(s.score.rawValue): target=\(s.target) typed=\(s.word?.typed ?? "-") now=\(s.word?.now ?? "-") bar=\(s.word?.bar ?? [])")
+      }
+      let counts = Score.allCases.map { c in "\(c.rawValue) \(scored.filter { $0.score == c }.count)" }.joined(separator: ", ")
+      let inBar = scored.filter { $0.score != .notScored && $0.inBar }.count
+      print("replay-exercise-summary words \(scored.count): \(counts); target in the bar \(inBar)")
+    }
     #expect(!out.words.isEmpty)
   }
 }
