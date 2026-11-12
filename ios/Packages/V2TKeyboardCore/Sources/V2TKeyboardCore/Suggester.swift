@@ -31,6 +31,10 @@ public final class Suggester: @unchecked Sendable {
   public let layout: KeyboardLayout
   /// Touch spread in key widths.
   public var touchStd: Double = 0.42
+  /// The least a neighbour of the key hit costs, however close the touch was to it.
+  public var neighbourFloor: Double = 0.3
+  /// Keys further than this from the touch, in key widths, are not offered for it.
+  public var neighbourCutoff: Double = 1.8
   public var editPenalty: Double = 5.0
   public var frequencyWeight: Double = 8.0
   /// Per letter a completion adds beyond what was typed.
@@ -145,7 +149,7 @@ public final class Suggester: @unchecked Sendable {
 
   /// What `search` depends on besides the keys.
   private var searchTuning: [Double] {
-    [touchStd, editPenalty, substitutionPenalty, vowelSubstitutionPenalty, firstTouchPenalty, Double(beamWidth), Double(maxEdits)]
+    [touchStd, neighbourFloor, neighbourCutoff, editPenalty, substitutionPenalty, vowelSubstitutionPenalty, firstTouchPenalty, Double(beamWidth), Double(maxEdits)]
   }
 
   /// What a ranking depends on besides the keys, the words before them and the search.
@@ -478,10 +482,10 @@ public final class Suggester: @unchecked Sendable {
     for b in UInt8(97)...UInt8(122) where b != hit {
       guard let c = centers[Int(b)] else { continue }
       let d = Double(hypot(c.x - p.x, c.y - p.y))
-      guard d < 1.8 * unit else { continue }
+      guard d < neighbourCutoff * unit else { continue }
       // relative to the hit key, so a touch on a key's edge makes its neighbour nearly as likely
       let cost = 0.5 * (pow(d / (touchStd * unit), 2) - pow(hd / (touchStd * unit), 2))
-      out.append((b, max(0.3, cost)))
+      out.append((b, max(neighbourFloor, cost)))
     }
     return out
   }

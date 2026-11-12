@@ -11,7 +11,8 @@ import Testing
 /// Keys: fw/pn/ac the swipe frequency weight and proper-noun and acronym penalties, other the prior of a
 /// language other than the layout's, sb/sbg the swipe and suggestion bigram weights, sf the suggestion
 /// frequency weight, sac the suggestion acronym penalty, mcp the letters typed before completions are offered,
-/// lead the nats a completion must beat a correction by for autocorrect to leave the word as unfinished.
+/// lead the nats a completion must beat a correction by for autocorrect to leave the word as unfinished; std,
+/// nfloor, ncut, edit, sub and vow the suggestion touch model and edit penalties, as RealTypoTuning's.
 /// `V2T_LEXICON_DIR` points at other lexicons.
 struct QualityTuning {
   static let env = ProcessInfo.processInfo.environment
@@ -35,6 +36,12 @@ struct QualityTuning {
         case "am": c.alternativeMargin = v
         case "mcp": c.minCompletionPrefix = v
         case "lead": c.completionLead = v
+        case "std": c.touchStd = v
+        case "nfloor": c.neighbourFloor = v
+        case "ncut": c.neighbourCutoff = v
+        case "edit": c.editPenalty = v
+        case "sub": c.substitutionPenalty = v
+        case "vow": c.vowelSubstitutionPenalty = v
         default: Issue.record("unknown key \(p[0])")
         }
       }
