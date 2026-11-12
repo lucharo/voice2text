@@ -51,7 +51,7 @@ xcodebuild -exportArchive -archivePath /tmp/V2T.xcarchive -exportOptionsPlist to
 | Keyboard engines | `Packages/V2TKeyboardCore` (`V2TKeyboardCore`) | Layouts, word lists, autocorrect and suggestions, swipe decoding, the typing rules. No UIKit; tested on the Mac. |
 | Cleanup guard | `Packages/V2TKeyboardCore` (`V2TCleanup`) | The Mac app's cleanup prompt and `keep_spoken_words` guard, ported to Swift and checked against the Python output (`tools/cleanup_golden.py`). |
 | Keyboard | `Keyboard/` | The keyboard extension: keys drawn with Core Animation, touch handling, previews, long-press accents, swipe trail, held delete, space-bar cursor, the suggestion bar and the mic. |
-| App | `App/` | About v2t (opens by itself on the first launch, then from its row), setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
+| App | `App/` | About v2t (opens by itself on the first launch, then from its row), setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary and its iCloud sync, history. |
 | Shared | `Shared/` | Settings and the dictionary in the App Group, and the keyboard-to-app dictation channel. |
 
 ### Dictation from the keyboard
@@ -88,6 +88,15 @@ iOS gives keyboards no microphone, so the app records:
   opens v2t on its download screen instead of recording.
 - History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
   saved: the app holds it in memory while it transcribes, then drops it.
+- The dictionary's entries and the keyboard's learned words sync between the user's iPhones and iPads through
+  iCloud key-value storage in their own iCloud account (`App/ICloudSync.swift`), unless **Sync with iCloud** on
+  the Dictionary screen is off. Only the app syncs, at launch, on return to the foreground, when iCloud brings a
+  change and after an edit in the app; the keyboard never talks to iCloud, and a word it keeps while the app is
+  closed goes up at the next sync. Each entry is last writer wins, with deletions kept so a device that still has
+  an entry cannot bring it back; learned words are a union, since none can be removed. Comment lines stay on the
+  device, and the per-entry sync state is `dictionary.sync.json` beside `dictionary.txt` in the App Group,
+  written in the same file transaction. Apple limits an app to 1 MB of values: past that nothing is written and
+  the screen says why. History, the speech model and audio are never synced.
 
 ### Keyboard debug log
 

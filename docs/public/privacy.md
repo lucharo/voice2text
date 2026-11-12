@@ -6,12 +6,16 @@ receives nothing about you or your use of it.
 ## On iPhone and iPad
 
 - **Your speech** is transcribed on the device. The recording and the text stay on it.
-- **What you type** with the v2t keyboard stays on the device. The keyboard asks for Full Access
-  only so it can ask the v2t app to record; it sends nothing anywhere.
+- **What you type** with the v2t keyboard stays on the device, apart from the words you keep
+  (below). The keyboard asks for Full Access only so it can ask the v2t app to record; it sends
+  nothing anywhere.
 - **Cleanup** with Apple Intelligence runs on the device too.
-- **History and your dictionary** are kept on the device until you delete them, in the app or by
-  deleting the app.
-- **The speech model download** is the one time v2t uses the network. When you tap Download, the
+- **History** is kept on the device until you delete it, in the app or by deleting the app.
+- **Your dictionary and the words you keep on the keyboard** are kept on the device and, unless you
+  turn off **Sync with iCloud** on the Dictionary screen, copied to your other iPhones and iPads
+  through your own iCloud account, which Apple stores; v2t's maintainer cannot see it. Nothing else
+  goes to iCloud.
+- **The speech model download** is the one time v2t itself uses the network. When you tap Download, the
   app fetches the model's files from [Hugging Face](https://huggingface.co/privacy), which, like any
   website, sees your device's IP address. v2t sends nothing else with the request.
 
