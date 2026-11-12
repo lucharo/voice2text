@@ -50,12 +50,21 @@ import UIKit
     onState?(state)
   }
 
-  /// Stops recording and drops the result: the request id moves on, so the text that comes back answers an
-  /// older request and is never typed (the app still keeps it in History).
+  /// While recording: stops and drops the result; the request id moves on, so the text that comes back answers
+  /// an older request and is never typed (the app still keeps it in History). After Done, while the app
+  /// transcribes or cleans up: the app stops that work and keeps nothing, so a slow or stuck transcription
+  /// never holds the keyboard.
   func cancel() {
-    guard state == .listening else { return }
-    defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
-    DictationChannel.post(DictationChannel.stop)
+    switch state {
+    case .listening:
+      defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)
+      DictationChannel.post(DictationChannel.stop)
+    case .transcribing, .cleaningUp:
+      defaults.set(UUID().uuidString, forKey: DictationChannel.requestIdKey)  // a result already on its way is not typed
+      DictationChannel.post(DictationChannel.cancel)
+    case .idle, .needsApp, .unavailable:
+      return
+    }
     onState?(state)
   }
 

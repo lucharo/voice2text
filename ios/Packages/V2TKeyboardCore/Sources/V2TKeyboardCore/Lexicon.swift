@@ -133,6 +133,47 @@ public final class Lexicon: @unchecked Sendable {
     return out
   }
 
+  private let tableLock = NSLock()
+  private var prefixTable: [[(Int, Int)]]?
+
+  /// The three commonest words (entry, frequency) that start with a one- or two-letter `prefix` and go on past
+  /// it, commonest first. Read from a table made of the whole list the first time it is asked for: those
+  /// ranges run to thousands of entries, too many to scan at every key.
+  public func commonest(after prefix: [UInt8]) -> [(Int, Int)] {
+    guard (1...2).contains(prefix.count), prefix.allSatisfy({ (97...122).contains($0) }) else { return [] }
+    tableLock.lock()
+    defer { tableLock.unlock() }
+    if prefixTable == nil { prefixTable = makePrefixTable() }
+    let a = Int(prefix[0]) - 97
+    return prefixTable![prefix.count == 1 ? a : 26 + a * 26 + Int(prefix[1]) - 97]
+  }
+
+  /// The commonest words of two letters or more (entry, frequency), commonest first: the best of each first letter.
+  public func commonestWords(limit: Int = 3) -> [(Int, Int)] {
+    let firsts = (UInt8(97)...UInt8(122)).flatMap { commonest(after: [$0]) }
+    return Array(firsts.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0 < $1.0 }.prefix(limit))
+  }
+
+  private func makePrefixTable() -> [[(Int, Int)]] {
+    var table = [[(Int, Int)]](repeating: [], count: 26 + 26 * 26)
+    func add(_ bucket: Int, _ i: Int, _ f: Int) {
+      // among equally common words the earlier entry stays, as a scan in order keeps it
+      guard table[bucket].count < 3 || f > table[bucket][2].1 else { return }
+      let at = table[bucket].firstIndex { f > $0.1 } ?? table[bucket].count
+      table[bucket].insert((i, f), at: at)
+      if table[bucket].count > 3 { table[bucket].removeLast() }
+    }
+    for i in 0..<count {
+      let f = frequency(i)
+      guard f > 0 else { continue }
+      let (n, a, b) = withKey(i) { k in (k.count, k.count > 0 ? Int(k[0]) - 97 : -1, k.count > 1 ? Int(k[1]) - 97 : -1) }
+      guard (0..<26).contains(a) else { continue }
+      if n > 1 { add(a, i, f) }
+      if n > 2, (0..<26).contains(b) { add(26 + a * 26 + b, i, f) }
+    }
+    return table
+  }
+
   /// Entries whose key equals `key` exactly (several words can share one key: "como", "cómo").
   public func exactRange(_ key: [UInt8]) -> Range<Int> {
     let p = prefixRange(key)

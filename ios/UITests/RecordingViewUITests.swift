@@ -3,7 +3,7 @@ import XCTest
 /// Screenshots of the keyboard's recording view, using the keyboard's preview mode (V2T_PREVIEW_RECORDING),
 /// which needs no microphone session or Full Access; and of the numbers and symbols pages.
 @MainActor final class RecordingViewUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
 
@@ -42,6 +42,8 @@ import XCTest
     app.terminate()
     showKeyboard(preview: "transcribing")
     XCTAssertFalse(app.buttons["v2t.recording.done"].isHittable)
+    // a slow transcription can always be ended from the keyboard
+    XCTAssertTrue(app.buttons["v2t.recording.cancel"].isHittable)
     // the wait after Done counts up in tenths of a second: the stage is the label, the time its value
     let status = app.staticTexts["v2t.recording.status"]
     XCTAssertEqual(status.label, "Transcribing…")
@@ -53,6 +55,7 @@ import XCTest
     app.terminate()
     showKeyboard(preview: "cleaningUp")
     XCTAssertEqual(app.staticTexts["v2t.recording.status"].label, "Cleaning up…")
+    XCTAssertTrue(app.buttons["v2t.recording.cancel"].isHittable)
     shot("rec-cleaning-up")
     app.terminate()
   }

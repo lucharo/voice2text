@@ -23,6 +23,8 @@ import V2TKeyboardCore
     if let t = env["V2T_SKIN_TONE"].flatMap(Int.init) { Settings.shared.emojiSkinTone = SkinTone(rawValue: t) }
     // the debug log UI test starts with the log off and empty, and leaves it off
     if env["V2T_KEYBOARD_LOG_OFF"] == "1" { Settings.shared.keyboardDebugLogUntil = nil }
+    // UI tests start as after install ("1": About v2t opens by itself) or with it already seen ("0")
+    if let first = env["V2T_FIRST_LAUNCH"] { Settings.shared.aboutShown = first != "1" }
     if env["V2T_RESET_KEYBOARD_LOG"] == "1" {
       Settings.shared.keyboardDebugLogUntil = nil
       if let dir = KeyboardLogStore.groupDirectory { KeyboardDebugLog.clear(in: dir) }
@@ -53,6 +55,8 @@ struct HomeView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var tryText = ""
   @State private var keyboardSeen = Settings.shared.keyboardFullAccessSeen
+  /// About v2t over the setup list, once after install; dismissing it shows the setup list.
+  @State private var showAbout = !Settings.shared.aboutShown
 
   var body: some View {
     NavigationStack {
@@ -101,6 +105,10 @@ struct HomeView: View {
         Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
         Section("Storage") { StorageRows() }
         Section("Keyboard") { NavigationLink("Languages and typing") { KeyboardSettingsView() } }
+        Section {
+          NavigationLink("About v2t") { AboutView() }
+            .accessibilityIdentifier("v2t.about.open")
+        }
       }
       .navigationTitle("v2t")
       // a readable column on an iPad, as Settings keeps its rows; no effect at iPhone widths
@@ -116,6 +124,11 @@ struct HomeView: View {
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
+    // the keyboard's mic opened v2t before it was ever opened: recording comes first, About waits for a later launch
+    .sheet(isPresented: Binding(get: { showAbout && !dictation.cameFromKeyboard }, set: { showAbout = $0 }),
+           onDismiss: { if !dictation.cameFromKeyboard { Settings.shared.aboutShown = true } }) {
+      AboutView { showAbout = false }
+    }
   }
 }
 
@@ -139,6 +152,25 @@ struct SetupRow: View {
 struct ModelRow: View {
   @EnvironmentObject var dictation: DictationService
   var body: some View {
+    if dictation.recommendation.tier == .notSupported { notSupported } else { model }
+  }
+
+  /// A13 and A14 devices: no download to offer, only why (the owner's tiers, 2026-11-12).
+  private var notSupported: some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: "mic.slash").font(.title2).foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Dictation").foregroundStyle(.primary)
+        Text(dictation.recommendation.notSupportedMessage).font(.footnote).foregroundStyle(.secondary)
+        Text(dictation.recommendation.notSupportedReason).font(.footnote).foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("v2t.model.notSupported")
+  }
+
+  private var model: some View {
     HStack(alignment: dictation.engineState == .notDownloaded ? .center : .top, spacing: 12) {
       Image(systemName: icon).font(.title2).foregroundStyle(color)
       VStack(alignment: .leading, spacing: 4) {
@@ -155,6 +187,10 @@ struct ModelRow: View {
         case .ready: Text("Ready. Transcription runs on this \(dictation.recommendation.deviceName), offline.").font(.footnote).foregroundStyle(.secondary)
         case .notDownloaded:
           Text("Needed for the mic. Typing works without it.").font(.footnote).foregroundStyle(.secondary)
+        }
+        if dictation.recommendation.tier == .untested {
+          Text(dictation.recommendation.untestedLine).font(.footnote).foregroundStyle(.orange)
+            .accessibilityIdentifier("v2t.model.untested")
         }
       }
       // the text takes every point the button leaves, so the row has no gap between them
@@ -213,7 +249,7 @@ struct CleanupRow: View {
     .accessibilityIdentifier("v2t.cleanup")
   }
   var subtitle: String {
-    guard available else { return "Unavailable: Apple Intelligence is off or not ready on this \(dictation.recommendation.deviceName), so you get the words as heard, plus your dictionary's replacements." }
+    guard available else { return dictation.recommendation.cleanupUnavailable }
     return cleanup
       ? "On: fixes punctuation and drops fillers on the \(dictation.recommendation.deviceName), keeping your words and dictionary spellings."
       : "Off: you get the words as heard, plus your dictionary's replacements."
@@ -321,7 +357,7 @@ struct KeyboardHandoffView: View {
   /// The mic opened v2t with no speech model on the device: this screen offers the download instead of recording.
   @State private var neededModel = false
   var body: some View {
-    Group { if neededModel { modelNeeded } else { handoff } }
+    Group { if dictation.recommendation.tier == .notSupported { notSupported } else if neededModel { modelNeeded } else { handoff } }
       .onAppear { neededModel = !dictation.canDictate }
       // the model can fail to load after this screen appeared (damaged files): stop telling the user to keep
       // talking, and show Try again instead
@@ -332,17 +368,35 @@ struct KeyboardHandoffView: View {
       }
   }
 
+  /// The keyboard's mic on a device whose tier is not supported yet: the same words as the app's model row.
+  private var notSupported: some View {
+    VStack(spacing: 24) {
+      Spacer()
+      Image(systemName: "mic.slash").font(.system(size: 64)).foregroundStyle(.secondary)
+      Text(dictation.recommendation.notSupportedMessage).font(.title2.bold())
+        .multilineTextAlignment(.center).padding(.horizontal, 32)
+      Text(dictation.recommendation.notSupportedReason)
+        .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
+      Spacer()
+      Button("Close") { dictation.cameFromKeyboard = false }.padding(.bottom, 32)
+    }
+    .accessibilityIdentifier("v2t.handoff.notSupported")
+  }
+
   private var modelNeeded: some View {
     VStack(spacing: 24) {
       Spacer()
       Image(systemName: dictation.engineState == .ready ? "checkmark.circle.fill" : "arrow.down.circle")
         .font(.system(size: 64)).foregroundStyle(dictation.engineState == .ready ? .green : .accentColor)
       Text(dictation.engineState == .ready ? "Speech model ready"
-           : dictation.modelOnDevice ? "The speech model didn't load" : "Download the speech model").font(.largeTitle.bold())
+           : !dictation.modelOnDevice ? "Download the speech model"
+           : dictation.engineState == .loading ? "Preparing the speech model" : "The speech model didn't load").font(.largeTitle.bold())
         .multilineTextAlignment(.center)
       Text(dictation.engineState == .ready
         ? "Go back to your app and tap the mic again."
-        : "v2t turns speech into text on this \(dictation.recommendation.deviceName), so the keyboard's mic needs the speech model first.")
+        : dictation.modelOnDevice && dictation.engineState == .loading
+          ? "The first time, v2t prepares the speech model for this \(dictation.recommendation.deviceName). Stay in v2t until it's ready."
+          : "v2t turns speech into text on this \(dictation.recommendation.deviceName), so the keyboard's mic needs the speech model first.")
         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
       if dictation.engineState != .ready { ModelRow().padding(.horizontal, 32) }
       Spacer()

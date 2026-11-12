@@ -6,7 +6,9 @@ import SwiftUI
 /// transcription, the dictionary and cleanup, and the result sent back to the keyboard.
 @MainActor final class DictationService: ObservableObject {
   @Published private(set) var state: DictationState = .needsApp
-  @Published private(set) var engineState: SpeechEngine.State = .notDownloaded
+  @Published private(set) var engineState: SpeechEngine.State = .notDownloaded {
+    didSet { publishCanDictate() }  // a first load starting or ending changes what the keyboard's mic does
+  }
   @Published private(set) var lastText = ""
   @Published private(set) var warmUntil: Date?
   /// The input the warm session records from, also sent to the keyboard; nil when the session is off.
@@ -16,12 +18,15 @@ import SwiftUI
   @Published private(set) var modelOnDevice = false
   /// Bytes the model takes on the device, its compiled copy included.
   @Published private(set) var modelBytes: Int64 = 0
+  /// The model has loaded on this device since it was downloaded, so loading it again reuses the copy Core ML
+  /// compiled for this device the first time instead of compiling it.
+  @Published private(set) var modelLoadedBefore = false
   /// Why deleting the model or the history failed, shown under the button.
   @Published private(set) var storageError: String?
   /// Deleting the model: no recording, preparation or second delete starts until it is done.
   @Published private(set) var deletingModel = false
-  /// Dictations stopped but not yet transcribed. Stopping the mic session does not end them, so the model
-  /// cannot be deleted under one (its audio is in memory only and would be lost).
+  /// Dictations stopped but not yet transcribed. A cancelled one counts until its piece already in the model
+  /// returns, so the model is never deleted under a decode still running.
   @Published private(set) var pendingTranscriptions = 0
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
@@ -30,16 +35,18 @@ import SwiftUI
   @Published private(set) var recommendation: Recommendation
   let history: History
   let dictionary: PersonalDictionary
-  private let engine: SpeechEngine
+  private let engine: any SpeechModel
   private let store: ModelStore
   private let recorder: AudioSource
+  /// The time now; unit tests move it on to reach the session's expiry.
+  private let now: () -> Date
   private static func defaultRecorder() -> AudioSource {
     guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
     // a test asked for the synthetic clip: never fall back to the real microphone
     guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
     return f
   }
-  private let defaults = Settings.shared.defaults
+  private let defaults: UserDefaults
   private var observers: [DarwinObserver] = []
   private var routeObserver: NSObjectProtocol?
   private var heartbeat: Timer?
@@ -61,18 +68,25 @@ import SwiftUI
   private var language = ""
   /// Cleans the current recording's settled sentences while it is recorded, when cleanup is on.
   private var liveCleanup: LiveCleanup?
+  /// The stopped dictation being transcribed now, so Cancel or the end of the session can stop it.
+  private var finishing: (id: Int, task: Task<Void, Never>, live: LiveTranscription?, cleanup: LiveCleanup?)?
 
-  /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
-  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil) {
+  /// `recorder`, `store`, `engine`, `defaults` and `now` are for unit tests; the app records from the
+  /// microphone (or the UI tests' fixture clip) and transcribes with FluidAudio.
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil,
+       engine: (any SpeechModel)? = nil, defaults: UserDefaults = Settings.shared.defaults, now: @escaping () -> Date = Date.init) {
     self.recorder = recorder ?? Self.defaultRecorder()
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
-    self.engine = SpeechEngine(speech: recommendation.speech)
+    self.engine = engine ?? SpeechEngine(speech: recommendation.speech)
     self.store = store ?? .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
+    self.defaults = defaults
+    self.now = now
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
+      DictationChannel.observe(DictationChannel.cancel) { [weak self] in self?.cancelTranscription() },
     ]
     // a headset plugged in or AirPods connected mid-session can change the input
     routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -91,7 +105,7 @@ import SwiftUI
 
   func refreshRecommendation() {
     let r = Recommendation.current
-    if r != recommendation { recommendation = r }
+    if r != recommendation { recommendation = r; publishCanDictate() }
   }
 
   // MARK: model
@@ -101,17 +115,32 @@ import SwiftUI
   func refreshModelStorage() {
     modelOnDevice = store.isOnDevice
     modelBytes = store.bytes
+    modelLoadedBefore = store.hasLoaded
+    publishCanDictate()
+  }
+
+  private func publishCanDictate() {
     defaults.set(!canDictate, forKey: DictationChannel.modelMissingKey)
   }
 
-  /// Dictation can record: the model is on the device and did not fail to load (damaged files fail offline;
-  /// only the user's Try again may repair them). Otherwise the keyboard's mic opens v2t on that screen.
-  var canDictate: Bool { Self.canDictate(modelOnDevice: modelOnDevice, engine: engineState) }
+  /// Dictation can record: the device's tier supports it, the model is on the device, did not fail to load
+  /// (damaged files fail offline; only the user's Try again may repair them), and is not being loaded for the
+  /// first time. Otherwise the keyboard's mic opens v2t on that screen.
+  var canDictate: Bool {
+    Self.canDictate(supported: recommendation.tier != .notSupported, modelOnDevice: modelOnDevice, engine: engineState, loadedBefore: modelLoadedBefore)
+  }
 
-  static func canDictate(modelOnDevice: Bool, engine: SpeechEngine.State) -> Bool {
-    guard modelOnDevice else { return false }
-    if case .failed = engine { return false }
-    return true
+  static func canDictate(supported: Bool, modelOnDevice: Bool, engine: SpeechEngine.State, loadedBefore: Bool) -> Bool {
+    guard supported, modelOnDevice else { return false }
+    switch engine {
+    case .ready: return true
+    case .failed: return false
+    // not loaded yet: a model that loaded here before reuses its compiled copy, so a recording may start and
+    // wait for the load (the keyboard's first mic tap launches v2t, which loads the model as it opens). The
+    // first load compiles the model for this device's Neural Engine, which nobody has timed on older chips:
+    // a recording made then could not be transcribed until it ends, so nothing records until it is done.
+    default: return loadedBefore
+    }
   }
 
   /// At launch: loads the model if it is on the device, offline; never starts a download (#124).
@@ -148,7 +177,8 @@ import SwiftUI
 
   /// Loads the model; `allowDownload` only from the user's Download or Try again.
   func prepareModel(allowDownload: Bool = true) async {
-    guard engineState != .ready, !deletingModel else { return }
+    // a device not supported yet never downloads or compiles the model (it would only heat the phone)
+    guard engineState != .ready, !deletingModel, recommendation.tier != .notSupported else { return }
     if let preparing { await preparing.value; return }
     let task = Task { await self.loadModel(allowDownload: allowDownload) }
     preparing = task
@@ -168,6 +198,8 @@ import SwiftUI
           self.engineState = s
         }
       }
+      store.markLoaded()
+      modelLoadedBefore = true
       engineState = .ready
     } catch {
       engineState = .failed(error.localizedDescription)
@@ -195,6 +227,7 @@ import SwiftUI
   }
 
   func coolDown() {
+    cancelTranscription()  // a dictation still transcribing ends with the session: nothing keeps decoding
     stopMeter()
     live?.abandon()
     live = nil
@@ -228,11 +261,14 @@ import SwiftUI
 
   private func extendWarmth() {
     let minutes = Settings.shared.warmMinutes
-    warmUntil = minutes == 0 ? nil : Date().addingTimeInterval(TimeInterval(minutes * 60))
+    warmUntil = minutes == 0 ? nil : now().addingTimeInterval(TimeInterval(minutes * 60))
   }
 
-  private func beat() {
-    if let until = warmUntil, Date() > until, state == .idle { coolDown(); return }
+  /// Every second while the session is warm (internal for tests). Stop sets the session's time from Done, so a
+  /// dictation still transcribing past it has run the whole of the user's warm time: it ends with the session
+  /// rather than keeping the microphone on for ever.
+  func beat() {
+    if let until = warmUntil, now() > until, [.idle, .transcribing, .cleaningUp].contains(state) { coolDown(); return }
     defaults.set(Date().timeIntervalSince1970, forKey: DictationChannel.heartbeatKey)
   }
 
@@ -240,7 +276,7 @@ import SwiftUI
   /// user can swipe back and keep talking.
   func handleKeyboardLaunch() {
     cameFromKeyboard = true
-    guard canDictate else { return }  // the hand-off screen offers the download, or Try again
+    guard canDictate else { return }  // the hand-off screen offers the download or Try again, or says it is unsupported
     if !recorder.running { warmUp() }
     start()
   }
@@ -303,10 +339,24 @@ import SwiftUI
     self.live = nil
     self.liveCleanup = nil
     pendingTranscriptions += 1
-    Task {
+    let task = Task {
       await finish(samples, id: id, request: request, language: language, live: live, liveCleanup: liveCleanup, stoppedAt: stoppedAt)
       pendingTranscriptions -= 1
+      if finishing?.id == id { finishing = nil }
     }
+    finishing = (id, task, live, liveCleanup)
+  }
+
+  /// The keyboard's Cancel after Done, or the session ending: the dictation being transcribed stops after the
+  /// piece already in the model, and nothing it produces is typed or kept in History. The keyboard is free at once.
+  func cancelTranscription() {
+    guard let f = finishing else { return }
+    finishing = nil
+    f.task.cancel()
+    f.live?.abandon()
+    f.cleanup?.abandon()
+    dictationLog.log("transcription cancelled")
+    if f.id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
   }
 
   private func finish(
@@ -326,6 +376,7 @@ import SwiftUI
       guard store.isOnDevice else { lastText = "Couldn't transcribe: the speech model is not on this \(recommendation.deviceName)."; return }
       await prepareModel(allowDownload: false)
     }
+    guard !Task.isCancelled else { return }  // cancelled while the model loaded: nothing to decode
     do {
       let raw: String
       var pieces = 0
@@ -338,7 +389,7 @@ import SwiftUI
       }
       let speech = ContinuousClock.now - stoppedAt
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !text.isEmpty else { return }
+      guard !text.isEmpty, !Task.isCancelled else { return }
       let heard = text
       dictionary.reload()  // the keyboard may have added words since
       var cleanup: Duration?
@@ -358,6 +409,7 @@ import SwiftUI
         cleanup = ContinuousClock.now - t0
       }
       text = dictionary.applyReplacements(text)
+      guard !Task.isCancelled else { return }  // cancelled during cleanup: neither typed nor kept
       lastText = text
       // the text goes to the keyboard first; History is written after, so its time is not in the wait
       if id == recording {  // otherwise kept in History, but not typed into whatever field is open now
@@ -371,6 +423,7 @@ import SwiftUI
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language, timings: timings))
       dictationLog.log("text ready \(timings.summary, privacy: .public)")
     } catch {
+      guard !Task.isCancelled else { return }  // the user ended it: not an error to show
       lastText = "Couldn't transcribe: \(error.localizedDescription)"
     }
   }

@@ -4,7 +4,7 @@ import XCTest
 /// records typing, a swipe, a correction and its revert and a suggestion tap, and the app then shows a log to
 /// export. The log it leaves in the Simulator's App Group is what `ios/tools/kb_log_report.py` was tried on.
 @MainActor final class DebugLogUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
   var field: XCUIElement { app.textFields["v2t.try"] }
@@ -74,7 +74,7 @@ import XCTest
     launch()
     // whatever happens, the log is off again for the tests after this one
     addTeardownBlock { @MainActor in
-      let app = XCUIApplication()
+      let app = XCUIApplication.v2t()
       app.terminate()
       app.launchEnvironment["V2T_KEYBOARD_LOG_OFF"] = "1"  // off, its file kept for kb_log_report.py
       app.launch()

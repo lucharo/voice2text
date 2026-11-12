@@ -51,7 +51,7 @@ xcodebuild -exportArchive -archivePath /tmp/V2T.xcarchive -exportOptionsPlist to
 | Keyboard engines | `Packages/V2TKeyboardCore` (`V2TKeyboardCore`) | Layouts, word lists, autocorrect and suggestions, swipe decoding, the typing rules. No UIKit; tested on the Mac. |
 | Cleanup guard | `Packages/V2TKeyboardCore` (`V2TCleanup`) | The Mac app's cleanup prompt and `keep_spoken_words` guard, ported to Swift and checked against the Python output (`tools/cleanup_golden.py`). |
 | Keyboard | `Keyboard/` | The keyboard extension: keys drawn with Core Animation, touch handling, previews, long-press accents, swipe trail, held delete, space-bar cursor, the suggestion bar and the mic. |
-| App | `App/` | Setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
+| App | `App/` | About v2t (opens by itself on the first launch, then from its row), setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
 | Shared | `Shared/` | Settings and the dictionary in the App Group, and the keyboard-to-app dictation channel. |
 
 ### Dictation from the keyboard
@@ -73,6 +73,13 @@ iOS gives keyboards no microphone, so the app records:
    moment near its 12 s mark (the Mac app's rule), so when you tap the mic again only the last piece is left. A
    dictation under 14.9 s is transcribed whole, as before (#112). Each dictation logs its timing under category
    `dictation`: how long speech took after Stop, and how many pieces were transcribed while you talked.
+6. A dictation can always be ended. The recording view keeps Cancel while the app transcribes or cleans up; Cancel
+   then, Stop microphone session, or the session's own expiry (counted from Done) stops the work after the piece
+   already in the model, and nothing of that dictation is typed or kept in History.
+7. The speech model's first load after its download compiles it for the device, and nobody has timed that on an
+   older chip. Until it has loaded once, the keyboard's mic opens v2t on "Preparing the speech model" instead of
+   recording audio that could not be transcribed until it ends. Later launches reload the compiled copy, and a
+   recording may start while they do. A file in the model's folder (`.v2t-loaded`) records the first load.
 
 ### What stays on the iPhone
 
@@ -114,7 +121,14 @@ shares both files joined; Clear log deletes them.
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
   reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
   `uv run ios/tools/kb_log_report.py <that folder>` reports autocorrections kept and taken back, words deleted and
-  retyped, swipes kept, bar taps by slot, taps read as swipes (#140) and keys per second; `--json` for the numbers.
+  retyped, swipes kept, bar taps by slot, taps read as swipes (#140), keys per second, how long after a touch the
+  keyboard acted on it (near a screen edge against elsewhere) and how long the bar took after a key; `--json` for
+  the numbers. It takes the app's Export file too.
+- **Replay.** `V2T_KB_LOG=<file> swift test -c release -Xswiftc -enable-testing --filter LogReplayEval 2>&1 | grep '^replay'`
+  (in `Packages/V2TKeyboardCore`) types the log again through the engine as it is now, touch points included, and
+  prints for each finished word what the build that wrote the log did and what this one does. On an unchanged
+  engine it prints `moved 0`. Text the log holds by length only (the host's, dictations) is replayed as blocks, and
+  the first word typed after it is left out.
 
 Each line has `t` (milliseconds of system uptime, the clock of touch timestamps) and `e`, the event:
 
@@ -126,7 +140,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `down` | n (finger), key, p, fingers down | a finger lands |
 | `up` | n, key, liftKey, p, ms, travel, verdict (tap, swipe, accent, trackpad, rolled, cancelled), path (24 points) | it lifts |
 | `rollover`, `swipe-start` | n, key, p, by | a finger typed early by a newer one lifting; a finger becomes a swipe |
-| `key`, `act`, `cursor` | text and p; action; by | a character, another key, the space-bar trackpad |
+| `key`, `act`, `cursor` | text, p and search (typed into emoji search); action and search; by | a character, another key, the space-bar trackpad |
 | `swipe` | points, trace (48 points), candidates (word, score), applied, decodeMs | a swipe decoded |
 | `swiped`, `picked` | word, alternatives; word, replaced | the engine typed a swipe; a bar tap replaced a word |
 | `bar`, `pick` | words, kinds, bold; slot, word, emoji | the bar changed; a slot was tapped |
@@ -134,15 +148,23 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `ins`, `del` | text (chars for dictation) | the keyboard edited the document |
 | `host` | kind, chars (text before the cursor, up to 160) | the app changed the text or moved the cursor |
 | `page`, `emoji`, `dictation` | page, form, width; emoji, from; chars, words | |
+| `edge-gates` | recognisers (on the keyboard's window; -1 with no window), released (those told not to hold touches back) | the keyboard appeared |
 
 ### Which model this iPhone gets
 
-One choice per iPhone, decided by Apple's own Apple Intelligence eligibility check (`SystemLanguageModel`):
+One choice per iPhone, in three tiers. Apple's own Apple Intelligence eligibility check (`SystemLanguageModel`)
+decides the top one; the hardware identifier (`utsname`, `Recommendation.notYetSupported`) the bottom one:
 
-| iPhone | Speech | Cleanup | Evidence |
-| --- | --- | --- | --- |
-| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air, Duo) | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
-| Every other iPhone that runs iOS 26 | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | FluidAudio's int8 Unified encoder failed to load on an A16 (#828, the Parakeet Unified sibling; Nemotron itself untried there) and is unverified on other earlier chips. Untested on these phones |
+| iPhone | Dictation | Speech | Cleanup | Evidence |
+| --- | --- | --- | --- | --- |
+| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air, Duo) | Transcription and cleanup | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
+| iPhone 13 and 14 families, iPhone 15 and 15 Plus, iPhone SE (3rd generation) (A15, A16), and any iPhone not listed | Transcription only, untested: the app says "Not yet tested on this iPhone model" | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | FluidAudio's int8 Unified encoder failed to load on an A16 (#828, the Parakeet Unified sibling; Nemotron itself untried there) and is unverified on other earlier chips. Untested on these phones |
+| iPhone 11, 11 Pro, 11 Pro Max, SE (2nd generation), 12, 12 mini, 12 Pro, 12 Pro Max (A13, A14) | Not supported yet: no download; the app and the keyboard's mic say "Dictation isn't supported on this iPhone yet. The keyboard still works for typing." | None | None | None of these has passed a test run; a stuck transcription was reported from an iPhone 12 Pro |
+
+iPads follow the same rule. The iPads on iPadOS 26 with A12 to A14 chips are not supported yet: iPad mini (5th
+generation), iPad Air (3rd and 4th generation), iPad (8th, 9th and 10th generation), iPad Pro 11-inch (1st and 2nd
+generation) and iPad Pro 12.9-inch (3rd and 4th generation). Identifiers come from Xcode's own device table
+(`device_traits.db`), chips from Apple's iPad comparison page; the sources are in `App/Recommendation.swift`.
 
 Model files come from Hugging Face at pinned revisions (`App/SpeechEngine.swift`).
 
@@ -181,8 +203,8 @@ Autocorrect is not yet measured with real fingers on a phone: the misspellings a
 keyboards, so the taps sit at the key centres and the touch model is not exercised; whether iOS turns the
 straight quotes the keyboard types into curly ones is also unchecked.
 
-The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard will only be claimed
-from side-by-side measurements on a phone.
+The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard is the aim, which the
+app's About v2t page states in the maintainer's words; measured parity, side by side on a phone, is still to be shown.
 
 ## Third-party code and data
 

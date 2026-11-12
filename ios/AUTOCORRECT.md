@@ -85,10 +85,40 @@ Typing 1,043 correct Tatoeba sentences per language, autocorrect changed 8 Engli
 2 and 141 now. No Spanish misspelling corpus of real typing errors was found; the Spanish Wikipedia list is
 the spelling bots' list, so it leans to missing accents.
 
+### After a real typing log (2026-11-12)
+
+A debug log of 355 keys typed on an iPhone 17 Pro (English and Spanish on, build 123), typed again through the
+engine with its touch points (`LogReplayEval`, ios/README.md "Keyboard debug log"), had 10 autocorrections, 4 of
+them taken back. It showed four things, each now a rule with a weight tuned on the misspelling sets
+(`AutocorrectRulesTests` types the log's own words):
+
+| What the log showed | Rule | In the log |
+| --- | --- | --- |
+| A first letter dropped for a commoner word | Skipping the first touch, or reading it as a far letter, costs 2 more | "hvent" was "vent", now "haven't" |
+| A last letter left off was only ever a completion | The word one letter longer is a correction, at the cost of a letter missed inside a word | "som" was "son", now "some"; "lov" was left, now "love" |
+| The best correction was applied whatever a completion scored, and the bar did not show it (42 of 269 keys) | When a commoner longer word leads the correction by 1 nat, the letters are left as unfinished; otherwise the bar's middle slot is the word a space puts in | "wanre" was "wants", now left with "wanted" in the bar |
+| Any correction of a non-word was applied, however unlikely | A correction scoring under -18 is not applied | none in this log ("mojnf" is still "mong", at -13.3) |
+
+Each language also keeps its own beam (one beam for all halved each language's share once a second was on), and
+the bar's completions after one and two letters come from a table of the whole list rather than a scan that
+stopped 4,000 entries in ("co" now offers "could").
+
+| Set | Fixed | Wrong word | Left as typed | Meant word in the bar |
+| --- | --- | --- | --- | --- |
+| English, 4,122 scored, before | 89.6% | 8.9% | 1.5% | 93.4% |
+| English, now | 89.5% | 6.2% | 4.3% | 93.7% |
+| Spanish, 15,701 scored, before | 91.1% | 8.2% | 0.6% | 93.7% |
+| Spanish, now | 90.9% | 6.7% | 2.5% | 93.7% |
+| English with Spanish on, now | 89.5% | 6.2% | 4.3% | 93.8% |
+
+Typing the 1,043 correct sentences per language, autocorrect changed 2 English and 141 Spanish words before, 0
+and 126 now. The trade is deliberate: about a third fewer wrong words in English for 5 fewer fixes of 4,122, since
+a wrong word has to be deleted and a misspelling left alone does not.
+
 Still different from Apple's keyboard, or unmeasured:
 
-- **Real fingers.** The misspellings were typed on physical keyboards, so the taps sit at the key centres. How
-  autocorrect does with touches on a phone is unmeasured.
+- **Real fingers.** The misspellings were typed on physical keyboards, so the taps sit at the key centres. One
+  log of real touches has been replayed (above); it is 72 words from one typist, tapping only, no swipes.
 - **Names at the start of a sentence** are still corrected when the word list lacks them ("Tom" → "Ton" with
   only Spanish on); a capitalised typo cannot be told from a name there.
 - **Learning.** v2t learns a word after one rejection, and a kept word no word list knows ("marimo" over

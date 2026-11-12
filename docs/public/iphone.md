@@ -20,6 +20,15 @@
 - **Recommended:** an iPhone that can run Apple Intelligence: the iPhone 15 Pro and Pro Max, the
   iPhone 16 and 17 families, 16e, 17e, Air, Duo, and 18 Pro and Pro Max. These get the more
   accurate speech model and cleanup.
+- **Transcription only, untested:** the iPhone 13 and 14 families, iPhone 15 and 15 Plus, and iPhone
+  SE (3rd generation). Dictation works, without cleanup, but no one has tested it on these phones;
+  the app says "Not yet tested on this iPhone model".
+- **Dictation not supported yet:** the iPhone 11, 11 Pro and 11 Pro Max, iPhone SE (2nd generation),
+  and the iPhone 12, 12 mini, 12 Pro and 12 Pro Max. These phones have not passed a test run. The app
+  offers no model download and says "Dictation isn't supported on this iPhone yet. The keyboard still
+  works for typing."; the keyboard's mic opens that message. The same goes for the iPad mini (5th
+  generation), iPad Air (3rd and 4th generation), iPad (8th, 9th and 10th generation), iPad Pro 11-inch
+  (1st and 2nd generation) and iPad Pro 12.9-inch (3rd and 4th generation).
 - **Measured so far:** the speech and cleanup models on one iPhone 16 Pro, in a separate benchmark
   app, and the app itself on an iPhone 17 Pro (TestFlight build 1). No result from build
   3, the one described here, has been reported from a phone yet. No other iPhone model has been
@@ -32,7 +41,8 @@ one choice:
 | This device | Speech model | Cleanup |
 | --- | --- | --- |
 | Can run Apple Intelligence | NVIDIA Nemotron-Labs Unified ASR 0.6B (627 MB download) | Apple Intelligence, when it is turned on in Settings |
-| Cannot (iPhone 15 and 15 Plus, and older) | NVIDIA Parakeet TDT 0.6B v3 (630 MB download) | None, only your dictionary's replacements |
+| Cannot (iPhone 15 and 15 Plus, the iPhone 13 and 14 families, SE 3rd generation) | NVIDIA Parakeet TDT 0.6B v3 (630 MB download) | None, only your dictionary's replacements |
+| iPhone 11 and 12 families, SE 2nd generation | None: dictation is not supported yet | None |
 
 Older phones get Parakeet, which makes a few more mistakes (see
 [Benchmarks](benchmarks.md#on-the-iphone)), because the int8 build of Nemotron's sibling model
@@ -44,8 +54,9 @@ section shows what your device got and why, says so when your iPhone model is un
 
 ## Set up
 
-1. Install v2t from the [App Store](https://apps.apple.com/app/id6831059370), open it and tap **Download** next to **Speech model** (about 630 MB,
-   once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
+1. Install v2t from the [App Store](https://apps.apple.com/app/id6831059370) and open it. The first time, **About v2t**
+   says what the app does; tap **Continue** for the setup list (its **About v2t** row at the bottom opens the page
+   again). Tap **Download** next to **Speech model** (about 630 MB, once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
 2. Tap **Add the v2t keyboard**. It opens Settings: go to **v2t** › **Keyboards** and turn on
    **v2t**. (General › Keyboard › Keyboards › Add New Keyboard does the same.)
 3. On the same page, turn on **Allow Full Access** and confirm. The keyboard needs Full Access to ask
@@ -91,7 +102,9 @@ While you talk, a waveform, a timer and the name of the microphone in use cover 
 **Done** to finish: the keyboard shows "Transcribing…", then "Cleaning up…" if cleanup is on, then
 types the text. A dictation over about
 15 seconds is transcribed in pieces while you talk, so only the last piece is left after Done.
-**Cancel** stops without typing anything, though v2t still saves the dictation in History.
+**Cancel** stops without typing anything, though v2t still saves the dictation in History. Cancel
+stays on screen while v2t transcribes or cleans up; tapping it then stops that work, and v2t keeps
+nothing of the dictation.
 
 <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
@@ -115,9 +128,10 @@ types the text. A dictation over about
   microphone's name. None of this has been checked on a phone yet.
 - The session turns off 15 minutes after your last dictation. Change that under **Languages and
   typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
-  yourself, as below.
+  yourself, as below. A dictation still being transcribed by then is stopped with it.
 - To turn it off now, open v2t and tap **Stop microphone session**, or turn off **Mic ready for the
-  keyboard**. The next mic tap opens v2t again.
+  keyboard**. This also stops a dictation still being transcribed, which is then lost. The next mic
+  tap opens v2t again.
 
 ### What happens to your words
 
@@ -130,7 +144,7 @@ flowchart LR
   on. It adds punctuation and capitals, drops "um" and repeated words, writes numbers as digits and
   uses your dictionary's spellings. Any other word it changes reverts to what you said. Cleanup adds
   about a second. Turn it off with **Clean up with Apple Intelligence**; the switch is greyed out
-  when Apple Intelligence is off or not ready.
+  when Apple Intelligence is off or not ready, or when the device can't run it.
 - **Dictionary** has two lists. **Spell exactly** holds names and jargon: cleanup spells them as
   written, and the keyboard never autocorrects them. **Replace** turns what v2t heard into what you
   want written (whole words, any capitalisation); it runs after cleanup, whether cleanup is on or
@@ -204,7 +218,7 @@ already listening; go back to your app and keep talking.
 
 **The text never appeared.** v2t types the text once, into the field where you tapped Done. You can
 go to the v2t app and back before then. If you left the field before the text arrived, or tapped
-Cancel, find the text in the app's **History**.
+Cancel while recording, find the text in the app's **History**. Cancel after Done keeps nothing.
 
 **The orange dot stays on.** The microphone session is waiting for your next dictation. Open v2t and
 tap **Stop microphone session**.
@@ -217,12 +231,18 @@ or was deleted. Tap **Download**, then go back to your app and tap the mic again
   <figcaption>What the mic opens when the speech model isn't on the device.</figcaption>
 </figure>
 
+**Tapping the mic opens v2t on "Preparing the speech model".** The first time the model loads after
+its download, v2t prepares it for this device, and the mic waits until that is done. Stay in v2t
+until it says the model is ready, then go back to your app and tap the mic again.
+
 **The speech model shows an error, or "The speech model didn't load".** The download needs a network
 connection. Tap **Try again** once you're online.
 
-**Clean up with Apple Intelligence is greyed out.** Apple Intelligence is off, still downloading, or
-unavailable on this device. Turn it on in Settings › Apple Intelligence & Siri, then reopen v2t.
-Until then you get the words as heard, plus your replacements.
+**Clean up with Apple Intelligence is greyed out.** If it says this device can't run Apple
+Intelligence, cleanup will never be available on it: you get the words as heard, plus your
+replacements. Otherwise Apple Intelligence is off or still downloading. Turn it on in Settings ›
+Apple Intelligence & Siri, then reopen v2t. Until then you get the words as heard, plus your
+replacements.
 
 **Apple's keyboard appears instead of v2t's.** iOS does that in password and phone-number fields and
 in apps that refuse other keyboards. v2t cannot change it.

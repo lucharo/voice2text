@@ -3,7 +3,7 @@ import XCTest
 /// Drives the real v2t keyboard in the simulator through synthesized touches (XCUITest taps and drags land
 /// in the keyboard's touch handlers), and keeps full-resolution screenshots as attachments.
 @MainActor final class KeyboardUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func launch(layout: String = "en") {
     continueAfterFailure = false
@@ -81,6 +81,22 @@ import XCTest
     let settled = Date().addingTimeInterval(3)
     while text != "Teh ", Date() < settled { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     XCTAssertEqual(text, "Teh ")
+  }
+
+  func testKeepingAWordNoListKnowsSaysItWentIntoTheDictionary() {
+    launch()
+    showKeyboard()
+    type("the marimo")
+    XCTAssertTrue(suggestion("“marimo”").waitForExistence(timeout: 3))
+    suggestion("“marimo”").tap()
+    let notice = app.staticTexts["v2t.notice"]
+    XCTAssertTrue(notice.waitForExistence(timeout: 3))
+    XCTAssertEqual(notice.label, "Added “marimo” to your dictionary")
+    shot("04b-added-to-dictionary")
+    // the next key brings the suggestions back
+    type("a")
+    XCTAssertTrue(suggestion("“a”").waitForExistence(timeout: 3) || suggestion("a").waitForExistence(timeout: 1))
+    XCTAssertFalse(notice.exists)
   }
 
   func testOneFingerSwipeTypesAWord() {
