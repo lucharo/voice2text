@@ -263,5 +263,122 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(json.loads(json.dumps(rep.json_report(r)))["tap_vs_swipe"]["likely_misreads"], 1)
 
 
+# the iPhone keyboard 402 pt wide (Layout.swift, checked against KeyboardLayout on 12 Nov 2026): letter keys
+# 34.2 pt wide, centres as printed by KeyboardLayout(width: 402)
+CENTRES = {"q": (20.1, 29), "a": (40.2, 83), "h": (241.2, 83), "g": (201.0, 83), "t": (180.9, 29), "e": (100.5, 29)}
+APPEAR = {"t": 0, "e": "appear", "width": 402, "form": "phone", "layout": "en", "wall": "2026-11-12T10:00:00Z"}
+
+
+def exercise(t, end, target, typed, wall="2026-11-12T10:00:10Z"):
+    return {"t": t, "e": "exercise", "end": end, "wall": wall, "id": "en-01", "target": target, "typed": typed}
+
+
+def tapped(t, word, at=None, n0=1):
+    """A word tapped key by key: down where the finger landed (`at`: letter -> point, else the key's centre),
+    the tap, the key and its insertion."""
+    out = []
+    for i, ch in enumerate(word):
+        p = list((at or {}).get(i, CENTRES.get(ch.lower(), (200, 100))))
+        out += [{"t": t, "e": "down", "n": n0 + i, "key": f"letters-{ch.lower()}", "p": p, "fingers": 1},
+                {"t": t + 40, "e": "up", "n": n0 + i, "key": f"letters-{ch.lower()}", "p": [p[0] + 1, p[1] + 1], "verdict": "tap", "ms": 40},
+                {"t": t + 41, "e": "key", "text": ch, "p": [p[0] + 1, p[1] + 1]}, {"t": t + 42, "e": "ins", "text": ch}]
+        t += 150
+    return out, t
+
+
+def space(t):
+    return [{"t": t, "e": "act", "a": "space"}, {"t": t + 1, "e": "ins", "text": " "}]
+
+
+class ExerciseTests(unittest.TestCase):
+    def test_words_that_ended_up_different_are_listed_target_then_typed(self):
+        x = rep.analyse([exercise(0, 1, "She's back from Lisbon.", "She’s back form lisbon")]).exercises
+        self.assertEqual((x.sentences, x.words, x.wrong), (1, 4, [("from", "form"), ("Lisbon", "lisbon")]))
+
+    def test_a_sentence_with_a_word_missing_is_one_pair(self):
+        x = rep.analyse([exercise(0, 1, "Sit by the window.", "Sit bythe window")]).exercises
+        self.assertEqual(x.wrong, [("Sit by the window.", "Sit bythe window")])
+
+    def test_autocorrections_are_placed_on_the_sentences_words(self):
+        ev = [APPEAR, {"t": 900, "e": "host", "kind": "text", "chars": 0}]
+        e, t = tapped(1000, "teh")
+        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "teh", "to": "the"}]
+        ev += [{"t": t, "e": "del"}] * 3 + [{"t": t, "e": "ins", "text": "the"}, {"t": t, "e": "ins", "text": " "}]
+        e, t = tapped(t + 100, "fox")
+        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "fox", "to": "for"}]
+        x = rep.analyse(ev + [exercise(950, t + 500, "the fox", "the for ")]).exercises
+        self.assertEqual(dict(x.corrections), {"to target": 1, "other word": 1})
+
+    def test_an_autocorrection_after_the_cursor_moved_is_not_placed(self):
+        ev = [APPEAR, {"t": 900, "e": "host", "kind": "text", "chars": 0}, {"t": 950, "e": "cursor", "by": -1}]
+        e, t = tapped(1000, "teh")
+        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "teh", "to": "the"}]
+        x = rep.analyse(ev + [exercise(900, t + 500, "the", "the ")]).exercises
+        self.assertEqual(dict(x.corrections), {"not placed": 1})
+
+    def test_events_after_the_sentences_time_are_left_out(self):
+        ev = [APPEAR]
+        e, t = tapped(100, "teh")
+        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "teh", "to": "the"}]
+        x = rep.analyse(ev + [exercise(10, 50, "the", "the")]).exercises
+        self.assertEqual((dict(x.corrections), dict(x.offsets)), ({}, {}))
+
+    def test_taps_on_the_right_letter_give_the_offset_from_the_keys_centre_in_key_widths(self):
+        # "hat": h landed 17.1 pt right of its centre (half a key) and 6.84 pt up; a and t on their centres
+        e, t = tapped(1000, "hat", at={0: (241.2 + 17.1, 83 - 6.84)})
+        x = rep.analyse([APPEAR] + e + space(t) + [exercise(900, t + 500, "hat", "hat ")]).exercises
+        got = {k: [(round(dx, 6), round(dy, 6)) for dx, dy in v] for k, v in x.offsets.items()}
+        self.assertEqual(got, {"h": [(0.5, -0.2)], "a": [(0, 0)], "t": [(0, 0)]})
+
+    def test_a_tap_that_typed_another_letter_is_counted_by_meant_and_hit(self):
+        e, t = tapped(1000, "tge")
+        x = rep.analyse([APPEAR] + e + space(t) + [exercise(900, t + 500, "the", "the ")]).exercises
+        self.assertEqual((dict(x.hits), sorted(x.offsets)), ({("h", "g"): 1}, ["e", "t"]))
+
+    def test_a_word_with_a_delete_gives_no_offsets_or_hits(self):
+        e, t = tapped(1000, "tg")
+        e2, t = tapped(t + 200, "he", n0=10)
+        ev = [APPEAR] + e + [{"t": t - 300, "e": "act", "a": "delete"}, {"t": t - 300, "e": "del"}] + e2
+        x = rep.analyse(ev + space(t) + [exercise(900, t + 500, "the", "the ")]).exercises
+        self.assertEqual((dict(x.hits), dict(x.offsets)), ({}, {}))
+
+    def test_a_word_continued_after_deleting_back_into_it_is_left_out(self):
+        # "teh " then delete the space and the h, and type "he": the letters belong to a word already in the field
+        e, t = tapped(1000, "tge")
+        ev = [APPEAR] + e + space(t) + [{"t": t + 10, "e": "act", "a": "delete"}, {"t": t + 10, "e": "del"}] * 3
+        e2, t = tapped(t + 200, "he", n0=10)
+        x = rep.analyse(ev + e2 + space(t) + [exercise(900, t + 500, "the", "the ")]).exercises
+        self.assertEqual((dict(x.hits), dict(x.offsets)), ({("h", "g"): 1}, {"t": [(0, 0)], "e": [(0, 0)]}))
+
+    def test_the_same_uptime_in_another_boot_is_left_out(self):
+        e, t = tapped(1000, "tge")
+        x = rep.analyse([APPEAR] + e + space(t) + [exercise(900, t + 500, "the", "the ", wall="2026-11-14T08:00:00Z")]).exercises
+        self.assertEqual(dict(x.hits), {})
+
+    def test_exercise_lines_after_the_keyboards_do_not_read_as_a_restart(self):
+        keys = [{"t": 5_000_000 + 200 * i, "e": "key", "text": "a"} for i in range(6)]
+        r = rep.analyse(keys + [exercise(1_000, 2_000, "a", "a")])
+        self.assertEqual((len(r.kps), r.span_s, r.exercises.sentences), (1, 1.0, 1))
+
+    def test_a_folder_holds_the_exercise_files_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "keyboard.jsonl").write_text('{"t":2,"e":"key","text":"b"}\n')
+            Path(d, "exercises.1.jsonl").write_text(json.dumps(exercise(1, 3, "a", "a")) + "\n")
+            Path(d, "exercises.jsonl").write_text(json.dumps(exercise(4, 5, "b", "b")) + "\n")
+            self.assertEqual([e["t"] for e in rep.read_events(Path(d))], [2, 1, 4])
+
+    def test_text_and_json_reports_carry_the_exercise(self):
+        e, t = tapped(1000, "tge", at={0: (180.9 - 3.42, 29)})
+        r = rep.analyse([APPEAR] + e + space(t) + [exercise(900, t + 500, "the", "tge ")])
+        self.assertIn("    t  -0.10  +0.00  (1)\n", rep.text_report(r) + "\n")
+        self.assertIn("    h  g  1", rep.text_report(r))
+        self.assertEqual(json.loads(json.dumps(rep.json_report(r)))["exercises"], {
+            "sentences": 1, "words": 1, "wrong_words": [{"target": "the", "typed": "tge"}],
+            "autocorrect": {"to_target": 0, "other_word": 0, "not_placed": 0}, "kps_median": 7.33,  # 4 keys (t g e, space) from 1041 to 1450 ms
+            "offsets": {"e": {"dx": 0.0, "dy": 0.0, "n": 1}, "t": {"dx": -0.1, "dy": 0.0, "n": 1}},
+            "hits": [{"meant": "h", "hit": "g", "n": 1}]})
+        self.assertIsNone(rep.json_report(rep.analyse([APPEAR]))["exercises"])
+
+
 if __name__ == "__main__":
     unittest.main()

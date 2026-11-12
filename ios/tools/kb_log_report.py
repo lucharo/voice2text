@@ -19,7 +19,11 @@ Reports:
 - touch delivery: how long after the touch the keyboard acted on it, for touches within 30 pt of a screen edge
   (where iOS holds touches back for its own edge gestures) against the rest;
 - bar time: from a character key to the suggestion bar it leads to, which is the keyboard's own work per key
-  (the engine and the suggestions), against the 8 ms of one frame at 120 Hz.
+  (the engine and the suggestions), against the 8 ms of one frame at 120 Hz;
+- exercises (the app's Debugging › Typing exercise, `exercise` lines): for the keyboard's events while each
+  sentence was on screen, the words that ended up different from the sentence, whether autocorrect made the
+  sentence's word or another, keys per second, and per letter where the finger landed against the key's centre
+  and which neighbouring key it hit instead.
 
 The log's events are described in ios/README.md ("Keyboard debug log").
 """
@@ -28,11 +32,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import bisect
 import statistics
 import sys
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 SLOTS = ["left", "middle", "right"]
@@ -75,8 +81,10 @@ def drop_last_character(text: str) -> str:
 
 
 def read_events(path: Path) -> list[dict]:
-    """Every event in the file, or in a folder's keyboard.1.jsonl then keyboard.jsonl, oldest first."""
-    files = [path] if path.is_file() else [p for p in (path / "keyboard.1.jsonl", path / "keyboard.jsonl") if p.exists()]
+    """Every event in the file, or in a folder's keyboard.1.jsonl then keyboard.jsonl, oldest first, then the typing
+    exercise's exercises.1.jsonl and exercises.jsonl (the app's Export appends them the same way)."""
+    names = ("keyboard.1.jsonl", "keyboard.jsonl", "exercises.1.jsonl", "exercises.jsonl")
+    files = [path] if path.is_file() else [p for p in (path / n for n in names) if p.exists()]
     if not files:
         files = sorted(path.glob("*.jsonl"))
     events = []
@@ -128,6 +136,7 @@ class Report:
     key_delivery: dict = field(default_factory=lambda: {"edge": [], "middle": []})
     delete_delivery: dict = field(default_factory=lambda: {"edge": [], "middle": []})
     bar_ms: list = field(default_factory=list)  # from a character key to the bar it leads to
+    exercises: ExerciseReport | None = None
 
 
 class Document:
@@ -184,8 +193,209 @@ class Document:
                 self.deleted.setdefault(start, word)
 
 
+# The phone keyboard's letter rows, as KeyboardLayout.buildPhone lays them out (Layout.swift, Metrics.phone):
+# 3 pt side insets, 6 pt gaps, 42 pt keys on a 54 pt row pitch 8 pt below the top. The top row starts at the
+# inset; the middle and bottom rows of letters are centred.
+PHONE_SIDE, PHONE_GAP, PHONE_KEY_H, PHONE_PITCH, PHONE_TOP = 3, 6, 42, 54, 8
+WALL_SLACK_S = 120  # how far apart the keyboard's and the exercise's uptime anchors may be and still be one boot
+
+
+def phone_letter_centres(width: float, language: str = "en") -> tuple[dict[str, tuple[float, float]], float]:
+    """Each letter key's centre on the iPhone keyboard of this width, and the width of one letter key."""
+    u = (width - 2 * PHONE_SIDE - 9 * PHONE_GAP) / 10
+    rows = ["qwertyuiop", "asdfghjklñ" if language == "es" else "asdfghjkl", "zxcvbnm"]
+    centres = {}
+    for r, letters in enumerate(rows):
+        n = len(letters)
+        x0 = PHONE_SIDE if r == 0 else (width - (n * u + (n - 1) * PHONE_GAP)) / 2
+        for i, ch in enumerate(letters):
+            centres[ch] = (x0 + i * (u + PHONE_GAP) + u / 2, PHONE_TOP + r * PHONE_PITCH + PHONE_KEY_H / 2)
+    return centres, u
+
+
+def words(s: str) -> list[str]:
+    """A sentence's words without the punctuation around them, curly apostrophes made straight, as the app
+    compares them (TypingExerciseLog.words)."""
+    out = []
+    for w in s.replace("’", "'").split():
+        i, j = 0, len(w)
+        while i < j and unicodedata.category(w[i])[0] in "PS":
+            i += 1
+        while j > i and unicodedata.category(w[j - 1])[0] in "PS":
+            j -= 1
+        if i < j:
+            out.append(w[i:j])
+    return out
+
+
+def wrong_words(target: str, typed: str) -> list[tuple[str, str]]:
+    """The sentence's words that ended up different, as (target, typed): paired in order when the counts match,
+    otherwise the whole sentence as one pair (TypingExerciseLog.wrongWords)."""
+    t, y = words(target), words(typed)
+    if len(t) != len(y):
+        return [] if t == y else [(target, typed)]
+    return [(a, b) for a, b in zip(t, y) if a != b]
+
+
+def epoch(iso: str | None) -> float | None:
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+@dataclass
+class ExerciseReport:
+    sentences: int = 0
+    words: int = 0
+    wrong: list = field(default_factory=list)  # (target word, typed word)
+    corrections: Counter = field(default_factory=Counter)  # "to target", "other word", "not placed"
+    correction_examples: list = field(default_factory=list)
+    offsets: dict = field(default_factory=lambda: defaultdict(list))  # letter -> [(dx, dy)] in key widths
+    hits: Counter = field(default_factory=Counter)  # (meant, hit) for a tap that typed another letter
+    kps: list = field(default_factory=list)  # one a sentence
+
+
+class ExerciseWindow:
+    """The keyboard's events while one sentence was on screen, lined up with the sentence. The field starts empty,
+    so the text before the cursor is known from the keyboard's own edits, and a word's place in it says which of
+    the sentence's words it is meant to be. A word continued after deleting back into it, or typed after the host
+    moved the cursor, has no such place and is left out."""
+
+    def __init__(self, ex: dict, rep: ExerciseReport) -> None:
+        self.target = words(ex.get("target", ""))
+        self.rep = rep
+        self.doc = ""
+        self.known = True
+        self.word: list[tuple[str, list | None]] = []
+        self.word_at = 0
+        self.word_clean = True
+        self.downs: dict = {}
+        self.taps: list[tuple[str, list]] = []  # letter keys tapped, with where the finger landed, until typed
+        self.keys: list[float] = []
+        self.centres: dict | None = None  # the keyboard's letter centres, and one letter key's width
+        self.u = 1.0
+
+    def finish_word(self) -> None:
+        centres, u = self.centres, self.u
+        word, self.word = self.word, []
+        if not word or not self.word_clean or not self.known or self.word_at >= len(self.target):
+            self.word_clean = True
+            return
+        meant_word = self.target[self.word_at]
+        if len(meant_word) == len(word):
+            for meant, (hit, p) in zip(meant_word.lower(), ((c.lower(), p) for c, p in word)):
+                if meant == hit:
+                    if centres and p and meant in centres:
+                        cx, cy = centres[meant]
+                        self.rep.offsets[meant].append(((p[0] - cx) / u, (p[1] - cy) / u))
+                elif meant.isalpha() and hit.isalpha():
+                    self.rep.hits[(meant, hit)] += 1
+
+    def event(self, ev: dict, centres: dict | None, u: float) -> None:
+        self.centres, self.u = centres, u
+        e = ev.get("e")
+        if e == "down":
+            self.downs[ev.get("n")] = ev.get("p")
+        elif (e == "up" and ev.get("verdict") == "tap") or e == "rollover":
+            k = str(ev.get("key", ""))
+            if k.startswith("letters-"):
+                self.taps.append((k.removeprefix("letters-"), self.downs.get(ev.get("n")) or ev.get("p")))
+        elif e == "key" and not ev.get("search"):
+            text = str(ev.get("text", ""))
+            self.keys.append(ev.get("t", 0))
+            if len(text) == 1 and (text.isalpha() or text in "'’"):
+                if not self.word:
+                    self.word_at = len(words(self.doc))
+                    # letters straight after a letter already in the field continue a word deleted back into
+                    self.word_clean = not self.doc or self.doc[-1].isspace() or not self.doc[-1].isalnum()
+                p = None
+                for i, (letter, at) in enumerate(self.taps):
+                    if letter == text.lower():
+                        p = at
+                        del self.taps[: i + 1]
+                        break
+                self.word.append((text, p))
+            else:
+                self.finish_word()
+        elif e == "act" and not ev.get("search"):
+            a = ev.get("a")
+            if a in TYPING_ACTS:
+                self.keys.append(ev.get("t", 0))
+                self.finish_word()
+            elif a in ("delete", "deleteWord"):
+                self.keys.append(ev.get("t", 0))
+                if self.word:
+                    self.word_clean = False
+        elif e in ("swiped", "pick", "emoji"):
+            self.finish_word()
+        elif e == "ins":
+            self.doc += ev["text"] if "text" in ev else "█" * ev.get("chars", 0)
+        elif e == "del":
+            self.doc = drop_last_character(self.doc)
+        elif e == "host":
+            self.doc = "█" * ev.get("chars", 0)
+            if ev.get("chars", 0):  # the field changed some other way than the app clearing it
+                self.known = False
+        elif e == "cursor":
+            self.known = False
+        elif e == "autocorrect":
+            # logged before the keyboard replaces the word: the word is the last one in the field
+            frm, to = ev.get("from"), ev.get("to")
+            done = words(self.doc)
+            at = len(done) - 1
+            if frm is None or to is None or not self.known or not done or [done[-1]] != words(frm) or at >= len(self.target):
+                how = "not placed"
+            else:
+                how = "to target" if words(to) == [self.target[at]] else "other word"
+            self.rep.corrections[how] += 1
+            if len(self.rep.correction_examples) < 20:
+                self.rep.correction_examples.append(f"{frm} -> {to} ({how})")
+
+
+def analyse_exercises(events: list[dict], exercises: list[dict]) -> ExerciseReport:
+    """Lines each exercise sentence up with the keyboard events between its `t` and `end`."""
+    rep = ExerciseReport()
+    exercises = sorted(exercises, key=lambda x: x.get("t", 0))
+    starts = [x.get("t", 0) for x in exercises]
+    windows: dict[int, ExerciseWindow] = {}
+    for x in exercises:
+        rep.sentences += 1
+        rep.words += len(words(x.get("target", "")))
+        rep.wrong += wrong_words(x.get("target", ""), x.get("typed", ""))
+    centres, u, anchor = None, 1.0, None
+    for ev in events:
+        t = ev.get("t", 0)
+        if ev.get("e") == "appear":
+            w = epoch(ev.get("wall"))
+            anchor = w - t / 1000 if w is not None else None  # the wall time at uptime 0: one per boot
+            phone = ev.get("form", "phone") == "phone" and ev.get("width")
+            centres, u = phone_letter_centres(ev["width"], ev.get("layout", "en")) if phone else (None, 1.0)
+        i = bisect.bisect_right(starts, t) - 1
+        if i < 0 or t > exercises[i].get("end", 0):
+            continue
+        x = exercises[i]
+        w = epoch(x.get("wall"))
+        if anchor is not None and w is not None and abs(w - x["t"] / 1000 - anchor) > WALL_SLACK_S:
+            continue  # the same uptime in another boot of the phone
+        if i not in windows:
+            windows[i] = ExerciseWindow(x, rep)
+        windows[i].event(ev, centres, u)
+    for win in windows.values():
+        win.finish_word()  # the last word, ended by Next
+        k = win.keys
+        if len(k) >= 2 and k[-1] > k[0]:
+            rep.kps.append((len(k) - 1) / ((k[-1] - k[0]) / 1000))
+    return rep
+
+
 def analyse(events: list[dict]) -> Report:
     r = Report(events=len(events))
+    # the exercise's lines come after the keyboard's in an export, on the same clock: read apart
+    exercises = [e for e in events if e.get("e") == "exercise"]
+    events = [e for e in events if e.get("e") != "exercise"]
+    if exercises:
+        r.exercises = analyse_exercises(events, exercises)
     if not events:
         return r
     doc = Document()
@@ -433,7 +643,37 @@ def text_report(r: Report) -> str:
         out += ["", "Bar time (character key to suggestions)",
                 f"  median {statistics.median(ms):.1f} ms, 95th percentile {ms[int(0.95 * (len(ms) - 1))]:.1f} ms, "
                 f"over {FRAME_MS} ms {pct(sum(m > FRAME_MS for m in ms), len(ms))}"]
+    if r.exercises:
+        out += ["", "Exercises"] + exercise_lines(r.exercises)
     return "\n".join(out)
+
+
+def mean_offsets(x: ExerciseReport) -> dict[str, tuple[float, float, int]]:
+    """Per letter: the mean horizontal and vertical offset from the key's centre, in key widths, and the taps."""
+    return {k: (statistics.fmean(d for d, _ in v), statistics.fmean(d for _, d in v), len(v)) for k, v in sorted(x.offsets.items())}
+
+
+def ranked_hits(x: ExerciseReport) -> list[tuple[str, str, int]]:
+    return [(m, h, n) for (m, h), n in sorted(x.hits.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def exercise_lines(x: ExerciseReport) -> list[str]:
+    c = x.corrections
+    out = [f"  sentences {x.sentences} ({x.words} words); words different from the sentence {len(x.wrong)}"]
+    out += [f"    {a} -> {b}" for a, b in x.wrong[:20]]
+    out.append(f"  autocorrections {sum(c.values())}: made the sentence's word {c['to target']}, another word {c['other word']}, "
+               f"not placed {c['not placed']}")
+    out += [f"    {e}" for e in x.correction_examples[:10]]
+    if x.kps:
+        out.append(f"  keys per second: median {statistics.median(x.kps):.1f} ({len(x.kps)} sentences)")
+    offsets = mean_offsets(x)
+    if offsets:
+        out.append("  where taps landed from the key's centre, in key widths (+ right, + down), letters typed right in words with no delete:")
+        out += [f"    {k}  {dx:+.2f}  {dy:+.2f}  ({n})" for k, (dx, dy, n) in offsets.items()]
+    if x.hits:
+        out.append("  taps that typed another letter (meant, hit, count):")
+        out += [f"    {m}  {h}  {n}" for m, h, n in ranked_hits(x)]
+    return out
 
 
 def json_report(r: Report) -> dict:
@@ -451,6 +691,18 @@ def json_report(r: Report) -> dict:
                               for name, d in (("keys", r.key_delivery), ("delete", r.delete_delivery))},
         "bar_ms": {"median": round(statistics.median(r.bar_ms), 1), "p95": round(sorted(r.bar_ms)[int(0.95 * (len(r.bar_ms) - 1))], 1),
                    "over_frame": sum(m > FRAME_MS for m in r.bar_ms), "n": len(r.bar_ms)} if r.bar_ms else None,
+        "exercises": exercise_json(r.exercises) if r.exercises else None,
+    }
+
+
+def exercise_json(x: ExerciseReport) -> dict:
+    c = x.corrections
+    return {
+        "sentences": x.sentences, "words": x.words, "wrong_words": [{"target": a, "typed": b} for a, b in x.wrong],
+        "autocorrect": {"to_target": c["to target"], "other_word": c["other word"], "not_placed": c["not placed"]},
+        "kps_median": round(statistics.median(x.kps), 2) if x.kps else None,
+        "offsets": {k: {"dx": round(dx, 3), "dy": round(dy, 3), "n": n} for k, (dx, dy, n) in mean_offsets(x).items()},
+        "hits": [{"meant": m, "hit": h, "n": n} for m, h, n in ranked_hits(x)],
     }
 
 
