@@ -302,11 +302,13 @@ class ExerciseWindow:
     def event(self, ev: dict, centres: dict | None, u: float) -> None:
         e = ev.get("e")
         if e == "down":
-            self.downs[ev.get("n")] = ev.get("p")
+            # the landing point with the keys it landed on: the keyboard may be resized before the finger lifts
+            self.downs[ev.get("n")] = (ev.get("p"), centres, u)
         elif (e == "up" and ev.get("verdict") == "tap") or e == "rollover":
             k = str(ev.get("key", ""))
             if k.startswith("letters-"):
-                self.taps.append((k.removeprefix("letters-"), self.downs.get(ev.get("n")) or ev.get("p"), centres, u))
+                p, cs, w = self.downs.get(ev.get("n")) or (None, centres, u)
+                self.taps.append((k.removeprefix("letters-"), *((p, cs, w) if p else (ev.get("p"), centres, u))))
         elif e == "key" and ev.get("search"):
             self.take_tap(str(ev.get("text", "")).lower())  # typed into emoji search: its touch is not the document's
         elif e == "key":

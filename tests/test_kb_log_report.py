@@ -420,6 +420,13 @@ class ExerciseTests(unittest.TestCase):
         got = {k: [(round(dx, 6), round(dy, 6)) for dx, dy in v] for k, v in x.offsets.items()}
         self.assertEqual(got, {"t": [(0, 0)], "h": [(0, 0)], "e": [(0, 0)]})
 
+    def test_a_keyboard_resized_while_a_finger_is_down_measures_the_tap_where_it_landed(self):
+        # the keyboard narrows between "t" going down and lifting: its landing point is on the 402 pt keys
+        e, t = tapped(1000, "t")
+        narrow = {"t": 1020, "e": "page", "page": "letters", "form": "phone", "width": 375}
+        x = rep.analyse([APPEAR, e[0], narrow] + e[1:] + space(t) + [exercise(900, t + 500, "t", "t ")]).exercises
+        self.assertEqual({k: [(round(dx, 6), round(dy, 6)) for dx, dy in v] for k, v in x.offsets.items()}, {"t": [(0, 0)]})
+
     def test_exercise_lines_after_the_keyboards_do_not_read_as_a_restart(self):
         keys = [{"t": 5_000_000 + 200 * i, "e": "key", "text": "a"} for i in range(6)]
         r = rep.analyse(keys + [exercise(1_000, 2_000, "a", "a"), exercise(3_000, 4_000, "b", "b")])
