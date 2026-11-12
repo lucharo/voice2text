@@ -240,7 +240,22 @@ class Release:
             f"create App Store version {self.version_string}")
         return created.get("data")
 
+    def check_key(self) -> None:
+        """Stop before anything else when the key's role cannot create an App Store version. The API has no call
+        that names a key's role, so this reads the app's price, which needs the same role: the upload key in the
+        testflight environment got FORBIDDEN_ERROR on both on 12 Nov (#132)."""
+        try:
+            get(f"apps/{APP_ID}/appPriceSchedule")
+        except ApiError as error:
+            if error.status != 403:
+                return  # not a question of the key's role: check_app reports it with the rest of the listing
+            sys.exit(f"the App Store Connect key {os.environ.get('ASC_KEY_ID')} cannot create an App Store version "
+                     f"(App Store Connect refuses it the app's price: {error.detail.split(':')[0]}); release with "
+                     f"an App Manager or Admin key, which appstore.yml reads from ASC_RELEASE_KEY_ID and "
+                     f"ASC_RELEASE_KEY_P8")
+
     def run(self) -> None:
+        self.check_key()
         versions = get(f"apps/{APP_ID}/appStoreVersions", **{"filter[platform]": "IOS", "limit": "50"})
         first_release = not any(state_of(v) in RELEASED for v in versions)
         done = [v for v in versions if v["attributes"]["versionString"] == self.version_string

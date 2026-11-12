@@ -40,7 +40,8 @@ class FakeConnect:
         self.screenshots = {"APP_IPHONE_67": 3, "APP_IPAD_PRO_3GEN_129": 2}
         self.category = {"id": "PRODUCTIVITY"}
         self.item_state = "READY_FOR_REVIEW"  # of every review submission item
-        self.failing = {}  # {path: HTTP status} for GETs that fail with an empty body
+        self.failing = {}  # {path: HTTP status, or (status, body)} for GETs that fail
+        self.rating = {"gambling": False, "kidsAgeBand": None}  # the age rating declaration's attributes
         self.writes = []
         self.bodies = {}  # {(method, path): the last body written there}
 
@@ -56,7 +57,8 @@ class FakeConnect:
             return {}
         params = params or {}
         if path in self.failing:
-            raise asc.ApiError(method, path, self.failing[path], "")
+            status, body = self.failing[path] if isinstance(self.failing[path], tuple) else (self.failing[path], "")
+            raise asc.ApiError(method, path, status, body)
         if path == "builds":
             found = self.builds.get(params["filter[preReleaseVersion.version]"], [])
             if "filter[version]" in params:
@@ -88,7 +90,7 @@ class FakeConnect:
         if path == "appInfos/info/primaryCategory":
             return {"data": self.category}
         if path == "appInfos/info/ageRatingDeclaration":
-            return {"data": {"attributes": {"gambling": False, "kidsAgeBand": None}}}
+            return {"data": {"attributes": self.rating}}
         if path in (f"apps/{APP}/appPriceSchedule", f"apps/{APP}/appAvailabilityV2"):
             return {"data": {"id": APP}}
         if path == "reviewSubmissions":
@@ -312,6 +314,36 @@ class Release(unittest.TestCase):
             self.run_release(fake, dry_run=True)
 
         self.assertEqual(str(stop.exception), "missing before App Review can take it:\n  - price (HTTP 503)")
+
+    # What App Store Connect answered the testflight environment's upload key on 12 Nov (#132).
+    FORBIDDEN = '{"errors": [{"status": "403", "code": "FORBIDDEN_ERROR", ' \
+                '"detail": "The API key in use does not allow this request"}]}'
+
+    def test_key_that_cannot_create_a_version_stops_a_real_run_before_any_change(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {"1.1": [build("b127", "127")]})
+        fake.failing = {f"apps/{APP}/appPriceSchedule": (403, self.FORBIDDEN)}
+
+        with mock.patch.dict(asc.os.environ, {"ASC_KEY_ID": "UPLOADKEY"}), \
+                self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1-127", whats_new="New")
+
+        self.assertEqual(str(stop.exception),
+                         "the App Store Connect key UPLOADKEY cannot create an App Store version (App Store Connect "
+                         "refuses it the app's price: FORBIDDEN_ERROR); release with an App Manager or Admin key, "
+                         "which appstore.yml reads from ASC_RELEASE_KEY_ID and ASC_RELEASE_KEY_P8")
+        self.assertEqual(fake.writes, [])
+
+    def test_key_that_cannot_create_a_version_stops_a_dry_run_with_the_same_sentence(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {"1.1": [build("b127", "127")]})
+        fake.failing = {f"apps/{APP}/appPriceSchedule": (403, self.FORBIDDEN),
+                        f"apps/{APP}/appAvailabilityV2": (403, self.FORBIDDEN)}
+
+        with mock.patch.dict(asc.os.environ, {"ASC_KEY_ID": "UPLOADKEY"}), \
+                self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1-127", whats_new="New", dry_run=True)
+
+        self.assertTrue(str(stop.exception).startswith("the App Store Connect key UPLOADKEY cannot create"),
+                        str(stop.exception))
 
     def test_dry_run_fails_listing_the_missing_screenshots(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
