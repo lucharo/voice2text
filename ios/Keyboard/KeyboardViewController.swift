@@ -85,7 +85,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     engine.learned = userWords()
     engine.onLearn = { Settings.shared.learn($0) }
     // a word you keep that no word list knows ("marimo") becomes a v2t dictionary term, for dictation too
-    engine.onNewWord = { try? PersonalDictionary().addTerm($0) }
+    engine.onNewWord = { [weak self] word in
+      guard (try? PersonalDictionary().addTerm(word)) != nil else { return }  // already there, or the App Group is closed
+      self?.bar.showNotice(Self.addedLabel(word))
+    }
     engine.emojiIndexes = emojiIndexes
     engine.emojiShown = { [weak self] e in self.flatMap { EmojiStore.shown([e], toned: $0.tonedEmoji).first } ?? e }
     decoders = lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }
@@ -184,6 +187,27 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
     if hasFullAccess { Settings.shared.keyboardFullAccessSeen = Date() }
   }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    releaseEdgeTouches()
+  }
+
+  /// iOS holds back touches within about 30 pt of the screen's left and right edges while its own edge gestures
+  /// decide whether a swipe is starting, so q, a, p, l, delete and 123 act late: a debug log from an iPhone 17 Pro
+  /// (build 123) has delete acting 96 ms after the touch there against 19 ms elsewhere, and character keys 38 ms
+  /// after the lift against 20 ms. The recognisers that hold the touches sit on the keyboard's window; told not
+  /// to delay them, they still recognise their own swipes. The log's `edge-gates` line says how many there were
+  /// (`recognisers` -1 or 0 means iOS holds the touches somewhere this process cannot reach), and kb_log_report.py's touch delivery
+  /// shows whether the delay went.
+  private func releaseEdgeTouches() {
+    let gates = view.window?.gestureRecognizers?.filter(\.delaysTouchesBegan) ?? []
+    gates.forEach { $0.delaysTouchesBegan = false }
+    dlog("edge-gates", [.init("recognisers", .i(view.window?.gestureRecognizers?.count ?? -1)), .init("released", .i(gates.count))])
+  }
+
+  /// The bar's note when a word kept on the keyboard goes into the v2t dictionary, which dictation spells from too.
+  static func addedLabel(_ word: String) -> String { "Added “\(word)” to your dictionary" }
 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
