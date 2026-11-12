@@ -69,13 +69,13 @@ final class SilentAudio: AudioSource, @unchecked Sendable {
       (true, .ready), (true, .loading), (true, .notDownloaded), (true, .failed("damaged")), (false, .ready), (false, .notDownloaded),
     ]
 
-    #expect(cases.map { DictationService.canDictate(modelOnDevice: $0.0, engine: $0.1, loadedBefore: true) } == [true, true, true, false, false, false])
+    #expect(cases.map { DictationService.canDictate(supported: true, modelOnDevice: $0.0, engine: $0.1, loadedBefore: true) } == [true, true, true, false, false, false])
   }
 
   /// Until the model has loaded once on this device (its first load compiles it), only a ready model records.
   @Test func aModelNeverLoadedHereRecordsOnlyOnceReady() {
     let states: [SpeechEngine.State] = [.ready, .loading, .notDownloaded, .downloading(0.5), .failed("damaged")]
 
-    #expect(states.map { DictationService.canDictate(modelOnDevice: true, engine: $0, loadedBefore: false) } == [true, false, false, false, false])
+    #expect(states.map { DictationService.canDictate(supported: true, modelOnDevice: true, engine: $0, loadedBefore: false) } == [true, false, false, false, false])
   }
 }

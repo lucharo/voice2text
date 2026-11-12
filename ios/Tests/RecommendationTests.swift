@@ -54,6 +54,53 @@ struct RecommendationTests {
     #expect(r.cleanupUnavailable == "Unavailable: this iPad can't run Apple Intelligence, so you get the words as heard, plus your dictionary's replacements.")
   }
 
+  @Test func anAppleIntelligencePhoneIsTheFullTier() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: true, model: "iPhone17,1"))
+
+    #expect(r.tier == .full)
+  }
+
+  @Test func anA15PhoneIsTranscriptionOnlyAndUntested() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone14,5"))  // iPhone 13
+
+    #expect(r.tier == .untested)
+    #expect(r.untestedLine == "Not yet tested on this iPhone model.")
+  }
+
+  @Test func anA14PhoneIsNotSupportedYet() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone13,3"))  // iPhone 12 Pro
+
+    #expect(r.tier == .notSupported)
+    #expect([r.notSupportedMessage, r.notSupportedReason] == [
+      "Dictation isn't supported on this iPhone yet. The keyboard still works for typing.",
+      "These iPhone models have not passed a test run.",
+    ])
+    #expect(r.reason.hasPrefix("Dictation isn't supported on this iPhone yet"))
+  }
+
+  @Test func anA13PhoneIsNotSupportedYet() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone12,8"))  // iPhone SE (2nd generation)
+
+    #expect(r.tier == .notSupported)
+  }
+
+  /// An identifier the table does not know (a phone released later, the Simulator's "arm64") is never blocked.
+  @Test func anUnknownIdentifierIsUntestedNotBlocked() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone99,1"))
+
+    #expect(r.tier == .untested)
+  }
+
+  @Test func anA14IPadIsNotSupportedYetAndSaysIPad() {
+    let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPad13,18", deviceName: "iPad"))  // iPad (10th generation)
+
+    #expect(r.tier == .notSupported)
+    #expect([r.notSupportedMessage, r.notSupportedReason] == [
+      "Dictation isn't supported on this iPad yet. The keyboard still works for typing.",
+      "These iPad models have not passed a test run.",
+    ])
+  }
+
   @Test func otherPhonesGetParakeetBecauseOfTheA16LoadFailure() {
     let r = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false))
     #expect([r.speech.rawValue, r.cleanup.rawValue] == ["parakeet", "dictionaryOnly"])

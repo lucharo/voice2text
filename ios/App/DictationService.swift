@@ -105,7 +105,7 @@ import SwiftUI
 
   func refreshRecommendation() {
     let r = Recommendation.current
-    if r != recommendation { recommendation = r }
+    if r != recommendation { recommendation = r; publishCanDictate() }
   }
 
   // MARK: model
@@ -123,13 +123,15 @@ import SwiftUI
     defaults.set(!canDictate, forKey: DictationChannel.modelMissingKey)
   }
 
-  /// Dictation can record: the model is on the device, did not fail to load (damaged files fail offline;
-  /// only the user's Try again may repair them), and is not being loaded for the first time. Otherwise the
-  /// keyboard's mic opens v2t on that screen.
-  var canDictate: Bool { Self.canDictate(modelOnDevice: modelOnDevice, engine: engineState, loadedBefore: modelLoadedBefore) }
+  /// Dictation can record: the device's tier supports it, the model is on the device, did not fail to load
+  /// (damaged files fail offline; only the user's Try again may repair them), and is not being loaded for the
+  /// first time. Otherwise the keyboard's mic opens v2t on that screen.
+  var canDictate: Bool {
+    Self.canDictate(supported: recommendation.tier != .notSupported, modelOnDevice: modelOnDevice, engine: engineState, loadedBefore: modelLoadedBefore)
+  }
 
-  static func canDictate(modelOnDevice: Bool, engine: SpeechEngine.State, loadedBefore: Bool) -> Bool {
-    guard modelOnDevice else { return false }
+  static func canDictate(supported: Bool, modelOnDevice: Bool, engine: SpeechEngine.State, loadedBefore: Bool) -> Bool {
+    guard supported, modelOnDevice else { return false }
     switch engine {
     case .ready: return true
     case .failed: return false
@@ -175,7 +177,8 @@ import SwiftUI
 
   /// Loads the model; `allowDownload` only from the user's Download or Try again.
   func prepareModel(allowDownload: Bool = true) async {
-    guard engineState != .ready, !deletingModel else { return }
+    // a device not supported yet never downloads or compiles the model (it would only heat the phone)
+    guard engineState != .ready, !deletingModel, recommendation.tier != .notSupported else { return }
     if let preparing { await preparing.value; return }
     let task = Task { await self.loadModel(allowDownload: allowDownload) }
     preparing = task
@@ -273,7 +276,7 @@ import SwiftUI
   /// user can swipe back and keep talking.
   func handleKeyboardLaunch() {
     cameFromKeyboard = true
-    guard canDictate else { return }  // the hand-off screen offers the download, or Try again
+    guard canDictate else { return }  // the hand-off screen offers the download or Try again, or says it is unsupported
     if !recorder.running { warmUp() }
     start()
   }

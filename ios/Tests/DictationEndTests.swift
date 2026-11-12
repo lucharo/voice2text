@@ -72,15 +72,15 @@ final class TestClock: @unchecked Sendable {
   let clock = TestClock()
 
   /// A service with its model "on the device" (a temporary folder), no cleanup, and `speech` as the model.
-  func service(_ speech: StubSpeech, loadedBefore: Bool = false) throws -> DictationService {
+  func service(_ speech: StubSpeech, loadedBefore: Bool = false,
+               recommendation: Recommendation = .choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false))) throws -> DictationService {
     let model = dir.appending(path: "Models/model")
     try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
     try Data(repeating: 1, count: 1_000).write(to: model.appending(path: "vocab.json"))
     let store = ModelStore(modelFolder: model, folders: [dir.appending(path: "Models")]) { ModelStore.hasAll(["vocab.json"], in: $0) }
     if loadedBefore { store.markLoaded() }
-    let noCleanup = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false))
     let dictation = DictationService(
-      recommendation: noCleanup, history: History(file: dir.appending(path: "h.json")),
+      recommendation: recommendation, history: History(file: dir.appending(path: "h.json")),
       dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: StoppedAudio(), store: store,
       engine: speech, defaults: defaults, now: { [clock] in clock.now })
     dictation.refreshModelStorage()
@@ -255,6 +255,44 @@ final class TestClock: @unchecked Sendable {
     #expect(dictation.state == .listening)
     await speech.release()
     await loading.value
+    dictation.coolDown()
+  }
+}
+
+/// The owner's device tiers (2026-11-12): A13 and A14 devices cannot dictate yet; A15 and A16 ones can, untested.
+@MainActor struct DeviceTierDictationTests {
+  let base = DictationEndTests()
+
+  @Test func anUnsupportedIPhoneCannotDictateAndNeverLoadsTheModel() async throws {
+    let speech = StubSpeech()
+    let iPhone12Pro = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone13,3"))
+    let dictation = try base.service(speech, loadedBefore: true, recommendation: iPhone12Pro)
+
+    await dictation.prepareModel()
+    dictation.warmUp()
+    dictation.start()
+
+    #expect(dictation.canDictate == false)
+    #expect(base.defaults.bool(forKey: DictationChannel.modelMissingKey))
+    #expect(dictation.engineState == .notDownloaded)
+    #expect(dictation.state == .idle)
+    #expect(dictation.recommendation.notSupportedMessage == "Dictation isn't supported on this iPhone yet. The keyboard still works for typing.")
+    dictation.coolDown()
+  }
+
+  @Test func anUntestedIPhoneCanDictate() async throws {
+    let speech = StubSpeech()
+    let iPhone13 = Recommendation.choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false, model: "iPhone14,5"))
+    let dictation = try base.service(speech, recommendation: iPhone13)
+
+    await dictation.prepareModel()
+    dictation.warmUp()
+    dictation.start()
+
+    #expect(dictation.canDictate)
+    #expect(base.defaults.bool(forKey: DictationChannel.modelMissingKey) == false)
+    #expect(dictation.state == .listening)
+    #expect(dictation.recommendation.untestedLine == "Not yet tested on this iPhone model.")
     dictation.coolDown()
   }
 }

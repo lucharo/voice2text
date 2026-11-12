@@ -139,6 +139,25 @@ struct SetupRow: View {
 struct ModelRow: View {
   @EnvironmentObject var dictation: DictationService
   var body: some View {
+    if dictation.recommendation.tier == .notSupported { notSupported } else { model }
+  }
+
+  /// A13 and A14 devices: no download to offer, only why (the owner's tiers, 2026-11-12).
+  private var notSupported: some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: "mic.slash").font(.title2).foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Dictation").foregroundStyle(.primary)
+        Text(dictation.recommendation.notSupportedMessage).font(.footnote).foregroundStyle(.secondary)
+        Text(dictation.recommendation.notSupportedReason).font(.footnote).foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("v2t.model.notSupported")
+  }
+
+  private var model: some View {
     HStack(alignment: dictation.engineState == .notDownloaded ? .center : .top, spacing: 12) {
       Image(systemName: icon).font(.title2).foregroundStyle(color)
       VStack(alignment: .leading, spacing: 4) {
@@ -155,6 +174,10 @@ struct ModelRow: View {
         case .ready: Text("Ready. Transcription runs on this \(dictation.recommendation.deviceName), offline.").font(.footnote).foregroundStyle(.secondary)
         case .notDownloaded:
           Text("Needed for the mic. Typing works without it.").font(.footnote).foregroundStyle(.secondary)
+        }
+        if dictation.recommendation.tier == .untested {
+          Text(dictation.recommendation.untestedLine).font(.footnote).foregroundStyle(.orange)
+            .accessibilityIdentifier("v2t.model.untested")
         }
       }
       // the text takes every point the button leaves, so the row has no gap between them
@@ -321,7 +344,7 @@ struct KeyboardHandoffView: View {
   /// The mic opened v2t with no speech model on the device: this screen offers the download instead of recording.
   @State private var neededModel = false
   var body: some View {
-    Group { if neededModel { modelNeeded } else { handoff } }
+    Group { if dictation.recommendation.tier == .notSupported { notSupported } else if neededModel { modelNeeded } else { handoff } }
       .onAppear { neededModel = !dictation.canDictate }
       // the model can fail to load after this screen appeared (damaged files): stop telling the user to keep
       // talking, and show Try again instead
@@ -330,6 +353,21 @@ struct KeyboardHandoffView: View {
         if dictation.state == .listening { dictation.stop() }
         neededModel = true
       }
+  }
+
+  /// The keyboard's mic on a device whose tier is not supported yet: the same words as the app's model row.
+  private var notSupported: some View {
+    VStack(spacing: 24) {
+      Spacer()
+      Image(systemName: "mic.slash").font(.system(size: 64)).foregroundStyle(.secondary)
+      Text(dictation.recommendation.notSupportedMessage).font(.title2.bold())
+        .multilineTextAlignment(.center).padding(.horizontal, 32)
+      Text(dictation.recommendation.notSupportedReason)
+        .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
+      Spacer()
+      Button("Close") { dictation.cameFromKeyboard = false }.padding(.bottom, 32)
+    }
+    .accessibilityIdentifier("v2t.handoff.notSupported")
   }
 
   private var modelNeeded: some View {
