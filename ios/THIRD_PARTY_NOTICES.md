@@ -27,6 +27,15 @@ English Wikipedia (revision 1199637275) and "Wikipedia:Corrector ortográfico/Li
 https://creativecommons.org/licenses/by-sa/4.0/. The same tool takes every 200th Tatoeba sentence (see above)
 as correct text for the same test.
 
+## Noisy typing dataset (CC BY 4.0), test data only
+
+The keyboard's touch model is measured (`NoisyTypingEval`, not shipped in the app) on phone taps fetched at test
+time by `tools/fetch_noisy_typing.py` from Keith Vertanen and Per Ola Kristensson, "A Dataset of Noisy Typing on
+QWERTY Keyboards" (IUI 2023), https://osf.io/5xwng/, file `vertanen_noisy_typing_iui2023.zip` version 1 (sha256
+76d9cc798b5694686333da8baec46ce025174068bbfef909a31fe01e67dcdf5d). Licensed under Creative Commons Attribution
+4.0 International: https://creativecommons.org/licenses/by/4.0/. The tool keeps the phone group's word-aligned
+taps and key layouts, and keeps only where each touch landed and lifted; nothing from it is committed or shipped.
+
 ## FlorisBoard glide typing (Apache-2.0)
 
 `Packages/V2TKeyboardCore/Sources/V2TKeyboardCore/SwipeDecoder.swift` follows the pruning (first and last key,

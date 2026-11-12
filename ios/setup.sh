@@ -9,6 +9,7 @@ cd "$(dirname "$0")"
 export V2T_TEAM=${V2T_TEAM:-7V3HZUL435}
 uv run --quiet tools/build_lexicons.py build/lexicons   # pinned AOSP word lists + Tatoeba bigrams -> keyboard lexicons
 uv run --quiet tools/fetch_misspellings.py build/misspellings   # pinned real misspellings + correct text for the autocorrect tests
+uv run --quiet tools/fetch_noisy_typing.py build/noisy-typing   # pinned real phone taps (18 MB download) for the touch-model eval
 # a synthetic dictation for the Simulator UI tests (V2T_FIXTURE_AUDIO), so no test records the room
 if [ ! -f build/fixtures/dictation-en.wav ]; then
   mkdir -p build/fixtures
