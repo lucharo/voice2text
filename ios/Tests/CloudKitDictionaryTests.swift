@@ -61,6 +61,41 @@ struct CloudKitDictionaryTests {
     #expect(answer == true)
   }
 
+  /// A conditional save that met a newer server record: the server's wins when it is later, and nothing is saved.
+  @Test func aConflictWithALaterServerEntryKeepsTheServers() {
+    let mine = CloudKitDictionary.record(key: "replace:ai", .init(line: "ai => A.I.", time: Date(timeIntervalSince1970: 10)))
+    let server = CloudKitDictionary.record(key: "replace:ai", .init(line: "ai => Ai", time: Date(timeIntervalSince1970: 20)))
+
+    #expect(CloudKitDictionary.resolve(mine, against: server) == nil)
+  }
+
+  /// Mine is later: its fields go onto the server's record (whose change tag the next save must carry).
+  @Test func aConflictWithAnEarlierServerEntryPutsMineOnTheServersRecord() throws {
+    let entry = DictionaryMerge.Record(line: nil, time: Date(timeIntervalSince1970: 30), source: .init(device: "iPhone17,1", app: "app"))
+    let mine = CloudKitDictionary.record(key: "replace:ai", entry)
+    let server = CloudKitDictionary.record(key: "replace:ai", .init(line: "ai => Ai", time: Date(timeIntervalSince1970: 20)))
+
+    let resolved = try #require(CloudKitDictionary.resolve(mine, against: server))
+
+    #expect(resolved === server)
+    #expect(CloudKitDictionary.entry(from: resolved)?.record == entry)
+  }
+
+  @Test func aConflictOnLearnedWordsSavesTheirUnionOnTheServersRecord() throws {
+    let server = CloudKitDictionary.record(learned: ["kian", "fluide"])
+
+    let resolved = try #require(CloudKitDictionary.resolve(CloudKitDictionary.record(learned: ["marimo", "kian"]), against: server))
+
+    #expect(resolved === server)
+    #expect(CloudKitDictionary.learned(from: resolved) == ["fluide", "kian", "marimo"])
+  }
+
+  @Test func aConflictOnLearnedWordsTheServerAlreadyHasSavesNothing() {
+    let server = CloudKitDictionary.record(learned: ["kian", "marimo"])
+
+    #expect(CloudKitDictionary.resolve(CloudKitDictionary.record(learned: ["marimo"]), against: server) == nil)
+  }
+
   @Test func learnedWordsAreOneEncryptedListThatReadsBack() {
     let r = CloudKitDictionary.record(learned: ["marimo", "kian"])
 

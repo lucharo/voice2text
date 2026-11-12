@@ -34,6 +34,14 @@ struct CloudContents: Equatable, Sendable {
 ///   operation in half and try both requests again."
 /// - https://developer.apple.com/documentation/cloudkit/ckrecordzone: records go in a custom zone, whose changes
 ///   can be fetched without a query index.
+/// - https://developer.apple.com/documentation/cloudkit/ckmodifyrecordsoperation/recordsavepolicy/ifserverrecordunchanged:
+///   "If the change tag in your local record matches the change tag of the record on the server, the save
+///   operation proceeds normally. If the server record contains a newer change tag, CloudKit doesn't save the
+///   record and reports a serverRecordChanged error." `.allKeys` "doesn't compare record change tags", so two
+///   devices saving from one fetch could overwrite a newer entry; saves here are conditional.
+/// - https://developer.apple.com/documentation/cloudkit/ckerror/code/serverrecordchanged: "When a conflict occurs,
+///   your app needs to merge all changes into the record for the CKRecordChangedErrorServerRecordKey key and
+///   attempt a new save using that record." `resolve` does that merge: the later entry, or the union of words.
 /// The record schema is written out in ios/README.md ("iCloud records").
 final class CloudKitDictionary: DictionaryCloud {
   nonisolated static let containerID = "iCloud.es.luischav.v2t"
@@ -45,6 +53,8 @@ final class CloudKitDictionary: DictionaryCloud {
 
   private let container = CKContainer(identifier: CloudKitDictionary.containerID)
   private var database: CKDatabase { container.privateCloudDatabase }
+  /// The records as last fetched or saved, with the server's change tags the conditional saves compare.
+  private var known: [CKRecord.ID: CKRecord] = [:]
 
   /// How long the account check may take before the sync counts the account as not there yet: CloudKit's request
   /// timeout is URLSession's `timeoutIntervalForRequest`
@@ -76,6 +86,7 @@ final class CloudKitDictionary: DictionaryCloud {
   /// Every record in the zone. No change token is kept: the dictionary is small, and the merge needs all of it.
   func fetch() async throws -> CloudContents {
     var contents = CloudContents()
+    known = [:]
     var token: CKServerChangeToken?
     var more = true
     while more {
@@ -88,6 +99,7 @@ final class CloudKitDictionary: DictionaryCloud {
       }
       for result in changes.modificationResultsByID.values {
         let record = try result.get().record
+        known[record.recordID] = record
         if record.recordType == Self.learnedType {
           contents.learned = Self.learned(from: record)
         } else if let (key, entry) = Self.entry(from: record) {
@@ -101,8 +113,8 @@ final class CloudKitDictionary: DictionaryCloud {
   }
 
   func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws {
-    var records = entries.map { Self.record(key: $0.key, $0.value) }
-    if let learned { records.append(Self.record(learned: learned)) }
+    var records = entries.map { Self.record(key: $0.key, $0.value, onto: known[Self.recordID(key: $0.key)]) }
+    if let learned { records.append(Self.record(learned: learned, onto: known[Self.learnedID])) }
     guard !records.isEmpty else { return }
     _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: [])
     for start in stride(from: 0, to: records.count, by: Self.operationLimit) {
@@ -110,15 +122,42 @@ final class CloudKitDictionary: DictionaryCloud {
     }
   }
 
-  /// Saves over whatever the server holds: the merge already chose each record against a fresh fetch.
+  /// Saves each record only over the server version it was based on. One another device changed meanwhile is
+  /// merged with that version and saved again, unless that version already wins.
   private func save(_ records: [CKRecord]) async throws {
+    let results: (saveResults: [CKRecord.ID: Result<CKRecord, Error>], deleteResults: [CKRecord.ID: Result<Void, Error>])
     do {
-      let results = try await database.modifyRecords(saving: records, deleting: [], savePolicy: .allKeys, atomically: false)
-      for result in results.saveResults.values { _ = try result.get() }
+      results = try await database.modifyRecords(saving: records, deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: false)
     } catch let e as CKError where e.code == .limitExceeded && records.count > 1 {
       try await save(Array(records[..<(records.count / 2)]))
       try await save(Array(records[(records.count / 2)...]))
+      return
     }
+    var again: [CKRecord] = []
+    for (id, result) in results.saveResults {
+      switch result {
+      case .success(let saved): known[id] = saved
+      case .failure(let e as CKError) where e.code == .serverRecordChanged:
+        guard let server = e.serverRecord, let mine = records.first(where: { $0.recordID == id }) else { throw e }
+        known[id] = server
+        if let merged = Self.resolve(mine, against: server) { again.append(merged) }
+      case .failure(let e): throw e
+      }
+    }
+    if !again.isEmpty { try await save(again) }
+  }
+
+  /// `mine` merged into the server's newer version of the same record, or nil when the server's version already
+  /// wins: for an entry the later record (as `DictionaryMerge.merge` picks), for the learned words their union.
+  nonisolated static func resolve(_ mine: CKRecord, against server: CKRecord) -> CKRecord? {
+    if mine.recordType == learnedType {
+      let all = learned(from: server).union(learned(from: mine))
+      return all == learned(from: server) ? nil : record(learned: all, onto: server)
+    }
+    guard let (key, ours) = entry(from: mine) else { return nil }
+    guard let (_, theirs) = entry(from: server) else { return record(key: key, ours, onto: server) }
+    let winner = DictionaryMerge.merge([key: ours], [key: theirs])[key]!
+    return winner == theirs ? nil : record(key: key, winner, onto: server)
   }
 
   // MARK: Records
@@ -128,8 +167,12 @@ final class CloudKitDictionary: DictionaryCloud {
     "entry-" + SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
   }
 
-  nonisolated static func record(key: String, _ entry: DictionaryMerge.Record) -> CKRecord {
-    let r = CKRecord(recordType: entryType, recordID: CKRecord.ID(recordName: recordName(key: key), zoneID: zoneID))
+  nonisolated static func recordID(key: String) -> CKRecord.ID { CKRecord.ID(recordName: recordName(key: key), zoneID: zoneID) }
+  nonisolated static let learnedID = CKRecord.ID(recordName: learnedName, zoneID: zoneID)
+
+  /// The entry's fields, written onto `base` (a fetched record, keeping its change tag) or a new record.
+  nonisolated static func record(key: String, _ entry: DictionaryMerge.Record, onto base: CKRecord? = nil) -> CKRecord {
+    let r = base ?? CKRecord(recordType: entryType, recordID: recordID(key: key))
     r.encryptedValues["key"] = key
     r.encryptedValues["line"] = entry.line
     r["time"] = entry.time
@@ -146,8 +189,8 @@ final class CloudKitDictionary: DictionaryCloud {
     return (key, DictionaryMerge.Record(line: r.encryptedValues["line"] as? String, time: time, source: source))
   }
 
-  nonisolated static func record(learned: Set<String>) -> CKRecord {
-    let r = CKRecord(recordType: learnedType, recordID: CKRecord.ID(recordName: learnedName, zoneID: zoneID))
+  nonisolated static func record(learned: Set<String>, onto base: CKRecord? = nil) -> CKRecord {
+    let r = base ?? CKRecord(recordType: learnedType, recordID: learnedID)
     r.encryptedValues["words"] = learned.sorted()
     return r
   }
