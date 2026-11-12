@@ -33,6 +33,19 @@ public enum KeyboardPage: Hashable, Sendable {
   }
 }
 
+/// Notices the host app emptying a field that had text. The keyboard notes whether the field has text after
+/// every refresh (its own edits included) and asks on each host callback; iOS sends the text and selection
+/// callbacks in either order, and the first one to see the empty field reports it, once.
+public struct HostTextWatch: Sendable {
+  public private(set) var hadText = false
+  public init() {}
+  public mutating func note(hasText: Bool) { hadText = hasText }
+  public mutating func emptied(hasText: Bool) -> Bool {
+    defer { hadText = hasText }
+    return hadText && !hasText
+  }
+}
+
 /// Which of Apple's keyboards the layout follows: the iPhone one; the iPad one (delete and return on the
 /// right of their rows, a shift at each end, a hide-keyboard key); or the 13-inch iPad's full keyboard, which
 /// adds a number row, tab and caps lock, with the punctuation of a hardware keyboard. An iPad's floating
