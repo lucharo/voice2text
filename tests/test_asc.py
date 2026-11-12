@@ -395,6 +395,42 @@ class WaitForBuild(unittest.TestCase):
         self.assertIn("build 113: GET builds: HTTP 503", out)
         self.assertIn("build 113 is processed and ready for TestFlight", out)
 
+    def wait_on_a_clock(self, listed_after_minutes: float | None) -> float:
+        """Apple lists the build as VALID after `listed_after_minutes` (never if None); returns minutes waited."""
+        clock = [0.0]
+
+        def fake_call(method, path, params=None, body=None):
+            listed = listed_after_minutes is not None and clock[0] >= listed_after_minutes * 60
+            return {"data": [build("b126", "126")] if listed else []}
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with mock.patch.object(asc, "call", fake_call), mock.patch.object(asc.time, "sleep", sleep), \
+                mock.patch.object(asc.time, "monotonic", lambda: clock[0]), redirect_stdout(io.StringIO()):
+            try:
+                asc.wait_for_build("126")
+            finally:
+                self.waited = clock[0] / 60
+        return self.waited
+
+    def test_a_build_apple_lists_after_45_minutes_passes(self):
+        # build 126 (run 43292640253) was unlisted at 30.4 minutes and listed by 44.8
+        waited = self.wait_on_a_clock(listed_after_minutes=45)
+
+        self.assertGreaterEqual(waited, 45)
+
+    def test_a_build_still_unlisted_at_the_limit_says_to_rerun_the_job(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.wait_on_a_clock(listed_after_minutes=None)
+
+        self.assertEqual(str(stop.exception),
+                         "build 126 is still 'not listed yet' after 60 minutes. Apple is slow or refused it: "
+                         "re-run this failed job (Re-run failed jobs), which waits again without a new upload. If "
+                         "it is still not listed, App Store Connect's TestFlight tab, or any email from Apple about "
+                         "build 126, says whether Apple refused it.")
+        self.assertGreaterEqual(self.waited, 60)
+
     def test_refused_key_fails_at_once(self):
         responses = [asc.ApiError("GET", "builds", 401, "{}"), [build("b113", "113")]]
 

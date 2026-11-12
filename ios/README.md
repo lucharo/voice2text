@@ -23,7 +23,8 @@ archive to App Store Connect for TestFlight (`xcodebuild -exportArchive … -exp
 with another team, change its `teamID` too.
 
 Every push to `main` that touches `ios/` goes to TestFlight by itself ([testflight.yml](../.github/workflows/testflight.yml)):
-CI runs the keyboard engine tests, archives, uploads, and stays red unless Apple accepts the build. Each build is
+CI runs the keyboard engine tests, archives, uploads, and stays red unless Apple accepts the build. The wait for
+Apple is its own job: when it times out, "Re-run failed jobs" waits again without a new upload. Each build is
 numbered one above the last upload, so there is nothing to bump. To upload `main` without a change, run the workflow
 by hand from the Actions tab. `scripts/ci-testflight-secrets.sh` loads its secrets; run it again when the Apple Distribution
 certificate or the App Store Connect key is renewed. Profiles come from App Store Connect on each run, so a renewed

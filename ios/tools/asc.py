@@ -14,7 +14,8 @@ ASC_KEY_ID and ASC_ISSUER_ID from the environment.
                                            submit a TestFlight build for App Store review (see `release` below)
 
 `wait` exists because an upload that succeeds can still fail Apple's processing, and such a build may never
-appear in the build list, so running out of time here means the build was refused or Apple is slow.
+appear in the build list, so running out of time here means the build was refused or Apple is slow. It runs in
+its own job in testflight.yml, so rerunning that job after a timeout waits again without a new upload.
 
 `release ios-v1.1` submits the newest processed build of version 1.1; `release ios-v1.1-104` submits build 104,
 which must be version 1.1. It reuses the App Store version, the build link and any draft or rejected submission
@@ -39,7 +40,12 @@ import jwt
 API = "https://api.appstoreconnect.apple.com"
 APP_ID = "6831059370"  # "v2t" in App Store Connect
 EXPORT_OPTIONS = Path(__file__).with_name("ExportOptions-manual.plist")
-WAIT_MINUTES = 30  # Apple: processing takes up to 30 minutes
+# How long `wait` polls for a build to be listed as VALID. In the 26 testflight.yml runs that reached the wait
+# (6 to 12 Nov 2026), Apple listed builds 102 to 123 1.5 to 3.5 minutes after the upload, 124 after 6.6, 125 after
+# 8.6 and 127 after 12.7; 126 was still unlisted at 30.4 minutes (the old limit; run 43292640253) and listed by
+# 44.8, when the next run picked 127. Every build went from unlisted straight to VALID: none was seen PROCESSING.
+# Sixty minutes covers the slowest seen with room; past it, rerunning the job waits again.
+WAIT_MINUTES = 60
 POLL_SECONDS = 30
 RETRYABLE = {408, 429, 500, 502, 503, 504}  # HTTP statuses that mean "try again shortly"
 TAG = re.compile(r"ios-v(?P<version>\d+\.\d+(?:\.\d+)?)(?:-(?P<build>\d+))?")
@@ -140,7 +146,10 @@ def wait_for_build(build: str) -> None:
                 sys.exit(f"Apple refused build {build}: {state}")
         print(f"build {build}: {state}", flush=True)
         time.sleep(POLL_SECONDS)
-    sys.exit(f"build {build} is still '{state}' after {WAIT_MINUTES} minutes: refused by Apple, or Apple is slow")
+    sys.exit(f"build {build} is still '{state}' after {WAIT_MINUTES} minutes. Apple is slow or refused it: re-run "
+             f"this failed job (Re-run failed jobs), which waits again without a new upload. If it is still not "
+             f"listed, App Store Connect's TestFlight tab, or any email from Apple about build {build}, says whether "
+             f"Apple refused it.")
 
 
 def status() -> None:

@@ -5,6 +5,11 @@ name: testflight
 # Actions tab to upload main without a change. Runs in the `testflight`
 # environment, which only main may deploy to, so a pull request never sees the
 # signing secrets. One-time setup: scripts/ci-testflight-secrets.sh.
+#
+# Waiting for Apple to list the build is its own job, so when Apple is slow and
+# it times out, "Re-run failed jobs" only waits again: it neither rebuilds nor
+# uploads a new build number. A run is green only once Apple lists the build as
+# VALID; a build Apple refuses can also stay unlisted.
 
 on:
   push:
@@ -47,6 +52,8 @@ jobs:
     runs-on: macos-26  # the Xcode 26 the app targets; macos-latest may lag behind it
     timeout-minutes: 60
     environment: testflight
+    outputs:
+      build: ${{ steps.build.outputs.number }}
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -88,7 +95,8 @@ jobs:
         id: build
         working-directory: ios
         # One above the last upload, by hand or from here, with no version-bump
-        # commits. The concurrency group means the last run's build is listed by now.
+        # commits. The concurrency group means the last run's build is listed by now,
+        # unless its wait timed out: then this number can repeat the unlisted build's.
         run: echo "number=$(uv run --quiet tools/asc.py next-build)" >> "$GITHUB_OUTPUT"
       - name: Install the App Store profiles
         working-directory: ios
@@ -106,11 +114,35 @@ jobs:
             -exportOptionsPlist tools/ExportOptions-manual.plist -exportPath "$RUNNER_TEMP/V2T-export" \
             -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-      - name: Wait for Apple to accept the build
-        working-directory: ios
-        run: uv run --quiet tools/asc.py wait ${{ steps.build.outputs.number }}
       - name: Remove the keychain and key
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/testflight.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+  wait:
+    name: Wait for Apple to accept the build
+    needs: upload
+    runs-on: ubuntu-latest  # only API calls
+    timeout-minutes: 70  # asc.py gives up after WAIT_MINUTES (60) and says what to do
+    environment: testflight
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+      - name: Wait for build ${{ needs.upload.outputs.build }}
+        working-directory: ios
+        run: uv run --quiet tools/asc.py wait "${{ needs.upload.outputs.build }}"
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
