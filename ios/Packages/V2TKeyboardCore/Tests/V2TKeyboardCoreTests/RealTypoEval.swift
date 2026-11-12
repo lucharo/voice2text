@@ -155,12 +155,12 @@ struct RealTypoEvalTests {
       print("realtypo-changed | \(r.name) | \(r.changedExamples)")
     }
     print("realtypo-latency | key + bar + bold slot, Mac | \(RealTypoEval.stats(keyTimes)) over \(keyTimes.count) keys")
-    // floors a couple of points under the measured values (2026-11-05), so a regression fails
+    // floors a couple of points under the measured values (2026-11-12), so a regression fails
     func share(_ a: Int, _ n: Int) -> Double { 100 * Double(a) / Double(max(1, n)) }
     #expect(share(rows[0].fixed, rows[0].scored) >= 87.5, "English misspellings fixed")
-    #expect(share(rows[0].wrong, rows[0].scored) <= 10.5, "English misspellings made a wrong word")
+    #expect(share(rows[0].wrong, rows[0].scored) <= 8, "English misspellings made a wrong word")
     #expect(share(rows[1].fixed, rows[1].scored) >= 89.5, "Spanish misspellings fixed")
-    #expect(share(rows[1].wrong, rows[1].scored) <= 9.5, "Spanish misspellings made a wrong word")
+    #expect(share(rows[1].wrong, rows[1].scored) <= 8.5, "Spanish misspellings made a wrong word")
     #expect(share(text[0].changed, text[0].words) <= 0.5, "correct English words changed")
     #expect(share(text[1].changed, text[1].words) <= 2.5, "correct Spanish words changed")
     #expect(share(text[2].changed, text[2].words) <= 0.5, "correct English words changed with Spanish on")
@@ -173,7 +173,11 @@ struct RealTypoEvalTests {
 ///       swift test -c release -Xswiftc -enable-testing --filter RealTypoTuning
 ///
 /// Keys: sub/vow the substitution penalties, edit the skip/insert penalty, margin the autocorrect margin,
-/// fw the frequency weight, pn the proper-noun penalty, edits the most edits.
+/// fw the frequency weight, pn the proper-noun penalty, edits the most edits, first the extra cost of skipping
+/// the first touch, last the cost of a last letter left off, floor the lowest score a non-word's correction may
+/// have (write -inf as "floor=-inf"), lead the nats a completion must beat a correction by for the word to be
+/// left as unfinished, beam the beam width per lexicon. The third row types the English misspellings with
+/// Spanish on as well, as a bilingual typist has it.
 struct RealTypoTuning {
   static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
 
@@ -187,7 +191,7 @@ struct RealTypoTuning {
       func make(_ lex: [Lexicon], _ layout: KeyboardLayout) -> Suggester {
         let s = Suggester(lexicons: lex, layout: layout)
         for kv in parts.count > 1 ? parts[1].split(separator: ",") : [] {
-          let p = kv.split(separator: "="), v = p[1] == "inf" ? Double.infinity : Double(p[1])!
+          let p = kv.split(separator: "="), v = p[1] == "inf" ? Double.infinity : p[1] == "-inf" ? -Double.infinity : Double(p[1])!
           switch p[0] {
           case "sub": s.substitutionPenalty = v
           case "vow": s.vowelSubstitutionPenalty = v
@@ -196,13 +200,19 @@ struct RealTypoTuning {
           case "fw": s.frequencyWeight = v
           case "pn": s.properNounPenalty = v
           case "edits": s.maxEdits = Int(v)
+          case "first": s.firstTouchPenalty = v
+          case "last": s.lastLetterPenalty = v
+          case "floor": s.correctionFloor = v
+          case "lead": s.completionLead = v
+          case "beam": s.beamWidth = Int(v)
           default: Issue.record("unknown key \(p[0])")
           }
         }
         return s
       }
       for r in [RealTypoEval.misspellingRow("EN", enRows, suggester: make([en], enLayout), context: "I think the "),
-                RealTypoEval.misspellingRow("ES", esRows, suggester: make([es], esLayout), context: "Creo que el ")] {
+                RealTypoEval.misspellingRow("ES", esRows, suggester: make([es], esLayout), context: "Creo que el "),
+                RealTypoEval.misspellingRow("EN, with ES on", enRows, suggester: make([en, es], enLayout), context: "I think the ")] {
         print("typotune | \(parts[0]) | \(r.name) | fixed \(RealTypoEval.pct(r.fixed, r.scored)) | wrong \(RealTypoEval.pct(r.wrong, r.scored)) | top-3 \(RealTypoEval.pct(r.top3, r.scored))")
       }
     }

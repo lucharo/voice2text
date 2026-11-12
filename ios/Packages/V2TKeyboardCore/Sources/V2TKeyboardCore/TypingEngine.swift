@@ -284,9 +284,16 @@ public final class TypingEngine {
       // a text replacement takes the middle slot, beside the shortcut as typed
       return [Suggestion(word: literal, kind: .typed, score: 0), Suggestion(word: r, kind: .correction, score: 0)] + rest.filter { $0.word != r && $0.word != literal }.prefix(1)
     }
-    guard let e = emojiSuggestion else { return typed + rest }
+    var slots = typed + rest
+    // the word a space would put in is always in the bar, in the middle: commoner completions can fill the
+    // three slots ("som": some, someone) while autocorrect applies a correction none of them shows ("son")
+    if let fix = pendingAutocorrection, slots.count < 2 || slots[1].word != fix {
+      slots.removeAll { $0.word == fix }
+      slots.insert(Suggestion(word: fix, kind: .correction, score: 0), at: min(1, slots.count))
+    }
+    guard let e = emojiSuggestion else { return Array(slots.prefix(3)) }
     // the emoji takes the last slot, as on Apple's bar
-    return Array((typed + rest).prefix(2)) + [Suggestion(word: e, kind: .emoji, score: 0)]
+    return Array(slots.prefix(2)) + [Suggestion(word: e, kind: .emoji, score: 0)]
   }
 
   /// The emoji the bar offers for the word being typed (or the word autocorrect would make of it), when it

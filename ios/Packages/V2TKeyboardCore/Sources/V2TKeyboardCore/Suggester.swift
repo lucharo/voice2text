@@ -56,8 +56,38 @@ public final class Suggester: @unchecked Sendable {
   public var languagePrior = LanguagePrior()
   /// Nats per nat of bigram lift, as MultiSwipeDecoder's.
   public var bigramWeight: Double = 1
+  /// Skipping a word's first touch ("hvent" read as "vent") or reading it as a letter that is not next to it
+  /// ("fnd" as "and"), on top of the usual cost: the first letter is the one a typist most reliably means. 0
+  /// treats it as any other touch. On RealTypoEval's misspellings, with the three weights below, 2 fixed 13 more
+  /// English and 3 more Spanish ones than 0 and made 14 and 13 fewer wrong words; 3 did no better.
+  public var firstTouchPenalty: Double = 2
+  /// A last letter left off ("som" for "some", "agre" for "agree") as a correction autocorrect may apply, at this
+  /// cost (half for a doubled letter, as inside a word). Infinity leaves such words to the bar's completions.
+  /// At 5, `editPenalty`'s value, RealTypoEval fixed 35 more English and 51 more Spanish misspellings than
+  /// without it and made 20 and 18 fewer wrong words; 4 and 7 did no better.
+  public var lastLetterPenalty: Double = 5
+  /// The lowest score a correction of something that is not a word may have and still be applied: below it the
+  /// letters stay as typed rather than become an unlikely word. -infinity applies the best correction whatever
+  /// it scores. On RealTypoEval -18 left 12 English and 43 Spanish misspellings unfixed that -infinity fixed, and
+  /// kept 44 and 97 from becoming a wrong word; -16 gave up 28 and 127 fixes for 62 and 194, -20 only 4 and 6
+  /// for 31 and 59.
+  public var correctionFloor: Double = -18
+  /// Nats by which a commoner word that goes on past the letters typed ("th": the, this) must beat the best
+  /// correction ("to") for the letters to count as a word not yet finished: autocorrect then leaves them, and the
+  /// bar keeps its completions. Infinity never leaves a correction for a completion. At 1, with the three weights
+  /// above, RealTypoEval fixed 89.5% of the English misspellings and 90.9% of the Spanish (89.6% and 91.1% before
+  /// any of them) and made a wrong word of 6.2% and 6.7% (8.9% and 8.2%); 0 gave up another point of fixes, and
+  /// from 2 up QualityEval's bar lost the meant word after two letters.
+  public var completionLead: Double = 1
 
   private let centers: [CGPoint?]
+  private let memoLock = NSLock()
+  /// The beams of the last word searched, `beams[n]` before its nth letter: the next key carries the search on
+  /// from where the last one stopped, and a delete steps back, rather than each key searching the word from
+  /// its first letter (the bar took 17 to 23 ms a key ten letters into a word on an iPhone 17 Pro).
+  private var searchMemo: (keys: [TypedKey], beams: [[State]], tuning: [Double], lexicons: [ObjectIdentifier])?
+  /// The last word ranked: the bar, the bold slot and the emoji lookup all ask about the same letters after a key.
+  private var rankMemo: (keys: [TypedKey], context: TypingContext, tuning: [Double], lexicons: [ObjectIdentifier], ranking: Ranking)?
 
   public init(lexicons: [Lexicon], layout: KeyboardLayout) {
     self.lexicons = lexicons
@@ -78,14 +108,59 @@ public final class Suggester: @unchecked Sendable {
   /// follow the previous one.
   public func suggestions(for typed: [TypedKey], context: TypingContext = .empty, limit: Int = 3) -> [Suggestion] {
     let literal = String(typed.map(\.character))
-    let folded = Lexicon.fold(literal)
-    guard !folded.isEmpty else { return [] }
+    guard !Lexicon.fold(literal).isEmpty else { return [] }
+    var out = ranking(for: typed, context: context).bar
+    // the literal word keeps a slot even when it is not a word, so it can always be chosen as typed
+    if !out.prefix(limit).contains(where: { $0.word == literal }) {
+      out.insert(Suggestion(word: literal, kind: .typed, score: -.infinity), at: min(out.count, limit - 1))
+    }
+    return Array(out.prefix(limit))
+  }
+
+  /// Every word the letters typed could be, best first.
+  struct Ranking {
+    /// Finished words and completions, as the bar ranks them.
+    var bar: [Suggestion]
+    /// Words one letter longer than what was typed, scored as corrections (a last letter left off).
+    var lastLetter: [Suggestion]
+    /// The finished words that are not the letters as typed, at their score as a correction. The bar holds each
+    /// word once, at its best score, which for some is as a completion of fewer letters ("belive": believe).
+    var corrections: [Suggestion]
+  }
+
+  /// What `search` depends on besides the keys.
+  private var searchTuning: [Double] {
+    [touchStd, editPenalty, substitutionPenalty, vowelSubstitutionPenalty, firstTouchPenalty, Double(beamWidth), Double(maxEdits)]
+  }
+
+  /// What a ranking depends on besides the keys, the words before them and the search.
+  private var rankTuning: [Double] {
+    searchTuning + [frequencyWeight, completionPenalty, Double(minCompletionPrefix), properNounPenalty, acronymPenalty, bigramWeight,
+                    lastLetterPenalty, languagePrior.otherLanguage, languagePrior.cap]
+      + (languagePrior.recentLanguage.map { $0.unicodeScalars.map { Double($0.value) } } ?? [])
+  }
+
+  func ranking(for typed: [TypedKey], context: TypingContext) -> Ranking {
+    let tuning = rankTuning, ids = lexicons.map { ObjectIdentifier($0) }
+    memoLock.lock()
+    let memo = rankMemo
+    memoLock.unlock()
+    if let m = memo, m.keys == typed, m.context == context, m.tuning == tuning, m.lexicons == ids { return m.ranking }
+    let r = rank(typed, context: context)
+    memoLock.lock()
+    rankMemo = (typed, context, tuning, ids, r)
+    memoLock.unlock()
+    return r
+  }
+
+  private func rank(_ typed: [TypedKey], context: TypingContext) -> Ranking {
+    let literal = String(typed.map(\.character))
     let states = search(typed)
-    var scored: [String: Suggestion] = [:]
+    var scored: [String: Suggestion] = [:], lastLetter: [String: Suggestion] = [:], corrections: [String: Suggestion] = [:]
     let typedLower = literal == literal.lowercased()
     let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
     let bonuses = bigramWeight > 0 ? lexicons.map { context.followerBonus(in: $0, weight: bigramWeight) } : lexicons.map { _ in [:] }
-    func offer(_ word: String, _ kind: Suggestion.Kind, _ raw: Double) {
+    func offer(_ word: String, _ kind: Suggestion.Kind, _ raw: Double, lastLetter missed: Bool = false) {
       var score = raw
       if typedLower {
         switch EntryCase(word) {
@@ -95,6 +170,14 @@ public final class Suggester: @unchecked Sendable {
         }
       }
       let w = Self.applyCase(of: literal, to: word)
+      if missed {
+        if let old = lastLetter[w.lowercased()], old.score >= score { return }
+        lastLetter[w.lowercased()] = Suggestion(word: w, kind: kind, score: score)
+        return
+      }
+      if kind == .correction, (corrections[w.lowercased()]?.score ?? -.infinity) < score {
+        corrections[w.lowercased()] = Suggestion(word: w, kind: kind, score: score)
+      }
       if let old = scored[w.lowercased()], old.score >= score { return }
       scored[w.lowercased()] = Suggestion(word: w, kind: kind, score: score)
     }
@@ -117,20 +200,35 @@ public final class Suggester: @unchecked Sendable {
       if s.prefix.count >= minCompletionPrefix || !bonus.isEmpty {
         var seen = Set<Int>()
         let followers = bonus.keys.filter { $0 >= i && $0 < s.range.upperBound }.map { ($0, lex.frequency($0)) }
-        let common = s.prefix.count >= minCompletionPrefix ? topFrequencies(lex, i..<s.range.upperBound, 3) : []
+        let common = s.prefix.count >= minCompletionPrefix ? commonest(lex, s.prefix, i..<s.range.upperBound) : []
         for (j, f) in common + followers where seen.insert(j).inserted {
           let extra = lex.keyLength(j) - s.prefix.count
           offer(lex.word(j), .completion, -s.cost + prior(f) - completionPenalty * Double(extra) - 0.5 + lang + (bonus[j] ?? 0))
         }
       }
+      // a last letter left off: the words one letter longer, at the cost of a letter missed inside a word
+      if lastLetterPenalty < .infinity, s.edits < maxEdits, !s.prefix.isEmpty {
+        for (x, r) in lex.children(s.prefix, in: i..<s.range.upperBound) {
+          let cost = x == s.prefix.last ? lastLetterPenalty * 0.5 : lastLetterPenalty
+          var j = r.lowerBound
+          while j < r.upperBound, lex.keyLength(j) == s.prefix.count + 1 {
+            let f = lex.frequency(j)
+            if f > 0 { offer(lex.word(j), .correction, -s.cost - cost + prior(f) + lang + (bonus[j] ?? 0), lastLetter: true) }
+            j += 1
+          }
+        }
+      }
     }
     // ties by word: a dictionary's order changes from one launch to the next
-    var out = scored.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }
-    // the literal word keeps a slot even when it is not a word, so it can always be chosen as typed
-    if !out.prefix(limit).contains(where: { $0.word == literal }) {
-      out.insert(Suggestion(word: literal, kind: .typed, score: -.infinity), at: min(out.count, limit - 1))
-    }
-    return Array(out.prefix(limit))
+    func sorted(_ d: [String: Suggestion]) -> [Suggestion] { d.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word } }
+    return Ranking(bar: sorted(scored), lastLetter: sorted(lastLetter), corrections: sorted(corrections))
+  }
+
+  /// The three commonest words that start with `prefix` and go on, within `range` (the prefix's own entries).
+  /// One and two letters are read from the lexicon's table: their ranges run to thousands of words, more than a
+  /// scan per key can read, and the scan's cut-off dropped the common words late in the alphabet ("could" from "co").
+  func commonest(_ lex: Lexicon, _ prefix: [UInt8], _ range: Range<Int>) -> [(Int, Int)] {
+    prefix.count <= 2 ? lex.commonest(after: prefix) : topFrequencies(lex, range, 3)
   }
 
   /// The replacement autocorrect should apply when the word is finished, or nil to leave it as typed.
@@ -155,14 +253,22 @@ public final class Suggester: @unchecked Sendable {
     }
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
-    guard let best = all.first(where: { $0.kind == .correction }) else { return nil }
+    // a last letter left off competes with the corrections of the same length ("som": some against son)
+    let rank = ranking(for: typed, context: context)
+    let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
+    guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
+    // a word one letter longer is in the bar as a completion too, at its score there ("agre": agree beside agreed)
+    let shown = all.first { $0.word.lowercased() == best.word.lowercased() }?.score ?? best.score
+    if let longer = all.first(where: { $0.kind == .completion }), longer.word.lowercased() != best.word.lowercased(),
+       longer.score - max(best.score, shown) >= completionLead { return nil }
     // a capitalised word in mid-sentence is likely a name (ios/AUTOCORRECT.md item 8): it may become a name
     // the lists know ("Britian" -> "Britain") but never a common word ("Figma" -> "Firma", "Susan" -> "Usan").
     // An unknown name can still become a known one ("Kian" -> "Lian"); never correcting names lost 1.9
     // points of RealTypoEval's English fixes for two fewer changed words in 14,000 of correct text.
     if !context.sentenceStart, Self.isTitleCase(literal), !isNameEntry(best.word) { return nil }
     let typedScore = all.first { $0.kind == .typed }?.score ?? -.infinity
-    return best.score - typedScore >= autocorrectMargin || typedScore == -.infinity ? best.word : nil
+    if typedScore == -.infinity { return best.score >= correctionFloor ? best.word : nil }
+    return best.score - typedScore >= autocorrectMargin ? best.word : nil
   }
 
   /// Frequency steps (0-255) a spelling with an apostrophe or accent must beat the word as typed by to replace
@@ -232,6 +338,17 @@ public final class Suggester: @unchecked Sendable {
         best[w.lowercased()] = Suggestion(word: w, kind: .prediction, score: score)
       }
     }
+    // no word is known to follow the last one ("benchmark", a name): the commonest words of the language being
+    // written, rather than an empty bar
+    if best.isEmpty {
+      for (n, lex) in lexicons.enumerated() {
+        for (i, f) in lex.commonestWords() {
+          let w = lex.word(i), score = prior(f) + priors[n]
+          if let old = best[w.lowercased()], old.score >= score { continue }
+          best[w.lowercased()] = Suggestion(word: w, kind: .prediction, score: score)
+        }
+      }
+    }
     return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
 
@@ -240,16 +357,34 @@ public final class Suggester: @unchecked Sendable {
   func prior(_ f: Int) -> Double { frequencyWeight * (Double(f) / 255 - 1) }
 
   func search(_ typed: [TypedKey]) -> [State] {
-    var beam: [State] = lexicons.indices.map { State(lex: $0, range: 0..<lexicons[$0].count, prefix: [], cost: 0, edits: 0) }
     let u = Double(layout.unitWidth)
     let letters = typed.compactMap { t in Lexicon.fold(String(t.character)).first.map { (t, $0) } }  // apostrophes and hyphens are not in the keys
-    // states that consumed the next letter already (a transposition), merged in at the next step
-    var ahead: [State] = []
-    for (n, (t, h)) in letters.enumerated() {
+    let keys = letters.map(\.0), tuning = searchTuning, ids = lexicons.map { ObjectIdentifier($0) }
+    memoLock.lock()
+    let memo = searchMemo
+    memoLock.unlock()
+    // beams[n]: the beam before letter n. Carried on from the last search as far as the keys are the same
+    var beams: [[State]] = [lexicons.indices.map { State(lex: $0, range: 0..<lexicons[$0].count, prefix: [], cost: 0, edits: 0) }]
+    if let m = memo, m.tuning == tuning, m.lexicons == ids {
+      var same = 0
+      while same < min(m.keys.count, keys.count), m.keys[same] == keys[same] { same += 1 }
+      beams = Array(m.beams.prefix(same + 1))
+    }
+    for n in (beams.count - 1)..<letters.count {
+      let (t, h) = letters[n], beam = beams[n]
+      guard !beam.isEmpty else { beams.append([]); continue }
       let options = letterOptions(h, t.point, unit: u)
-      var next: [State] = ahead
-      ahead = []
-      next.reserveCapacity(beam.count * (options.count + 2))
+      // two letters swapped ("becuase"): the states before the last letter that took this one first, then it
+      var next: [State] = []
+      if n >= 1 {
+        let h1 = letters[n - 1].1
+        for s in beams[n - 1] where s.edits < maxEdits && h != h1 {
+          let p = s.prefix + [h, h1]
+          let r = lexicons[s.lex].prefixRange(p, in: s.range)
+          if !r.isEmpty { next.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + editPenalty * 0.8, edits: s.edits + 1)) }
+        }
+      }
+      next.reserveCapacity(next.count + beam.count * (options.count + 2))
       for s in beam {
         let lex = lexicons[s.lex]
         for (c, cost) in options {
@@ -262,18 +397,11 @@ public final class Suggester: @unchecked Sendable {
         // another letter than the touch's key or its neighbours
         let hitVowel = Self.vowels.contains(h)
         for (x, r) in kids where !options.contains(where: { $0.0 == x }) {
-          let cost = hitVowel && Self.vowels.contains(x) ? vowelSubstitutionPenalty : substitutionPenalty
+          let cost = (hitVowel && Self.vowels.contains(x) ? vowelSubstitutionPenalty : substitutionPenalty) + (n == 0 ? firstTouchPenalty : 0)
           if cost < .infinity { next.append(State(lex: s.lex, range: r, prefix: s.prefix + [x], cost: s.cost + cost, edits: s.edits + 1)) }
         }
         // this touch was a mistake: skip it
-        next.append(State(lex: s.lex, range: s.range, prefix: s.prefix, cost: s.cost + editPenalty, edits: s.edits + 1))
-        // two letters swapped ("becuase"): take the next one first, then this one
-        if n + 1 < letters.count {
-          let h2 = letters[n + 1].1
-          let p = s.prefix + [h2, h]
-          let r = lex.prefixRange(p, in: s.range)
-          if h2 != h, !r.isEmpty { ahead.append(State(lex: s.lex, range: r, prefix: p, cost: s.cost + editPenalty * 0.8, edits: s.edits + 1)) }
-        }
+        next.append(State(lex: s.lex, range: s.range, prefix: s.prefix, cost: s.cost + editPenalty + (n == 0 ? firstTouchPenalty : 0), edits: s.edits + 1))
         // a letter was missed before this touch
         if s.prefix.count >= 1 {
           for (x, xr) in kids {
@@ -286,15 +414,19 @@ public final class Suggester: @unchecked Sendable {
         }
       }
       next.sort { $0.cost < $1.cost }
-      // one state per (lexicon, prefix), the cheapest
-      var seen = Set<[UInt8]>(), kept: [State] = []
-      for s in next where kept.count < beamWidth {
-        if seen.insert([UInt8(s.lex)] + s.prefix).inserted { kept.append(s) }
+      // one state per (lexicon, prefix), the cheapest, and `beamWidth` of them per lexicon: one beam for all
+      // halved each language's share with a second one on (RealTypoEval's English misspellings typed with
+      // Spanish on: 88.5% fixed at 24 a lexicon, 89.3% at 48)
+      var seen = Set<[UInt8]>(), kept: [State] = [], perLexicon = [Int](repeating: 0, count: lexicons.count)
+      for s in next where perLexicon[s.lex] < beamWidth {
+        if seen.insert([UInt8(s.lex)] + s.prefix).inserted { kept.append(s); perLexicon[s.lex] += 1 }
       }
-      beam = kept
-      if beam.isEmpty { break }
+      beams.append(kept)
     }
-    return beam
+    memoLock.lock()
+    searchMemo = (keys, beams, tuning, ids)
+    memoLock.unlock()
+    return beams[letters.count]
   }
 
   /// The letters a touch may have meant with their spatial costs: the hit key free, neighbours by distance.
