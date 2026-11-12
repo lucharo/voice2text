@@ -336,8 +336,6 @@ class ExerciseWindow:
             self.doc += ev["text"] if "text" in ev else "█" * ev.get("chars", 0)
             if "text" not in ev:  # dictated text, logged by length only: where its words end is unknown
                 self.known = False
-        elif e == "dictation":
-            self.known = False
         elif e == "del":
             self.doc = drop_last_character(self.doc)
         elif e == "host":
