@@ -241,10 +241,16 @@ fixed; for the other two no rule held up on the evals, so the letters still beco
 the rest. The keyboard passed the text before the cursor to the swipe decoder as it was, so "E" read as the word
 before, and "e" (Spanish for "and") made Spanish the likelier language by more than `LanguagePrior.cap`: every
 English word paid 6 nats, and the Spanish list's "kirchhoff" won at -9.05 against "leaving" at -10.41. The logged
-48 points of the trace give the same scores to 0.02. Letters with no space after them are a word in progress,
-which `TypingContext(before:)` asks callers to cut off; the swipe decoder now does (`MultiSwipeDecoder.finishedText`,
-`SwipeDecoderTests`). QualityEval's swipe rows end their context with a space and do not move. Of the log's 20
-swipes, the bar before 1 showed a word in progress (this one), 11 did not, and 8 were in fields the log redacts.
+48 points of the trace give the same scores to 0.02. The keyboard now gives the decoder the engine's own words
+before the cursor (`TypingEngine.context`): they leave out the word being typed, which the swipe ends, and keep a
+swiped word, which has no space after it until the next word starts (`SwipeDecoderTests`: letters still being
+typed, a swiped word, a word picked from the bar). QualityEval's swipe rows do not move.
+
+A first version cut any letters with no space after them, and so also the word a swipe had just put in: Luis swipes
+words one after another, and the next swipe read the word before that one instead. Typed again through the log
+(the replay's text, each trace decoded as the keyboard would; all 20 come out as the phone logged them with the text
+as it was), that version read the wrong word before 7 of the 20 swipes and turned one "to" into "too"; the engine's
+words change 1 of the 20, "kirchhoff" to "leaving". 8 of the 20 were in fields whose text the log does not hold.
 
 Tried first, from the brief, and dropped (QualityEval, top-1):
 
