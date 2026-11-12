@@ -29,7 +29,15 @@ import V2TKeyboardCore
       Settings.shared.keyboardDebugLogUntil = nil
       if let dir = KeyboardLogStore.groupDirectory { KeyboardDebugLog.clear(in: dir) }
     }
-    let h = History(), d = PersonalDictionary()
+    // UI tests show History with dictations of their own (V2T_HISTORY: a JSON array as History stores it), kept
+    // in a file of their own, so the Simulator's History is left as it was
+    var h = History()
+    if let seed = env["V2T_HISTORY"] {
+      let file = FileManager.default.temporaryDirectory.appending(path: "v2t-ui-test-history.json")
+      try? Data(seed.utf8).write(to: file)
+      h = History(file: file)
+    }
+    let d = PersonalDictionary()
     _history = StateObject(wrappedValue: h)
     _dictionary = StateObject(wrappedValue: d)
     _dictation = StateObject(wrappedValue: DictationService(recommendation: .current, history: h, dictionary: d))
@@ -537,26 +545,6 @@ struct DictionaryTextView: View {
       .navigationTitle("Dictionary file")
       .onAppear { dictionary.reload(); draft = dictionary.text; snapshot = draft }
       .onDisappear { try? dictionary.saveEdit(draft, from: snapshot) }
-  }
-}
-
-struct HistoryView: View {
-  @EnvironmentObject var history: History
-  var body: some View {
-    List {
-      ForEach(history.items) { d in
-        VStack(alignment: .leading, spacing: 4) {
-          Text(d.text).textSelection(.enabled)
-          if let heard = d.heard { Text("Heard: \(heard)").font(.footnote).foregroundStyle(.secondary) }
-          if let t = d.timings { Text(t.summary).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
-          Text(d.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
-        }
-        .swipeActions { Button("Delete", role: .destructive) { try? history.delete(d.id) } }
-      }
-    }
-    .overlay { if history.items.isEmpty { Text("No dictations yet").foregroundStyle(.secondary) } }
-    .navigationTitle("History")
-    .toolbar { TimingsToolbar() }
   }
 }
 
