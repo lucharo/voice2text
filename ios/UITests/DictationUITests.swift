@@ -53,7 +53,7 @@ import XCTest
     shot("12-mic-session-on")
 
     let field = app.textFields["v2t.try"]
-    for _ in 0..<4 where !field.isHittable { app.swipeDown(velocity: .slow) }  // revealing the stop row scrolled it away
+    revealAbove(field, in: app)  // revealing the stop row scrolled it away, maybe to under the navigation bar
     sleep(1)  // let the list settle, or the tap lands on whatever scrolled under it
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
     // an earlier test may have left Apple's keyboard up: step through the keyboards to v2t's, as a user would.

@@ -89,9 +89,9 @@ import XCTest
     XCTAssertTrue(card.waitForExistence(timeout: 3))
   }
 
-  /// Scrolls back up to `toggle` and flips it.
+  /// Scrolls back up to `toggle`, clear of the navigation bar, and flips it.
   func flip(_ toggle: XCUIElement) {
-    for _ in 0..<6 where !(toggle.exists && toggle.isHittable) { app.swipeDown(velocity: .slow) }
+    revealAbove(toggle, in: app)
     toggle.switches.firstMatch.tap()
   }
 
