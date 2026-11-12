@@ -25,8 +25,8 @@ import SwiftUI
   @Published private(set) var storageError: String?
   /// Deleting the model: no recording, preparation or second delete starts until it is done.
   @Published private(set) var deletingModel = false
-  /// Dictations stopped but not yet transcribed. Stopping the mic session does not end them, so the model
-  /// cannot be deleted under one (its audio is in memory only and would be lost).
+  /// Dictations stopped but not yet transcribed. A cancelled one counts until its piece already in the model
+  /// returns, so the model is never deleted under a decode still running.
   @Published private(set) var pendingTranscriptions = 0
   /// Set when the keyboard opened the app to start dictating: the screen asks the user to swipe back.
   @Published var cameFromKeyboard = false
@@ -68,6 +68,8 @@ import SwiftUI
   private var language = ""
   /// Cleans the current recording's settled sentences while it is recorded, when cleanup is on.
   private var liveCleanup: LiveCleanup?
+  /// The stopped dictation being transcribed now, so Cancel or the end of the session can stop it.
+  private var finishing: (id: Int, task: Task<Void, Never>, live: LiveTranscription?, cleanup: LiveCleanup?)?
 
   /// `recorder`, `store`, `engine`, `defaults` and `now` are for unit tests; the app records from the
   /// microphone (or the UI tests' fixture clip) and transcribes with FluidAudio.
@@ -84,6 +86,7 @@ import SwiftUI
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
+      DictationChannel.observe(DictationChannel.cancel) { [weak self] in self?.cancelTranscription() },
     ]
     // a headset plugged in or AirPods connected mid-session can change the input
     routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -221,6 +224,7 @@ import SwiftUI
   }
 
   func coolDown() {
+    cancelTranscription()  // a dictation still transcribing ends with the session: nothing keeps decoding
     stopMeter()
     live?.abandon()
     live = nil
@@ -329,10 +333,24 @@ import SwiftUI
     self.live = nil
     self.liveCleanup = nil
     pendingTranscriptions += 1
-    Task {
+    let task = Task {
       await finish(samples, id: id, request: request, language: language, live: live, liveCleanup: liveCleanup, stoppedAt: stoppedAt)
       pendingTranscriptions -= 1
+      if finishing?.id == id { finishing = nil }
     }
+    finishing = (id, task, live, liveCleanup)
+  }
+
+  /// The keyboard's Cancel after Done, or the session ending: the dictation being transcribed stops after the
+  /// piece already in the model, and nothing it produces is typed or kept in History. The keyboard is free at once.
+  func cancelTranscription() {
+    guard let f = finishing else { return }
+    finishing = nil
+    f.task.cancel()
+    f.live?.abandon()
+    f.cleanup?.abandon()
+    dictationLog.log("transcription cancelled")
+    if f.id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
   }
 
   private func finish(
@@ -352,6 +370,7 @@ import SwiftUI
       guard store.isOnDevice else { lastText = "Couldn't transcribe: the speech model is not on this \(recommendation.deviceName)."; return }
       await prepareModel(allowDownload: false)
     }
+    guard !Task.isCancelled else { return }  // cancelled while the model loaded: nothing to decode
     do {
       let raw: String
       var pieces = 0
@@ -364,7 +383,7 @@ import SwiftUI
       }
       let speech = ContinuousClock.now - stoppedAt
       var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !text.isEmpty else { return }
+      guard !text.isEmpty, !Task.isCancelled else { return }
       let heard = text
       dictionary.reload()  // the keyboard may have added words since
       var cleanup: Duration?
@@ -384,6 +403,7 @@ import SwiftUI
         cleanup = ContinuousClock.now - t0
       }
       text = dictionary.applyReplacements(text)
+      guard !Task.isCancelled else { return }  // cancelled during cleanup: neither typed nor kept
       lastText = text
       // the text goes to the keyboard first; History is written after, so its time is not in the wait
       if id == recording {  // otherwise kept in History, but not typed into whatever field is open now
@@ -397,6 +417,7 @@ import SwiftUI
       try? history.add(Dictation(text: text, heard: text == heard ? nil : heard, date: Date(), language: language, timings: timings))
       dictationLog.log("text ready \(timings.summary, privacy: .public)")
     } catch {
+      guard !Task.isCancelled else { return }  // the user ended it: not an error to show
       lastText = "Couldn't transcribe: \(error.localizedDescription)"
     }
   }

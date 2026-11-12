@@ -1,7 +1,8 @@
 import UIKit
 
 /// What the keyboard shows while it records and transcribes, in place of the keys: a live waveform of the
-/// microphone, then Cancel (drop the recording) and Done (type it) where the bottom row of keys was.
+/// microphone, then Cancel (drop the recording) and Done (type it) where the bottom row of keys was. Cancel
+/// stays while the app transcribes, so a slow transcription can always be ended.
 final class RecordingPanel: UIView {
   var onStop: (() -> Void)?
   var onCancel: (() -> Void)?
@@ -92,7 +93,7 @@ final class RecordingPanel: UIView {
     self.bottomRow = bottomRow
     isHidden = false
     let listening = state == .listening
-    cancel.isHidden = !listening
+    cancel.isHidden = ![.listening, .transcribing, .cleaningUp].contains(state)
     done.isHidden = !listening
     dot.isHidden = !listening
     mic.isHidden = !listening

@@ -112,6 +112,66 @@ final class TestClock: @unchecked Sendable {
     #expect(dictation.history.items.isEmpty)
     #expect(dictation.lastText == "")
   }
+
+  @Test func cancelAfterDoneFreesTheKeyboardStopsDecodingAndDeliversNothing() async throws {
+    let speech = StubSpeech()
+    let dictation = try await transcribingWithTheFirstPieceHeld(speech)
+
+    dictation.cancelTranscription()
+    let stateAtCancel = dictation.state
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(stateAtCancel == .idle)
+    #expect(await speech.decodes == [208_800])  // the two pieces after the held one are never decoded
+    #expect(dictation.pendingTranscriptions == 0)
+    expectNothingDelivered(dictation)
+    dictation.coolDown()
+  }
+
+  @Test func turningTheSessionOffWhileTranscribingStopsDecodingAndDeliversNothing() async throws {
+    let speech = StubSpeech()
+    let dictation = try await transcribingWithTheFirstPieceHeld(speech)
+
+    dictation.coolDown()
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(dictation.state == .needsApp)
+    #expect(await speech.decodes == [208_800])
+    expectNothingDelivered(dictation)
+  }
+
+  /// Cancel while the dictation waits for the model to load: once it loads, nothing is decoded.
+  @Test func cancelWhileTheModelLoadsDecodesNothing() async throws {
+    let speech = StubSpeech()
+    let dictation = try service(speech, loadedBefore: true)
+    dictation.warmUp()
+    dictation.start()
+    await speech.holdTheNextLoad()
+    dictation.stop()
+    await speech.waitUntilHeld()
+
+    dictation.cancelTranscription()
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(dictation.state == .idle)
+    #expect(await speech.decodes == [])
+    expectNothingDelivered(dictation)
+    dictation.coolDown()
+  }
+
+  /// Positive control for the stubs: left alone, the same dictation is transcribed and typed.
+  @Test func anUncancelledDictationIsDelivered() async throws {
+    let speech = StubSpeech()
+    let dictation = try await transcribingWithTheFirstPieceHeld(speech)
+
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(await speech.decodes == [208_800, 192_000, 231_200])
+    #expect(defaults.string(forKey: DictationChannel.resultKey) == "<208800> <192000> <231200>")
+    #expect(dictation.history.items.count == 1)
+    #expect(dictation.state == .idle)
+    dictation.coolDown()
+  }
 }
 
 /// While the speech model loads for the first time, the keyboard's mic opens v2t instead of recording.

@@ -43,6 +43,8 @@ struct Microphone: Equatable, Sendable {
 enum DictationChannel {
   static let start = "es.luischav.v2t.dictation.start"
   static let stop = "es.luischav.v2t.dictation.stop"
+  /// Cancel after Done: the app stops transcribing that dictation and keeps nothing of it.
+  static let cancel = "es.luischav.v2t.dictation.cancel"
   static let changed = "es.luischav.v2t.dictation.changed"
   static let stateKey = "dictation.state"
   static let heartbeatKey = "dictation.heartbeat"
