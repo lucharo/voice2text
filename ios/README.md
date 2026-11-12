@@ -194,14 +194,15 @@ What has been checked so far, and how:
 | Autocorrect against Apple's keyboard | `AppleBehaviourTests`: 31 checks of what Apple's keyboard does, each with its source in [AUTOCORRECT.md](AUTOCORRECT.md) (when a correction applies, revert, contractions, names, addresses, text replacements, Spanish accents) | All 31 pass (20 before #114) |
 | Autocorrect on real misspellings | `RealTypoEval`: Wikipedia's lists of common misspellings at pinned revisions (4,256 English, 20,227 Spanish, mostly missing accents), typed at the key centres. Scored: the 4,122 and 15,701 that are not themselves words and whose meant word is in the keyboard's word list | EN fixes 89.6% (a wrong word 8.9%, the meant word in the bar 93.4%); ES 91.1% (8.2%, 93.7%). Before #114: EN 83.6% (13.1%, 88.1%), ES 89.0% (10.0%, 91.2%) |
 | Autocorrect on correct text | `RealTypoEval`: 1,043 Tatoeba sentences per language typed through the keyboard's engine | Changes 2 of 7,088 English words and 141 of 6,909 Spanish ones (220 before #114), mostly names at the start of a sentence and Spanish verb forms the word list lacks |
+| Autocorrect on real phone taps | `NoisyTypingEval`: the word-aligned phone taps of Vertanen and Kristensson's noisy-typing dataset (CC BY 4.0), 45,757 test words from the participants of seven studies on an iPhone 4 or a Nexus 4, mapped onto the 402 pt layout and typed a word at a time ([AUTOCORRECT.md](AUTOCORRECT.md)) | Of the words tapped wrong, fixes 69.4% (a wrong word 7.6%, the meant word in the bar 84.5%); changes 30 of 25,805 words tapped right. With the taps moved to their keys' centres, fixes 50.3% |
 | Autocorrect, synthetic typos | 200 noisy-tap typos per language; 1,000 correctly typed common words | EN fixes 187, ES 187; changes 0 correct words |
 | Typing rules (capitals, double-space full stop, revert, swipe spacing) | Unit tests, and UI tests driving the keyboard in the Simulator | See the test files |
 | Keystroke latency | Not yet measured on a phone. Provisional target: under one 120 Hz frame (8 ms) of our own handling per key, logged as `latency` in the keyboard. On the Mac, `RealTypoEval` times key + suggestion bar + bold slot over 109,509 keys (release build) | Phone untested. Mac, English and Spanish on, with the Mac loaded by other builds: mean 1.2 ms, p95 3.3 ms, p99 4.2 ms; with #114's spelling-slip search off, in the same run, 0.6, 1.8 and 2.4 ms |
 | Keyboard memory | Not yet measured. Provisional target: 40 MB, well under the ~60 MB commonly reported limit (Apple documents no number) | Untested |
 
-Autocorrect is not yet measured with real fingers on a phone: the misspellings above were made on physical
-keyboards, so the taps sit at the key centres and the touch model is not exercised; whether iOS turns the
-straight quotes the keyboard types into curly ones is also unchecked.
+Autocorrect is measured with real fingers only on the noisy-typing dataset's phones of 2010-2012 and one debug
+log of one typist (`LogReplayEval`): the misspellings above were made on physical keyboards, so their taps sit at
+the key centres. Whether iOS turns the straight quotes the keyboard types into curly ones is unchecked.
 
 The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard is the aim, which the
 app's About v2t page states in the maintainer's words; measured parity, side by side on a phone, is still to be shown.

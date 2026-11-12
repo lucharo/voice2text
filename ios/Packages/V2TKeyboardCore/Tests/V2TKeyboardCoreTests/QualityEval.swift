@@ -140,6 +140,12 @@ enum QualityEval {
     var alternativeMargin: Double?
     var minCompletionPrefix: Double?
     var completionLead: Double?
+    var touchStd: Double?
+    var neighbourFloor: Double?
+    var neighbourCutoff: Double?
+    var editPenalty: Double?
+    var substitutionPenalty: Double?
+    var vowelSubstitutionPenalty: Double?
 
     func apply(_ d: SwipeDecoder) {
       if let v = frequencyWeight { d.frequencyWeight = v }
@@ -164,6 +170,12 @@ enum QualityEval {
       if let v = suggestAcronym { s.acronymPenalty = v }
       if let v = minCompletionPrefix { s.minCompletionPrefix = Int(v) }
       if let v = completionLead { s.completionLead = v }
+      if let v = touchStd { s.touchStd = v }
+      if let v = neighbourFloor { s.neighbourFloor = v }
+      if let v = neighbourCutoff { s.neighbourCutoff = v }
+      if let v = editPenalty { s.editPenalty = v }
+      if let v = substitutionPenalty { s.substitutionPenalty = v }
+      if let v = vowelSubstitutionPenalty { s.vowelSubstitutionPenalty = v }
       return s
     }
   }

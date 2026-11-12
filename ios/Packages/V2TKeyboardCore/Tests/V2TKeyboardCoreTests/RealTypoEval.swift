@@ -86,11 +86,13 @@ enum RealTypoEval {
   /// Every sentence typed through the engine as written (capitals typed as capitals, punctuation and spaces
   /// as keys, taps at key centres), counting the words autocorrect changed. Each sentence is a fresh field.
   static func correctTextRow(_ name: String, _ sentences: [String], lexicons: [Lexicon], layout: KeyboardLayout,
-                             keyTimes: inout [Double]) -> Result {
+                             keyTimes: inout [Double], configure: (Suggester) -> Void = { _ in }) -> Result {
     var r = Result(name: name)
     for sentence in sentences {
       let p = FakeProxy()
-      let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: lexicons, layout: layout))
+      let s = Suggester(lexicons: lexicons, layout: layout)
+      configure(s)
+      let e = TypingEngine(proxy: p, suggester: s)
       e.resync()
       var t: TimeInterval = 0
       for ch in sentence {
@@ -167,7 +169,7 @@ struct RealTypoEvalTests {
   }
 }
 
-/// RealTypoEval's misspelling rows under other autocorrect weights, off by default:
+/// RealTypoEval's rows under other autocorrect weights, off by default:
 ///
 ///     V2T_TYPO_TUNE='off:sub=inf,vow=inf;s5:sub=5,vow=3.5' \
 ///       swift test -c release -Xswiftc -enable-testing --filter RealTypoTuning
@@ -177,22 +179,20 @@ struct RealTypoEvalTests {
 /// the first touch, last the cost of a last letter left off, floor the lowest score a non-word's correction may
 /// have (write -inf as "floor=-inf"), lead the nats a completion must beat a correction by for the word to be
 /// left as unfinished, beam the beam width per lexicon, runner the nats the best correction must lead the next
-/// word by. The third row types the English misspellings with
-/// Spanish on as well, as a bilingual typist has it.
+/// word by, std the touch spread in key widths, nfloor the least a neighbouring key costs and ncut the furthest
+/// a key may be from the touch, in key widths. The third row types the English misspellings with Spanish on as
+/// well, as a bilingual typist has it. `NoisyTypingTuning` reads the same settings.
 struct RealTypoTuning {
   static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
 
-  @Test(.enabled(if: spec != nil))
-  func table() throws {
-    let en = try Fixtures.english.get(), es = try Fixtures.spanish.get()
-    let enLayout = KeyboardLayout(width: 402, language: .english), esLayout = KeyboardLayout(width: 402, language: .spanish)
-    let enRows = try RealTypoEval.misspellings("en"), esRows = try RealTypoEval.misspellings("es")
-    for item in Self.spec!.split(separator: ";") {
+  /// The settings of `V2T_TYPO_TUNE`, by name: "name:key=value,key=value;name:...".
+  static func settings(_ spec: String) -> [(name: String, apply: (Suggester) -> Void)] {
+    spec.split(separator: ";").map { item in
       let parts = item.split(separator: ":", maxSplits: 1)
-      func make(_ lex: [Lexicon], _ layout: KeyboardLayout) -> Suggester {
-        let s = Suggester(lexicons: lex, layout: layout)
-        for kv in parts.count > 1 ? parts[1].split(separator: ",") : [] {
-          let p = kv.split(separator: "="), v = p[1] == "inf" ? Double.infinity : p[1] == "-inf" ? -Double.infinity : Double(p[1])!
+      let pairs = parts.count > 1 ? parts[1].split(separator: ",").map { $0.split(separator: "=") } : []
+      return (String(parts[0]), { s in
+        for p in pairs {
+          let v = p[1] == "inf" ? Double.infinity : p[1] == "-inf" ? -Double.infinity : Double(p[1])!
           switch p[0] {
           case "sub": s.substitutionPenalty = v
           case "vow": s.vowelSubstitutionPenalty = v
@@ -207,15 +207,38 @@ struct RealTypoTuning {
           case "lead": s.completionLead = v
           case "beam": s.beamWidth = Int(v)
           case "runner": s.runnerUpLead = v
+          case "std": s.touchStd = v
+          case "nfloor": s.neighbourFloor = v
+          case "ncut": s.neighbourCutoff = v
           default: Issue.record("unknown key \(p[0])")
           }
         }
+      })
+    }
+  }
+
+  @Test(.enabled(if: spec != nil))
+  func table() throws {
+    let en = try Fixtures.english.get(), es = try Fixtures.spanish.get()
+    let enLayout = KeyboardLayout(width: 402, language: .english), esLayout = KeyboardLayout(width: 402, language: .spanish)
+    let enRows = try RealTypoEval.misspellings("en"), esRows = try RealTypoEval.misspellings("es")
+    let enText = try RealTypoEval.sentences("en"), esText = try RealTypoEval.sentences("es")
+    for (name, apply) in Self.settings(Self.spec!) {
+      func make(_ lex: [Lexicon], _ layout: KeyboardLayout) -> Suggester {
+        let s = Suggester(lexicons: lex, layout: layout)
+        apply(s)
         return s
       }
       for r in [RealTypoEval.misspellingRow("EN", enRows, suggester: make([en], enLayout), context: "I think the "),
                 RealTypoEval.misspellingRow("ES", esRows, suggester: make([es], esLayout), context: "Creo que el "),
                 RealTypoEval.misspellingRow("EN, with ES on", enRows, suggester: make([en, es], enLayout), context: "I think the ")] {
-        print("typotune | \(parts[0]) | \(r.name) | fixed \(RealTypoEval.pct(r.fixed, r.scored)) | wrong \(RealTypoEval.pct(r.wrong, r.scored)) | top-3 \(RealTypoEval.pct(r.top3, r.scored))")
+        print("typotune | \(name) | \(r.name) | fixed \(RealTypoEval.pct(r.fixed, r.scored)) | wrong \(RealTypoEval.pct(r.wrong, r.scored)) | top-3 \(RealTypoEval.pct(r.top3, r.scored))")
+      }
+      var times: [Double] = []
+      for r in [RealTypoEval.correctTextRow("EN text", enText, lexicons: [en], layout: enLayout, keyTimes: &times, configure: apply),
+                RealTypoEval.correctTextRow("ES text", esText, lexicons: [es], layout: esLayout, keyTimes: &times, configure: apply),
+                RealTypoEval.correctTextRow("EN text, with ES on", enText, lexicons: [en, es], layout: enLayout, keyTimes: &times, configure: apply)] {
+        print("typotune | \(name) | \(r.name) | changed \(RealTypoEval.pct(r.changed, r.words))")
       }
     }
   }
