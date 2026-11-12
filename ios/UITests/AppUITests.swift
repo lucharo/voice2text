@@ -21,11 +21,11 @@ import XCTest
     app.buttons["v2t.dict.addTerm"].tap()
     XCTAssertTrue(app.staticTexts[term].waitForExistence(timeout: 5), app.debugDescription)
     shot("20-dictionary-editor")
-    // iCloud sync is on unless turned off, and the screen says so
+    // iCloud sync is on unless turned off; how a sync went depends on the Simulator's iCloud account, so it is not
+    // checked here (ICloudSyncTests cover each outcome against a fake)
     let iCloud = app.switches["v2t.dict.iCloud"]
     reveal(iCloud, in: app)
     XCTAssertEqual(iCloud.value as? String, "1", iCloud.label)
-    XCTAssertFalse(iCloud.label.contains("Not synced"), iCloud.label)  // the real store, signed in or not, never fails
 
     app.terminate()
     app.launch()
