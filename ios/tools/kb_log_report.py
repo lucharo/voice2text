@@ -341,11 +341,12 @@ class ExerciseWindow:
         elif e == "cursor":
             self.known = False
         elif e == "autocorrect":
-            # logged before the keyboard replaces the word: the word is the last one in the field
+            # logged once the keyboard has put the correction in, before the space or mark that ended the word:
+            # the correction is the last word in the field (hand-written logs may name it first: the word typed)
             frm, to = ev.get("from"), ev.get("to")
             done = words(self.doc)
             at = len(done) - 1
-            if frm is None or to is None or not self.known or not done or [done[-1]] != words(frm) or at >= len(self.target):
+            if frm is None or to is None or not self.known or not done or [done[-1]] not in (words(to), words(frm)) or at >= len(self.target):
                 how = "not placed"
             else:
                 how = "to target" if words(to) == [self.target[at]] else "other word"

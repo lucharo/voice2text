@@ -301,11 +301,13 @@ class ExerciseTests(unittest.TestCase):
 
     def test_autocorrections_are_placed_on_the_sentences_words(self):
         ev = [APPEAR, {"t": 900, "e": "host", "kind": "text", "chars": 0}]
+        # as the keyboard logs a correction: the space, the word replaced, the autocorrect line, then the space put in
         e, t = tapped(1000, "teh")
-        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "teh", "to": "the"}]
-        ev += [{"t": t, "e": "del"}] * 3 + [{"t": t, "e": "ins", "text": "the"}, {"t": t, "e": "ins", "text": " "}]
+        ev += e + [{"t": t, "e": "act", "a": "space"}] + [{"t": t, "e": "del"}] * 3 + [{"t": t, "e": "ins", "text": "the"},
+                                                                                     {"t": t, "e": "autocorrect", "from": "teh", "to": "the"}, {"t": t, "e": "ins", "text": " "}]
         e, t = tapped(t + 100, "fox")
-        ev += e + [{"t": t, "e": "act", "a": "space"}, {"t": t, "e": "autocorrect", "from": "fox", "to": "for"}]
+        ev += e + [{"t": t, "e": "act", "a": "space"}] + [{"t": t, "e": "del"}] * 3 + [{"t": t, "e": "ins", "text": "for"},
+                                                                                     {"t": t, "e": "autocorrect", "from": "fox", "to": "for"}, {"t": t, "e": "ins", "text": " "}]
         x = rep.analyse(ev + [exercise(950, t + 500, "the fox", "the for ")]).exercises
         self.assertEqual(dict(x.corrections), {"to target": 1, "other word": 1})
 
