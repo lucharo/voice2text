@@ -31,6 +31,24 @@ struct PersonalDictionaryTests {
     #expect(d.entries.replacements.map { "\($0.heard)|\($0.written)" } == ["ai|AI"])
   }
 
+  /// Synced devices hold the same rules in different file orders: the longer heard side applies first everywhere.
+  @Test func aLongerHeardSideAppliesFirstWhateverTheFileOrder() throws {
+    let rules = ["york => Yorkshire", "new york => NYC"]
+
+    let texts = try [rules, Array(rules.reversed())].map { try dictionary($0.joined(separator: "\n")).applyReplacements("from new york to york") }
+
+    #expect(texts == ["from NYC to Yorkshire", "from NYC to Yorkshire"])
+  }
+
+  /// Rules of equal length that chain ("foo" becomes "bar", which becomes "baz") apply alphabetically everywhere.
+  @Test func equalLengthRulesApplyAlphabeticallyWhateverTheFileOrder() throws {
+    let rules = ["foo => bar", "bar => baz"]
+
+    let texts = try [rules, Array(rules.reversed())].map { try dictionary($0.joined(separator: "\n")).applyReplacements("foo") }
+
+    #expect(texts == ["bar", "bar"])
+  }
+
   @Test func keyboardWordsCoverTermsAndWrittenSides() throws {
     let d = try dictionary("Claude Code\nfluid => Fluide\n")
     #expect(d.keyboardWords == ["Claude", "Code", "Fluide"])

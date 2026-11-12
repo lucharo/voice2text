@@ -173,9 +173,15 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     Set(keyboardWords.flatMap { $0.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init) })
   }
 
+  /// Each replacement applies to the text the previous ones left, so their order matters. iCloud sync gives each
+  /// device the same rules but not the same file order, so the order is fixed here instead: the longest heard
+  /// side first, so "new york => NYC" wins over "york => Yorkshire", then alphabetically.
   func applyReplacements(_ input: String) -> String {
     var out = input
-    for (heard, written) in entries.replacements {
+    let ordered = entries.replacements.sorted { a, b in
+      a.heard.count != b.heard.count ? a.heard.count > b.heard.count : a.heard.lowercased() < b.heard.lowercased()
+    }
+    for (heard, written) in ordered {
       let pattern = "(?<!\\w)" + NSRegularExpression.escapedPattern(for: heard) + "(?!\\w)"
       guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
       out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: NSRegularExpression.escapedTemplate(for: written))
