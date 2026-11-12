@@ -261,8 +261,11 @@ import SwiftUI
     warmUntil = minutes == 0 ? nil : now().addingTimeInterval(TimeInterval(minutes * 60))
   }
 
-  private func beat() {
-    if let until = warmUntil, now() > until, state == .idle { coolDown(); return }
+  /// Every second while the session is warm (internal for tests). Stop sets the session's time from Done, so a
+  /// dictation still transcribing past it has run the whole of the user's warm time: it ends with the session
+  /// rather than keeping the microphone on for ever.
+  func beat() {
+    if let until = warmUntil, now() > until, [.idle, .transcribing, .cleaningUp].contains(state) { coolDown(); return }
     defaults.set(Date().timeIntervalSince1970, forKey: DictationChannel.heartbeatKey)
   }
 

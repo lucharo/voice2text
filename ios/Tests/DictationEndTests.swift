@@ -159,6 +159,36 @@ final class TestClock: @unchecked Sendable {
     dictation.coolDown()
   }
 
+  @Test func aTranscriptionWithinTheSessionTimeKeepsTheSessionOn() async throws {
+    let speech = StubSpeech()
+    let dictation = try await transcribingWithTheFirstPieceHeld(speech)
+    let until = try #require(dictation.warmUntil)
+
+    clock.now = until.addingTimeInterval(-1)
+    dictation.beat()
+
+    #expect(dictation.state == .transcribing)
+    dictation.coolDown()
+    try await releaseAndWaitForTheWork(dictation, speech)
+  }
+
+  /// A transcription still running when the user's warm time since Done runs out ends with the session, so a
+  /// stuck decode cannot keep the microphone on for ever.
+  @Test func theSessionExpiringEndsATranscriptionStillRunning() async throws {
+    let speech = StubSpeech()
+    let dictation = try await transcribingWithTheFirstPieceHeld(speech)
+    let until = try #require(dictation.warmUntil)
+
+    clock.now = until.addingTimeInterval(1)
+    dictation.beat()
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(dictation.state == .needsApp)
+    #expect(dictation.warmUntil == nil)
+    #expect(await speech.decodes == [208_800])
+    expectNothingDelivered(dictation)
+  }
+
   /// Positive control for the stubs: left alone, the same dictation is transcribed and typed.
   @Test func anUncancelledDictationIsDelivered() async throws {
     let speech = StubSpeech()
