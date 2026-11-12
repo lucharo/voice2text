@@ -13,9 +13,10 @@ struct CloudContents: Equatable, Sendable {
   /// Whether the device has an iCloud account the private database can be used with.
   func accountAvailable() async -> Bool
   func fetch() async throws -> CloudContents
-  /// Saves these entry records (the ones that changed) and, when not nil, the learned words. True when a record
+  /// Saves these entry records (the ones that changed) and, when not nil, the learned words, starting each request
+  /// only while `proceed` holds (sync still on); once it does not, it throws CancellationError. True when a record
   /// had changed on the server since the fetch, so what this device holds may not be what won.
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?, while proceed: @escaping () -> Bool) async throws -> Bool
 }
 
 /// The dictionary in the user's private CloudKit database, in the container iCloud.es.luischav.v2t. What Apple
@@ -113,42 +114,59 @@ final class CloudKitDictionary: DictionaryCloud {
     return contents
   }
 
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool {
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?, while proceed: @escaping () -> Bool) async throws -> Bool {
     var records = entries.map { Self.record(key: $0.key, $0.value, onto: known[Self.recordID(key: $0.key)]) }
     if let learned { records.append(Self.record(learned: learned, onto: known[Self.learnedID])) }
     guard !records.isEmpty else { return false }
-    _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: [])
-    var conflicted = false
-    for start in stride(from: 0, to: records.count, by: Self.operationLimit) {
-      if try await save(Array(records[start..<min(start + Self.operationLimit, records.count)])) { conflicted = true }
-    }
-    return conflicted
+    let database = database
+    return try await Self.upload(
+      records, while: proceed,
+      prepare: { _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: []) },
+      modify: { try await database.modifyRecords(saving: $0, deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: false).saveResults },
+      saved: { [weak self] id, record in self?.known[id] = record })
   }
 
-  /// Saves each record only over the server version it was based on. One another device changed meanwhile is
-  /// merged with that version and saved again, unless that version already wins.
-  private func save(_ records: [CKRecord]) async throws -> Bool {
-    let results: (saveResults: [CKRecord.ID: Result<CKRecord, Error>], deleteResults: [CKRecord.ID: Result<Void, Error>])
-    do {
-      results = try await database.modifyRecords(saving: records, deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: false)
-    } catch let e as CKError where e.code == .limitExceeded && records.count > 1 {
-      let first = try await save(Array(records[..<(records.count / 2)]))
-      let second = try await save(Array(records[(records.count / 2)...]))
-      return first || second
-    }
-    var again: [CKRecord] = [], conflicted = false
-    for (id, result) in results.saveResults {
-      switch result {
-      case .success(let saved): known[id] = saved
-      case .failure(let e as CKError) where e.code == .serverRecordChanged:
-        guard let server = e.serverRecord, let mine = records.first(where: { $0.recordID == id }) else { throw e }
-        known[id] = server
-        conflicted = true
-        if let merged = Self.resolve(mine, against: server) { again.append(merged) }
-      case .failure(let e): throw e
+  typealias SaveResults = [CKRecord.ID: Result<CKRecord, Error>]
+
+  /// The upload, with CloudKit's two calls passed in: the zone (`prepare`), then the records in operations of at
+  /// most `operationLimit`, each saved only over the server version it was based on. A record another device
+  /// changed meanwhile is merged with that version and saved again, unless that version already wins. No request
+  /// starts once `proceed` fails (sync turned off): one already sent may finish, nothing new goes. True when a
+  /// record had changed on the server.
+  static func upload(_ records: [CKRecord], while proceed: @escaping () -> Bool, prepare: () async throws -> Void,
+                     modify: @escaping ([CKRecord]) async throws -> SaveResults,
+                     saved: @escaping (CKRecord.ID, CKRecord) -> Void) async throws -> Bool {
+    func send(_ batch: [CKRecord]) async throws -> Bool {
+      guard proceed() else { throw CancellationError() }
+      let results: SaveResults
+      do {
+        results = try await modify(batch)
+      } catch let e as CKError where e.code == .limitExceeded && batch.count > 1 {
+        let first = try await send(Array(batch[..<(batch.count / 2)]))
+        let second = try await send(Array(batch[(batch.count / 2)...]))
+        return first || second
       }
+      var again: [CKRecord] = [], conflicted = false
+      for (id, result) in results {
+        switch result {
+        case .success(let record): saved(id, record)
+        case .failure(let e as CKError) where e.code == .serverRecordChanged:
+          guard let server = e.serverRecord, let mine = batch.first(where: { $0.recordID == id }) else { throw e }
+          saved(id, server)
+          conflicted = true
+          if let merged = resolve(mine, against: server) { again.append(merged) }
+        case .failure(let e): throw e
+        }
+      }
+      if !again.isEmpty { _ = try await send(again) }
+      return conflicted
     }
-    if !again.isEmpty { _ = try await save(again) }
+    guard proceed() else { throw CancellationError() }
+    try await prepare()
+    var conflicted = false
+    for start in stride(from: 0, to: records.count, by: operationLimit) {
+      if try await send(Array(records[start..<min(start + operationLimit, records.count)])) { conflicted = true }
+    }
     return conflicted
   }
 

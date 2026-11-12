@@ -96,6 +96,38 @@ struct CloudKitDictionaryTests {
     #expect(CloudKitDictionary.resolve(CloudKitDictionary.record(learned: ["marimo"]), against: server) == nil)
   }
 
+  func entries(_ n: Int) -> [CKRecord] {
+    (0..<n).map { CloudKitDictionary.record(key: "term:w\($0)", .init(line: "w\($0)", time: Date(timeIntervalSince1970: 5))) }
+  }
+
+  func savedAll(_ batch: [CKRecord]) -> CloudKitDictionary.SaveResults {
+    Dictionary(uniqueKeysWithValues: batch.map { ($0.recordID, .success($0)) })
+  }
+
+  /// Sync turned off while the zone request is out: no record is sent, and the upload says why it stopped.
+  @MainActor @Test func turnedOffWhileTheZoneIsSavedSendsNoRecord() async {
+    var on = true, sent: [Int] = []
+
+    await #expect(throws: CancellationError.self) {
+      try await CloudKitDictionary.upload(self.entries(3), while: { on }, prepare: { on = false },
+                                          modify: { sent.append($0.count); return self.savedAll($0) }, saved: { _, _ in })
+    }
+
+    #expect(sent == [])
+  }
+
+  /// Sync turned off during the first of two operations (401 records, 400 at most each): the second never goes.
+  @MainActor @Test func turnedOffDuringOneOperationSendsNoLaterOne() async {
+    var on = true, sent: [Int] = []
+
+    await #expect(throws: CancellationError.self) {
+      try await CloudKitDictionary.upload(self.entries(401), while: { on }, prepare: {},
+                                          modify: { sent.append($0.count); on = false; return self.savedAll($0) }, saved: { _, _ in })
+    }
+
+    #expect(sent == [400])
+  }
+
   @Test func learnedWordsAreOneEncryptedListThatReadsBack() {
     let r = CloudKitDictionary.record(learned: ["marimo", "kian"])
 

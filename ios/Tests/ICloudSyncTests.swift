@@ -16,10 +16,11 @@ import UIKit
 
   func accountAvailable() async -> Bool { calls += 1; return available }
   func fetch() async throws -> CloudContents { calls += 1; fetched = contents; return contents }
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool {
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?, while proceed: @escaping () -> Bool) async throws -> Bool {
     calls += 1
     beforeNextSave?()
     beforeNextSave = nil
+    guard proceed() else { throw CancellationError() }  // as CloudKitDictionary.upload, before each request
     var conflicted = false
     for (k, mine) in entries {
       let changed = contents.entries[k] != fetched.entries[k]
@@ -369,6 +370,17 @@ final class Clock {
 
     #expect(phone.dictionary.text == "ai => Ai\n")
     #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(25), source: by("iPad16,3"))])
+  }
+
+  /// Sync turned off while an upload is on its way: nothing more goes up, and the switch's line stays Off.
+  @Test func turningSyncOffDuringAnUploadSendsNothingMore() async throws {
+    let phone = try Device("Claude\n", learned: ["marimo"], cloud: cloud, clock: clock)
+    cloud.beforeNextSave = { phone.settings.iCloudSyncEnabled = false }  // the switch, between fetch and save
+
+    clock.at(1); await phone.sync.start().value
+
+    #expect(cloud.contents == CloudContents())
+    #expect(phone.sync.status == .off)
   }
 
   /// A save that meets a newer server record leaves the server's winner there; the sync then fetches again, so

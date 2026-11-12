@@ -87,11 +87,13 @@ import UIKit
       // the learned words merged there) apply here now rather than at the next sync
       for _ in 0..<2 {
         guard let conflicted = try await pass() else { return }
+        guard settings.iCloudSyncEnabled else { status = .off; return }  // turned off during the upload
         status = .synced
         if !conflicted { return }
       }
     } catch {
-      status = .failed(error.localizedDescription)
+      // turned off mid-upload: the upload stopped on purpose, and the line says Off
+      status = settings.iCloudSyncEnabled ? .failed(error.localizedDescription) : .off
     }
   }
 
@@ -126,6 +128,7 @@ import UIKit
     }
     guard let upload else { return nil }
     guard !upload.entries.isEmpty || upload.learned != nil else { return false }
-    return try await cloud.save(entries: upload.entries, learned: upload.learned)
+    let shared = settings
+    return try await cloud.save(entries: upload.entries, learned: upload.learned, while: { shared.iCloudSyncEnabled })
   }
 }
