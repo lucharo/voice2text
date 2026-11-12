@@ -270,7 +270,8 @@ public final class Suggester: @unchecked Sendable {
     // letters with that run one shorter
     let runs = Self.letterRuns(lower)
     let longest = runs.map(\.count).max() ?? 0
-    if longest > stretchedRun { return nil }
+    // four or more in a row, or nothing but the one letter ("Mmm", "ooo"), is never a slip on a double letter
+    if longest > stretchedRun || (longest == stretchedRun && runs.count == 1) { return nil }
     // compared by letters alone, as the lists spell the word with a straight apostrophe or an accent the
     // typist left to autocorrect ("i’lll": I'll)
     let oneTapFewer: Set<[UInt8]>? = longest == stretchedRun

@@ -77,6 +77,13 @@ struct AutocorrectRulesTests {
     #expect(try suggester { $0.stretchedRun = .max }.autocorrection(for: typed, context: context) == "book")
   }
 
+  /// "Mmm" in a typing log was about to become "Mm": one tap fewer, but the whole word is the stretch.
+  @Test func aWordThatIsOnlyOneLetterStretchedIsLeftAsTyped() throws {
+    let typed = taps("mmm", Self.layout), context = TypingContext(before: "I think ")
+    #expect(try suggester().autocorrection(for: typed, context: context) == nil)
+    #expect(try suggester { $0.stretchedRun = .max; $0.runnerUpLead = 0 }.autocorrection(for: typed, context: context) != nil)
+  }
+
   @Test func letterRunsSplitAWordWhereTheLetterChanges() {
     #expect(Suggester.letterRuns("boook").map(String.init) == ["b", "ooo", "k"])
     #expect(Suggester.letterRuns("aab").map(String.init) == ["aa", "b"])
