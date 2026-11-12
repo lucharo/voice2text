@@ -204,6 +204,23 @@ class ReportTests(unittest.TestCase):
                           "delete": {"middle": {"median": 19, "n": 1}, "edge": {"median": 96, "n": 1}}})
         self.assertIn("delete, touch to delete: elsewhere median 19 ms (1), within 30 pt of a screen edge median 96 ms (1)", rep.text_report(r))
 
+    def test_keys_typed_by_a_rollover_are_not_timed(self):
+        # finger 2 lifts first: its lift types finger 1's "t" (the rollover), then its own "h"
+        for order in (("rollover", "up"), ("up", "rollover")):
+            lines = {"rollover": {"t": 150, "e": "rollover", "n": 1, "key": "letters-t", "p": [170, 30], "by": 2},
+                     "up": {"t": 150, "e": "up", "n": 2, "key": "letters-h", "p": [240, 90], "verdict": "tap", "ms": 30}}
+            ev = [{"t": 0, "e": "appear", "width": 402},
+                  {"t": 100, "e": "down", "n": 1, "key": "letters-t", "p": [170, 30], "fingers": 1},
+                  {"t": 120, "e": "down", "n": 2, "key": "letters-h", "p": [240, 90], "fingers": 2},
+                  lines[order[0]], lines[order[1]],
+                  {"t": 170, "e": "key", "text": "t"}, {"t": 185, "e": "key", "text": "h"},
+                  {"t": 300, "e": "up", "n": 1, "key": "letters-t", "p": [170, 30], "verdict": "rolled", "ms": 200},
+                  # the next plain tap is timed again
+                  {"t": 400, "e": "down", "n": 3, "key": "letters-e", "p": [95, 40], "fingers": 1},
+                  {"t": 460, "e": "up", "n": 3, "key": "letters-e", "p": [95, 40], "verdict": "tap", "ms": 60},
+                  {"t": 481, "e": "key", "text": "e"}]
+            self.assertEqual(rep.analyse(ev).key_delivery, {"edge": [], "middle": [21]}, order)
+
     def test_touches_are_not_timed_without_the_keyboards_width(self):
         ev = [{"t": 300, "e": "down", "n": 2, "key": "letters-a", "p": [25, 80], "fingers": 1},
               {"t": 360, "e": "up", "n": 2, "key": "letters-a", "p": [25, 80], "verdict": "tap", "ms": 60},

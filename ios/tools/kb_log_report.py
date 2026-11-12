@@ -204,6 +204,7 @@ def analyse(events: list[dict]) -> Report:
     lifted: tuple[float, str] | None = None  # a tapped character key's lift, until its key line
     delete_down: tuple[float, str] | None = None  # delete's touch, until its first act line
     key_at: float | None = None  # a character key, until the bar line it leads to
+    rolled = False  # a finger typed early by rollover: the keys that follow its lift are not one touch's
 
     def zone(ev: dict) -> str | None:
         p = ev.get("p")
@@ -272,7 +273,8 @@ def analyse(events: list[dict]) -> Report:
         elif e == "up":
             z = zone(ev)
             character = str(ev.get("key", "")).partition("-")[0] in ("letters", "numbers", "symbols")
-            lifted = (t, z) if ev.get("verdict") == "tap" and character and z else None
+            lifted = (t, z) if ev.get("verdict") == "tap" and character and z and not rolled else None
+            rolled = False
             if ev.get("verdict") == "tap":
                 r.taps += 1
                 last_tap_up = t
@@ -281,6 +283,9 @@ def analyse(events: list[dict]) -> Report:
         elif e == "rollover":
             r.rollovers += 1
             last_tap_up = t
+            # the newer finger's lift types the older finger's key first, then its own: neither is timed
+            lifted = None
+            rolled = True
         elif e == "swipe" and "ignored" in ev:
             if swipe_lifts:
                 swipe_lifts.pop(0)  # lifted in emoji search, never decoded

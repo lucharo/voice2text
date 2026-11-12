@@ -13,9 +13,12 @@ import Testing
 /// and `now` differ is a decision the change moved; the log's own `autocorrect` lines are the control that the
 /// replay follows the keyboard (an unchanged build must print `moved 0`).
 ///
-/// What the log leaves out limits it: text the host put in the field and dictated text are recorded by length
-/// only. The replay puts that many blocks there, so nothing before them reads as a word, and leaves out the
-/// first word typed after them (`not replayed`): it may have joined letters the log does not hold.
+/// The replay follows the field's traits (autocorrect off, capitals), keys, space, return, tab, delete, shift,
+/// caps lock, bar picks, emoji and the words swipes typed. What the log leaves out limits it: text the host put
+/// in the field, dictated text and anything in a field a dictation went into are recorded by length only, and a
+/// cursor move says how far, not past what. The replay puts blocks there, so nothing before them reads as a
+/// word, and leaves out the first word typed after them (`not replayed`): it may have joined letters the log
+/// does not hold.
 enum LogReplayEval {
   static let path = ProcessInfo.processInfo.environment["V2T_KB_LOG"].map { NSString(string: $0).expandingTildeInPath }
 
@@ -43,6 +46,8 @@ enum LogReplayEval {
     var open: Int?
     // the word in progress may join letters the log does not hold
     var unknownStart = false
+    // a correction the log names before the line that ends its word here (a swipe commits the word, then is logged)
+    var early: (from: String, to: String)?
     func boundary(_ e: TypingEngine, _ body: () -> Void) {
       let typed = e.literal
       guard !typed.isEmpty else { body(); return }
@@ -52,12 +57,24 @@ enum LogReplayEval {
         body()
         return
       }
-      let word = Word(typed: typed, previous: e.context.previous, logged: nil, now: e.pendingAutocorrection, bar: e.suggestions().map(\.word))
+      let previous = e.context.previous, bar = e.suggestions().map(\.word)
+      // what the engine does at this boundary, not what a space would do: "@" and "_" keep the letters as typed
+      var applied: String?
+      e.onEvent = { if case .autocorrected(_, let replacement) = $0 { applied = replacement } }
       body()
-      out.words.append(word)
+      e.onEvent = nil
+      out.words.append(Word(typed: typed, previous: previous, logged: early?.from == typed ? early?.to : nil, now: applied, bar: bar))
+      early = nil
       open = out.words.count - 1
       out.boundaries += 1
       if e.suggestions().isEmpty { out.emptyBars += 1 }
+    }
+    /// Text the log does not hold is before the cursor now: `blocks` characters of it.
+    func unknown(_ e: TypingEngine, blocks: Int) {
+      proxy.text += String(repeating: "█", count: blocks)
+      e.resync()
+      unknownStart = blocks > 0
+      open = nil
     }
     for line in lines {
       guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let name = o["e"] as? String else { continue }
@@ -69,10 +86,21 @@ enum LogReplayEval {
         engine = TypingEngine(proxy: proxy, suggester: Suggester(lexicons: languages, layout: layout))
         open = nil
         unknownStart = false
+        early = nil
         continue
       }
       guard let e = engine else { continue }
       switch name {
+      case "field":
+        var traits = FieldTraits(autocorrect: o["autocorrect"] as? Bool ?? true)
+        switch o["capitalization"] as? String {
+        case "none": traits.capitalization = .none
+        case "words": traits.capitalization = .words
+        case "all": traits.capitalization = .all
+        default: traits.capitalization = .sentences
+        }
+        e.traits = traits
+        e.resync()
       case "key":
         guard let text = o["text"] as? String, o["search"] as? Bool != true else { continue }
         let p = (o["p"] as? [Double]).map { CGPoint(x: $0[0], y: $0[1]) }
@@ -80,6 +108,7 @@ enum LogReplayEval {
         if ends { boundary(e) { e.character(text, at: p, now: now) } } else {
           e.character(text, at: p, now: now)
           open = nil
+          early = nil
           out.composingKeys += 1
           if let pending = e.pendingAutocorrection, !e.suggestions().contains(where: { $0.word == pending }) { out.hiddenPending += 1 }
         }
@@ -87,25 +116,35 @@ enum LogReplayEval {
         switch o["a"] as? String {
         case "space": boundary(e) { e.space(now: now) }
         case "returnKey": boundary(e) { e.returnKey() }
+        case "tab": boundary(e) { e.character("\t") }
         case "delete": e.delete(); open = nil
         case "deleteWord": e.deleteWord(); open = nil
+        case "shift": e.shiftTap(now: now)
+        case "capsLock": e.capsLockTap()
         default: break
         }
       case "autocorrect":
-        if let i = open, let from = o["from"] as? String, from == out.words[i].typed { out.words[i].logged = o["to"] as? String }
-      case "pick":
-        if let w = o["word"] as? String { e.pick(w) }
+        guard let from = o["from"] as? String, let to = o["to"] as? String else { break }  // by name only in a redacted field
+        if let i = open, from == out.words[i].typed { out.words[i].logged = to } else { early = (from, to) }
+      case "swiped":
+        // the word the swipe typed, after ending the word in progress as the engine does
+        if let w = o["word"] as? String { boundary(e) { e.swipe([w] + (o["alternatives"] as? [String] ?? [])) } } else { unknown(e, blocks: 1) }
         open = nil
+      case "pick":
+        if let w = o["word"] as? String { e.pick(w); open = nil } else { unknown(e, blocks: 1) }
+      case "cursor":
+        // left: the characters passed are after the cursor now; right: the ones passed are not in the log
+        let by = o["by"] as? Int ?? 0
+        if by < 0 { proxy.text = String(proxy.text.dropLast(-by)) }
+        unknown(e, blocks: max(1, by))
       case "emoji":
         if let s = o["emoji"] as? String { e.emoji(s) }
         open = nil
       case "host", "dictation":
         // the text is not in the log, only its length
         let chars = o["chars"] as? Int ?? 0
-        if name == "host" { proxy.text = String(repeating: "█", count: chars) } else { e.insertFinished(String(repeating: "█", count: chars)) }
-        e.resync()
-        unknownStart = chars > 0
-        open = nil
+        if name == "host" { proxy.text = "" } else { e.insertFinished("") }
+        unknown(e, blocks: chars)
       default: break
       }
     }
