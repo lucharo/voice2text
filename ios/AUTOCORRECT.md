@@ -130,19 +130,23 @@ keyboards with popups are the part closest to v2t. Release build:
 
 | Set (English) | Words | Tapped right | Of those, changed | Tapped wrong | Fixed | Wrong word | Left as typed | Meant word in the bar |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Development, all | 15,305 | 61.3% | 2 | 5,929 | 75.8% | 7.6% | 16.6% | 89.0% |
-| Development, full-size with popups | 5,728 | 64.8% | 1 | 2,016 | 81.0% | 4.1% | 14.9% | 92.9% |
-| Test, all | 45,757 | 56.4% | 35 | 19,952 | 70.9% | 10.0% | 19.1% | 84.6% |
-| Test, full-size with popups | 16,766 | 72.1% | 17 | 4,681 | 71.3% | 7.9% | 20.8% | 83.4% |
-| Test, all, taps moved to their keys' centres | 45,757 | 56.4% | 36 | 19,952 | 52.3% | 18.7% | 29.0% | 64.6% |
+| Development, all | 15,305 | 61.3% | 2 | 5,929 | 74.2% | 5.5% | 20.3% | 89.0% |
+| Development, full-size with popups | 5,728 | 64.8% | 1 | 2,016 | 79.9% | 2.9% | 17.3% | 92.8% |
+| Test, all | 45,757 | 56.4% | 30 | 19,952 | 69.4% | 7.6% | 23.0% | 84.5% |
+| Test, full-size with popups | 16,766 | 72.1% | 15 | 4,681 | 70.2% | 6.4% | 23.5% | 83.4% |
+| Test, all, taps moved to their keys' centres | 45,757 | 56.4% | 36 | 19,952 | 50.3% | 14.1% | 35.6% | 64.4% |
 
 The last four columns are shares of the words tapped wrong. 11.7% of those on the test split are words
-themselves ("hone" for "home"), which autocorrect leaves by design: up to 11.7 of its 19.1 points left as typed.
+themselves ("hone" for "home"), which autocorrect leaves by design: up to 11.7 of its 23.0 points left as typed.
 Moving each tap to the centre of the key it typed loses 19 points of fixes: the touch model reads where the
 finger lifted.
 
+The stretched-word and near-tie rules (#192) show on these taps as they do on the misspelling sets: before
+them the test split fixed 70.9% and made a wrong word of 10.0%; with them, 69.4% and 7.6%.
+
 Tuned on the development split (`V2T_TYPO_TUNE=... --filter NoisyTypingTuning`), the touch spread is the only
-constant that moves it. A wider one fixes more real taps and costs the key-centre measures:
+constant that moves it. A wider one fixes more real taps and costs the key-centre measures (this table was
+measured before #192's rules):
 
 | `touchStd` | Test fixed / wrong | Test full-size fixed / wrong | RealTypo EN wrong | RealTypo ES wrong | Bar after 3 letters (EN) |
 | --- | --- | --- | --- | --- | --- |

@@ -31,6 +31,7 @@ public final class Suggester: @unchecked Sendable {
   public let layout: KeyboardLayout
   /// Touch spread in key widths. NoisyTypingEval's real phone taps want it wider: on its test split 0.5 fixed 73.0%
   /// of the mistapped words against 70.9% at 0.42 (72.0% and 71.3% on full-size keyboards), with fewer wrong words.
+  /// (Measured before `runnerUpLead`; with it the 0.42 row is 69.4%.)
   /// It stays at 0.42 because the taps at key centres want it narrow: 0.46 already made 31 more English and 23
   /// more Spanish wrong words on RealTypoEval's misspellings, and QualityEval's bar lost words after two and three
   /// letters. The neighbour floor (0 to 1) moved no development row by more than 0.4 points; a cutoff of 2.2 or 2.6
