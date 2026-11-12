@@ -24,16 +24,16 @@ struct AboutView: View {
           .font(.largeTitle.bold())
           .accessibilityAddTraits(.isHeader)
           .accessibilityIdentifier("v2t.about.headline")
-        AboutPoint(symbol: "keyboard", title: "A full keyboard",
+        AboutPoint(symbol: "keyboard", title: "A keyboard as good as Apple's",
                    detail: "Swipe to type, autocorrect and suggestions, so you don't trade a good keyboard for transcription.")
         AboutPoint(symbol: "lock.shield", title: "Transcription stays offline",
                    detail: "It runs on this \(device) after a one-time download. Audio never leaves it.")
         AboutPoint(symbol: "bolt", title: "Text almost as soon as you stop",
-                   detail: "v2t transcribes while you talk, so little is left to do when you finish.")
+                   detail: "v2t transcribes while you talk, so the wait barely changes whether you spoke for 10\u{00A0}seconds or 20\u{00A0}minutes.")
         AboutPoint(symbol: "book.closed", title: "One dictionary for typing and dictation",
                    detail: "A word you keep on the keyboard is added to it, and Apple Intelligence cleanup spells it that way.")
         AboutPoint(symbol: "cpu", title: "Local first, with the right model",
-                   detail: "Small, fast speech models, picked from our tests for this \(device).")
+                   detail: "Small, fast speech models tailored to speaking to an agent, where a small slip matters less than speed.")
       }
       .padding(24)
       // a readable column on an iPad, as the home screen keeps its rows

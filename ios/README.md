@@ -181,8 +181,8 @@ Autocorrect is not yet measured with real fingers on a phone: the misspellings a
 keyboards, so the taps sit at the key centres and the touch model is not exercised; whether iOS turns the
 straight quotes the keyboard types into curly ones is also unchecked.
 
-The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard will only be claimed
-from side-by-side measurements on a phone.
+The targets are our own provisional choices, not Apple figures. Parity with Apple's keyboard is the aim, which the
+app's About v2t page states in the maintainer's words; measured parity, side by side on a phone, is still to be shown.
 
 ## Third-party code and data
 
