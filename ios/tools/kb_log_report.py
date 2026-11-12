@@ -326,6 +326,7 @@ class ExerciseWindow:
             elif a in ("delete", "deleteWord"):
                 self.keys.append(ev.get("t", 0))
                 if self.word:
+                    self.word.pop()
                     self.word_clean = False
         elif e in ("swiped", "pick", "emoji"):
             self.finish_word()

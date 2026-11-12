@@ -343,11 +343,11 @@ class ExerciseTests(unittest.TestCase):
         self.assertEqual((dict(x.hits), dict(x.offsets)), ({}, {}))
 
     def test_a_word_continued_after_deleting_back_into_it_is_left_out(self):
-        # "teh " then delete the space and the h, and type "he": the letters belong to a word already in the field
+        # "tge " then delete the space, e and g, and type "he": the letters belong to the first word, not to "ox"
         e, t = tapped(1000, "tge")
         ev = [APPEAR] + e + space(t) + [{"t": t + 10, "e": "act", "a": "delete"}, {"t": t + 10, "e": "del"}] * 3
         e2, t = tapped(t + 200, "he", n0=10)
-        x = rep.analyse(ev + e2 + space(t) + [exercise(900, t + 500, "the", "the ")]).exercises
+        x = rep.analyse(ev + e2 + space(t) + [exercise(900, t + 500, "the ox", "the ")]).exercises
         self.assertEqual((dict(x.hits), dict(x.offsets)), ({("h", "g"): 1}, {"t": [(0, 0)], "e": [(0, 0)]}))
 
     def test_the_same_uptime_in_another_boot_is_left_out(self):
@@ -357,8 +357,8 @@ class ExerciseTests(unittest.TestCase):
 
     def test_exercise_lines_after_the_keyboards_do_not_read_as_a_restart(self):
         keys = [{"t": 5_000_000 + 200 * i, "e": "key", "text": "a"} for i in range(6)]
-        r = rep.analyse(keys + [exercise(1_000, 2_000, "a", "a")])
-        self.assertEqual((len(r.kps), r.span_s, r.exercises.sentences), (1, 1.0, 1))
+        r = rep.analyse(keys + [exercise(1_000, 2_000, "a", "a"), exercise(3_000, 4_000, "b", "b")])
+        self.assertEqual((len(r.kps), r.span_s, r.exercises.sentences), (1, 1.0, 2))
 
     def test_a_folder_holds_the_exercise_files_too(self):
         with tempfile.TemporaryDirectory() as d:
