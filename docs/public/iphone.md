@@ -126,8 +126,8 @@ nothing of the dictation.
   as it would without v2t. **Connected headset** uses AirPods or a wired headset; with AirPods, music
   drops to call quality while the session is on. The app and the recording view show the
   microphone's name. None of this has been checked on a phone yet.
-- The session turns off 15 minutes after your last dictation. Change that under **Languages and
-  typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
+- The session turns off 15 minutes after your last dictation. Change that with **Keep the mic
+  ready for**, just under **Mic ready for the keyboard**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
   yourself, as below. A dictation still being transcribed by then is stopped with it.
 - To turn it off now, open v2t and tap **Stop microphone session**, or turn off **Mic ready for the
   keyboard**. This also stops a dictation still being transcribed, which is then lost. The next mic
@@ -149,10 +149,12 @@ flowchart LR
   written, and the keyboard never autocorrects them. **Replace** turns what v2t heard into what you
   want written (whole words, any capitalisation); it runs after cleanup, whether cleanup is on or
   off. The file format is the Mac app's, so you can paste your Mac dictionary into **Edit as text**.
-- **History** lists your dictations on this device, newest first. A **Heard:** line shows the words
-  before cleanup and replacements changed them. Touch and hold an entry to copy it; swipe left to
-  delete. Each entry also keeps how long the dictation took; the stopwatch menu copies those timings
-  and opens **Compare cleanup**.
+- **History** lists your dictations on this device, newest first, as cards of one height: three
+  lines of text (tap the text to read all of it), then the number of words, how long speech and
+  cleanup took and how long you spoke. **Copy** copies the text. **Heard** opens the words before
+  cleanup and replacements changed them, where they did. Swipe left to delete. **Export** (the share
+  button at the top) shares all of them as one file, one dictation per line; the stopwatch menu
+  copies the timings and opens **Compare cleanup**.
 - **Speech language**: English, Español, or Detect.
 - **Storage** shows the space the speech model and your dictations take, with **Delete speech
   model** and **Clear History**. Audio is never saved; History keeps text only.
@@ -163,8 +165,8 @@ flowchart LR
 </figure>
 
 <figure markdown>
-  ![History with one dictation: Testing the V2T keyboard on the iPhone Simulator, with Heard: Testing the V2T keyboard on the simulator underneath](images/iphone/history.png){ width="340" }
-  <figcaption>A dictation in History. A replacement (simulator becomes iPhone Simulator) changed it, so the Heard line shows the original.</figcaption>
+  ![History with two dictations of the same height: a short one with Copy, and a long one cut at three lines with Heard and Copy. Under each text, a line, then 88 words, speech 0.1 s, cleanup 1.7 s and 98 s spoken](images/iphone/history.png){ width="340" }
+  <figcaption>History's cards: the same height however long the dictation. Heard shows only where cleanup or a replacement changed the words.</figcaption>
 </figure>
 
 ## Typing
@@ -172,7 +174,7 @@ flowchart LR
 The keyboard does its own swiping, autocorrection and word suggestions, because iOS withholds
 Apple's from other keyboards. It has English (QWERTY) and Spanish (with ñ) layouts, suggests English
 and Spanish together unless you turn that off, offers accents on a long press, and moves the cursor
-when you hold the space bar and slide. Their settings are under **Languages and typing** in the app.
+when you hold the space bar and slide. Their settings are in the app's **Keyboard** section.
 
 - **Emoji:** on Face ID iPhones the emoji key sits after 123, where Apple's keyboard has it, and
   opens v2t's emoji panel; long-press an emoji for skin tones and tap **ABC** to go back. iOS's own
@@ -184,14 +186,15 @@ when you hold the space bar and slide. Their settings are under **Languages and 
   alone, and cleanup spells it too. Delete a typo kept by mistake in **Dictionary**.
 - **Hide the keyboard** with the chevron at the right end of the suggestion bar (on the iPad, the
   hide key in the bottom row).
-- **Keyboard debug log:** off unless you turn it on, under **Languages and typing** › Debugging.
+- **Keyboard debug log:** off unless you turn it on, in the app's **Debugging** section (TestFlight
+  builds only).
   While it is on, a small red dot shows at the left of the suggestion bar and the keyboard records
   what you type with it (keys, swipes, suggestions, corrections, and the words themselves) to a file
   on your iPhone, so the keyboard's mistakes can be studied. Dictation is recorded by length only.
   Nothing leaves the iPhone unless you tap **Export**, and **Clear log** deletes it. It turns itself
   off after 24 hours, and never records in password, one-time-code or card fields. It needs Full
   Access, like dictation.
-- **Typing exercise:** under **Languages and typing** › Debugging, like a typing test: it shows ten
+- **Typing exercise:** in **Debugging**, like a typing test: it shows ten
   short sentences one at a time to type with the v2t keyboard, then the words that came out
   different and your speed. It turns the debug log on for 24 hours if it is off, and records each
   sentence and what you typed beside the keyboard's log, so the keyboard's mistakes can be told
