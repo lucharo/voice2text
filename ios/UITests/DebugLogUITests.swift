@@ -74,7 +74,7 @@ import XCTest
     shot("20-debug-log-switch-on")
 
     // the keyboard: its dot shows, and what is typed is recorded
-    for _ in 0..<6 where !(field.exists && field.isHittable) { app.swipeDown(velocity: .slow) }
+    revealAbove(field, in: app)  // back up the long first page, from Debugging at its foot
     // a tap while the list still glides after the swipe can miss the field: tap until a keyboard shows
     for _ in 0..<3 where !(key("letters-q").exists || app.keyboards.firstMatch.exists) {
       field.tap()

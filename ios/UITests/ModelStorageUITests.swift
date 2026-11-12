@@ -52,8 +52,8 @@ import XCTest
     shot("31-storage-model-deleted")
 
     // the keyboard's mic, with the session still on, opens the download screen rather than recording
-    for _ in 0..<6 where !app.textFields["v2t.try"].isHittable { app.swipeDown(velocity: .slow) }
     let field = app.textFields["v2t.try"]
+    revealAbove(field, in: app)
     sleep(1)
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
     for _ in 0..<2 where !key("letters-q").exists {
