@@ -6,7 +6,9 @@ import SwiftUI
 /// transcription, the dictionary and cleanup, and the result sent back to the keyboard.
 @MainActor final class DictationService: ObservableObject {
   @Published private(set) var state: DictationState = .needsApp
-  @Published private(set) var engineState: SpeechEngine.State = .notDownloaded
+  @Published private(set) var engineState: SpeechEngine.State = .notDownloaded {
+    didSet { publishCanDictate() }  // a first load starting or ending changes what the keyboard's mic does
+  }
   @Published private(set) var lastText = ""
   @Published private(set) var warmUntil: Date?
   /// The input the warm session records from, also sent to the keyboard; nil when the session is off.
@@ -16,6 +18,9 @@ import SwiftUI
   @Published private(set) var modelOnDevice = false
   /// Bytes the model takes on the device, its compiled copy included.
   @Published private(set) var modelBytes: Int64 = 0
+  /// The model has loaded on this device since it was downloaded, so loading it again reuses the copy Core ML
+  /// compiled for this device the first time instead of compiling it.
+  @Published private(set) var modelLoadedBefore = false
   /// Why deleting the model or the history failed, shown under the button.
   @Published private(set) var storageError: String?
   /// Deleting the model: no recording, preparation or second delete starts until it is done.
@@ -30,16 +35,18 @@ import SwiftUI
   @Published private(set) var recommendation: Recommendation
   let history: History
   let dictionary: PersonalDictionary
-  private let engine: SpeechEngine
+  private let engine: any SpeechModel
   private let store: ModelStore
   private let recorder: AudioSource
+  /// The time now; unit tests move it on to reach the session's expiry.
+  private let now: () -> Date
   private static func defaultRecorder() -> AudioSource {
     guard let path = ProcessInfo.processInfo.environment["V2T_FIXTURE_AUDIO"] else { return Recorder() }
     // a test asked for the synthetic clip: never fall back to the real microphone
     guard let f = FixtureAudio(path: path) else { preconditionFailure("V2T_FIXTURE_AUDIO is set but unreadable: \(path)") }
     return f
   }
-  private let defaults = Settings.shared.defaults
+  private let defaults: UserDefaults
   private var observers: [DarwinObserver] = []
   private var routeObserver: NSObjectProtocol?
   private var heartbeat: Timer?
@@ -62,14 +69,18 @@ import SwiftUI
   /// Cleans the current recording's settled sentences while it is recorded, when cleanup is on.
   private var liveCleanup: LiveCleanup?
 
-  /// `recorder` is for unit tests; the app records from the microphone (or the UI tests' fixture clip).
-  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil) {
+  /// `recorder`, `store`, `engine`, `defaults` and `now` are for unit tests; the app records from the
+  /// microphone (or the UI tests' fixture clip) and transcribes with FluidAudio.
+  init(recommendation: Recommendation, history: History, dictionary: PersonalDictionary, recorder: AudioSource? = nil, store: ModelStore? = nil,
+       engine: (any SpeechModel)? = nil, defaults: UserDefaults = Settings.shared.defaults, now: @escaping () -> Date = Date.init) {
     self.recorder = recorder ?? Self.defaultRecorder()
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
-    self.engine = SpeechEngine(speech: recommendation.speech)
+    self.engine = engine ?? SpeechEngine(speech: recommendation.speech)
     self.store = store ?? .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
+    self.defaults = defaults
+    self.now = now
     observers = [
       DictationChannel.observe(DictationChannel.start) { [weak self] in self?.start() },
       DictationChannel.observe(DictationChannel.stop) { [weak self] in self?.stop() },
@@ -101,17 +112,30 @@ import SwiftUI
   func refreshModelStorage() {
     modelOnDevice = store.isOnDevice
     modelBytes = store.bytes
+    modelLoadedBefore = store.hasLoaded
+    publishCanDictate()
+  }
+
+  private func publishCanDictate() {
     defaults.set(!canDictate, forKey: DictationChannel.modelMissingKey)
   }
 
-  /// Dictation can record: the model is on the device and did not fail to load (damaged files fail offline;
-  /// only the user's Try again may repair them). Otherwise the keyboard's mic opens v2t on that screen.
-  var canDictate: Bool { Self.canDictate(modelOnDevice: modelOnDevice, engine: engineState) }
+  /// Dictation can record: the model is on the device, did not fail to load (damaged files fail offline;
+  /// only the user's Try again may repair them), and is not being loaded for the first time. Otherwise the
+  /// keyboard's mic opens v2t on that screen.
+  var canDictate: Bool { Self.canDictate(modelOnDevice: modelOnDevice, engine: engineState, loadedBefore: modelLoadedBefore) }
 
-  static func canDictate(modelOnDevice: Bool, engine: SpeechEngine.State) -> Bool {
+  static func canDictate(modelOnDevice: Bool, engine: SpeechEngine.State, loadedBefore: Bool) -> Bool {
     guard modelOnDevice else { return false }
-    if case .failed = engine { return false }
-    return true
+    switch engine {
+    case .ready: return true
+    case .failed: return false
+    // not loaded yet: a model that loaded here before reuses its compiled copy, so a recording may start and
+    // wait for the load (the keyboard's first mic tap launches v2t, which loads the model as it opens). The
+    // first load compiles the model for this device's Neural Engine, which nobody has timed on older chips:
+    // a recording made then could not be transcribed until it ends, so nothing records until it is done.
+    default: return loadedBefore
+    }
   }
 
   /// At launch: loads the model if it is on the device, offline; never starts a download (#124).
@@ -168,6 +192,8 @@ import SwiftUI
           self.engineState = s
         }
       }
+      store.markLoaded()
+      modelLoadedBefore = true
       engineState = .ready
     } catch {
       engineState = .failed(error.localizedDescription)
@@ -228,11 +254,11 @@ import SwiftUI
 
   private func extendWarmth() {
     let minutes = Settings.shared.warmMinutes
-    warmUntil = minutes == 0 ? nil : Date().addingTimeInterval(TimeInterval(minutes * 60))
+    warmUntil = minutes == 0 ? nil : now().addingTimeInterval(TimeInterval(minutes * 60))
   }
 
   private func beat() {
-    if let until = warmUntil, Date() > until, state == .idle { coolDown(); return }
+    if let until = warmUntil, now() > until, state == .idle { coolDown(); return }
     defaults.set(Date().timeIntervalSince1970, forKey: DictationChannel.heartbeatKey)
   }
 

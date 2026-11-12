@@ -20,12 +20,14 @@ final class SilentAudio: AudioSource, @unchecked Sendable {
 @MainActor struct ModelDeleteTests {
   let dir = FileManager.default.temporaryDirectory.appending(path: "v2t-delete-\(UUID().uuidString)")
 
-  /// A service whose model is "on the device": a temporary folder with one file it requires.
+  /// A service whose model is "on the device" and has loaded there before: a temporary folder with one file it
+  /// requires.
   func service() throws -> DictationService {
     let model = dir.appending(path: "Models/model")
     try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
     try Data(repeating: 1, count: 1_000).write(to: model.appending(path: "vocab.json"))
     let store = ModelStore(modelFolder: model, folders: [dir.appending(path: "Models")]) { ModelStore.hasAll(["vocab.json"], in: $0) }
+    store.markLoaded()
     return DictationService(recommendation: .current, history: History(file: dir.appending(path: "h.json")),
                             dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: SilentAudio(), store: store)
   }
@@ -67,6 +69,13 @@ final class SilentAudio: AudioSource, @unchecked Sendable {
       (true, .ready), (true, .loading), (true, .notDownloaded), (true, .failed("damaged")), (false, .ready), (false, .notDownloaded),
     ]
 
-    #expect(cases.map { DictationService.canDictate(modelOnDevice: $0.0, engine: $0.1) } == [true, true, true, false, false, false])
+    #expect(cases.map { DictationService.canDictate(modelOnDevice: $0.0, engine: $0.1, loadedBefore: true) } == [true, true, true, false, false, false])
+  }
+
+  /// Until the model has loaded once on this device (its first load compiles it), only a ready model records.
+  @Test func aModelNeverLoadedHereRecordsOnlyOnceReady() {
+    let states: [SpeechEngine.State] = [.ready, .loading, .notDownloaded, .downloading(0.5), .failed("damaged")]
+
+    #expect(states.map { DictationService.canDictate(modelOnDevice: true, engine: $0, loadedBefore: false) } == [true, false, false, false, false])
   }
 }

@@ -70,7 +70,8 @@ enum DictationChannel {
     return Microphone(name: name)
   }
 
-  /// True while the speech model is not on the device: the mic key then opens the app, which offers the download.
+  /// True while the speech model cannot take a recording: not on the device, failed to load, or loading for the
+  /// first time. The mic key then opens the app, which offers the download, Try again, or shows it preparing.
   static let modelMissingKey = "dictation.modelMissing"
 
   /// The microphone level while listening, newest last, each 0...1, written by the app 20 times a second for

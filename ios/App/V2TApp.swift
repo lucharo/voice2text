@@ -338,11 +338,14 @@ struct KeyboardHandoffView: View {
       Image(systemName: dictation.engineState == .ready ? "checkmark.circle.fill" : "arrow.down.circle")
         .font(.system(size: 64)).foregroundStyle(dictation.engineState == .ready ? .green : .accentColor)
       Text(dictation.engineState == .ready ? "Speech model ready"
-           : dictation.modelOnDevice ? "The speech model didn't load" : "Download the speech model").font(.largeTitle.bold())
+           : !dictation.modelOnDevice ? "Download the speech model"
+           : dictation.engineState == .loading ? "Preparing the speech model" : "The speech model didn't load").font(.largeTitle.bold())
         .multilineTextAlignment(.center)
       Text(dictation.engineState == .ready
         ? "Go back to your app and tap the mic again."
-        : "v2t turns speech into text on this \(dictation.recommendation.deviceName), so the keyboard's mic needs the speech model first.")
+        : dictation.modelOnDevice && dictation.engineState == .loading
+          ? "The first time, v2t prepares the speech model for this \(dictation.recommendation.deviceName). Stay in v2t until it's ready."
+          : "v2t turns speech into text on this \(dictation.recommendation.deviceName), so the keyboard's mic needs the speech model first.")
         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal, 32)
       if dictation.engineState != .ready { ModelRow().padding(.horizontal, 32) }
       Spacer()
