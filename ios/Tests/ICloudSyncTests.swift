@@ -1,22 +1,24 @@
 import Foundation
 import Testing
+import UIKit
 @testable import V2T
 
-/// iCloud key-value storage shared by every device in a test, counting what the sync reads and writes.
-final class FakeCloud: KeyValueSync {
-  var values: [String: Data] = [:]
-  var reads = 0, writes = 0, fetches = 0
+/// The private iCloud database shared by every device in a test, counting the sync's calls to it.
+@MainActor final class FakeCloud: DictionaryCloud {
+  var contents = CloudContents()
+  var available = true
+  var calls = 0
 
-  func data(forKey key: String) -> Data? { reads += 1; return values[key] }
-  func set(_ data: Data?, forKey key: String) { writes += 1; values[key] = data }
-  func synchronize() -> Bool { fetches += 1; return true }
+  func accountAvailable() async -> Bool { calls += 1; return available }
+  func fetch() async throws -> CloudContents { calls += 1; return contents }
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws {
+    calls += 1
+    contents.entries.merge(entries) { $1 }
+    if let learned { contents.learned = learned }
+  }
 
-  var records: DictionaryMerge.Records {
-    values[ICloudSync.dictionaryKey].flatMap { try? JSONDecoder().decode(DictionaryMerge.Records.self, from: $0) } ?? [:]
-  }
-  var learned: [String] {
-    values[ICloudSync.learnedKey].flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
-  }
+  var records: DictionaryMerge.Records { contents.entries }
+  var learned: [String] { contents.learned.sorted() }
 }
 
 final class Clock {
@@ -31,109 +33,132 @@ final class Clock {
   let dictionary: PersonalDictionary
   let sync: ICloudSync
 
-  init(_ text: String, learned: [String] = [], cloud: FakeCloud, clock: Clock, signedIn: Bool = true) throws {
+  init(_ text: String, learned: [String] = [], model: String = "iPhone17,1", cloud: FakeCloud, clock: Clock) throws {
     dictionary = PersonalDictionary(file: dir.appending(path: "dictionary.txt"))
     try dictionary.save(text)
     for w in learned { settings.learn(w) }
-    sync = ICloudSync(dictionary: dictionary, settings: settings, store: cloud, signedIn: { signedIn }, now: { clock.now })
+    sync = ICloudSync(dictionary: dictionary, settings: settings, cloud: cloud, device: model, now: { clock.now })
   }
 
+  /// A copy of this device's dictionary as the keyboard extension holds it.
+  var keyboard: PersonalDictionary { PersonalDictionary(file: dictionary.file, writer: "keyboard") }
   var lines: [String] { dictionary.items.map(\.line) }
 }
 
-@MainActor struct ICloudSyncTests {
+/// Serialized: a foreground notification reaches every started sync, so two tests must never overlap.
+@MainActor @Suite(.serialized) struct ICloudSyncTests {
   let cloud = FakeCloud()
   let clock = Clock()
 
   func at(_ seconds: TimeInterval) -> Date { Date(timeIntervalSince1970: seconds) }
+  func by(_ device: String, _ app: String = "app") -> DictionaryMerge.Source { .init(device: device, app: app) }
 
-  @Test func twoDevicesWithDifferentEntriesConvergeToTheUnion() throws {
+  @Test func twoDevicesWithDifferentEntriesConvergeToTheUnion() async throws {
     let phone = try Device("Claude\n", cloud: cloud, clock: clock)
     let pad = try Device("Fluide\nai => AI\n", cloud: cloud, clock: clock)
 
-    clock.at(1); phone.sync.start()
-    clock.at(2); pad.sync.start()
-    clock.at(3); phone.sync.sync()
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(3); await phone.sync.sync().value
 
     #expect(phone.lines == ["Claude", "ai => AI", "Fluide"])
     #expect(pad.lines == ["Fluide", "ai => AI", "Claude"])
   }
 
-  @Test func aDeletionReachesOtherDevicesAndAnOlderSnapshotCannotBringItBack() throws {
+  @Test func aDeletionReachesOtherDevicesAndAnOlderSnapshotCannotBringItBack() async throws {
     let phone = try Device("Claude\nFluide\n", cloud: cloud, clock: clock)
     let pad = try Device("", cloud: cloud, clock: clock)
     let oldPad = try Device("", cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
-    clock.at(2); pad.sync.start()
-    clock.at(3); oldPad.sync.start()  // has Fluide, and then stays away while it is deleted
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(3); await oldPad.sync.start().value  // has Fluide, and then stays away while it is deleted
 
     try phone.dictionary.remove("Fluide")
-    clock.at(4); phone.sync.sync()
-    clock.at(5); pad.sync.sync()
-    clock.at(6); oldPad.sync.sync()
-    clock.at(7); phone.sync.sync()
+    clock.at(4); await phone.sync.sync().value
+    clock.at(5); await pad.sync.sync().value
+    clock.at(6); await oldPad.sync.sync().value
+    clock.at(7); await phone.sync.sync().value
 
     #expect(phone.lines == ["Claude"])
     #expect(pad.lines == ["Claude"])
     #expect(oldPad.lines == ["Claude"])
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:fluide": .init(line: nil, time: at(4))])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast),
+                              "term:fluide": .init(line: nil, time: at(4), source: by("iPhone17,1"))])
   }
 
-  @Test func theSameEntryEditedOnTwoDevicesKeepsTheLaterEdit() throws {
+  @Test func theSameEntryEditedOnTwoDevicesKeepsTheLaterEdit() async throws {
     let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
     let pad = try Device("", cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
-    clock.at(2); pad.sync.start()
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
 
     try phone.dictionary.save("ai => A.I.\n")
     try pad.dictionary.save("AI => Ai\n")
-    clock.at(10); phone.sync.sync()
-    clock.at(11); pad.sync.sync()
-    clock.at(12); phone.sync.sync()
+    clock.at(10); await phone.sync.sync().value
+    clock.at(11); await pad.sync.sync().value
+    clock.at(12); await phone.sync.sync().value
 
     #expect(phone.dictionary.text == "AI => Ai\n")
     #expect(pad.dictionary.text == "AI => Ai\n")
   }
 
-  /// The keyboard writes the App Group while the app is closed; the app's next sync finds the word and sends it.
-  @Test func aWordTheKeyboardAddedWhileTheAppWasClosedIsUploaded() throws {
+  /// The keyboard writes the App Group while the app is closed; the app's next sync finds the word and sends it,
+  /// saying the keyboard on this device added it.
+  @Test func aWordTheKeyboardAddedWhileTheAppWasClosedIsUploaded() async throws {
     let phone = try Device("Claude\n", cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
 
-    try PersonalDictionary(file: phone.dictionary.file).addTerm("marimo")
-    clock.at(2); phone.sync.sync(fetch: true)
+    try phone.keyboard.addTerm("marimo")
+    clock.at(2); await phone.sync.sync().value
 
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:marimo": .init(line: "marimo", time: at(2))])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast),
+                              "term:marimo": .init(line: "marimo", time: at(2), source: by("iPhone17,1", "keyboard"))])
   }
 
-  @Test func aFirstSyncOnAnEmptyDeviceDownloadsEverything() throws {
+  /// Each change records the device and whether the keyboard or the app made it; once synced, the keyboard's
+  /// mark is spent, so a later edit in the app is the app's.
+  @Test func eachChangeSaysWhichDeviceAndWhetherTheKeyboardOrTheAppMadeIt() async throws {
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await pad.sync.start().value
+    try pad.keyboard.addTerm("marimo")
+    try pad.dictionary.addReplacement(heard: "ai", written: "AI")
+    clock.at(2); await pad.sync.sync().value
+
+    try pad.dictionary.save("Marimo\nai => AI\n")
+    clock.at(3); await pad.sync.sync().value
+
+    #expect(cloud.records == ["term:marimo": .init(line: "Marimo", time: at(3), source: by("iPad16,3")),
+                              "replace:ai": .init(line: "ai => AI", time: at(2), source: by("iPad16,3"))])
+  }
+
+  @Test func aFirstSyncOnAnEmptyDeviceDownloadsEverything() async throws {
     let phone = try Device("Claude\nai => AI\n", learned: ["marimo"], cloud: cloud, clock: clock)
     let pad = try Device(PersonalDictionary.header, cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
 
-    clock.at(2); pad.sync.start()
+    clock.at(2); await pad.sync.start().value
 
     #expect(pad.dictionary.text == PersonalDictionary.header + "ai => AI\nClaude\n")
     #expect(pad.settings.learnedWords == ["marimo"])
   }
 
-  @Test func aFirstSyncWithAnEmptyCloudUploadsEverything() throws {
+  @Test func aFirstSyncWithAnEmptyCloudUploadsEverything() async throws {
     let phone = try Device("Claude\nai => AI\n", learned: ["kian", "marimo"], cloud: cloud, clock: clock)
 
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
 
     #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "replace:ai": .init(line: "ai => AI", time: .distantPast)])
     #expect(cloud.learned == ["kian", "marimo"])
     #expect(phone.sync.status == .synced)
   }
 
-  @Test func learnedWordsFromTwoDevicesBecomeTheirUnion() throws {
+  @Test func learnedWordsFromTwoDevicesBecomeTheirUnion() async throws {
     let phone = try Device("", learned: ["marimo"], cloud: cloud, clock: clock)
     let pad = try Device("", learned: ["kian"], cloud: cloud, clock: clock)
 
-    clock.at(1); phone.sync.start()
-    clock.at(2); pad.sync.start()
-    clock.at(3); phone.sync.sync()
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    clock.at(3); await phone.sync.sync().value
 
     #expect(phone.settings.learnedWords == ["kian", "marimo"])
     #expect(pad.settings.learnedWords == ["kian", "marimo"])
@@ -142,48 +167,49 @@ final class Clock {
 
   /// Only entries sync: comments, blank lines and a replacement missing a side stay where they are, while an
   /// entry from iCloud is added and one deleted there goes.
-  @Test func commentsAndHeaderLinesSurviveAMergeUntouched() throws {
+  @Test func commentsAndHeaderLinesSurviveAMergeUntouched() async throws {
     let pad = try Device("Fluide\nKian\n", cloud: cloud, clock: clock)
-    clock.at(1); pad.sync.start()
+    clock.at(1); await pad.sync.start().value
     try pad.dictionary.save("Fluide\n")
-    clock.at(5); pad.sync.sync()  // Kian deleted at 5
+    clock.at(5); await pad.sync.sync().value  // Kian deleted at 5
     let phone = try Device("# mine\nClaude\n\n# names\nKian\nbad =>\n", cloud: cloud, clock: clock)
 
-    clock.at(6); phone.sync.start()  // a first sync: this device's Kian is older than the deletion
+    clock.at(6); await phone.sync.start().value  // a first sync: this device's Kian is older than the deletion
 
     #expect(phone.dictionary.text == "# mine\nClaude\n\n# names\nbad =>\nFluide\n")
   }
 
   /// A device's first sync, also one that had sync off until now, cannot tell its old entries from new ones: an
   /// entry deleted elsewhere goes, and one iCloud has never seen goes up.
-  @Test func aFirstSyncHonoursADeletionMadeElsewhere() throws {
+  @Test func aFirstSyncHonoursADeletionMadeElsewhere() async throws {
     let phone = try Device("Claude\nFluide\n", cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
     try phone.dictionary.remove("Fluide")
-    clock.at(2); phone.sync.sync()
+    clock.at(2); await phone.sync.sync().value
     let pad = try Device("Fluide\nKian\n", cloud: cloud, clock: clock)
 
-    clock.at(10); pad.sync.start()
+    clock.at(10); await pad.sync.start().value
 
     #expect(pad.lines == ["Kian", "Claude"])
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:fluide": .init(line: nil, time: at(2)),
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast),
+                              "term:fluide": .init(line: nil, time: at(2), source: by("iPhone17,1")),
                               "term:kian": .init(line: "Kian", time: .distantPast)])
   }
 
   /// After its first sync, even an empty one, a device's new entry is a deliberate change and beats an older deletion.
-  @Test func aWordAddedAfterTheFirstSyncBeatsAnEarlierDeletion() throws {
-    let pad = try Device("", cloud: cloud, clock: clock)
-    clock.at(1); pad.sync.start()
+  @Test func aWordAddedAfterTheFirstSyncBeatsAnEarlierDeletion() async throws {
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await pad.sync.start().value
     let phone = try Device("marimo\n", cloud: cloud, clock: clock)
-    clock.at(2); phone.sync.start()
+    clock.at(2); await phone.sync.start().value
     try phone.dictionary.remove("marimo")
-    clock.at(3); phone.sync.sync()
+    clock.at(3); await phone.sync.sync().value
 
-    try PersonalDictionary(file: pad.dictionary.file).addTerm("marimo")
-    clock.at(4); pad.sync.sync(fetch: true)
+    try pad.keyboard.addTerm("marimo")
+    clock.at(4); await pad.sync.sync().value
 
     #expect(pad.lines == ["marimo"])
-    #expect(cloud.records == ["term:marimo": .init(line: "marimo", time: at(4))])
+    #expect(cloud.records == ["term:marimo": .init(line: "marimo", time: at(4), source: by("iPad16,3", "keyboard"))])
   }
 
   /// The keyboard keeps words while the app applies a download, each reading and writing back the one array: no
@@ -200,59 +226,64 @@ final class Clock {
     #expect(Settings(defaults: UserDefaults(suiteName: suite)!).learnedWords == Set(kept).union(downloaded))
   }
 
-  @Test func switchedOffItReadsAndWritesNothing() throws {
+  @Test func switchedOffItReadsAndWritesNothing() async throws {
     let pad = try Device("Fluide\n", learned: ["kian"], cloud: cloud, clock: clock)
-    clock.at(1); pad.sync.start()
-    let before = cloud.values, reads = cloud.reads, writes = cloud.writes, fetches = cloud.fetches
+    clock.at(1); await pad.sync.start().value
+    let before = cloud.contents, calls = cloud.calls
     let phone = try Device("Claude\n", learned: ["marimo"], cloud: cloud, clock: clock)
     phone.settings.iCloudSyncEnabled = false
 
-    clock.at(2); phone.sync.start()
-    phone.sync.sync(fetch: true)
+    clock.at(2); await phone.sync.start().value
+    await phone.sync.sync().value
 
     #expect(phone.dictionary.text == "Claude\n")
     #expect(phone.settings.learnedWords == ["marimo"])
-    #expect(cloud.values == before)
-    #expect([cloud.reads, cloud.writes, cloud.fetches] as [Int] == [reads, writes, fetches])
+    #expect(cloud.contents == before)
+    #expect(cloud.calls == calls)
     #expect(!FileManager.default.fileExists(atPath: phone.sync.stateFile.path()))
     #expect(phone.sync.status == .off)
   }
 
-  @Test func overTheSizeLimitItWritesNothingAndSaysWhy() throws {
-    let huge = String(repeating: "a", count: ICloudSync.limit)
+  @Test func overTheSizeLimitItWritesNothingAndSaysWhy() async throws {
+    let huge = String(repeating: "a", count: CloudKitDictionary.recordLimit / 2)
     let phone = try Device("Claude\n\(huge)\n", learned: ["marimo"], cloud: cloud, clock: clock)
-    cloud.values[ICloudSync.learnedKey] = try JSONEncoder().encode(["kian"])
-    let before = cloud.values
+    cloud.contents.learned = ["kian"]
+    let before = cloud.contents
 
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
 
-    #expect(cloud.values == before)
+    #expect(cloud.contents == before)
     #expect(phone.dictionary.text == "Claude\n\(huge)\n")
     #expect(phone.settings.learnedWords == ["marimo"])
     #expect(!FileManager.default.fileExists(atPath: phone.sync.stateFile.path()))
-    guard case .tooLarge(let bytes) = phone.sync.status else { Issue.record("status \(phone.sync.status)"); return }
-    #expect(bytes > ICloudSync.limit)
-    #expect(ICloudSyncRow.subtitle(phone.sync.status, device: "iPhone").hasSuffix(", over the 1 MB iCloud keeps for an app. Remove some entries to sync again."))
+    #expect(phone.sync.status == .tooLarge(bytes: CloudKitDictionary.recordLimit + "term:".count + 8))
+    #expect(ICloudSyncRow.subtitle(phone.sync.status, device: "iPhone").hasSuffix(", over the 1 MB iCloud allows in one record. Shorten it to sync again."))
   }
 
-  @Test func withNoICloudAccountItSaysItIsWaiting() throws {
-    let phone = try Device("Claude\n", cloud: cloud, clock: clock, signedIn: false)
+  @Test func withNoICloudAccountItSaysItIsWaitingAndTouchesNothing() async throws {
+    cloud.available = false
+    let phone = try Device("Claude\n", cloud: cloud, clock: clock)
 
-    clock.at(1); phone.sync.start()
+    clock.at(1); await phone.sync.start().value
 
     #expect(phone.sync.status == .waitingForICloud)
+    #expect(cloud.contents == CloudContents())
+    #expect(!FileManager.default.fileExists(atPath: phone.sync.stateFile.path()))
     #expect(ICloudSyncRow.subtitle(phone.sync.status, device: "iPhone") == "Waiting for iCloud: sign in to iCloud in Settings and your dictionary and kept words sync then.")
   }
 
-  @Test func aChangeFromICloudIsMergedWhenItArrives() throws {
+  /// No push arrives from iCloud: a change made on another device is fetched when the app comes back to the
+  /// foreground.
+  @Test func returningToTheForegroundFetchesChangesMadeElsewhere() async throws {
     let phone = try Device("Claude\n", cloud: cloud, clock: clock)
     let pad = try Device("", cloud: cloud, clock: clock)
-    clock.at(1); phone.sync.start()
-    clock.at(2); pad.sync.start()
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
     try pad.dictionary.addTerm("Fluide")
-    clock.at(3); pad.sync.sync()
+    clock.at(3); await pad.sync.sync().value
 
-    NotificationCenter.default.post(name: NSUbiquitousKeyValueStore.didChangeExternallyNotification, object: cloud)
+    NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+    for _ in 0..<200 where phone.lines.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
 
     #expect(phone.lines == ["Claude", "Fluide"])
   }

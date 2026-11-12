@@ -5,12 +5,21 @@ import Foundation
 /// last writer wins, and a deletion is kept as a tombstone (a record with no line) so a device that still has
 /// the entry cannot bring it back. Comments, blanks and malformed lines are not entries and stay local.
 enum DictionaryMerge {
-  /// One entry as synced: its line as stored, nil once deleted, and when this device or another last changed it.
+  /// One entry as synced: its line as stored, nil once deleted, when this device or another last changed it, and
+  /// where that change came from (nil for an entry a device had before its first sync).
   struct Record: Codable, Equatable, Sendable {
     var line: String?
     var time: Date
+    var source: Source? = nil
   }
   typealias Records = [String: Record]
+
+  /// The device that made a change, by its hardware model ("iPhone17,1"), and whether the "keyboard" or the "app"
+  /// made it there.
+  struct Source: Codable, Equatable, Sendable {
+    var device: String
+    var app: String
+  }
 
   /// The file's entries by key; of two lines with one key, the first counts, as the first is what `remove` drops.
   static func entries(_ text: String) -> [String: String] { PersonalDictionary.entryLines(text) }
@@ -22,26 +31,34 @@ enum DictionaryMerge {
   /// The file as records: an entry unchanged since the last sync keeps that sync's time; one added or edited
   /// since (on this device, the keyboard included) and one deleted since (a tombstone) take `now`. With no last
   /// sync (`synced` nil: the first on this device, also after sync was off from the start), every entry is
-  /// `unversioned`, since nothing tells an old entry from one just added.
-  static func local(_ text: String, synced: Records?, now: Date) -> Records {
+  /// `unversioned`, since nothing tells an old entry from one just added. A change's source is this `device`, and
+  /// the keyboard for the keys in `keyboardAdded`, the app otherwise (deletions are the app's: the keyboard only adds).
+  static func local(_ text: String, synced: Records?, now: Date, device: String, keyboardAdded: Set<String>) -> Records {
     let current = entries(text)
-    guard let synced else { return current.mapValues { Record(line: $0, time: unversioned) } }
+    let source = { (k: String) in Source(device: device, app: keyboardAdded.contains(k) ? "keyboard" : "app") }
+    guard let synced else {
+      return Dictionary(uniqueKeysWithValues: current.map { k, line in
+        (k, Record(line: line, time: unversioned, source: keyboardAdded.contains(k) ? source(k) : nil))
+      })
+    }
     var out: Records = [:]
     for (k, line) in current {
-      out[k] = synced[k]?.line == line ? synced[k]! : Record(line: line, time: now)
+      out[k] = synced[k]?.line == line ? synced[k]! : Record(line: line, time: now, source: source(k))
     }
     for (k, record) in synced where current[k] == nil {
-      out[k] = record.line == nil ? record : Record(line: nil, time: now)
+      out[k] = record.line == nil ? record : Record(line: nil, time: now, source: Source(device: device, app: "app"))
     }
     return out
   }
 
-  /// Per key, the later record. A tie, as when two devices sync in the same instant, goes to the greater line
-  /// (a line over a tombstone), so every device picks the same one.
+  /// Per key, the later record. A tie, as when two devices sync in the same instant or both had the entry before
+  /// their first sync, goes to the greater line (a line over a tombstone), then the greater source, so every
+  /// device picks the same one.
   static func merge(_ a: Records, _ b: Records) -> Records {
     a.merging(b) { x, y in
       if x.time != y.time { return x.time > y.time ? x : y }
-      return (x.line ?? "") >= (y.line ?? "") ? x : y
+      let rank = { (r: Record) in [r.line ?? "", r.source?.device ?? "", r.source?.app ?? ""] }
+      return rank(x).lexicographicallyPrecedes(rank(y)) ? y : x
     }
   }
 
@@ -69,8 +86,9 @@ enum DictionaryMerge {
   }
 
   /// The whole merge: the new file text, and the records both this device's sync state and iCloud then hold.
-  static func run(text: String, synced: Records?, remote: Records, now: Date) -> (text: String, records: Records) {
-    let records = merge(local(text, synced: synced, now: now), remote)
+  static func run(text: String, synced: Records?, remote: Records, now: Date, device: String,
+                  keyboardAdded: Set<String>) -> (text: String, records: Records) {
+    let records = merge(local(text, synced: synced, now: now, device: device, keyboardAdded: keyboardAdded), remote)
     return (apply(records, to: text), records)
   }
 }

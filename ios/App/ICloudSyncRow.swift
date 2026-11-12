@@ -18,9 +18,9 @@ struct ICloudSyncRow: View {
   static func subtitle(_ status: ICloudSync.Status, device: String) -> String {
     switch status {
     case .off: "Off: your dictionary and the words you keep on the keyboard stay on this \(device)."
-    case .synced: "Your dictionary and the words you keep on the keyboard, on your iPhones and iPads, through your own iCloud account. Audio never leaves this \(device)."
+    case .synced: "Your dictionary and the words you keep on the keyboard, on your iPhones and iPads, through your private iCloud database, encrypted. Audio never leaves this \(device)."
     case .waitingForICloud: "Waiting for iCloud: sign in to iCloud in Settings and your dictionary and kept words sync then."
-    case .tooLarge(let bytes): "Not synced: your dictionary and kept words take \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)), over the 1 MB iCloud keeps for an app. Remove some entries to sync again."
+    case .tooLarge(let bytes): "Not synced: one entry or your kept words take \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)), over the 1 MB iCloud allows in one record. Shorten it to sync again."
     case .failed(let reason): "Not synced: \(reason)"
     }
   }

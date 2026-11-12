@@ -1,35 +1,21 @@
+import CloudKit
 import Foundation
 import UIKit
 
-/// Where the sync keeps its two values: iCloud key-value storage in the app, an in-memory store in tests.
-protocol KeyValueSync: AnyObject {
-  func data(forKey key: String) -> Data?
-  func set(_ data: Data?, forKey key: String)
-  @discardableResult func synchronize() -> Bool
-}
-
-extension NSUbiquitousKeyValueStore: KeyValueSync {}
-
 /// Syncs the dictionary's entries and the keyboard's learned words with the user's other iPhones and iPads,
-/// through iCloud key-value storage in the user's own iCloud account. Only the app syncs: the keyboard keeps
-/// reading and writing the App Group, and what it adds while the app is closed goes up at the next sync. Runs
-/// at launch, on return to the foreground, when iCloud brings a change and after the app edits the dictionary;
-/// nothing runs in the background.
+/// through the user's private iCloud database, with the words in encrypted fields (`CloudKitDictionary`). Only
+/// the app syncs: the keyboard keeps reading and writing the App Group, and what it adds while the app is closed
+/// goes up at the next sync. Runs at launch, on return to the foreground, when the iCloud account changes and
+/// after the app edits the dictionary. Changes made on another device arrive at the next of those: a push from a
+/// CloudKit subscription would need the "Remote notifications" background mode
+/// (https://developer.apple.com/documentation/cloudkit/ckdatabasesubscription), which the app does not have.
 @MainActor final class ICloudSync: ObservableObject {
-  /// Apple's limits, from https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore (read
-  /// 12 November 2026): "Your app can have no more than 1024 keys in the iCloud key-value store. The total
-  /// amount of available storage space for all values is 1 megabyte. The maximum size for a single value is
-  /// 1 megabyte." and "If you exceed any of the prescribed limits during a write operation, the operation fails
-  /// and the system doesn't add the keys or values to the store." v2t uses two short keys, so only the 1 MB
-  /// total can bind; counted as 1,000,000 bytes, the smaller reading of "1 megabyte".
-  nonisolated static let limit = 1_000_000
-  nonisolated static let dictionaryKey = "dictionary", learnedKey = "learnedWords"
-
   enum Status: Equatable {
     case off, synced
-    /// No iCloud account on the device: changes wait in the store, which iCloud sends on once one signs in.
+    /// No iCloud account on the device: nothing is read or written until there is one.
     case waitingForICloud
-    /// Both values together would take this many bytes, over `limit`: nothing was written.
+    /// One record (an entry, or the learned words) would take this many bytes, over Apple's 1 MB per record:
+    /// nothing was written.
     case tooLarge(bytes: Int)
     case failed(String)
   }
@@ -37,21 +23,23 @@ extension NSUbiquitousKeyValueStore: KeyValueSync {}
   @Published private(set) var status: Status
   let dictionary: PersonalDictionary
   let settings: Settings
-  private let store: KeyValueSync
-  private let signedIn: () -> Bool
+  private let cloud: DictionaryCloud
+  private let device: String
   private let now: () -> Date
   private var observers: [NSObjectProtocol] = []
   /// Nothing syncs before `start`, so a launch that skips it (UI tests) never touches iCloud.
   private var started = false
+  /// The latest sync; each one waits for the one before, so two never interleave.
+  private var running: Task<Void, Never>?
 
-  init(dictionary: PersonalDictionary, settings: Settings = .shared, store: KeyValueSync = NSUbiquitousKeyValueStore.default,
-       // FileManager's token is nil with no iCloud account (and, Apple's page says, when iCloud Drive is off)
-       signedIn: @escaping () -> Bool = { FileManager.default.ubiquityIdentityToken != nil },
-       now: @escaping () -> Date = Date.init) {
+  /// `device` is the hardware model ("iPhone17,1"), which needs no permission; the name the user gave the device
+  /// needs an entitlement since iOS 16 (https://developer.apple.com/documentation/uikit/uidevice/name).
+  init(dictionary: PersonalDictionary, settings: Settings = .shared, cloud: DictionaryCloud? = nil,
+       device: String = Recommendation.Device.current.model, now: @escaping () -> Date = Date.init) {
     self.dictionary = dictionary
     self.settings = settings
-    self.store = store
-    self.signedIn = signedIn
+    self.cloud = cloud ?? CloudKitDictionary()
+    self.device = device
     self.now = now
     status = settings.iCloudSyncEnabled ? .synced : .off
   }
@@ -69,60 +57,63 @@ extension NSUbiquitousKeyValueStore: KeyValueSync {}
     }
   }
 
-  /// Syncs now, and again on each return to the foreground and each change iCloud brings.
-  func start() {
+  /// Syncs now, and again on each return to the foreground and each iCloud account change.
+  @discardableResult func start() -> Task<Void, Never> {
     started = true
     if observers.isEmpty {
       let center = NotificationCenter.default
-      observers.append(center.addObserver(forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification, object: store, queue: .main) { [weak self] _ in
-        MainActor.assumeIsolated { self?.sync() }
-      })
-      observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-        MainActor.assumeIsolated { self?.sync(fetch: true) }
-      })
+      for name in [UIApplication.willEnterForegroundNotification, .CKAccountChanged] {
+        observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+          MainActor.assumeIsolated { _ = self?.sync() }
+        })
+      }
     }
-    sync(fetch: true)
+    return sync()
   }
 
-  /// Merges this device's dictionary and learned words with iCloud's, then writes whichever side changed. Off,
-  /// it reads and writes nothing. `fetch` asks iCloud for newer values first, which Apple's page advises only at
-  /// launch and on return to the foreground.
-  func sync(fetch: Bool = false) {
+  /// Fetches what iCloud holds, merges it with this device's dictionary and learned words, writes the local side
+  /// and uploads the records that changed. Off, it reads and writes nothing.
+  @discardableResult func sync() -> Task<Void, Never> {
+    let previous = running
+    let task = Task { await previous?.value; await run() }
+    running = task
+    return task
+  }
+
+  private func run() async {
     guard started else { return }
     guard settings.iCloudSyncEnabled else { status = .off; return }
-    if fetch { store.synchronize() }
+    guard await cloud.accountAvailable() else { status = .waitingForICloud; return }
     do {
-      status = try dictionary.transaction {
+      let remote = try await cloud.fetch()
+      guard settings.iCloudSyncEnabled else { status = .off; return }  // turned off while fetching
+      let upload: (entries: DictionaryMerge.Records, learned: Set<String>?)? = try dictionary.transaction {
         // none on a first sync, which the merge treats apart; an unreadable one counts as none
-        let synced = decode(DictionaryMerge.Records.self, try? Data(contentsOf: stateFile))
-        let remote = decode(DictionaryMerge.Records.self, store.data(forKey: Self.dictionaryKey)) ?? [:]
-        let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote, now: now())
-        let learnedThere = Set(decode([String].self, store.data(forKey: Self.learnedKey)) ?? [])
-        // no way to remove a learned word exists, so the union is the whole merge
-        let records = try encode(merged.records), words = try encode(settings.learnedWords.union(learnedThere).sorted())
-        // a store write over the limit would fail, and a cut record would read as deletions elsewhere
-        guard records.count + words.count <= Self.limit else { return .tooLarge(bytes: records.count + words.count) }
+        let synced = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(DictionaryMerge.Records.self, from: $0) }
+        let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote.entries, now: now(),
+                                         device: device, keyboardAdded: dictionary.keyboardAdded)
+        // a record over the limit would be refused, and leaving it out would read as a deletion elsewhere
+        let largest = max(merged.records.map { CloudKitDictionary.size(key: $0.key, $0.value) }.max() ?? 0,
+                          CloudKitDictionary.size(learned: settings.learnedWords.union(remote.learned)))
+        guard largest <= CloudKitDictionary.recordLimit else { status = .tooLarge(bytes: largest); return nil }
         // in one coordinated update the keyboard cannot interleave with; it returns any word the keyboard kept meanwhile
-        let learned = try settings.learn(learnedThere)
+        let learned = try settings.learn(remote.learned)
         if merged.text != dictionary.text { try dictionary.write(merged.text) }
         // written on a first sync even when empty, so the next sync is not a first one
-        if merged.records != synced { try records.write(to: stateFile, options: .atomic) }
-        if merged.records != remote { store.set(records, forKey: Self.dictionaryKey) }
-        if learned != learnedThere { store.set(try encode(learned.sorted()), forKey: Self.learnedKey) }
-        return signedIn() ? .synced : .waitingForICloud
+        if merged.records != synced {
+          let e = JSONEncoder()
+          e.outputFormatting = .sortedKeys
+          try e.encode(merged.records).write(to: stateFile, options: .atomic)
+        }
+        try? FileManager.default.removeItem(at: dictionary.keyboardAddedFile)  // their records now say so
+        // only what iCloud lacks; one that fails to upload differs again at the next sync and goes then
+        return (merged.records.filter { remote.entries[$0.key] != $0.value }, learned == remote.learned ? nil : learned)
       }
+      guard let upload else { return }
+      if !upload.entries.isEmpty || upload.learned != nil { try await cloud.save(entries: upload.entries, learned: upload.learned) }
+      status = .synced
     } catch {
       status = .failed(error.localizedDescription)
     }
-  }
-
-  private func decode<T: Decodable>(_ type: T.Type, _ data: Data?) -> T? {
-    data.flatMap { try? JSONDecoder().decode(type, from: $0) }
-  }
-
-  private func encode(_ value: some Encodable) throws -> Data {
-    let e = JSONEncoder()
-    e.outputFormatting = .sortedKeys  // the same records always give the same bytes
-    return try e.encode(value)
   }
 }

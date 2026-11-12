@@ -13,12 +13,23 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
   """
 
   let file: URL
+  /// Which program writes through this copy: "keyboard" in the keyboard extension, "app" otherwise.
+  let writer: String
   @Published private(set) var text: String
 
-  init(file: URL? = PersonalDictionary.defaultFile) {
+  init(file: URL? = PersonalDictionary.defaultFile, writer: String = Bundle.main.bundleURL.pathExtension == "appex" ? "keyboard" : "app") {
     let f = file ?? URL.applicationSupportDirectory.appending(path: "dictionary.txt")
     self.file = f
+    self.writer = writer
     text = (try? String(contentsOf: f, encoding: .utf8)) ?? Self.header
+  }
+
+  /// The keys of entries the keyboard added since the app last synced with iCloud, so the sync can say the
+  /// keyboard added them. Read, written and cleared only inside `transaction`.
+  var keyboardAddedFile: URL { file.deletingPathExtension().appendingPathExtension("keyboard.json") }
+
+  var keyboardAdded: Set<String> {
+    Set((try? JSONDecoder().decode([String].self, from: Data(contentsOf: keyboardAddedFile))) ?? [])
   }
 
   static var defaultFile: URL? {
@@ -177,6 +188,9 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     var t = text
     if !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
     try write(t + line + "\n")
+    if writer == "keyboard", let key = Self.item(line)?.key {
+      try JSONEncoder().encode(keyboardAdded.union([key]).sorted()).write(to: keyboardAddedFile, options: .atomic)
+    }
   }
 
   var terms: [String] { entries.terms }

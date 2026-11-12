@@ -27,9 +27,10 @@ targets:
       path: App/V2T.entitlements
       properties:
         com.apple.security.application-groups: [group.es.luischav.v2t]
-        # iCloud key-value storage for the dictionary and learned words (App/ICloudSync.swift); the app only,
-        # the keyboard never talks to iCloud
-        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)$(CFBundleIdentifier)
+        # the dictionary and learned words in the user's private CloudKit database (App/DictionaryCloud.swift);
+        # the app only, the keyboard never talks to iCloud. No aps-environment: the app uses no subscriptions
+        com.apple.developer.icloud-container-identifiers: [iCloud.es.luischav.v2t]
+        com.apple.developer.icloud-services: [CloudKit]
     dependencies:
       - target: V2TKeyboard
       - package: FluidAudio
