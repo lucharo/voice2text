@@ -89,16 +89,39 @@ iOS gives keyboards no microphone, so the app records:
 - History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
   saved: the app holds it in memory while it transcribes, then drops it.
 - The dictionary's entries and the keyboard's learned words sync between the user's iPhones and iPads through
-  iCloud key-value storage in their own iCloud account (`App/ICloudSync.swift`), unless **Sync with iCloud** on
-  the Dictionary screen is off. Only the app syncs, at launch, on return to the foreground, when iCloud brings a
-  change and after an edit in the app; the keyboard never talks to iCloud, and a word it keeps while the app is
-  closed goes up at the next sync. Each entry is last writer wins, with deletions kept so a device that still has
-  an entry cannot bring it back; a device's first sync counts the entries it already had as older than any change
-  in iCloud. Learned words are a union, since none can be removed, updated under a file coordinator the keyboard
-  shares. Comment lines stay on the
-  device, and the per-entry sync state is `dictionary.sync.json` beside `dictionary.txt` in the App Group,
-  written in the same file transaction. Apple limits an app to 1 MB of values: past that nothing is written and
-  the screen says why. History, the speech model and audio are never synced.
+  the user's private CloudKit database, with the words in encrypted fields (`App/ICloudSync.swift`,
+  `App/DictionaryCloud.swift`), unless **Sync with iCloud** on the Dictionary screen is off. Only the user can
+  read that database, and it counts toward their iCloud storage. Only the app syncs, at launch, on return to the
+  foreground, when the iCloud account changes and after an edit in the app; there is no push from iCloud, which
+  would need a background mode the app lacks. The keyboard never talks to iCloud, and a word it keeps while the
+  app is closed goes up at the next sync. Each entry is last writer wins, with deletions kept so a device that
+  still has an entry cannot bring it back; a device's first sync counts the entries it already had as older than
+  any change in iCloud. Learned words are a union, since none can be removed, updated under a file coordinator
+  the keyboard shares. Comment lines stay on the device. The per-entry sync state is `dictionary.sync.json`
+  beside `dictionary.txt` in the App Group, and `dictionary.keyboard.json` lists the entries the keyboard added
+  since the last sync; both are written in the dictionary's file transaction. Apple limits a record to 1 MB: an
+  entry or the learned words past that stop the sync, nothing is written, and the screen says why. History, the
+  speech model and audio are never synced.
+
+### iCloud records
+
+Container `iCloud.es.luischav.v2t`, the user's private database, custom zone `Dictionary`. Written by the iPhone
+and iPad app today; the Mac app and agents that edit the dictionary can read and write the same records. Fields
+in `encryptedValues` are encrypted on the device by CloudKit; the others, and record names, are not.
+
+`DictionaryEntry`, one per entry (a term, or a replacement by its heard side), named `entry-` and the SHA-256 of
+its key in hex:
+
+| Field | Type | Encrypted | Meaning |
+| --- | --- | --- | --- |
+| `key` | String | yes | `term:` and the term, or `replace:` and the heard side, lowercased: lines with one key are one entry |
+| `line` | String | yes | The line as written in `dictionary.txt` (`Term` or `heard => written`); absent once deleted |
+| `time` | Date | no | When the entry last changed, by the changing device's clock; the later record wins. `distantPast` for an entry a device had before its first sync |
+| `sourceDevice` | String | no | Hardware model of the device that made the change (`iPhone17,1`); absent when unknown |
+| `sourceApp` | String | no | `keyboard` or `app`: which of them made the change; absent when unknown |
+
+`LearnedWords`, one record named `learnedWords`: `words`, a list of strings, encrypted, each a word the keyboard
+learned, lowercased with straight apostrophes. Devices take the union.
 
 ### Keyboard debug log
 
