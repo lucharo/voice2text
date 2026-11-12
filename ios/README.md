@@ -73,6 +73,13 @@ iOS gives keyboards no microphone, so the app records:
    moment near its 12 s mark (the Mac app's rule), so when you tap the mic again only the last piece is left. A
    dictation under 14.9 s is transcribed whole, as before (#112). Each dictation logs its timing under category
    `dictation`: how long speech took after Stop, and how many pieces were transcribed while you talked.
+6. A dictation can always be ended. The recording view keeps Cancel while the app transcribes or cleans up; Cancel
+   then, Stop microphone session, or the session's own expiry (counted from Done) stops the work after the piece
+   already in the model, and nothing of that dictation is typed or kept in History.
+7. The speech model's first load after its download compiles it for the device, and nobody has timed that on an
+   older chip. Until it has loaded once, the keyboard's mic opens v2t on "Preparing the speech model" instead of
+   recording audio that could not be transcribed until it ends. Later launches reload the compiled copy, and a
+   recording may start while they do. A file in the model's folder (`.v2t-loaded`) records the first load.
 
 ### What stays on the iPhone
 

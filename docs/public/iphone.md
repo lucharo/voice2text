@@ -91,7 +91,9 @@ While you talk, a waveform, a timer and the name of the microphone in use cover 
 **Done** to finish: the keyboard shows "Transcribing…", then "Cleaning up…" if cleanup is on, then
 types the text. A dictation over about
 15 seconds is transcribed in pieces while you talk, so only the last piece is left after Done.
-**Cancel** stops without typing anything, though v2t still saves the dictation in History.
+**Cancel** stops without typing anything, though v2t still saves the dictation in History. Cancel
+stays on screen while v2t transcribes or cleans up; tapping it then stops that work, and v2t keeps
+nothing of the dictation.
 
 <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center" markdown>
 <figure markdown>
@@ -115,9 +117,10 @@ types the text. A dictation over about
   microphone's name. None of this has been checked on a phone yet.
 - The session turns off 15 minutes after your last dictation. Change that under **Languages and
   typing** › **Keep the mic ready for**: 5 minutes, 15 minutes, 1 hour, or until you turn it off
-  yourself, as below.
+  yourself, as below. A dictation still being transcribed by then is stopped with it.
 - To turn it off now, open v2t and tap **Stop microphone session**, or turn off **Mic ready for the
-  keyboard**. The next mic tap opens v2t again.
+  keyboard**. This also stops a dictation still being transcribed, which is then lost. The next mic
+  tap opens v2t again.
 
 ### What happens to your words
 
@@ -204,7 +207,7 @@ already listening; go back to your app and keep talking.
 
 **The text never appeared.** v2t types the text once, into the field where you tapped Done. You can
 go to the v2t app and back before then. If you left the field before the text arrived, or tapped
-Cancel, find the text in the app's **History**.
+Cancel while recording, find the text in the app's **History**. Cancel after Done keeps nothing.
 
 **The orange dot stays on.** The microphone session is waiting for your next dictation. Open v2t and
 tap **Stop microphone session**.
@@ -216,6 +219,10 @@ or was deleted. Tap **Download**, then go back to your app and tap the mic again
   ![v2t's Download the speech model screen: the keyboard's mic needs the speech model first, with a Download button](images/iphone/no-model.png){ width="300" }
   <figcaption>What the mic opens when the speech model isn't on the device.</figcaption>
 </figure>
+
+**Tapping the mic opens v2t on "Preparing the speech model".** The first time the model loads after
+its download, v2t prepares it for this device, and the mic waits until that is done. Stay in v2t
+until it says the model is ready, then go back to your app and tap the mic again.
 
 **The speech model shows an error, or "The speech model didn't load".** The download needs a network
 connection. Tap **Try again** once you're online.
