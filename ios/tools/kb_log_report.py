@@ -15,7 +15,11 @@ Reports:
 - suggestion bar taps by slot (left, middle, right), and how many kept the word as typed;
 - tap-vs-swipe misreads (#140): swipes made within 350 ms of a tap, or shorter than 300 ms, whose word was
   then deleted or replaced; and fingers typed early by rollover;
-- keys per second while typing (bursts with no gap over 2 s).
+- keys per second while typing (bursts with no gap over 2 s);
+- touch delivery: how long after the touch the keyboard acted on it, for touches within 30 pt of a screen edge
+  (where iOS holds touches back for its own edge gestures) against the rest;
+- bar time: from a character key to the suggestion bar it leads to, which is the keyboard's own work per key
+  (the engine and the suggestions), against the 8 ms of one frame at 120 Hz.
 
 The log's events are described in ios/README.md ("Keyboard debug log").
 """
@@ -35,6 +39,8 @@ SLOTS = ["left", "middle", "right"]
 FAST_TYPING_MS = 350  # TouchArbiter.fastTypingWindow
 SHORT_SWIPE_MS = 300
 BURST_GAP_MS = 2000
+FRAME_MS = 8  # one frame at 120 Hz: per-key work over this can hold up the next touch
+EDGE_PT = 30  # iOS's edge gestures hold back touches this close to the left and right screen edges
 # actions that type or edit, as KeyboardViewController logs them; shift, pages and the globe do neither
 TYPING_ACTS = {"space", "returnKey", "tab"}
 EDITING_ACTS = TYPING_ACTS | {"delete", "deleteWord"}
@@ -117,6 +123,11 @@ class Report:
     taps: int = 0
     kps: list = field(default_factory=list)
     keys: int = 0
+    # ms from the touch to the keyboard acting on it, by "edge" or "middle": a character key acts when the
+    # finger lifts, delete when it lands
+    key_delivery: dict = field(default_factory=lambda: {"edge": [], "middle": []})
+    delete_delivery: dict = field(default_factory=lambda: {"edge": [], "middle": []})
+    bar_ms: list = field(default_factory=list)  # from a character key to the bar it leads to
 
 
 class Document:
@@ -189,6 +200,16 @@ def analyse(events: list[dict]) -> Report:
     key_times: list[float] = []
     corrected: Counter = Counter()  # (replacement, original), lowercase
     offered_left: Counter = Counter()  # the same pairs, for offers counted as left
+    width = 0.0  # the keyboard's width, from the session's appear line
+    lifted: tuple[float, str] | None = None  # a tapped character key's lift, until its key line
+    delete_down: tuple[float, str] | None = None  # delete's touch, until its first act line
+    key_at: float | None = None  # a character key, until the bar line it leads to
+
+    def zone(ev: dict) -> str | None:
+        p = ev.get("p")
+        if not width or not p:
+            return None
+        return "edge" if p[0] < EDGE_PT or p[0] > width - EDGE_PT else "middle"
     reverted_by_keyboard: Counter = Counter()
 
     def settle_swipe(outcome: str) -> None:
@@ -209,6 +230,8 @@ def analyse(events: list[dict]) -> Report:
         last_t = t
         if e == "appear":
             r.sessions += 1
+            width = ev.get("width", 0.0)
+            lifted = delete_down = key_at = None
         elif e == "skip":
             r.skipped_fields[ev.get("reason", "?")] += 1
             swipe_lifts.clear()  # their decodes land while the log is paused, unrecorded
@@ -233,10 +256,23 @@ def analyse(events: list[dict]) -> Report:
         elif e == "key" or (e == "act" and ev.get("a") in TYPING_ACTS):
             r.keys += 1
             key_times.append(t)
+            if e == "key" and lifted is not None and 0 <= t - lifted[0] < 500:
+                r.key_delivery[lifted[1]].append(t - lifted[0])
+            lifted = None
+            key_at = t if e == "key" else None
+        elif e == "act" and ev.get("a") == "delete":
+            if delete_down is not None and 0 <= t - delete_down[0] < 500:  # the first delete, not a held one's repeats
+                r.delete_delivery[delete_down[1]].append(t - delete_down[0])
+            delete_down = None
         elif e == "down":
             if ev.get("fingers", 0) > 1:  # counts the finger landing too
                 r.multi_finger_downs += 1
+            z = zone(ev)
+            delete_down = (t, z) if ev.get("key") == "delete" and z else None
         elif e == "up":
+            z = zone(ev)
+            character = str(ev.get("key", "")).partition("-")[0] in ("letters", "numbers", "symbols")
+            lifted = (t, z) if ev.get("verdict") == "tap" and character and z else None
             if ev.get("verdict") == "tap":
                 r.taps += 1
                 last_tap_up = t
@@ -268,6 +304,9 @@ def analyse(events: list[dict]) -> Report:
                 swipe_end = len(doc.text)
         elif e == "bar":
             last_bar = ev
+            if key_at is not None and 0 <= t - key_at < 500:
+                r.bar_ms.append(t - key_at)
+            key_at = None
         elif e == "pick":
             slot = ev.get("slot", 0)
             r.picks[SLOTS[slot] if 0 <= slot < 3 else str(slot)] += 1
@@ -375,6 +414,17 @@ def text_report(r: Report) -> str:
     out += ["", "Speed", f"  {r.keys} keys"]
     if r.kps:
         out.append(f"  keys per second while typing: median {statistics.median(r.kps):.1f}, best {max(r.kps):.1f} ({len(r.kps)} bursts)")
+    delivery = [f"  {name}: " + ", ".join(
+        f"{'within 30 pt of a screen edge' if z == 'edge' else 'elsewhere'} median {statistics.median(d[z]):.0f} ms ({len(d[z])})"
+        for z in ("middle", "edge") if d[z])
+        for name, d in (("character keys, lift to key", r.key_delivery), ("delete, touch to delete", r.delete_delivery)) if d["edge"] or d["middle"]]
+    if delivery:
+        out += ["", "Touch delivery"] + delivery
+    if r.bar_ms:
+        ms = sorted(r.bar_ms)
+        out += ["", "Bar time (character key to suggestions)",
+                f"  median {statistics.median(ms):.1f} ms, 95th percentile {ms[int(0.95 * (len(ms) - 1))]:.1f} ms, "
+                f"over {FRAME_MS} ms {pct(sum(m > FRAME_MS for m in ms), len(ms))}"]
     return "\n".join(out)
 
 
@@ -389,6 +439,10 @@ def json_report(r: Report) -> dict:
         "tap_vs_swipe": {"taps": r.taps, "rollovers": r.rollovers, "multi_finger_downs": r.multi_finger_downs,
                          "likely_misreads": len(misreads(r))},
         "keys": r.keys, "kps_median": round(statistics.median(r.kps), 2) if r.kps else None,
+        "touch_delivery_ms": {name: {z: {"median": round(statistics.median(d[z]), 1), "n": len(d[z])} for z in ("middle", "edge") if d[z]}
+                              for name, d in (("keys", r.key_delivery), ("delete", r.delete_delivery))},
+        "bar_ms": {"median": round(statistics.median(r.bar_ms), 1), "p95": round(sorted(r.bar_ms)[int(0.95 * (len(r.bar_ms) - 1))], 1),
+                   "over_frame": sum(m > FRAME_MS for m in r.bar_ms), "n": len(r.bar_ms)} if r.bar_ms else None,
     }
 
 
