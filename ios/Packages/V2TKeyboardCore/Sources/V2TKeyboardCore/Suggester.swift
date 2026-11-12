@@ -29,7 +29,12 @@ public struct Suggestion: Equatable, Sendable {
 public final class Suggester: @unchecked Sendable {
   public var lexicons: [Lexicon]
   public let layout: KeyboardLayout
-  /// Touch spread in key widths.
+  /// Touch spread in key widths. NoisyTypingEval's real phone taps want it wider: on its test split 0.5 fixed 73.0%
+  /// of the mistapped words against 70.9% at 0.42 (72.0% and 71.3% on full-size keyboards), with fewer wrong words.
+  /// It stays at 0.42 because the taps at key centres want it narrow: 0.46 already made 31 more English and 23
+  /// more Spanish wrong words on RealTypoEval's misspellings, and QualityEval's bar lost words after two and three
+  /// letters. The neighbour floor (0 to 1) moved no development row by more than 0.4 points; a cutoff of 2.2 or 2.6
+  /// key widths matched 1.8, and 1.4 fixed 2.3 points fewer.
   public var touchStd: Double = 0.42
   /// The least a neighbour of the key hit costs, however close the touch was to it.
   public var neighbourFloor: Double = 0.3

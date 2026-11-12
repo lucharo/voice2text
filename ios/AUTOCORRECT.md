@@ -115,10 +115,54 @@ Typing the 1,043 correct sentences per language, autocorrect changed 2 English a
 and 126 now. The trade is deliberate: about a third fewer wrong words in English for 5 fewer fixes of 4,122, since
 a wrong word has to be deleted and a misspelling left alone does not.
 
+### On real phone taps (2026-11-12)
+
+`NoisyTypingEval` types the phone taps of Vertanen and Kristensson's noisy-typing dataset (CC BY 4.0,
+https://osf.io/5xwng/, fetched by `tools/fetch_noisy_typing.py`): Enron email sentences copied on an iPhone 4 or a
+Nexus 4, which the authors force aligned to the words meant, typed here a word at a time with the words before
+as context. Each dataset keyboard is mapped onto the 402 pt layout by one straight line for x and one for y
+through the letter centres; after it, the share of taps that type the meant key is within 0.2 points of the
+share nearest it on the dataset's own keyboard (86.1% against 86.3% on development, 83.5% against 83.6% on test).
+The typists saw no recognition while typing, many saw no key popups, and some typed on keyboards a third or a
+sixth of a phone's, so a word was tapped right less often than on a keyboard that shows each key: the full-size
+keyboards with popups are the part closest to v2t. Release build:
+`swift test -c release -Xswiftc -enable-testing --filter NoisyTypingEval 2>&1 | grep '^noisy'`.
+
+| Set (English) | Words | Tapped right | Of those, changed | Tapped wrong | Fixed | Wrong word | Left as typed | Meant word in the bar |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Development, all | 15,305 | 61.3% | 2 | 5,929 | 75.8% | 7.6% | 16.6% | 89.0% |
+| Development, full-size with popups | 5,728 | 64.8% | 1 | 2,016 | 81.0% | 4.1% | 14.9% | 92.9% |
+| Test, all | 45,757 | 56.4% | 35 | 19,952 | 70.9% | 10.0% | 19.1% | 84.6% |
+| Test, full-size with popups | 16,766 | 72.1% | 17 | 4,681 | 71.3% | 7.9% | 20.8% | 83.4% |
+| Test, all, taps moved to their keys' centres | 45,757 | 56.4% | 36 | 19,952 | 52.3% | 18.7% | 29.0% | 64.6% |
+
+The last four columns are shares of the words tapped wrong. 11.7% of those on the test split are words
+themselves ("hone" for "home"), which autocorrect leaves by design: up to 11.7 of its 19.1 points left as typed.
+Moving each tap to the centre of the key it typed loses 19 points of fixes: the touch model reads where the
+finger lifted.
+
+Tuned on the development split (`V2T_TYPO_TUNE=... --filter NoisyTypingTuning`), the touch spread is the only
+constant that moves it. A wider one fixes more real taps and costs the key-centre measures:
+
+| `touchStd` | Test fixed / wrong | Test full-size fixed / wrong | RealTypo EN wrong | RealTypo ES wrong | Bar after 3 letters (EN) |
+| --- | --- | --- | --- | --- | --- |
+| 0.42 (kept) | 70.9% / 10.0% | 71.3% / 7.9% | 6.2% | 6.7% | 41.0% |
+| 0.46 | 72.2% / 9.4% | 71.8% / 7.7% | 7.0% | 6.8% | 40.3% |
+| 0.50 | 73.0% / 9.0% | 72.0% / 7.8% | 7.4% | 7.1% | 39.6% |
+| 0.55 | 73.3% / 9.0% | 71.6% / 8.3% | 8.5% | 7.6% | 36.6% |
+
+The evals are deterministic, so their run-to-run noise is nil and any rise in a wrong-word rate counts; no
+default changed. At 0.42 the neighbour floor (0 to 1) moved no development row by more than 0.4 points. At 0.5 a
+neighbour cutoff of 1.4 key widths fixed 2.3 points fewer than 1.8, and 2.2 and 2.6 matched it; a skip or
+missed-letter penalty of 4 or 6 did up to 0.7 points worse than 5; the spelling-slip (6, 8), vowel (4, 6),
+first-touch (1, 3) and last-letter (4, 6) penalties moved no row by more than 0.3.
+
 Still different from Apple's keyboard, or unmeasured:
 
 - **Real fingers.** The misspellings were typed on physical keyboards, so the taps sit at the key centres. One
-  log of real touches has been replayed (above); it is 72 words from one typist, tapping only, no swipes.
+  log of real touches has been replayed (above); it is 72 words from one typist, tapping only, no swipes. The
+  noisy-typing dataset (above) is real taps from the participants of seven studies (126 listed in their readmes), but on an iPhone 4 or a Nexus 4, copying
+  text, mostly without key popups: noisier than typing on a keyboard that shows each key.
 - **Names at the start of a sentence** are still corrected when the word list lacks them ("Tom" → "Ton" with
   only Spanish on); a capitalised typo cannot be told from a name there.
 - **Learning.** v2t learns a word after one rejection, and a kept word no word list knows ("marimo" over
