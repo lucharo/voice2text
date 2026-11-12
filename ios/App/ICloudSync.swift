@@ -104,7 +104,7 @@ import UIKit
       // none on a first sync, which the merge treats apart; an unreadable one counts as none
       let synced = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(DictionaryMerge.Records.self, from: $0) }
       let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote.entries,
-                                       changes: dictionary.changes, device: device)
+                                       changes: try dictionary.committedChanges(), device: device)
       // a record over the limit would be refused, and leaving it out would read as a deletion elsewhere
       let largest = max(merged.records.map { CloudKitDictionary.size(key: $0.key, $0.value) }.max() ?? 0,
                         CloudKitDictionary.size(learned: settings.learnedWords.union(remote.learned)))

@@ -345,6 +345,32 @@ final class Clock {
     #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(20), source: by("iPad16,3"))])
   }
 
+  /// A failed write's note names a line that never reached the disk. If iCloud then brings that same line, and
+  /// the sync state fails to save, the note must not date the download: a later edit elsewhere still wins.
+  @Test func aFailedWritesNoteNeverDatesTheSameLineDownloadedLater() async throws {
+    let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+    let file = phone.dictionary.file.path(), state = phone.sync.stateFile.path()
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: file)
+    clock.at(30); let writeFailed = (try? phone.dictionary.save("ai => A.I.\n")) == nil
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file)
+    clock.at(20); try pad.dictionary.save("ai => A.I.\n")
+    await pad.sync.sync().value
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: state)
+    clock.at(22); await phone.sync.sync().value  // downloads the pad's line, then fails to save its sync state
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: state)
+    guard writeFailed, case .failed = phone.sync.status else { Issue.record("a write did not fail: \(phone.sync.status)"); return }
+
+    clock.at(25); try pad.dictionary.save("ai => Ai\n")
+    await pad.sync.sync().value
+    clock.at(40); await phone.sync.sync().value
+
+    #expect(phone.dictionary.text == "ai => Ai\n")
+    #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(25), source: by("iPad16,3"))])
+  }
+
   /// A save that meets a newer server record leaves the server's winner there; the sync then fetches again, so
   /// this device uses the winning rule (and the learned words the server merged) straight away.
   @Test func aSaveThatMeetsANewerServerRecordBringsTheWinnerHere() async throws {

@@ -49,6 +49,20 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     (try? JSONDecoder().decode([String: [Change]].self, from: Data(contentsOf: changesFile))) ?? [:]
   }
 
+  /// The changes whose line is the one on disk, at most one per entry, with the rest dropped from the file: a
+  /// note for a write that failed, or one an entry has since moved on from. The app's iCloud sync calls this,
+  /// inside `transaction`, before it writes a download, so a download of a line a failed write meant to leave
+  /// can never take that note's time, even if the sync then fails to save its state.
+  func committedChanges() throws -> [String: [Change]] {
+    let all = changes, onDisk = Self.entryLines(text)
+    var kept: [String: [Change]] = [:]
+    for (k, notes) in all {
+      if let note = notes.last(where: { $0.line == onDisk[k] }) { kept[k] = [note] }
+    }
+    if kept != all { try JSONEncoder().encode(kept).write(to: changesFile, options: .atomic) }
+    return kept
+  }
+
   static var defaultFile: URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Settings.group)?.appending(path: "dictionary.txt")
   }
