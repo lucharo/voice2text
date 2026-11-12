@@ -46,6 +46,8 @@ public final class KeyboardDebugLog: @unchecked Sendable {
   public let maxFileBytes: Int
   /// Seconds on the same clock as UITouch timestamps and CACurrentMediaTime (system uptime).
   public let clock: @Sendable () -> TimeInterval
+  /// The log's clock unless a test passes its own: system uptime, which the app's typing exercise uses too.
+  public static let systemClock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
   let flushCount: Int
   let flushDelay: TimeInterval
 
@@ -68,7 +70,7 @@ public final class KeyboardDebugLog: @unchecked Sendable {
   }
 
   public init(directory: URL, maxFileBytes: Int = KeyboardDebugLog.defaultMaxFileBytes, flushCount: Int = 64,
-              flushDelay: TimeInterval = 1, clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+              flushDelay: TimeInterval = 1, clock: @escaping @Sendable () -> TimeInterval = KeyboardDebugLog.systemClock) {
     self.directory = directory
     self.maxFileBytes = maxFileBytes
     self.flushCount = flushCount
@@ -191,9 +193,10 @@ public final class KeyboardDebugLog: @unchecked Sendable {
 
   // MARK: files, for the app
 
-  /// The log's files, oldest first, those that exist.
+  /// The log's files that exist: the keyboard's, oldest first, then the typing exercise's (`TypingExerciseLog`),
+  /// so Export, the size shown and Clear log take both.
   public static func files(in directory: URL) -> [URL] {
-    [rotatedName, fileName].map { directory.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+    [rotatedName, fileName, TypingExerciseLog.rotatedName, TypingExerciseLog.fileName].map { directory.appending(path: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
   }
 
   /// Bytes on disk.
@@ -209,7 +212,7 @@ public final class KeyboardDebugLog: @unchecked Sendable {
     }
   }
 
-  /// Both files joined, oldest first: what Export shares, read while the keyboard cannot rotate them.
+  /// The files joined, the keyboard's oldest first and the exercise's after them: what Export shares, read while the keyboard cannot rotate them.
   public static func merged(in directory: URL) throws -> Data {
     var result: Result<Data, Error> = .success(Data())
     coordinate(directory, writing: false) {

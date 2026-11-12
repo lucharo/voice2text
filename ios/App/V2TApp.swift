@@ -637,6 +637,8 @@ struct KeyboardLogSection: View {
       }
       .disabled(size == 0)
       .accessibilityIdentifier("settings.debugLogClear")
+      NavigationLink("Typing exercise") { TypingExerciseView() }
+        .accessibilityIdentifier("settings.typingExercise")
     } header: {
       Text("Debugging")
     } footer: {

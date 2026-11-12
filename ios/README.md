@@ -97,6 +97,14 @@ while it records. It is written by `KeyboardDebugLog` (V2TKeyboardCore) as JSON 
 in the App Group, moving to `keyboard.1.jsonl` past 4 MB, so it never holds more than 8 MB. The app's Export
 shares both files joined; Clear log deletes them.
 
+**Typing exercise** (Debugging › Typing exercise) is a typing test for the log: it shows ten sentences one at a
+time (seven English and three Spanish when Spanish is among the suggestion languages, picked at random from 24 and
+8 written for v2t, `App/ExerciseSentences.swift`), the person types each with the v2t keyboard in a field with
+iOS's default traits, and a summary shows the words that came out different and characters per second. It turns
+the log on for its 24 hours if it is off. Each sentence is one `exercise` line in `KeyboardLog/exercises.jsonl`
+(moving to `exercises.1.jsonl` past 256 KB), written only while the log is on; Export appends these files after
+the keyboard's, and Clear log deletes them too.
+
 - **Privacy.** Local only. Never recorded: fields whose content type asks for a password, a new password, a
   one-time code or card details (iOS already swaps in its own keyboard for secure fields; `keyboardType` has no
   password or card value, so it marks nothing on its own). A `skip` line names the reason, then nothing until
@@ -117,6 +125,22 @@ shares both files joined; Clear log deletes them.
   8 ms budget: log off mean 0.95, p95 2.43, p99 3.48 ms; log on 0.97, 2.46 and 3.28 ms
   (`swift test -c release -Xswiftc -enable-testing --filter perKeyCost`). The difference is within the noise.
   Phone untested.
+- **Exercises.** `kb_log_report.py` reads the `exercise` lines from an export or a fetched folder and adds an
+  Exercises section: for the keyboard's events between each line's `t` and `end`, the sentence's words that
+  ended up different, how many autocorrections made the sentence's word and how many another word (or could not
+  be placed: after the host moved the cursor, or in a sentence whose text at Next has a different number of words,
+  where every word after the gap would meet the wrong target), keys per second, and, from taps in words typed with no delete
+  whose letter matches the sentence's at that place, the mean offset of the finger's landing point from its key's
+  centre per letter, in key widths, and for taps that typed another letter, which (meant, hit, count). Key
+  centres follow `KeyboardLayout.buildPhone`'s rules (`phone_letter_centres`, checked against the Swift layout
+  at 402 and 375 pt), from the `appear` line's width; iPad sessions get no offsets. The replay (below) prints
+  `replay-exercise` lines when the log has exercises: each sentence word typed while it was on screen as tapped
+  right, fixed by autocorrect, made a different wrong word or left as typed, whether the bar showed the
+  sentence's word, and a `replay-exercise-summary`. A sentence is scored only when its finished words, as the
+  logging build left them, are the field's words at Next one for one and as many as the sentence's; otherwise
+  every word of it is not scored. A last word with nothing typed after it before Next was never finished, so it
+  alone is not scored, and so is a word typed after a delete. Both tools match a
+  sentence only with keyboard events from the same boot of the phone (the `wall` time less the uptime).
 - **Fetch.** `ios/tools/fetch_kb_log.sh` copies the log off a connected iPhone (`xcrun devicectl device copy from
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
   reads TestFlight builds too) or a Simulator (`--sim <udid>`) into `~/.v2t/eval/kb-logs/<device>-<time>/`. Then
@@ -149,6 +173,7 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 | `host` | kind, chars (text before the cursor, up to 160) | the app changed the text or moved the cursor |
 | `page`, `emoji`, `dictation` | page, form, width; emoji, from; chars, words | |
 | `edge-gates` | recognisers (on the keyboard's window; -1 with no window), released (those told not to hold touches back) | the keyboard appeared |
+| `exercise` | end (uptime ms at Next), wall (ISO time the sentence appeared), id (`en-07`), target, typed (the field at Next); `t` is when the sentence appeared | written by the app, in `exercises.jsonl`, one a sentence |
 
 ### Which model this iPhone gets
 

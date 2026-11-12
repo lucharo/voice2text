@@ -191,6 +191,11 @@ when you hold the space bar and slide. Their settings are under **Languages and 
   Nothing leaves the iPhone unless you tap **Export**, and **Clear log** deletes it. It turns itself
   off after 24 hours, and never records in password, one-time-code or card fields. It needs Full
   Access, like dictation.
+- **Typing exercise:** under **Languages and typing** › Debugging, like a typing test: it shows ten
+  short sentences one at a time to type with the v2t keyboard, then the words that came out
+  different and your speed. It turns the debug log on for 24 hours if it is off, and records each
+  sentence and what you typed beside the keyboard's log, so the keyboard's mistakes can be told
+  from what you meant.
 
 iOS limits every third-party keyboard, v2t's included:
 
