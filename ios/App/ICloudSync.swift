@@ -97,19 +97,18 @@ extension NSUbiquitousKeyValueStore: KeyValueSync {}
         let synced = decode(DictionaryMerge.Records.self, try? Data(contentsOf: stateFile))
         let remote = decode(DictionaryMerge.Records.self, store.data(forKey: Self.dictionaryKey)) ?? [:]
         let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote, now: now())
-        let learnedHere = settings.learnedWords
         let learnedThere = Set(decode([String].self, store.data(forKey: Self.learnedKey)) ?? [])
         // no way to remove a learned word exists, so the union is the whole merge
-        let learned = learnedHere.union(learnedThere)
-        let records = try encode(merged.records), words = try encode(learned.sorted())
+        let records = try encode(merged.records), words = try encode(settings.learnedWords.union(learnedThere).sorted())
         // a store write over the limit would fail, and a cut record would read as deletions elsewhere
         guard records.count + words.count <= Self.limit else { return .tooLarge(bytes: records.count + words.count) }
+        // in one coordinated update the keyboard cannot interleave with; it returns any word the keyboard kept meanwhile
+        let learned = try settings.learn(learnedThere)
         if merged.text != dictionary.text { try dictionary.write(merged.text) }
         // written on a first sync even when empty, so the next sync is not a first one
         if merged.records != synced { try records.write(to: stateFile, options: .atomic) }
         if merged.records != remote { store.set(records, forKey: Self.dictionaryKey) }
-        for w in learned.subtracting(learnedHere).sorted() { settings.learn(w) }
-        if learned != learnedThere { store.set(words, forKey: Self.learnedKey) }
+        if learned != learnedThere { store.set(try encode(learned.sorted()), forKey: Self.learnedKey) }
         return signedIn() ? .synced : .waitingForICloud
       }
     } catch {

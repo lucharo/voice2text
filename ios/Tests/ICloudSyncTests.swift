@@ -186,6 +186,20 @@ final class Clock {
     #expect(cloud.records == ["term:marimo": .init(line: "marimo", time: at(4))])
   }
 
+  /// The keyboard keeps words while the app applies a download, each reading and writing back the one array: no
+  /// word from either side is lost.
+  @Test func wordsTheKeyboardKeepsDuringADownloadAllStay() async {
+    let suite = "v2t-learn-\(UUID().uuidString)"
+    let kept = (0..<100).map { "kept\($0)" }, downloaded = Set((0..<100).map { "cloud\($0)" })
+
+    await withTaskGroup(of: Void.self) { group in
+      for w in kept { group.addTask { Settings(defaults: UserDefaults(suiteName: suite)!).learn(w) } }
+      group.addTask { _ = try? Settings(defaults: UserDefaults(suiteName: suite)!).learn(downloaded) }
+    }
+
+    #expect(Settings(defaults: UserDefaults(suiteName: suite)!).learnedWords == Set(kept).union(downloaded))
+  }
+
   @Test func switchedOffItReadsAndWritesNothing() throws {
     let pad = try Device("Fluide\n", learned: ["kian"], cloud: cloud, clock: clock)
     clock.at(1); pad.sync.start()
