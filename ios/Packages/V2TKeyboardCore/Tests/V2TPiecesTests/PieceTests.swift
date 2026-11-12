@@ -282,6 +282,25 @@ private func record(_ audio: [Float], into t: PieceTranscriber) async {
     #expect(throws: CancellationError.self) { try result.get() }
   }
 
+  /// A piece failed, so Stop decodes the whole recording; Cancel while that decode runs: its text is not returned.
+  @Test func abandoningWhileTheWholeRecordingDecodesReturnsNoText() async throws {
+    let model = FakeModel()
+    await model.failing(on: 1)
+    let t = transcriber(model)
+    let audio = speech(13) + silence(0.5) + speech(11)
+    await record(audio, into: t)
+    await model.holdTheNextDecode()
+
+    let finishing = Task { try await t.finish(audio) }
+    await model.waitUntilHeld()
+    await t.abandon()
+    await model.release()
+    let result = await finishing.result
+
+    #expect(await model.calls == [208_800, 392_000])
+    #expect(throws: CancellationError.self) { try result.get() }
+  }
+
   @Test func audioAddedAfterFinishIsIgnored() async throws {
     let model = FakeModel()
     let t = transcriber(model)

@@ -94,7 +94,11 @@ public actor PieceTranscriber {
     // not the tail and not the whole recording again, and no text comes back to be typed or kept
     if abandoned { return .failure(CancellationError()) }
     report.fellBack = true
-    do { return .success((try await decode(recording).trimmed, report)) } catch { return .failure(error) }
+    let whole: Result<String, Error>
+    do { whole = .success(try await decode(recording).trimmed) } catch { whole = .failure(error) }
+    // dropped while the whole recording was decoding: its text is not returned either
+    if abandoned { return .failure(CancellationError()) }
+    return whole.map { ($0, report) }
   }
 
   private func decodeSettled(atFinish: Bool) async {
