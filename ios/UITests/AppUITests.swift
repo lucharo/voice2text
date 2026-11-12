@@ -37,6 +37,28 @@ import XCTest
     XCTAssertFalse(app.staticTexts[term].waitForExistence(timeout: 2), "deleted term came back")
   }
 
+  /// The keyboard's settings and, in a test build, Debugging are sections of the first page, with nothing to open.
+  func testKeyboardAndDebuggingAreSectionsOfTheHomePage() {
+    continueAfterFailure = false
+    app.launch()
+    XCTAssertFalse(app.buttons["Languages and typing"].exists)
+    let skinTone = app.buttons["settings.skinTone"].firstMatch
+    reveal(skinTone, in: app)
+    XCTAssertTrue(skinTone.exists, app.debugDescription)
+    XCTAssertTrue(app.buttons["Layout"].firstMatch.exists || app.staticTexts["Layout"].exists, app.debugDescription)
+    shot("25-home-keyboard")
+    let log = app.switches["settings.debugLog"].firstMatch
+    reveal(log, in: app)
+    XCTAssertTrue(log.exists, "no Debugging section on the home page of a test build")
+    XCTAssertTrue(app.staticTexts["Debugging"].exists || app.staticTexts["DEBUGGING"].exists, app.debugDescription)
+    XCTAssertTrue(app.buttons["settings.debugLogExport"].exists)
+    let exercise = app.buttons["settings.typingExercise"]
+    reveal(exercise, in: app)
+    XCTAssertTrue(exercise.exists)
+    XCTAssertTrue(app.navigationBars["v2t"].exists, "Debugging opened a screen of its own")
+    shot("26-home-debugging")
+  }
+
   func testCleanupSwitchDrivesTheRecommendationCard() {
     continueAfterFailure = false
     app.launch()

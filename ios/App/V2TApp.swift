@@ -57,6 +57,8 @@ struct HomeView: View {
   @State private var keyboardSeen = Settings.shared.keyboardFullAccessSeen
   /// About v2t over the setup list, once after install; dismissing it shows the setup list.
   @State private var showAbout = !Settings.shared.aboutShown
+  /// Debugging, for TestFlight, debug and Simulator builds; a release build learns which it is from StoreKit.
+  @State private var showsDebugging = DebuggingVisibility.shownByBuild
 
   var body: some View {
     NavigationStack {
@@ -92,6 +94,7 @@ struct HomeView: View {
         }
         Section("Dictation") {
           WarmRow()
+          WarmLengthRow()
           MicrophoneRow()
           CleanupRow()
           Picker("Speech language", selection: Binding(get: { Settings.shared.speechLanguage }, set: { Settings.shared.speechLanguage = $0 })) {
@@ -102,9 +105,10 @@ struct HomeView: View {
           NavigationLink("Dictionary") { DictionaryView() }
           NavigationLink("History (\(history.items.count))") { HistoryView() }
         }
+        KeyboardSection()
         Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
         Section("Storage") { StorageRows() }
-        Section("Keyboard") { NavigationLink("Languages and typing") { KeyboardSettingsView() } }
+        if showsDebugging { KeyboardLogSection() }
         Section {
           NavigationLink("About v2t") { AboutView() }
             .accessibilityIdentifier("v2t.about.open")
@@ -123,6 +127,11 @@ struct HomeView: View {
       dictation.refreshModelStorage()
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
+    .task {
+      let shows = await DebuggingVisibility.current()
+      showsDebugging = shows
+      DebuggingVisibility.apply(shows: shows, to: .shared)
+    }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
     // the keyboard's mic opened v2t before it was ever opened: recording comes first, About waits for a later launch
     .sheet(isPresented: Binding(get: { showAbout && !dictation.cameFromKeyboard }, set: { showAbout = $0 }),
@@ -227,7 +236,7 @@ struct WarmRow: View {
   }
   var subtitle: String {
     guard dictation.state != .needsApp else { return "Off: the keyboard's mic opens v2t once to turn it on." }
-    if let until = dictation.warmUntil { return "On: dictate from any app until \(until.formatted(date: .omitted, time: .shortened)), 15 minutes after your last dictation unless changed in Keyboard settings. The orange dot shows while it's on; only what you say between the mic taps is kept." }
+    if let until = dictation.warmUntil { return "On: dictate from any app until \(until.formatted(date: .omitted, time: .shortened)), 15 minutes after your last dictation unless changed below. The orange dot shows while it's on; only what you say between the mic taps is kept." }
     return "Dictate from any app until you turn this off. The orange dot shows while it's on."
   }
 }
@@ -551,49 +560,54 @@ struct HistoryView: View {
   }
 }
 
-struct KeyboardSettingsView: View {
+/// How long the mic stays ready after the last dictation, under the switch it applies to.
+struct WarmLengthRow: View {
   @EnvironmentObject var dictation: DictationService
+  @State private var warm = Settings.shared.warmMinutes
+  var body: some View {
+    Picker("Keep the mic ready for", selection: $warm) {
+      Text("5 minutes").tag(5)
+      Text("15 minutes").tag(15)
+      Text("1 hour").tag(60)
+      Text("Until I turn it off").tag(0)
+    }
+    .onChange(of: warm) {
+      Settings.shared.warmMinutes = warm
+      dictation.applyWarmSetting()  // a session already on takes the new length from now
+    }
+  }
+}
+
+/// The keyboard's layout, its suggestion languages and the emoji skin tone, as a section of the home page.
+struct KeyboardSection: View {
   @State private var layout = Settings.shared.layoutLanguage
   @State private var bilingual = Settings.shared.suggestionLanguages.count > 1
-  @State private var warm = Settings.shared.warmMinutes
   /// 0 is yellow, 1 to 5 the skin tones.
   @State private var skinTone = Settings.shared.emojiSkinTone?.rawValue ?? 0
   var body: some View {
-    Form {
+    Section {
       Picker("Layout", selection: $layout) {
         Text("English (QWERTY)").tag(KeyboardLanguage.english)
         Text("Español (con ñ)").tag(KeyboardLanguage.spanish)
       }
       Toggle("Suggest English and Spanish together", isOn: $bilingual)
-      Picker("Keep the mic ready for", selection: $warm) {
-        Text("5 minutes").tag(5)
-        Text("15 minutes").tag(15)
-        Text("1 hour").tag(60)
-        Text("Until I turn it off").tag(0)
+      // written on every pick, the one already shown too: picking it again resets the tones picked for
+      // single emoji in the keyboard since
+      Picker("Emoji skin tone", selection: Binding(get: { skinTone }, set: {
+        skinTone = $0
+        Settings.shared.emojiSkinTone = SkinTone(rawValue: $0)
+      })) {
+        Text("👋 Yellow").tag(0)
+        ForEach(SkinTone.allCases, id: \.rawValue) { t in Text("👋" + t.modifier).tag(t.rawValue) }
       }
-      Section {
-        // written on every pick, the one already shown too: picking it again resets the tones picked for
-        // single emoji in the keyboard since
-        Picker("Emoji skin tone", selection: Binding(get: { skinTone }, set: {
-          skinTone = $0
-          Settings.shared.emojiSkinTone = SkinTone(rawValue: $0)
-        })) {
-          Text("👋 Yellow").tag(0)
-          ForEach(SkinTone.allCases, id: \.rawValue) { t in Text("👋" + t.modifier).tag(t.rawValue) }
-        }
-        .accessibilityIdentifier("settings.skinTone")
-      } footer: {
-        Text("Every emoji with skin tones shows this tone until you pick another for it: touch and hold an emoji in the v2t keyboard. iOS keeps the Apple keyboard's skin tones to itself, so v2t cannot follow them.")
-      }
-      KeyboardLogSection()
+      .accessibilityIdentifier("settings.skinTone")
+    } header: {
+      Text("Keyboard")
+    } footer: {
+      Text("Every emoji with skin tones shows this tone until you pick another for it: touch and hold an emoji in the v2t keyboard. iOS keeps the Apple keyboard's skin tones to itself, so v2t cannot follow them.")
     }
-    .navigationTitle("Keyboard")
     .onChange(of: layout) { Settings.shared.layoutLanguage = layout; saveLanguages() }
     .onChange(of: bilingual) { saveLanguages() }
-    .onChange(of: warm) {
-      Settings.shared.warmMinutes = warm
-      dictation.applyWarmSetting()  // a session already on takes the new length from now
-    }
   }
 
   private func saveLanguages() {
@@ -601,7 +615,8 @@ struct KeyboardSettingsView: View {
   }
 }
 
-/// The opt-in keyboard debug log (#162): the switch, when it turns itself off, Export and Clear log.
+/// The opt-in keyboard debug log (#162): the switch, when it turns itself off, Export and Clear log. A section of
+/// the home page, shown only where `DebuggingVisibility` says.
 struct KeyboardLogSection: View {
   @State private var until = KeyboardLogSection.activeUntil
   @State private var size = 0
