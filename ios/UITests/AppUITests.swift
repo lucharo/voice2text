@@ -66,7 +66,9 @@ import XCTest
     let cleanup = app.switches["v2t.cleanup"].firstMatch
     reveal(cleanup, in: app)
     guard cleanup.isEnabled else {
-      XCTAssertTrue(app.staticTexts["Cleanup: none, your dictionary's replacements only"].exists)
+      let none = app.staticTexts["Cleanup: none, your dictionary's replacements only"]
+      reveal(none, in: app)
+      XCTAssertTrue(none.exists)
       shot("22-cleanup-unavailable")
       return
     }
@@ -76,11 +78,21 @@ import XCTest
     XCTAssertTrue(card.exists)
     shot("22-cleanup-on")
 
-    cleanup.switches.firstMatch.tap()
-    XCTAssertTrue(app.staticTexts["Cleanup: off (turned off above)"].waitForExistence(timeout: 3))
+    // the Keyboard section sits between the switch and the card: back up to the switch, down to the card
+    flip(cleanup)
+    let off = app.staticTexts["Cleanup: off (turned off above)"]
+    reveal(off, in: app)
+    XCTAssertTrue(off.waitForExistence(timeout: 3))
     shot("23-cleanup-off")
-    cleanup.switches.firstMatch.tap()
+    flip(cleanup)
+    reveal(card, in: app)
     XCTAssertTrue(card.waitForExistence(timeout: 3))
+  }
+
+  /// Scrolls back up to `toggle` and flips it.
+  func flip(_ toggle: XCUIElement) {
+    for _ in 0..<6 where !(toggle.exists && toggle.isHittable) { app.swipeDown(velocity: .slow) }
+    toggle.switches.firstMatch.tap()
   }
 
   func testACachedModelNeverShowsAsDownloading() {

@@ -98,6 +98,9 @@ import XCTest
     let history = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'History'")).firstMatch
     reveal(history, in: app)
     history.tap()
+    let heard = app.buttons["v2t.history.heard"].firstMatch  // closed by default: open the newest card's
+    XCTAssertTrue(heard.waitForExistence(timeout: 5), app.debugDescription)
+    heard.tap()
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Heard: '")).firstMatch.waitForExistence(timeout: 5))
     shot("16-history-heard")
   }
