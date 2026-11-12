@@ -44,8 +44,9 @@ section shows what your device got and why, says so when your iPhone model is un
 
 ## Set up
 
-1. Install v2t from the [App Store](https://apps.apple.com/app/id6831059370), open it and tap **Download** next to **Speech model** (about 630 MB,
-   once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
+1. Install v2t from the [App Store](https://apps.apple.com/app/id6831059370) and open it. The first time, **About v2t**
+   says what the app does; tap **Continue** for the setup list (its **About v2t** row at the bottom opens the page
+   again). Tap **Download** next to **Speech model** (about 630 MB, once). The mic needs it; typing doesn't. When the row says **Ready**, transcription works offline.
 2. Tap **Add the v2t keyboard**. It opens Settings: go to **v2t** › **Keyboards** and turn on
    **v2t**. (General › Keyboard › Keyboards › Add New Keyboard does the same.)
 3. On the same page, turn on **Allow Full Access** and confirm. The keyboard needs Full Access to ask

@@ -3,7 +3,7 @@ import XCTest
 /// Drives the real v2t keyboard in the simulator through synthesized touches (XCUITest taps and drags land
 /// in the keyboard's touch handlers), and keeps full-resolution screenshots as attachments.
 @MainActor final class KeyboardUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func launch(layout: String = "en") {
     continueAfterFailure = false

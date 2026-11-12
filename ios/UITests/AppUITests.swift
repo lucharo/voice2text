@@ -4,7 +4,7 @@ import XCTest
 /// cleanup switch drives the recommendation card. Needs the speech model already on the Simulator only for
 /// the ready row; nothing here records audio.
 @MainActor final class AppUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func open(_ label: String) {
     let b = app.buttons[label]

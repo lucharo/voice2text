@@ -12,7 +12,7 @@ import XCTest
     XCTAssertTrue(FileManager.default.fileExists(atPath: Self.fixture), "run ios/setup.sh to make \(Self.fixture)")
     allowFullAccess()
 
-    let app = XCUIApplication()
+    let app = XCUIApplication.v2t()
     app.launchEnvironment["V2T_LAYOUT"] = "en"
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = Self.fixture
     app.launch()

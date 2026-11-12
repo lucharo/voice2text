@@ -23,6 +23,8 @@ import V2TKeyboardCore
     if let t = env["V2T_SKIN_TONE"].flatMap(Int.init) { Settings.shared.emojiSkinTone = SkinTone(rawValue: t) }
     // the debug log UI test starts with the log off and empty, and leaves it off
     if env["V2T_KEYBOARD_LOG_OFF"] == "1" { Settings.shared.keyboardDebugLogUntil = nil }
+    // UI tests start as after install ("1": About v2t opens by itself) or with it already seen ("0")
+    if let first = env["V2T_FIRST_LAUNCH"] { Settings.shared.aboutShown = first != "1" }
     if env["V2T_RESET_KEYBOARD_LOG"] == "1" {
       Settings.shared.keyboardDebugLogUntil = nil
       if let dir = KeyboardLogStore.groupDirectory { KeyboardDebugLog.clear(in: dir) }
@@ -53,6 +55,8 @@ struct HomeView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var tryText = ""
   @State private var keyboardSeen = Settings.shared.keyboardFullAccessSeen
+  /// About v2t over the setup list, once after install; dismissing it shows the setup list.
+  @State private var showAbout = !Settings.shared.aboutShown
 
   var body: some View {
     NavigationStack {
@@ -101,6 +105,10 @@ struct HomeView: View {
         Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
         Section("Storage") { StorageRows() }
         Section("Keyboard") { NavigationLink("Languages and typing") { KeyboardSettingsView() } }
+        Section {
+          NavigationLink("About v2t") { AboutView() }
+            .accessibilityIdentifier("v2t.about.open")
+        }
       }
       .navigationTitle("v2t")
       // a readable column on an iPad, as Settings keeps its rows; no effect at iPhone widths
@@ -116,6 +124,11 @@ struct HomeView: View {
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
+    // the keyboard's mic opened v2t before it was ever opened: recording comes first, About waits for a later launch
+    .sheet(isPresented: Binding(get: { showAbout && !dictation.cameFromKeyboard }, set: { showAbout = $0 }),
+           onDismiss: { if !dictation.cameFromKeyboard { Settings.shared.aboutShown = true } }) {
+      AboutView { showAbout = false }
+    }
   }
 }
 

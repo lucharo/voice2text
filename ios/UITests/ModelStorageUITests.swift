@@ -6,7 +6,7 @@ import XCTest
   func testTheModelDownloadsOnlyWhenAskedAndCanBeDeleted() throws {
     continueAfterFailure = false
     XCTAssertTrue(FileManager.default.fileExists(atPath: DictationUITests.fixture), "run ios/setup.sh to make \(DictationUITests.fixture)")
-    let app = XCUIApplication()
+    let app = XCUIApplication.v2t()
     app.launchEnvironment["V2T_LAYOUT"] = "en"
     app.launchEnvironment["V2T_FIXTURE_AUDIO"] = DictationUITests.fixture
     app.launch()
