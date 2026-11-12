@@ -3,8 +3,14 @@
 # App Store Connect key from ~/.appstoreconnect into the `testflight`
 # environment's secrets, which .github/workflows/testflight.yml reads. Run once
 # on the Mac that holds the certificate, and again whenever the certificate or
-# the key is renewed. macOS asks for the login password once per certificate in
+# a key is renewed. macOS asks for the login password once per certificate in
 # the keychain.
+#
+# appstore.yml needs a second key whose role can create an App Store version
+# (App Manager or Admin; the upload key's cannot, #132). Name it to load it too:
+#   RELEASE_KEY_ID=<key id> scripts/ci-testflight-secrets.sh
+# It reads ~/.appstoreconnect/private_keys/AuthKey_<key id>.p8, from the same
+# issuer, into ASC_RELEASE_KEY_ID and ASC_RELEASE_KEY_P8.
 set -euo pipefail
 repo="lucharo/voice2text"
 identity="Apple Distribution: Luis Chaves Rodriguez (7V3HZUL435)"
@@ -12,6 +18,12 @@ keychain="login.keychain-db"
 key_id="AZ756K8XB6"
 p8="$HOME/.appstoreconnect/private_keys/AuthKey_$key_id.p8"
 issuer_file="$HOME/.appstoreconnect/issuer_id"
+release_key_id="${RELEASE_KEY_ID:-}"
+release_p8="$HOME/.appstoreconnect/private_keys/AuthKey_$release_key_id.p8"
+
+if [[ -n "$release_key_id" && ! -f "$release_p8" ]]; then
+  echo "no $release_p8 for RELEASE_KEY_ID=$release_key_id" >&2; exit 1
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -59,4 +71,10 @@ printf '%s' "$P12_PASSWORD" | gh secret set APPLE_DISTRIBUTION_P12_PASSWORD --en
 gh secret set ASC_KEY_P8 --env testflight --repo "$repo" < "$p8"
 printf '%s' "$key_id" | gh secret set ASC_KEY_ID --env testflight --repo "$repo"
 gh secret set ASC_ISSUER_ID --env testflight --repo "$repo" < "$issuer_file"
+if [[ -n "$release_key_id" ]]; then
+  gh secret set ASC_RELEASE_KEY_P8 --env testflight --repo "$repo" < "$release_p8"
+  printf '%s' "$release_key_id" | gh secret set ASC_RELEASE_KEY_ID --env testflight --repo "$repo"
+else
+  echo "RELEASE_KEY_ID not set: ASC_RELEASE_KEY_ID and ASC_RELEASE_KEY_P8 left as they are (appstore.yml needs them)" >&2
+fi
 gh secret list --env testflight --repo "$repo"
