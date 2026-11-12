@@ -260,13 +260,14 @@ class ExerciseWindow:
     """The keyboard's events while one sentence was on screen, lined up with the sentence. The field starts empty,
     so the text before the cursor is known from the keyboard's own edits, and a word's place in it says which of
     the sentence's words it is meant to be. A word continued after deleting back into it, or typed after the host
-    moved the cursor, has no such place and is left out."""
+    moved the cursor, has no such place and is left out, and so is every word of a sentence that ended up with a
+    different number of words (one left out or run together moves every word after it)."""
 
     def __init__(self, ex: dict, rep: ExerciseReport) -> None:
         self.target = words(ex.get("target", ""))
         self.rep = rep
         self.doc = ""
-        self.known = True
+        self.known = len(words(ex.get("typed", ""))) == len(self.target)
         self.word: list[tuple[str, list | None]] = []
         self.word_at = 0
         self.word_clean = True
@@ -359,8 +360,18 @@ def analyse_exercises(events: list[dict], exercises: list[dict]) -> ExerciseRepo
     """Lines each exercise sentence up with the keyboard events between its `t` and `end`."""
     rep = ExerciseReport()
     exercises = sorted(exercises, key=lambda x: x.get("t", 0))
-    starts = [x.get("t", 0) for x in exercises]
     windows: dict[int, ExerciseWindow] = {}
+    # the phone's boots: exercises grouped by their uptime anchor (the wall time at uptime 0), each group's windows
+    # in uptime order, since two boots can have sentences at the same uptime
+    boots: list[tuple[float | None, list[int]]] = []
+    for i, x in enumerate(exercises):
+        w = epoch(x.get("wall"))
+        a = w - x.get("t", 0) / 1000 if w is not None else None
+        same = next((b for b in boots if (a is None) == (b[0] is None) and (a is None or abs(b[0] - a) <= WALL_SLACK_S)), None)
+        if same is None:
+            boots.append((a, [i]))
+        else:
+            same[1].append(i)
     for x in exercises:
         rep.sentences += 1
         rep.words += len(words(x.get("target", "")))
@@ -373,13 +384,17 @@ def analyse_exercises(events: list[dict], exercises: list[dict]) -> ExerciseRepo
             anchor = w - t / 1000 if w is not None else None  # the wall time at uptime 0: one per boot
             phone = ev.get("form", "phone") == "phone" and ev.get("width")
             centres, u = phone_letter_centres(ev["width"], ev.get("layout", "en")) if phone else (None, 1.0)
-        i = bisect.bisect_right(starts, t) - 1
-        if i < 0 or t > exercises[i].get("end", 0):
+        i = None
+        for a, members in boots:
+            if anchor is not None and a is not None and abs(a - anchor) > WALL_SLACK_S:
+                continue  # the same uptime in another boot of the phone
+            j = bisect.bisect_right([exercises[k].get("t", 0) for k in members], t) - 1
+            if j >= 0 and t <= exercises[members[j]].get("end", 0):
+                i = members[j]
+                break
+        if i is None:
             continue
         x = exercises[i]
-        w = epoch(x.get("wall"))
-        if anchor is not None and w is not None and abs(w - x["t"] / 1000 - anchor) > WALL_SLACK_S:
-            continue  # the same uptime in another boot of the phone
         if i not in windows:
             windows[i] = ExerciseWindow(x, rep)
         windows[i].event(ev, centres, u)

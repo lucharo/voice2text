@@ -345,17 +345,37 @@ class ExerciseTests(unittest.TestCase):
         self.assertEqual((dict(x.hits), dict(x.offsets)), ({}, {}))
 
     def test_a_word_continued_after_deleting_back_into_it_is_left_out(self):
-        # "tge " then delete the space, e and g, and type "he": the letters belong to the first word, not to "ox"
+        # "tge " then delete the space, e and g, and type "he ": the letters belong to the first word, not to "at"
         e, t = tapped(1000, "tge")
         ev = [APPEAR] + e + space(t) + [{"t": t + 10, "e": "act", "a": "delete"}, {"t": t + 10, "e": "del"}] * 3
         e2, t = tapped(t + 200, "he", n0=10)
-        x = rep.analyse(ev + e2 + space(t) + [exercise(900, t + 500, "the ox", "the ")]).exercises
-        self.assertEqual((dict(x.hits), dict(x.offsets)), ({("h", "g"): 1}, {"t": [(0, 0)], "e": [(0, 0)]}))
+        e3, t = tapped(t + 200, "at", n0=20)
+        ev += e2 + space(t - 300) + e3 + space(t)
+        x = rep.analyse(ev + [exercise(900, t + 500, "the at", "the at ")]).exercises
+        offsets = {k: [(round(dx, 6), round(dy, 6)) for dx, dy in v] for k, v in x.offsets.items()}
+        self.assertEqual((dict(x.hits), offsets), ({("h", "g"): 1}, {"t": [(0, 0), (0, 0)], "e": [(0, 0)], "a": [(0, 0)]}))
 
     def test_the_same_uptime_in_another_boot_is_left_out(self):
         e, t = tapped(1000, "tge")
         x = rep.analyse([APPEAR] + e + space(t) + [exercise(900, t + 500, "the", "the ", wall="2026-11-14T08:00:00Z")]).exercises
         self.assertEqual(dict(x.hits), {})
+
+    def test_a_sentence_typed_with_a_word_left_out_attributes_no_taps(self):
+        # "mind we" for "mind if we": "we" sits where "if" was meant, and is the same length
+        e, t = tapped(1000, "mind")
+        e2, t = tapped(t + 100, "we", n0=10)
+        ev = [APPEAR] + e + space(t - 200) + e2 + space(t)
+        x = rep.analyse(ev + [exercise(900, t + 500, "mind if we", "mind we ")]).exercises
+        self.assertEqual((dict(x.hits), dict(x.offsets)), ({}, {}))
+
+    def test_a_window_is_matched_within_its_own_boot(self):
+        # two boots whose uptime windows overlap: the other boot's second sentence started later in uptime than
+        # this boot's, and its first one earlier
+        e, t = tapped(1000, "tge")
+        ev = [APPEAR] + e + space(t)
+        other = [exercise(100, 200, "cat", "cat", wall="2026-11-14T07:58:20Z"), exercise(950, t + 500, "dog", "dog", wall="2026-11-14T07:58:20.85Z")]
+        x = rep.analyse(ev + [exercise(900, t + 500, "the", "the ")] + other).exercises
+        self.assertEqual(dict(x.hits), {("h", "g"): 1})
 
     def test_exercise_lines_after_the_keyboards_do_not_read_as_a_restart(self):
         keys = [{"t": 5_000_000 + 200 * i, "e": "key", "text": "a"} for i in range(6)]
