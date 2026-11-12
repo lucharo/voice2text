@@ -10,8 +10,9 @@ struct SuggesterSearchTests {
 
   func lexicons() throws -> [Lexicon] { [try Fixtures.english.get(), try Fixtures.spanish.get()] }
 
-  /// Words typed a key at a time with touches off the key centres, and on the way a wrong key that is deleted
-  /// together with the letter before it, so the search steps back two letters and then forward again.
+  /// Words typed a key at a time with touches off the key centres. On the way a wrong fourth key, then the
+  /// right one in its place (the same number of keys, the last one another), then two keys fewer, so the search
+  /// starts again from a changed key and steps back as well as forward.
   @Test(arguments: ["collaborative", "becuase", "hvent", "tomorow", "wouldn't", "particular", "som", "standford", "cancion"])
   func aSearchCarriedOnFromTheLastKeyFindsWhatAFreshSearchFinds(word: String) throws {
     let lexicons = try lexicons()
@@ -19,14 +20,27 @@ struct SuggesterSearchTests {
     var rng = SeededRandom(state: 7)
     let context = TypingContext(before: "I think the ")
     let keys = noisyTaps(word, layout, std: 0.25, rng: &rng)
-    var steps = (1...keys.count).map { Array(keys.prefix($0)) }
     let slip = TypedKey("q", at: try #require(layout.keys.first { $0.label == "q" }).center)
-    steps.insert(contentsOf: [Array(keys.prefix(3)) + [slip], Array(keys.prefix(3)), Array(keys.prefix(2))], at: 3)
+    var steps = (1...3).map { Array(keys.prefix($0)) }
+    steps += [Array(keys.prefix(3)) + [slip], Array(keys.prefix(min(4, keys.count))), Array(keys.prefix(2))]
+    steps += (3...keys.count).map { Array(keys.prefix($0)) }
     for typed in steps {
       let fresh = Suggester(lexicons: lexicons, layout: layout)
       #expect(carried.suggestions(for: typed, context: context, limit: 10) == fresh.suggestions(for: typed, context: context, limit: 10))
       #expect(carried.autocorrection(for: typed, context: context) == fresh.autocorrection(for: typed, context: context))
     }
+  }
+
+  /// Each language has its own beam: what English finds is what it finds alone, however many near misses
+  /// Spanish has for the same touches.
+  @Test(arguments: ["becuase", "catapiller", "collaborative", "particular"])
+  func aSecondLanguageLeavesTheFirstsSearchAsItWas(word: String) throws {
+    let lexicons = try lexicons()
+    let typed = taps(word, layout)
+    let alone = Suggester(lexicons: [lexicons[0]], layout: layout).search(typed).map { "\(String(decoding: $0.prefix, as: UTF8.self)) \($0.cost)" }
+    let both = Suggester(lexicons: lexicons, layout: layout).search(typed).filter { $0.lex == 0 }.map { "\(String(decoding: $0.prefix, as: UTF8.self)) \($0.cost)" }
+    #expect(!alone.isEmpty)
+    #expect(both == alone)
   }
 
   @Test func theSameLettersAfterOtherWordsAreRankedAgain() throws {
