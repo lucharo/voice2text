@@ -76,7 +76,7 @@ final class Clock {
     #expect(phone.lines == ["Claude"])
     #expect(pad.lines == ["Claude"])
     #expect(oldPad.lines == ["Claude"])
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: at(1)), "term:fluide": .init(line: nil, time: at(4))])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:fluide": .init(line: nil, time: at(4))])
   }
 
   @Test func theSameEntryEditedOnTwoDevicesKeepsTheLaterEdit() throws {
@@ -103,7 +103,7 @@ final class Clock {
     try PersonalDictionary(file: phone.dictionary.file).addTerm("marimo")
     clock.at(2); phone.sync.sync(fetch: true)
 
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: at(1)), "term:marimo": .init(line: "marimo", time: at(2))])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:marimo": .init(line: "marimo", time: at(2))])
   }
 
   @Test func aFirstSyncOnAnEmptyDeviceDownloadsEverything() throws {
@@ -122,7 +122,7 @@ final class Clock {
 
     clock.at(1); phone.sync.start()
 
-    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: at(1)), "replace:ai": .init(line: "ai => AI", time: at(1))])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "replace:ai": .init(line: "ai => AI", time: .distantPast)])
     #expect(cloud.learned == ["kian", "marimo"])
     #expect(phone.sync.status == .synced)
   }
@@ -149,9 +149,41 @@ final class Clock {
     clock.at(5); pad.sync.sync()  // Kian deleted at 5
     let phone = try Device("# mine\nClaude\n\n# names\nKian\nbad =>\n", cloud: cloud, clock: clock)
 
-    clock.at(3); phone.sync.start()  // this device's Kian dates from 3, before the deletion
+    clock.at(6); phone.sync.start()  // a first sync: this device's Kian is older than the deletion
 
     #expect(phone.dictionary.text == "# mine\nClaude\n\n# names\nbad =>\nFluide\n")
+  }
+
+  /// A device's first sync, also one that had sync off until now, cannot tell its old entries from new ones: an
+  /// entry deleted elsewhere goes, and one iCloud has never seen goes up.
+  @Test func aFirstSyncHonoursADeletionMadeElsewhere() throws {
+    let phone = try Device("Claude\nFluide\n", cloud: cloud, clock: clock)
+    clock.at(1); phone.sync.start()
+    try phone.dictionary.remove("Fluide")
+    clock.at(2); phone.sync.sync()
+    let pad = try Device("Fluide\nKian\n", cloud: cloud, clock: clock)
+
+    clock.at(10); pad.sync.start()
+
+    #expect(pad.lines == ["Kian", "Claude"])
+    #expect(cloud.records == ["term:claude": .init(line: "Claude", time: .distantPast), "term:fluide": .init(line: nil, time: at(2)),
+                              "term:kian": .init(line: "Kian", time: .distantPast)])
+  }
+
+  /// After its first sync, even an empty one, a device's new entry is a deliberate change and beats an older deletion.
+  @Test func aWordAddedAfterTheFirstSyncBeatsAnEarlierDeletion() throws {
+    let pad = try Device("", cloud: cloud, clock: clock)
+    clock.at(1); pad.sync.start()
+    let phone = try Device("marimo\n", cloud: cloud, clock: clock)
+    clock.at(2); phone.sync.start()
+    try phone.dictionary.remove("marimo")
+    clock.at(3); phone.sync.sync()
+
+    try PersonalDictionary(file: pad.dictionary.file).addTerm("marimo")
+    clock.at(4); pad.sync.sync(fetch: true)
+
+    #expect(pad.lines == ["marimo"])
+    #expect(cloud.records == ["term:marimo": .init(line: "marimo", time: at(4))])
   }
 
   @Test func switchedOffItReadsAndWritesNothing() throws {

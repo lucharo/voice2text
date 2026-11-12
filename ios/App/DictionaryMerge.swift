@@ -22,10 +22,17 @@ enum DictionaryMerge {
     return out
   }
 
+  /// The time of an entry this device had before it ever synced: older than any change made anywhere, so a
+  /// deletion or edit already in iCloud wins over it, while an entry iCloud has never seen still goes up.
+  static let unversioned = Date.distantPast
+
   /// The file as records: an entry unchanged since the last sync keeps that sync's time; one added or edited
-  /// since (on this device, the keyboard included) and one deleted since (a tombstone) take `now`.
-  static func local(_ text: String, synced: Records, now: Date) -> Records {
+  /// since (on this device, the keyboard included) and one deleted since (a tombstone) take `now`. With no last
+  /// sync (`synced` nil: the first on this device, also after sync was off from the start), every entry is
+  /// `unversioned`, since nothing tells an old entry from one just added.
+  static func local(_ text: String, synced: Records?, now: Date) -> Records {
     let current = entries(text)
+    guard let synced else { return current.mapValues { Record(line: $0, time: unversioned) } }
     var out: Records = [:]
     for (k, line) in current {
       out[k] = synced[k]?.line == line ? synced[k]! : Record(line: line, time: now)
@@ -69,7 +76,7 @@ enum DictionaryMerge {
   }
 
   /// The whole merge: the new file text, and the records both this device's sync state and iCloud then hold.
-  static func run(text: String, synced: Records, remote: Records, now: Date) -> (text: String, records: Records) {
+  static func run(text: String, synced: Records?, remote: Records, now: Date) -> (text: String, records: Records) {
     let records = merge(local(text, synced: synced, now: now), remote)
     return (apply(records, to: text), records)
   }

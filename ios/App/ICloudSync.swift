@@ -93,7 +93,8 @@ extension NSUbiquitousKeyValueStore: KeyValueSync {}
     if fetch { store.synchronize() }
     do {
       status = try dictionary.transaction {
-        let synced = decode(DictionaryMerge.Records.self, try? Data(contentsOf: stateFile)) ?? [:]
+        // none on a first sync, which the merge treats apart; an unreadable one counts as none
+        let synced = decode(DictionaryMerge.Records.self, try? Data(contentsOf: stateFile))
         let remote = decode(DictionaryMerge.Records.self, store.data(forKey: Self.dictionaryKey)) ?? [:]
         let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote, now: now())
         let learnedHere = settings.learnedWords
@@ -104,6 +105,7 @@ extension NSUbiquitousKeyValueStore: KeyValueSync {}
         // a store write over the limit would fail, and a cut record would read as deletions elsewhere
         guard records.count + words.count <= Self.limit else { return .tooLarge(bytes: records.count + words.count) }
         if merged.text != dictionary.text { try dictionary.write(merged.text) }
+        // written on a first sync even when empty, so the next sync is not a first one
         if merged.records != synced { try records.write(to: stateFile, options: .atomic) }
         if merged.records != remote { store.set(records, forKey: Self.dictionaryKey) }
         for w in learned.subtracting(learnedHere).sorted() { settings.learn(w) }
