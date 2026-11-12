@@ -38,6 +38,19 @@ enum LogReplayEval {
     /// before it ended: for lining words up with a typing exercise's sentence.
     var t: Double = 0
     var deleted = false
+    /// The clock time at uptime 0 for the keyboard session it was typed in (its `appear` line's wall less its
+    /// uptime): one per boot of the phone, since uptime starts again with each.
+    var boot: Double? = nil
+  }
+
+  /// Exercises and keyboard sessions this many seconds apart in their boot anchors are the same boot (the
+  /// uptime clock and the wall clock drift apart a little; kb_log_report.py's WALL_SLACK_S).
+  static let bootSlack: Double = 120
+
+  /// The clock time at uptime 0 for a line with `t` (uptime ms) and `wall` (ISO time).
+  static func bootAnchor(_ o: [String: Any]) -> Double? {
+    guard let t = o["t"] as? Double, let wall = o["wall"] as? String, let date = ISO8601DateFormatter().date(from: wall) else { return nil }
+    return date.timeIntervalSince1970 - t / 1000
   }
 
   struct Outcome {
@@ -70,6 +83,7 @@ enum LogReplayEval {
     // the line being replayed, and whether delete was pressed since the last word ended
     var lineT: Double = 0
     var deletedSince = false
+    var boot: Double?
     func boundary(_ e: TypingEngine, _ body: () -> Void) {
       let typed = e.literal
       guard !typed.isEmpty else { body(); return }
@@ -86,7 +100,7 @@ enum LogReplayEval {
       body()
       e.onEvent = nil
       out.words.append(Word(typed: typed, previous: previous, logged: early?.from == typed ? early?.to : nil, now: applied, bar: bar,
-                            t: lineT, deleted: deletedSince))
+                            t: lineT, deleted: deletedSince, boot: boot))
       deletedSince = false
       early = nil
       open = out.words.count - 1
@@ -105,6 +119,7 @@ enum LogReplayEval {
       let now = (o["t"] as? Double ?? 0) / 1000
       lineT = o["t"] as? Double ?? 0
       if name == "appear" {
+        boot = bootAnchor(o)
         guard (o["form"] as? String ?? "phone") == "phone" else {
           engine = nil  // the touches cannot be placed on the right keys
           out.sessionsSkipped += 1
@@ -204,17 +219,21 @@ enum LogReplayEval {
 
   static func fold(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "’", with: "'") }
 
-  /// Each exercise sentence's words against the words this replay finished while the sentence was on screen.
-  /// A sentence whose word count differs (a word left out, run together or not replayed) is not scored, and
-  /// nor is a word typed after a delete: which of the sentence's words it was is a guess.
+  /// Each exercise sentence's words against the words this replay finished while the sentence was on screen, in
+  /// the same boot of the phone. A sentence is not scored when the words finished or the words in the field at
+  /// Next differ in number from the sentence's (a word left out, run together, not replayed, or deleted after it
+  /// was finished), and nor is a word typed after a delete: which of the sentence's words it was is a guess.
   static func scoreExercises(_ lines: [String], _ out: Outcome) -> [Scored] {
     var scored: [Scored] = []
     for line in lines {
       guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], o["e"] as? String == "exercise",
             let t = o["t"] as? Double, let end = o["end"] as? Double, let target = o["target"] as? String else { continue }
-      let want = TypingExerciseLog.words(target)
-      let typed = out.words.filter { t <= $0.t && $0.t <= end }
-      guard typed.count == want.count else {
+      let want = TypingExerciseLog.words(target), anchor = bootAnchor(o)
+      let typed = out.words.filter { w in
+        t <= w.t && w.t <= end && (anchor == nil || w.boot == nil || abs(anchor! - w.boot!) <= bootSlack)
+      }
+      let final = TypingExerciseLog.words(o["typed"] as? String ?? "")
+      guard typed.count == want.count, final.count == want.count else {
         scored += want.map { Scored(score: .notScored, target: $0, word: nil) }
         continue
       }
@@ -238,8 +257,9 @@ enum LogReplayEval {
     // "The fox ran." typed as "teh" (corrected), "fox", then a delete before "ran"; "Sit by." with one word run on
     out.words = [word("teh", now: "the", t: 100, bar: ["teh", "the"]), word("fox", t: 200), word("ran", t: 300, deleted: true),
                  word("sitby", t: 1100), word("dog", now: "dig", t: 2100), word("cst", t: 2200)]
-    let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran."}"#, #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by."}"#,
-                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat"}"#]
+    let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran.","typed":"The fox ran."}"#,
+                 #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by.","typed":"Sitby"}"#,
+                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst"}"#]
 
     let scored = scoreExercises(lines, out)
 
@@ -248,6 +268,28 @@ enum LogReplayEval {
       "Sit not scored false", "by not scored false",
       "dog made a different wrong word false", "cat left as typed false",
     ])
+  }
+
+  @Test static func aSentenceWhoseLastWordWasDeletedBeforeNextIsNotScored() {
+    var out = Outcome()
+    // "Sit by " typed, then "by " deleted and Next tapped: both words were finished, one is gone from the field
+    out.words = [Word(typed: "Sit", previous: nil, logged: nil, now: nil, bar: [], t: 100),
+                 Word(typed: "by", previous: nil, logged: nil, now: nil, bar: [], t: 200)]
+    let lines = [#"{"t":50,"e":"exercise","end":400,"target":"Sit by.","typed":"Sit "}"#]
+
+    #expect(scoreExercises(lines, out).map(\.score) == [.notScored, .notScored])
+  }
+
+  @Test static func wordsFromAnotherBootAreLeftOutOfTheSentence() {
+    var out = Outcome()
+    let here = 1_794_470_409.95, otherBoot = here + 2 * 86_400
+    // the sentence appeared at uptime 50 ms, at 08:00:10 UTC on 12 Nov 2026; "dog" was typed at the same uptime two days on
+    out.words = [Word(typed: "Sit", previous: nil, logged: nil, now: nil, bar: [], t: 100, boot: here),
+                 Word(typed: "dog", previous: nil, logged: nil, now: nil, bar: [], t: 150, boot: otherBoot),
+                 Word(typed: "by", previous: nil, logged: nil, now: nil, bar: [], t: 200, boot: here)]
+    let lines = [#"{"t":50,"e":"exercise","end":400,"wall":"2026-11-12T08:00:10Z","target":"Sit by.","typed":"Sit by."}"#]
+
+    #expect(scoreExercises(lines, out).map(\.score) == [.tappedRight, .tappedRight])
   }
 
   @Test(.enabled(if: path != nil)) static func replaysTheLog() throws {
