@@ -18,6 +18,9 @@ struct Recommendation: Equatable {
   let measured: Bool
   /// "iPhone" or "iPad", for the words the user sees.
   var deviceName = "iPhone"
+  /// Whether this device can run Apple Intelligence at all, turned on or not: one that never can must not be
+  /// told to turn it on.
+  var appleIntelligenceCompatible = true
 
   var speechName: String {
     switch speech {
@@ -38,6 +41,14 @@ struct Recommendation: Equatable {
     case .appleIntelligence: "Cleanup: Apple Intelligence, on this \(deviceName)"
     case .dictionaryOnly: "Cleanup: none, your dictionary's replacements only"
     }
+  }
+
+  /// Why the cleanup switch is greyed out, and what the user gets instead. Without cleanup the dictionary's
+  /// replacements still apply; its exact spellings are only used by cleanup.
+  var cleanupUnavailable: String {
+    appleIntelligenceCompatible
+      ? "Unavailable: Apple Intelligence is off or not ready on this \(deviceName), so you get the words as heard, plus your dictionary's replacements."
+      : "Unavailable: this \(deviceName) can't run Apple Intelligence, so you get the words as heard, plus your dictionary's replacements."
   }
 
   /// What the choice depends on, read from Apple's own runtime check so the rule needs no model table.
@@ -63,6 +74,7 @@ struct Recommendation: Equatable {
   static func choose(for d: Device) -> Recommendation {
     var r = chooseModel(for: d)
     r.deviceName = d.deviceName
+    r.appleIntelligenceCompatible = d.appleIntelligenceCompatible
     return r
   }
 

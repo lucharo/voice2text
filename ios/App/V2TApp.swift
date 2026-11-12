@@ -213,7 +213,7 @@ struct CleanupRow: View {
     .accessibilityIdentifier("v2t.cleanup")
   }
   var subtitle: String {
-    guard available else { return "Unavailable: Apple Intelligence is off or not ready on this \(dictation.recommendation.deviceName), so you get the words as heard, plus your dictionary's replacements." }
+    guard available else { return dictation.recommendation.cleanupUnavailable }
     return cleanup
       ? "On: fixes punctuation and drops fillers on the \(dictation.recommendation.deviceName), keeping your words and dictionary spellings."
       : "Off: you get the words as heard, plus your dictionary's replacements."

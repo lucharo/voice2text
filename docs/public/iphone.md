@@ -130,7 +130,7 @@ flowchart LR
   on. It adds punctuation and capitals, drops "um" and repeated words, writes numbers as digits and
   uses your dictionary's spellings. Any other word it changes reverts to what you said. Cleanup adds
   about a second. Turn it off with **Clean up with Apple Intelligence**; the switch is greyed out
-  when Apple Intelligence is off or not ready.
+  when Apple Intelligence is off or not ready, or when the device can't run it.
 - **Dictionary** has two lists. **Spell exactly** holds names and jargon: cleanup spells them as
   written, and the keyboard never autocorrects them. **Replace** turns what v2t heard into what you
   want written (whole words, any capitalisation); it runs after cleanup, whether cleanup is on or
@@ -220,9 +220,11 @@ or was deleted. Tap **Download**, then go back to your app and tap the mic again
 **The speech model shows an error, or "The speech model didn't load".** The download needs a network
 connection. Tap **Try again** once you're online.
 
-**Clean up with Apple Intelligence is greyed out.** Apple Intelligence is off, still downloading, or
-unavailable on this device. Turn it on in Settings › Apple Intelligence & Siri, then reopen v2t.
-Until then you get the words as heard, plus your replacements.
+**Clean up with Apple Intelligence is greyed out.** If it says this device can't run Apple
+Intelligence, cleanup will never be available on it: you get the words as heard, plus your
+replacements. Otherwise Apple Intelligence is off or still downloading. Turn it on in Settings ›
+Apple Intelligence & Siri, then reopen v2t. Until then you get the words as heard, plus your
+replacements.
 
 **Apple's keyboard appears instead of v2t's.** iOS does that in password and phone-number fields and
 in apps that refuse other keyboards. v2t cannot change it.
