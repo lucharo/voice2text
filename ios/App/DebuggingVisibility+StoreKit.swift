@@ -1,8 +1,8 @@
 import StoreKit
 
-/// Whether the home page shows its Debugging section (the keyboard debug log, the typing exercise): in TestFlight
-/// builds, debug builds and the Simulator, never in a build from the App Store.
-enum DebuggingVisibility {
+/// The app's half of `DebuggingVisibility`: which build this is, from StoreKit, and recording the answer for the
+/// keyboard.
+extension DebuggingVisibility {
   /// The rule. `environment` is the App Store server environment that signed this install, nil when it could not
   /// be read; Debugging is then hidden, as in an App Store build.
   ///
@@ -19,14 +19,16 @@ enum DebuggingVisibility {
     return environment != .production
   }
 
-  /// A hidden section turns the debug log off: a log left on by a TestFlight build would otherwise record for the
-  /// rest of its 24 hours in a build with no switch to stop it or Export to read it.
-  static func apply(shows: Bool, to settings: Settings) {
-    if !shows { settings.keyboardDebugLogUntil = nil }
+  /// Records the decision for the keyboard. Shown: `install` may log. Hidden: the debug log goes off and no install
+  /// may log, so a log left on by a TestFlight build does not record on in a build with no switch to stop it.
+  static func apply(shows: Bool, install: String?, to settings: Settings) {
+    if shows {
+      settings.debuggingInstall = install
+    } else {
+      settings.keyboardDebugLogUntil = nil
+      settings.debuggingInstall = nil
+    }
   }
-
-  /// Known without asking StoreKit: a debug build or the Simulator always shows the section.
-  static var shownByBuild: Bool { debugBuild || simulator }
 
   /// This install's answer. Asks StoreKit only in a release build on a device; an unverified app transaction still
   /// names its environment, which is enough to decide whether to show a debugging section.
@@ -39,21 +41,5 @@ enum DebuggingVisibility {
       }
     }
     return shows(environment: environment, debugBuild: false, simulator: false)
-  }
-
-  private static var debugBuild: Bool {
-    #if DEBUG
-    true
-    #else
-    false
-    #endif
-  }
-
-  private static var simulator: Bool {
-    #if targetEnvironment(simulator)
-    true
-    #else
-    false
-    #endif
   }
 }

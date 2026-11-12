@@ -104,9 +104,13 @@ in the App Group, moving to `keyboard.1.jsonl` past 4 MB, so it never holds more
 shares both files joined; Clear log deletes them.
 
 Debugging shows in TestFlight builds, debug builds and the Simulator, and is hidden in App Store builds
-(`App/DebuggingVisibility.swift`): a release build reads `AppTransaction.environment`, which is `.sandbox` for
-TestFlight and `.production` for the App Store. Where the section is hidden, the app turns the log off, so a log
-switched on in a TestFlight build stops when an App Store build replaces it rather than recording out its 24 hours.
+(`App/DebuggingVisibility+StoreKit.swift`): a release build reads `AppTransaction.environment`, which is `.sandbox`
+for TestFlight and `.production` for the App Store. The App Store build is the TestFlight binary promoted, so only
+that environment tells them apart. Where the section is hidden, the app turns the log off. Where it shows, the app
+records which install it approved (the app bundle's path, which iOS changes when a build replaces another), and
+outside debug and Simulator builds the keyboard records only for that install (`Shared/DebuggingVisibility.swift`).
+So a log switched on in a TestFlight build stops as soon as an App Store build replaces it, even when the keyboard
+is used before v2t is opened, rather than recording out its 24 hours.
 
 **Typing exercise** (in Debugging) is a typing test for the log: it shows ten sentences one at a
 time (seven English and three Spanish when Spanish is among the suggestion languages, picked at random from 24 and
