@@ -34,15 +34,20 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     try transaction { try write(newText) }
   }
 
-  /// Saves the "Edit as text" draft, which started as `snapshot`: an unchanged draft writes nothing, and lines
-  /// another copy added to the file meanwhile (a word kept on the keyboard) are kept at the end.
+  /// Saves the "Edit as text" draft, which started as `snapshot`: an unchanged draft writes nothing, lines
+  /// another copy added to the file meanwhile (a word kept on the keyboard, an entry from iCloud) are kept at the
+  /// end, and lines it removed meanwhile (an entry deleted on another device) stay removed unless the draft
+  /// changed them. An entry edited elsewhere is both: its old line goes, its new one is kept.
   func saveEdit(_ draft: String, from snapshot: String) throws {
     try transaction {
       guard draft != snapshot else { return }
       let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) } }
-      let before = Set(lines(snapshot)), mine = Set(lines(draft))
+      let before = Set(lines(snapshot)), mine = Set(lines(draft)), current = Set(lines(text))
       let added = lines(text).filter { !$0.isEmpty && !before.contains($0) && !mine.contains($0) }
-      var t = draft
+      let removed = before.intersection(mine).subtracting(current).subtracting([""])
+      var t = removed.isEmpty ? draft
+        : draft.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+          .filter { !removed.contains($0.trimmingCharacters(in: .whitespaces)) }.joined(separator: "\n")
       if !added.isEmpty, !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
       try write(t + added.map { $0 + "\n" }.joined())
     }

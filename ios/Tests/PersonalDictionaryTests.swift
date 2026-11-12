@@ -88,6 +88,18 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: app.file).terms == ["Claude", "Fluide", "marimo", "Kian"])
   }
 
+  /// "Edit as text" left open while iCloud sync deletes one entry and edits another: saving an unrelated change
+  /// keeps the deletion and the edit rather than writing back the draft's stale lines.
+  @Test func theTextEditorKeepsDeletionsAndEditsMadeWhileItWasOpen() throws {
+    let app = try dictionary("# mine\nClaude\nFluide\nai => AI\n")
+    let snapshot = app.text
+    try PersonalDictionary(file: app.file).save("# mine\nClaude\nai => A.I.\n")
+
+    try app.saveEdit("# mine\nClaude Code\nFluide\nai => AI\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "# mine\nClaude Code\nai => A.I.\n")
+  }
+
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
   @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
     let file = try dictionary("").file
