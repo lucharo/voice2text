@@ -62,6 +62,7 @@ import XCTest
     text.tap()
     XCTAssertEqual(text.value as? String, "Expanded")
     XCTAssertGreaterThan(card(1).frame.height, heights[1] + 80, "the text did not grow")
+    sleep(1)  // the shot after the expand animation
     shot("history-\(appearance)-expanded")
     text.tap()
     XCTAssertEqual(card(1).frame.height, heights[1], accuracy: 1)
@@ -72,6 +73,7 @@ import XCTest
     heard.tap()
     XCTAssertEqual(heard.value as? String, "Shown")
     XCTAssertTrue(any("v2t.history.heardText", in: card(2)).waitForExistence(timeout: 2))
+    sleep(1)
     shot("history-\(appearance)-heard-open")
 
     // Copy confirms in its own label
