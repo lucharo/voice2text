@@ -217,7 +217,7 @@ public struct MultiSwipeDecoder: Sendable {
 
   /// `decode`'s words with their scores (nats, higher is better), for the keyboard's debug log.
   public func decodeScored(_ trace: [CGPoint], context: String = "", limit: Int = 4) -> [SwipeDecoder.Candidate] {
-    let ctx = TypingContext(before: context)
+    let ctx = TypingContext(before: Self.finishedText(context))
     let priors = languagePrior.priors(decoders.map(\.lexicon), primary: decoders.first?.layout.language.rawValue, context: ctx)
     let merged = zip(decoders, priors).flatMap { d, p in
       let bonus = ctx.followerBonus(in: d.lexicon, weight: bigramWeight)
@@ -227,5 +227,13 @@ public struct MultiSwipeDecoder: Sendable {
     let floor = (merged.first?.score ?? 0) - alternativeMargin
     var seen = Set<String>()
     return Array(merged.filter { $0.score >= floor && seen.insert($0.word.lowercased()).inserted }.prefix(limit))
+  }
+
+  /// The text before the cursor without the word still being typed there (letters with no space after them),
+  /// as `TypingContext(before:)` asks: the swipe ends that word, so it is not yet a word the swipe follows. A typing
+  /// log had "E" left from a mistyped word when a swipe for "leaving" began: read as a finished word it made
+  /// Spanish the likelier language, every English word paid `LanguagePrior.cap`, and the Spanish "kirchhoff" won.
+  static func finishedText(_ before: String) -> String {
+    String(before[..<(before.lastIndex { !($0.isLetter || TypingEngine.isApostrophe($0)) }.map(before.index(after:)) ?? before.startIndex)])
   }
 }

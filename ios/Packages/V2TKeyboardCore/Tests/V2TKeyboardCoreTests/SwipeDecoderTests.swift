@@ -66,6 +66,29 @@ struct SwipeDecoderTests {
     }
   }
 
+  /// A swipe for "leaving" from a typing log (iPhone 17 Pro, English and Spanish on), as logged (48 of its 233
+  /// points): it starts on l and ends by f. It was made while "E" was still being typed, the first letter of a
+  /// mistyped "Eavin" left after deleting the rest, and the keyboard passed that letter as the word before.
+  static let leaving: [CGPoint] = [
+    (363, 82.3), (348, 86.7), (318, 77.7), (283.3, 57), (250.7, 38.3), (225, 29.7), (207.7, 28), (190, 24.3),
+    (173.7, 20.3), (150.3, 14.7), (123.3, 12), (97, 15.3), (82, 25.7), (74, 35.3), (66.7, 44), (60.7, 52.3),
+    (57.7, 60.3), (57.3, 67), (57.3, 73.3), (61, 84), (69.7, 98.7), (82, 116.7), (100.3, 135), (120.7, 146.7),
+    (135.3, 148), (151, 140.3), (172.3, 115), (197.3, 88.7), (220.7, 72.3), (244.3, 59.3), (271.3, 41),
+    (292.3, 23), (297, 15.3), (294, 15.7), (291, 20), (286.7, 32.7), (276.7, 65), (266.7, 96.3), (261.3, 117),
+    (258.7, 125.3), (255.7, 127), (243.7, 127), (214.7, 114.3), (184.7, 95), (168.3, 80.7), (164.3, 72),
+    (164.7, 69), (168, 69)
+  ].map { CGPoint(x: $0.0, y: $0.1) }
+
+  /// "E" read as a finished word is evidence for Spanish ("e", and), so every English word paid the language prior's
+  /// cap and the Spanish "kirchhoff" won. Letters with no space before the cursor are a word in progress, which the
+  /// swipe ends: they are not context. Once a space has finished them they are.
+  @Test func lettersStillBeingTypedAreNotTheSwipesContext() throws {
+    let layout = KeyboardLayout(width: 402, language: .english)
+    let m = MultiSwipeDecoder([try Fixtures.english.get(), try Fixtures.spanish.get()].map { SwipeDecoder(lexicon: $0, layout: layout) })
+    #expect(m.decode(Self.leaving, context: "E").first == "leaving")
+    #expect(m.decode(Self.leaving, context: "E ").first == "kirchhoff")
+  }
+
   @Test func aSingleTouchIsNotASwipe() throws {
     let decoder = SwipeDecoder(lexicon: try Fixtures.english.get(), layout: KeyboardLayout(width: 402))
     #expect(decoder.decode([CGPoint(x: 100, y: 30)]) == [])
