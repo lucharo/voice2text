@@ -76,6 +76,15 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     let line: String
     let kind: Kind
     var id: String { line }
+    /// Lines with one key are one entry, as `addTerm` and `addReplacement` judge duplicates: a term by its text, a
+    /// replacement by what is heard, both ignoring case. Only the first line of a key is used, for dictation and
+    /// for iCloud sync alike, so a device that downloads the dictionary behaves as the one that wrote it.
+    var key: String {
+      switch kind {
+      case .term(let t): "term:" + t.lowercased()
+      case .replacement(let heard, _): "replace:" + heard.lowercased()
+      }
+    }
   }
 
   var items: [Item] { text.split(whereSeparator: \.isNewline).compactMap(Self.item) }
@@ -92,7 +101,8 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
 
   var entries: (terms: [String], replacements: [(heard: String, written: String)]) {
     var terms: [String] = [], reps: [(String, String)] = []
-    for item in items {
+    var seen = Set<String>()
+    for item in items where seen.insert(item.key).inserted {
       switch item.kind {
       case .term(let t): terms.append(t)
       case .replacement(let h, let w): reps.append((h, w))

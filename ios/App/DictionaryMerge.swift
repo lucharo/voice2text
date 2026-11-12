@@ -12,22 +12,12 @@ enum DictionaryMerge {
   }
   typealias Records = [String: Record]
 
-  /// Entries are the same entry when `addTerm` and `addReplacement` would call them duplicates: a term by its
-  /// text, a replacement by what is heard, both ignoring case.
-  static func key(_ item: PersonalDictionary.Item) -> String {
-    switch item.kind {
-    case .term(let t): "term:" + t.lowercased()
-    case .replacement(let heard, _): "replace:" + heard.lowercased()
-    }
-  }
-
   /// The file's entries by key; of two lines with one key, the first counts, as the first is what `remove` drops.
   static func entries(_ text: String) -> [String: String] {
     var out: [String: String] = [:]
     for raw in text.split(whereSeparator: \.isNewline) {
       guard let item = PersonalDictionary.item(raw) else { continue }
-      let k = key(item)
-      if out[k] == nil { out[k] = item.line }
+      if out[item.key] == nil { out[item.key] = item.line }
     }
     return out
   }
@@ -68,7 +58,7 @@ enum DictionaryMerge {
     var out: [String] = []
     for raw in lines {
       guard let item = PersonalDictionary.item(raw) else { out.append(raw); continue }
-      let k = key(item)
+      let k = item.key
       guard let line = wanted[k] else { continue }
       // a second line with the same key is the user's own duplicate: left as it is
       out.append(placed.insert(k).inserted && line != item.line ? line : raw)

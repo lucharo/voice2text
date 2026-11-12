@@ -21,6 +21,16 @@ struct PersonalDictionaryTests {
     #expect(d.applyReplacements("V two T beats said ai, not maid") == "v2t beats said AI, not maid")
   }
 
+  /// iCloud sync keeps one line per heard side (and per term, ignoring case), so dictation uses only that one too:
+  /// a downloaded copy then turns the same words into the same text.
+  @Test func aSecondLineForTheSameHeardSideOrTermIsIgnored() throws {
+    let d = try dictionary("ai => AI\nAI => A.I.\nClaude\nclaude\n")
+
+    #expect(d.applyReplacements("said ai") == "said AI")
+    #expect(d.entries.terms == ["Claude"])
+    #expect(d.entries.replacements.map { "\($0.heard)|\($0.written)" } == ["ai|AI"])
+  }
+
   @Test func keyboardWordsCoverTermsAndWrittenSides() throws {
     let d = try dictionary("Claude Code\nfluid => Fluide\n")
     #expect(d.keyboardWords == ["Claude", "Code", "Fluide"])
