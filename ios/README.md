@@ -101,9 +101,10 @@ iOS gives keyboards no microphone, so the app records:
   are a union, since none can be removed, updated under a file coordinator the keyboard shares. Comment lines
   stay on the device. The per-entry sync state is `dictionary.sync.json` beside `dictionary.txt` in the App
   Group, and `dictionary.changes.json` notes when each entry was added, edited or deleted since the last sync,
-  and whether by the keyboard or the app; both are written in the dictionary's file transaction, and a
-  difference between the file and the sync state with no note behind it never counts as a change made on this
-  device. Apple limits a record to 1 MB: an
+  by the keyboard or the app, and the line it left; both are written in the dictionary's file transaction. Only
+  a note whose line is the one on disk counts (a failed write never dates the old line), and a difference
+  between the file and the sync state with no such note never counts as a change made on this device. A save
+  that meets a newer server record is followed by one more fetch and merge. Apple limits a record to 1 MB: an
   entry or the learned words past that stop the sync, nothing is written, and the screen says why. History, the
   speech model and audio are never synced.
 
