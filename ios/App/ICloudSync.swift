@@ -83,37 +83,49 @@ import UIKit
     guard settings.iCloudSyncEnabled else { status = .off; return }
     guard await cloud.accountAvailable() else { status = .waitingForICloud; return }
     do {
-      let remote = try await cloud.fetch()
-      guard settings.iCloudSyncEnabled else { status = .off; return }  // turned off while fetching
-      let upload: (entries: DictionaryMerge.Records, learned: Set<String>?)? = try dictionary.transaction {
-        // none on a first sync, which the merge treats apart; an unreadable one counts as none
-        let synced = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(DictionaryMerge.Records.self, from: $0) }
-        let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote.entries,
-                                         changes: dictionary.changes, device: device)
-        // a record over the limit would be refused, and leaving it out would read as a deletion elsewhere
-        let largest = max(merged.records.map { CloudKitDictionary.size(key: $0.key, $0.value) }.max() ?? 0,
-                          CloudKitDictionary.size(learned: settings.learnedWords.union(remote.learned)))
-        guard largest <= CloudKitDictionary.recordLimit else { status = .tooLarge(bytes: largest); return nil }
-        // in one coordinated update the keyboard cannot interleave with; it returns any word the keyboard kept meanwhile
-        let learned = try settings.learn(remote.learned)
-        // the download is not a change made here
-        if merged.text != dictionary.text { try dictionary.write(merged.text, asChanges: false) }
-        // written on a first sync even when empty, so the next sync is not a first one
-        if merged.records != synced {
-          let e = JSONEncoder()
-          e.outputFormatting = .sortedKeys
-          try e.encode(merged.records).write(to: stateFile, options: .atomic)
-        }
-        // the records now carry them
-        if FileManager.default.fileExists(atPath: dictionary.changesFile.path()) { try FileManager.default.removeItem(at: dictionary.changesFile) }
-        // only what iCloud lacks; one that fails to upload differs again at the next sync and goes then
-        return (merged.records.filter { remote.entries[$0.key] != $0.value }, learned == remote.learned ? nil : learned)
+      // a save that met a newer server record brings one more fetch and merge, so the record that won there (and
+      // the learned words merged there) apply here now rather than at the next sync
+      for _ in 0..<2 {
+        guard let conflicted = try await pass() else { return }
+        status = .synced
+        if !conflicted { return }
       }
-      guard let upload else { return }
-      if !upload.entries.isEmpty || upload.learned != nil { try await cloud.save(entries: upload.entries, learned: upload.learned) }
-      status = .synced
     } catch {
       status = .failed(error.localizedDescription)
     }
+  }
+
+  /// One fetch, merge and upload. Nil when it stopped (sync turned off, a record too large), else whether the
+  /// upload met a newer server record.
+  private func pass() async throws -> Bool? {
+    let remote = try await cloud.fetch()
+    guard settings.iCloudSyncEnabled else { status = .off; return nil }  // turned off while fetching
+    let upload: (entries: DictionaryMerge.Records, learned: Set<String>?)? = try dictionary.transaction {
+      // none on a first sync, which the merge treats apart; an unreadable one counts as none
+      let synced = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(DictionaryMerge.Records.self, from: $0) }
+      let merged = DictionaryMerge.run(text: dictionary.text, synced: synced, remote: remote.entries,
+                                       changes: dictionary.changes, device: device)
+      // a record over the limit would be refused, and leaving it out would read as a deletion elsewhere
+      let largest = max(merged.records.map { CloudKitDictionary.size(key: $0.key, $0.value) }.max() ?? 0,
+                        CloudKitDictionary.size(learned: settings.learnedWords.union(remote.learned)))
+      guard largest <= CloudKitDictionary.recordLimit else { status = .tooLarge(bytes: largest); return nil }
+      // in one coordinated update the keyboard cannot interleave with; it returns any word the keyboard kept meanwhile
+      let learned = try settings.learn(remote.learned)
+      // the download is not a change made here
+      if merged.text != dictionary.text { try dictionary.write(merged.text, asChanges: false) }
+      // written on a first sync even when empty, so the next sync is not a first one
+      if merged.records != synced {
+        let e = JSONEncoder()
+        e.outputFormatting = .sortedKeys
+        try e.encode(merged.records).write(to: stateFile, options: .atomic)
+      }
+      // the records now carry them
+      if FileManager.default.fileExists(atPath: dictionary.changesFile.path()) { try FileManager.default.removeItem(at: dictionary.changesFile) }
+      // only what iCloud lacks; one that fails to upload differs again at the next sync and goes then
+      return (merged.records.filter { remote.entries[$0.key] != $0.value }, learned == remote.learned ? nil : learned)
+    }
+    guard let upload else { return nil }
+    guard !upload.entries.isEmpty || upload.learned != nil else { return false }
+    return try await cloud.save(entries: upload.entries, learned: upload.learned)
   }
 }

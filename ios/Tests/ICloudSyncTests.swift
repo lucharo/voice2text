@@ -3,18 +3,35 @@ import Testing
 import UIKit
 @testable import V2T
 
-/// The private iCloud database shared by every device in a test, counting the sync's calls to it.
+/// The private iCloud database shared by every device in a test, counting the sync's calls to it. Saves are
+/// conditional, as CloudKitDictionary's: a record changed on the server since the last fetch is merged (the later
+/// entry, the union of learned words) instead of overwritten.
 @MainActor final class FakeCloud: DictionaryCloud {
   var contents = CloudContents()
   var available = true
   var calls = 0
+  /// Runs once, between a device's fetch and its save: another device saving meanwhile.
+  var beforeNextSave: (() -> Void)?
+  private var fetched = CloudContents()
 
   func accountAvailable() async -> Bool { calls += 1; return available }
-  func fetch() async throws -> CloudContents { calls += 1; return contents }
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws {
+  func fetch() async throws -> CloudContents { calls += 1; fetched = contents; return contents }
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool {
     calls += 1
-    contents.entries.merge(entries) { $1 }
-    if let learned { contents.learned = learned }
+    beforeNextSave?()
+    beforeNextSave = nil
+    var conflicted = false
+    for (k, mine) in entries {
+      let changed = contents.entries[k] != fetched.entries[k]
+      conflicted = conflicted || changed
+      contents.entries[k] = changed ? DictionaryMerge.merge([k: mine], contents.entries)[k]! : mine
+    }
+    if let learned {
+      let changed = contents.learned != fetched.learned
+      conflicted = conflicted || changed
+      contents.learned = changed ? learned.union(contents.learned) : learned
+    }
+    return conflicted
   }
 
   var records: DictionaryMerge.Records { contents.entries }
@@ -326,6 +343,26 @@ final class Clock {
 
     #expect(phone.dictionary.text == "ai => Ai\n")
     #expect(cloud.records == ["replace:ai": .init(line: "ai => Ai", time: at(20), source: by("iPad16,3"))])
+  }
+
+  /// A save that meets a newer server record leaves the server's winner there; the sync then fetches again, so
+  /// this device uses the winning rule (and the learned words the server merged) straight away.
+  @Test func aSaveThatMeetsANewerServerRecordBringsTheWinnerHere() async throws {
+    let phone = try Device("ai => AI\n", cloud: cloud, clock: clock)
+    let pad = try Device("", model: "iPad16,3", cloud: cloud, clock: clock)
+    clock.at(1); await phone.sync.start().value
+    clock.at(2); await pad.sync.start().value
+
+    clock.at(10); try phone.dictionary.save("ai => A.I.\n")
+    cloud.beforeNextSave = { [cloud, at] in  // the pad saves its later edit between the phone's fetch and save
+      cloud.contents.entries["replace:ai"] = .init(line: "ai => Ai", time: at(20), source: .init(device: "iPad16,3", app: "app"))
+      cloud.contents.learned = ["kian"]
+    }
+    await phone.sync.sync().value
+
+    #expect(phone.dictionary.text == "ai => Ai\n")
+    #expect(phone.settings.learnedWords == ["kian"])
+    #expect(phone.sync.status == .synced)
   }
 
   /// The keyboard keeps words while the app applies a download, each reading and writing back the one array: no

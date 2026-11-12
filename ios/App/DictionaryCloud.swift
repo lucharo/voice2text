@@ -13,8 +13,9 @@ struct CloudContents: Equatable, Sendable {
   /// Whether the device has an iCloud account the private database can be used with.
   func accountAvailable() async -> Bool
   func fetch() async throws -> CloudContents
-  /// Saves these entry records (the ones that changed) and, when not nil, the learned words.
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws
+  /// Saves these entry records (the ones that changed) and, when not nil, the learned words. True when a record
+  /// had changed on the server since the fetch, so what this device holds may not be what won.
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool
 }
 
 /// The dictionary in the user's private CloudKit database, in the container iCloud.es.luischav.v2t. What Apple
@@ -112,39 +113,43 @@ final class CloudKitDictionary: DictionaryCloud {
     return contents
   }
 
-  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws {
+  func save(entries: DictionaryMerge.Records, learned: Set<String>?) async throws -> Bool {
     var records = entries.map { Self.record(key: $0.key, $0.value, onto: known[Self.recordID(key: $0.key)]) }
     if let learned { records.append(Self.record(learned: learned, onto: known[Self.learnedID])) }
-    guard !records.isEmpty else { return }
+    guard !records.isEmpty else { return false }
     _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: [])
+    var conflicted = false
     for start in stride(from: 0, to: records.count, by: Self.operationLimit) {
-      try await save(Array(records[start..<min(start + Self.operationLimit, records.count)]))
+      if try await save(Array(records[start..<min(start + Self.operationLimit, records.count)])) { conflicted = true }
     }
+    return conflicted
   }
 
   /// Saves each record only over the server version it was based on. One another device changed meanwhile is
   /// merged with that version and saved again, unless that version already wins.
-  private func save(_ records: [CKRecord]) async throws {
+  private func save(_ records: [CKRecord]) async throws -> Bool {
     let results: (saveResults: [CKRecord.ID: Result<CKRecord, Error>], deleteResults: [CKRecord.ID: Result<Void, Error>])
     do {
       results = try await database.modifyRecords(saving: records, deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: false)
     } catch let e as CKError where e.code == .limitExceeded && records.count > 1 {
-      try await save(Array(records[..<(records.count / 2)]))
-      try await save(Array(records[(records.count / 2)...]))
-      return
+      let first = try await save(Array(records[..<(records.count / 2)]))
+      let second = try await save(Array(records[(records.count / 2)...]))
+      return first || second
     }
-    var again: [CKRecord] = []
+    var again: [CKRecord] = [], conflicted = false
     for (id, result) in results.saveResults {
       switch result {
       case .success(let saved): known[id] = saved
       case .failure(let e as CKError) where e.code == .serverRecordChanged:
         guard let server = e.serverRecord, let mine = records.first(where: { $0.recordID == id }) else { throw e }
         known[id] = server
+        conflicted = true
         if let merged = Self.resolve(mine, against: server) { again.append(merged) }
       case .failure(let e): throw e
       }
     }
-    if !again.isEmpty { try await save(again) }
+    if !again.isEmpty { _ = try await save(again) }
+    return conflicted
   }
 
   /// `mine` merged into the server's newer version of the same record, or nil when the server's version already
