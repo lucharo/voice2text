@@ -15,6 +15,8 @@ struct AutocorrectRulesTests {
   static let hvent = keys([("h", 230.7, 73), ("v", 196.3, 129.3), ("e", 91.3, 34), ("n", 291, 127), ("t", 169, 33.7)])
   static let som = keys([("s", 73.7, 97.3), ("o", 348.7, 28.3), ("m", 318.3, 135.7)])
   static let lov = keys([("l", 360, 88.7), ("o", 338.7, 39.7), ("v", 190.3, 140.7)])
+  // "actually ica" (I can), from a second log of the same phone on build 124
+  static let ica = keys([("i", 314, 26), ("c", 173.7, 120.7), ("a", 40.3, 79.3)])
   static let wanre = keys([("w", 47.3, 38.3), ("a", 26, 86), ("n", 281.3, 153.3), ("r", 149.7, 42), ("e", 86, 45)])
 
   func suggester(_ change: (Suggester) -> Void = { _ in }) throws -> Suggester {
@@ -26,7 +28,7 @@ struct AutocorrectRulesTests {
   @Test func aFirstLetterIsKeptRatherThanDropped() throws {
     let context = TypingContext(before: "model but ")
     #expect(try suggester().autocorrection(for: Self.hvent, context: context) == "haven't")
-    #expect(try suggester { $0.firstTouchPenalty = 0 }.autocorrection(for: Self.hvent, context: context) == "vent")
+    #expect(try suggester { $0.firstTouchPenalty = 0; $0.runnerUpLead = 0 }.autocorrection(for: Self.hvent, context: context) == "vent")
   }
 
   @Test(arguments: [(som, "I also got ", "some"), (lov, "by my ", "love"), (taps("agre", layout), "I think the ", "agree")])
@@ -54,7 +56,7 @@ struct AutocorrectRulesTests {
   func aStretchedWordIsLeftAsTyped(word: String, before: String) throws {
     let typed = taps(word, Self.layout), context = TypingContext(before: "I think the ")
     #expect(try suggester().autocorrection(for: typed, context: context) == nil)
-    #expect(try suggester { $0.stretchedRun = .max }.autocorrection(for: typed, context: context) == before)
+    #expect(try suggester { $0.stretchedRun = .max; $0.runnerUpLead = 0 }.autocorrection(for: typed, context: context) == before)
   }
 
   @Test(arguments: [("boook", "book"), ("cannnot", "cannot"), ("agreeement", "agreement"), ("caballlo", "caballo")])
@@ -72,6 +74,13 @@ struct AutocorrectRulesTests {
     #expect(Suggester.letterRuns("boook").map(String.init) == ["b", "ooo", "k"])
     #expect(Suggester.letterRuns("aab").map(String.init) == ["aa", "b"])
     #expect(Suggester.letterRuns("").isEmpty)
+  }
+
+  /// "ova" led "ice" by 0.1: with two words that close, neither is put in.
+  @Test func lettersWithTwoCorrectionsAboutAsLikelyAreLeftAsTyped() throws {
+    let context = TypingContext(before: "smooth actually ")
+    #expect(try suggester().autocorrection(for: Self.ica, context: context) == nil)
+    #expect(try suggester { $0.runnerUpLead = 0 }.autocorrection(for: Self.ica, context: context) == "ova")
   }
 
   /// The bar holds "believe" as a completion of fewer letters, which outranks it as a correction of all six.

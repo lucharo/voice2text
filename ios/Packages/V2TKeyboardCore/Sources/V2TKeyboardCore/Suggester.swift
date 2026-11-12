@@ -79,6 +79,14 @@ public final class Suggester: @unchecked Sendable {
   /// any of them) and made a wrong word of 6.2% and 6.7% (8.9% and 8.2%); 0 gave up another point of fixes, and
   /// from 2 up QualityEval's bar lost the meant word after two letters.
   public var completionLead: Double = 1
+  /// The nats the best correction must beat the next different word by; closer than that and the letters stay
+  /// as typed, since either word may be the one meant ("ica" in a typing log became "ova", 0.1 ahead of "ice",
+  /// where "I can" was meant). 0 turns the rule off. On RealTypoEval each step gives up about one fix for one
+  /// wrong word avoided: 0.25 lost 33 English and 116 Spanish fixes and avoided 40 and 172 wrong words, 0.5
+  /// lost 72 and 224 for 72 and 328, 0.75 lost 115 and 348 for 95 and 428, 1 lost 157 and 487 for 121 and 534.
+  /// At 0.5 the two typing logs keep every correction that was right ("fnd" -> "find", "som" -> "some");
+  /// 0.75 leaves those two as typed.
+  public var runnerUpLead: Double = 0.5
   /// How many times in a row a letter is typed before it counts as stretched on purpose ("saaame", "nooo",
   /// "yesss"). Letters with such a run stay as typed, except one tap too many on a double letter ("boook" ->
   /// "book", "cannnot" -> "cannot"), and a run one longer is never corrected. `Int.max` turns the rule off.
@@ -273,6 +281,9 @@ public final class Suggester: @unchecked Sendable {
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
     guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
     if let oneTapFewer, !oneTapFewer.contains(best.word.lowercased()) { return nil }
+    // two different words about as likely as each other ("ica": ova against ice): the letters stay
+    let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
+    if let second = others.map(\.score).max(), best.score - second < runnerUpLead { return nil }
     // a word one letter longer is in the bar as a completion too, at its score there ("agre": agree beside agreed)
     let shown = all.first { $0.word.lowercased() == best.word.lowercased() }?.score ?? best.score
     if let longer = all.first(where: { $0.kind == .completion }), longer.word.lowercased() != best.word.lowercased(),
