@@ -120,6 +120,7 @@ enum LogReplayEval {
       lineT = o["t"] as? Double ?? 0
       if name == "appear" {
         boot = bootAnchor(o)
+        deletedSince = false  // a new keyboard session: a delete before it touched nothing typed in it
         guard (o["form"] as? String ?? "phone") == "phone" else {
           engine = nil  // the touches cannot be placed on the right keys
           out.sessionsSkipped += 1
@@ -198,6 +199,7 @@ enum LogReplayEval {
         let chars = o["chars"] as? Int ?? 0
         if name == "host" { proxy.text = "" } else { e.insertFinished("") }
         unknown(e, blocks: chars)
+        if name == "host" { deletedSince = false }  // the host replaced the text: a delete before it is gone with it
       default: break
       }
     }
@@ -334,6 +336,28 @@ enum LogReplayEval {
     let lines = [#"{"t":50,"e":"exercise","end":2000,"target":"The quiz starts at eight, so be quick.","typed":"The quiz starts at eight, so be quick"}"#]
 
     #expect(scoreExercises(lines, out).map(\.score) == Array(repeating: .tappedRight, count: 7) + [.notScored])
+  }
+
+  /// "x" typed and deleted, then `between` (the host clearing the field, the keyboard opening again), then "the "
+  /// typed with no delete.
+  static func deleteThen(_ between: String) throws -> Word? {
+    let appear = #"{"t":0,"e":"appear","layout":"en","languages":["en"],"width":402,"form":"phone"}"#
+    let lines = [appear, #"{"t":10,"e":"key","text":"x"}"#, #"{"t":20,"e":"act","a":"delete"}"#, between,
+                 #"{"t":40,"e":"key","text":"t"}"#, #"{"t":50,"e":"key","text":"h"}"#, #"{"t":60,"e":"key","text":"e"}"#,
+                 #"{"t":70,"e":"act","a":"space"}"#]
+    return replay(lines, lexicons: ["en": try Fixtures.english.get()]).words.last
+  }
+
+  @Test static func aDeleteBeforeTheHostClearedTheFieldDoesNotMarkTheNextWord() throws {
+    let w = try deleteThen(#"{"t":30,"e":"host","kind":"text","chars":0}"#)
+    #expect(w?.typed == "The")
+    #expect(w?.deleted == false)
+  }
+
+  @Test static func aDeleteBeforeTheKeyboardOpenedAgainDoesNotMarkTheNextWord() throws {
+    let w = try deleteThen(#"{"t":30,"e":"appear","layout":"en","languages":["en"],"width":402,"form":"phone"}"#)
+    #expect(w?.typed == "The")
+    #expect(w?.deleted == false)
   }
 
   @Test static func wordsFromAnotherBootAreLeftOutOfTheSentence() {
