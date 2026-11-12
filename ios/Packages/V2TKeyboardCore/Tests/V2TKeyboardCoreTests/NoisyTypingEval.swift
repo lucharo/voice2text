@@ -141,13 +141,16 @@ enum NoisyTyping {
     var tappedRight = 0, kept = 0, changed = 0
     /// Words whose taps typed other letters: corrected to the meant word, to another, or left as typed.
     var tappedWrong = 0, fixed = 0, wrong = 0, untouched = 0
+    /// Of the words tapped wrong, those whose letters are a word in the lexicons ("hone" for "home"): autocorrect
+    /// leaves a real word as typed by design (RealTypoEval leaves such errors out).
+    var realWord = 0
     /// Of the words tapped wrong, those whose meant word was in the bar's three slots before the space.
     var inBar = 0
     var changedExamples: [String] = [], wrongExamples: [String] = [], untouchedExamples: [String] = []
 
     static func == (a: Result, b: Result) -> Bool {
-      [a.sentences, a.words, a.taps, a.offLetterKeys, a.tappedRight, a.kept, a.changed, a.tappedWrong, a.fixed, a.wrong, a.untouched, a.inBar]
-        == [b.sentences, b.words, b.taps, b.offLetterKeys, b.tappedRight, b.kept, b.changed, b.tappedWrong, b.fixed, b.wrong, b.untouched, b.inBar]
+      [a.sentences, a.words, a.taps, a.offLetterKeys, a.tappedRight, a.kept, a.changed, a.tappedWrong, a.fixed, a.wrong, a.untouched, a.realWord, a.inBar]
+        == [b.sentences, b.words, b.taps, b.offLetterKeys, b.tappedRight, b.kept, b.changed, b.tappedWrong, b.fixed, b.wrong, b.untouched, b.realWord, b.inBar]
     }
   }
 
@@ -169,7 +172,7 @@ enum NoisyTyping {
     for p in parts {
       r.sentences += p.sentences; r.words += p.words; r.taps += p.taps; r.offLetterKeys += p.offLetterKeys
       r.tappedRight += p.tappedRight; r.kept += p.kept; r.changed += p.changed
-      r.tappedWrong += p.tappedWrong; r.fixed += p.fixed; r.wrong += p.wrong; r.untouched += p.untouched; r.inBar += p.inBar
+      r.tappedWrong += p.tappedWrong; r.fixed += p.fixed; r.wrong += p.wrong; r.untouched += p.untouched; r.realWord += p.realWord; r.inBar += p.inBar
       r.changedExamples += p.changedExamples.prefix(30 - r.changedExamples.count)
       r.wrongExamples += p.wrongExamples.prefix(30 - r.wrongExamples.count)
       r.untouchedExamples += p.untouchedExamples.prefix(30 - r.untouchedExamples.count)
@@ -217,6 +220,7 @@ enum NoisyTyping {
           }
         } else {
           r.tappedWrong += 1
+          if lexicons.contains(where: { $0.entry(of: letters) != nil }) { r.realWord += 1 }
           if bar.contains(word) { r.inBar += 1 }
           if got == word { r.fixed += 1 } else if got == letters {
             r.untouched += 1
@@ -260,11 +264,11 @@ enum NoisyTyping {
   static func share(_ a: Int, _ n: Int) -> Double { 100 * Double(a) / Double(max(1, n)) }
 
   static func printHeader() {
-    print("noisy | set | sentences | words | taps on a v2t key that is not a letter | tapped right | kept | changed by autocorrect | tapped wrong | fixed | wrong word | left as typed | meant word in bar (tapped wrong)")
+    print("noisy | set | sentences | words | taps on a v2t key that is not a letter | tapped right | kept | changed by autocorrect | tapped wrong | of them a real word | fixed | wrong word | left as typed | meant word in bar (tapped wrong)")
   }
 
   static func printRow(_ r: Result, label: String = "noisy") {
-    print("\(label) | \(r.name) | \(r.sentences) | \(r.words) | \(pct(r.offLetterKeys, r.taps)) | \(pct(r.tappedRight, r.words)) | \(pct(r.kept, r.tappedRight)) | \(pct(r.changed, r.tappedRight)) | \(pct(r.tappedWrong, r.words)) | \(pct(r.fixed, r.tappedWrong)) | \(pct(r.wrong, r.tappedWrong)) | \(pct(r.untouched, r.tappedWrong)) | \(pct(r.inBar, r.tappedWrong))")
+    print("\(label) | \(r.name) | \(r.sentences) | \(r.words) | \(pct(r.offLetterKeys, r.taps)) | \(pct(r.tappedRight, r.words)) | \(pct(r.kept, r.tappedRight)) | \(pct(r.changed, r.tappedRight)) | \(pct(r.tappedWrong, r.words)) | \(pct(r.realWord, r.tappedWrong)) | \(pct(r.fixed, r.tappedWrong)) | \(pct(r.wrong, r.tappedWrong)) | \(pct(r.untouched, r.tappedWrong)) | \(pct(r.inBar, r.tappedWrong))")
   }
 }
 
@@ -430,19 +434,21 @@ struct NoisyTypingTests {
     #expect(onG.letter == "g" && onG.onLetterKey)
   }
 
-  /// One sentence tapped at the made-up keyboard's centres, "the" tapped "thw": every count of the row.
+  /// Two sentences tapped at the made-up keyboard's centres, "the" tapped "thw" (not a word, fixed) and "in" tapped
+  /// "on" (a word, left as typed): every count of the row.
   @Test func countsWhatAutocorrectDidWithEachWord() throws {
     let kb = try NoisyTyping.keyboards(Self.keyboardText)
     func taps(_ letters: String) throws -> String {
       try letters.map { ch in let c = try toyCentre(ch); return "\(c.x),\(c.y),\(c.x),\(c.y)" }.joined(separator: ";")
     }
     let line = "s/p1\ttoy\tm1\ti think the plan works\t\(try taps("i")) \(try taps("think")) \(try taps("thw")) \(try taps("plan")) \(try taps("works"))\n"
+      + "s/p1\ttoy\tm2\twe met in town\t\(try taps("we")) \(try taps("met")) \(try taps("on")) \(try taps("town"))\n"
     let r = NoisyTyping.row("toy", try NoisyTyping.sentences(line), keyboards: kb, lexicons: [try Fixtures.english.get()], layout: layout)
     var want = NoisyTyping.Result(name: "toy")
-    (want.sentences, want.words, want.taps, want.offLetterKeys) = (1, 5, 18, 0)
-    (want.tappedRight, want.kept, want.changed) = (4, 4, 0)
-    (want.tappedWrong, want.fixed, want.wrong, want.untouched) = (1, 1, 0, 0)
-    want.inBar = 1
+    (want.sentences, want.words, want.taps, want.offLetterKeys) = (2, 9, 29, 0)
+    (want.tappedRight, want.kept, want.changed) = (7, 7, 0)
+    (want.tappedWrong, want.fixed, want.wrong, want.untouched, want.realWord) = (2, 1, 0, 1, 1)
+    want.inBar = 1  // "the" after "thw"; the bar after "on" offers "on" and longer words, not "in"
     #expect(r == want, "\(r)")
   }
 }
