@@ -303,6 +303,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     applyTraits()
     engine.resync()
     logHost("text")
+    lettersIfHostEmptiedField()
     refresh()
   }
 
@@ -313,6 +314,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     inputEpoch += 1
     engine.resync()
     logHost("selection")
+    lettersIfHostEmptiedField()
     refresh()
   }
 
@@ -436,6 +438,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     }
     keyboardView.returnLabel = Self.returnLabel(p.returnKeyType ?? .default, language)
     let numeric = [.numberPad, .decimalPad, .numbersAndPunctuation, .phonePad, .asciiCapableNumberPad].contains(type)
+    fieldNumeric = numeric
     if let page = KeyboardPage.forField(numeric: numeric, current: keyboardView.layout.page, emojiSearch: emojiSearch != nil) {
       relayout(page: page)
     }
@@ -467,7 +470,23 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     latencyLog.log("\(name, privacy: .public) \(String(format: "%.2f", (CACurrentMediaTime() - t0) * 1000), privacy: .public) ms")
   }
 
+  /// Whether the field held text at the last refresh, and whether its keyboard type is a numeric one: what
+  /// `KeyboardPage.afterHostEdit` needs when the host changes the text.
+  private var hostText = HostTextWatch()
+  private var fieldNumeric = false
+
+  /// The app emptied a field that had text (a sent message, a typing exercise's next sentence): back to
+  /// letters. Called from both host callbacks, before either refreshes, since iOS sends them in either order.
+  private func lettersIfHostEmptiedField() {
+    let emptied = hostText.emptied(hasText: textDocumentProxy.hasText)
+    if let page = KeyboardPage.afterHostEdit(emptied: emptied, numeric: fieldNumeric, current: keyboardView.layout.page,
+                                             emojiSearch: emojiSearch != nil) {
+      relayout(page: page)
+    }
+  }
+
   private func refresh() {
+    hostText.note(hasText: textDocumentProxy.hasText)
     // search has its own shift, off unless tapped, and types the shifted mark only (EmojiIndex folds case)
     keyboardView.shift = emojiSearch == nil ? engine.shift : (searchShift ? .on : .off)
     keyboardView.shiftManual = emojiSearch == nil ? engine.shiftManual : true

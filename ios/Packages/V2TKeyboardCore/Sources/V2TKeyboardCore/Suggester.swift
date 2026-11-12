@@ -79,6 +79,21 @@ public final class Suggester: @unchecked Sendable {
   /// any of them) and made a wrong word of 6.2% and 6.7% (8.9% and 8.2%); 0 gave up another point of fixes, and
   /// from 2 up QualityEval's bar lost the meant word after two letters.
   public var completionLead: Double = 1
+  /// The nats the best correction must beat the next different word by; closer than that and the letters stay
+  /// as typed, since either word may be the one meant ("ica" in a typing log became "ova", 0.1 ahead of "ice",
+  /// where "I can" was meant). 0 turns the rule off. On RealTypoEval each step gives up about one fix for one
+  /// wrong word avoided: 0.25 lost 33 English and 116 Spanish fixes and avoided 40 and 172 wrong words, 0.5
+  /// lost 72 and 224 for 72 and 328, 0.75 lost 115 and 348 for 95 and 428, 1 lost 157 and 487 for 121 and 534.
+  /// At 0.5 the two typing logs keep every correction that was right ("fnd" -> "find", "som" -> "some");
+  /// 0.75 leaves those two as typed.
+  public var runnerUpLead: Double = 0.5
+  /// How many times in a row a letter is typed before it counts as stretched on purpose ("saaame", "nooo",
+  /// "yesss"). Letters with such a run stay as typed, except one tap too many on a double letter ("boook" ->
+  /// "book", "cannnot" -> "cannot"), and a run one longer is never corrected. `Int.max` turns the rule off.
+  /// RealTypoEval has 15 English and 4 Spanish misspellings with a run of three, none longer; all but two
+  /// ("asssassans", "resssurecting") are the extra tap. Without the rule "saaame" became "salaam", "soooo"
+  /// "soon" and "yessss" "yeasts".
+  public var stretchedRun = 3
 
   private let centers: [CGPoint?]
   private let memoLock = NSLock()
@@ -251,12 +266,27 @@ public final class Suggester: @unchecked Sendable {
     for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
       if isWord(String(literal.dropLast(suffix.count))) { return nil }
     }
+    // a stretched word is left as typed; with a run of exactly `stretchedRun` the only correction is the same
+    // letters with that run one shorter
+    let runs = Self.letterRuns(lower)
+    let longest = runs.map(\.count).max() ?? 0
+    // four or more in a row, or nothing but the one letter ("Mmm", "ooo"), is never a slip on a double letter
+    if longest > stretchedRun || (longest == stretchedRun && runs.count == 1) { return nil }
+    // compared by letters alone, as the lists spell the word with a straight apostrophe or an accent the
+    // typist left to autocorrect ("i’lll": I'll)
+    let oneTapFewer: Set<[UInt8]>? = longest == stretchedRun
+      ? Set(runs.filter { $0.count == stretchedRun }.map { run in Lexicon.fold(String(lower[..<run.startIndex] + lower[lower.index(after: run.startIndex)...])) })
+      : nil
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
     // a last letter left off competes with the corrections of the same length ("som": some against son)
     let rank = ranking(for: typed, context: context)
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
     guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
+    if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
+    // two different words about as likely as each other ("ica": ova against ice): the letters stay
+    let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
+    if let second = others.map(\.score).max(), best.score - second < runnerUpLead { return nil }
     // a word one letter longer is in the bar as a completion too, at its score there ("agre": agree beside agreed)
     let shown = all.first { $0.word.lowercased() == best.word.lowercased() }?.score ?? best.score
     if let longer = all.first(where: { $0.kind == .completion }), longer.word.lowercased() != best.word.lowercased(),
@@ -324,6 +354,17 @@ public final class Suggester: @unchecked Sendable {
   }
 
   /// The lexicons spell apostrophes straight; the long press types the curly one.
+  /// The stretches of one letter repeated, each as a slice of `s` ("boook": b, ooo, k).
+  static func letterRuns(_ s: String) -> [Substring] {
+    var runs: [Substring] = [], start = s.startIndex
+    for i in s.indices.dropFirst() where s[i] != s[start] {
+      runs.append(s[start..<i])
+      start = i
+    }
+    if start < s.endIndex { runs.append(s[start...]) }
+    return runs
+  }
+
   static func straightApostrophes(_ s: String) -> String { s.replacingOccurrences(of: "’", with: "'") }
 
   /// The likeliest next words before anything of the next word is typed, best first: the words that most

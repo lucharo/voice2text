@@ -218,6 +218,26 @@ struct EmojiTests {
     #expect(KeyboardPage.forField(numeric: false, current: .letters, emojiSearch: false) == nil)
   }
 
+  /// The selection callback may come before the text one: whichever sees the empty field first reports it.
+  @Test func theFirstHostCallbackAfterTheFieldIsEmptiedReportsItOnce() {
+    var watch = HostTextWatch()
+    let neverHadText = watch.emptied(hasText: false)
+    watch.note(hasText: true)                       // the user typed
+    let stillThere = watch.emptied(hasText: true)   // a host callback with the text still there
+    let first = watch.emptied(hasText: false)       // selectionDidChange or textDidChange, whichever is first
+    let second = watch.emptied(hasText: false)      // the other one
+    #expect([neverHadText, stillThere, first, second] == [false, false, true, false])
+  }
+
+  @Test func aFieldTheHostEmptiedGoesBackToLetters() {
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .numbers, emojiSearch: false) == .letters)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .symbols, emojiSearch: false) == .letters)
+    #expect(KeyboardPage.afterHostEdit(emptied: false, numeric: false, current: .numbers, emojiSearch: false) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: true, current: .numbers, emojiSearch: false) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .numbers, emojiSearch: true) == nil)
+    #expect(KeyboardPage.afterHostEdit(emptied: true, numeric: false, current: .letters, emojiSearch: false) == nil)
+  }
+
   // MARK: typing
 
   func engine(_ start: String = "") throws -> (TypingEngine, FakeProxy) {

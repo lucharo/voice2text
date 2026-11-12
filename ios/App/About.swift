@@ -20,7 +20,7 @@ struct AboutView: View {
     let device = dictation.recommendation.deviceName
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        Text("Great keyboard and transcription, no compromises.")
+        Text("Great keyboard, excellent on-device transcription, no compromises.")
           .font(.largeTitle.bold())
           .accessibilityAddTraits(.isHeader)
           .accessibilityIdentifier("v2t.about.headline")

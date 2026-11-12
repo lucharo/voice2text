@@ -157,10 +157,10 @@ struct RealTypoEvalTests {
     print("realtypo-latency | key + bar + bold slot, Mac | \(RealTypoEval.stats(keyTimes)) over \(keyTimes.count) keys")
     // floors a couple of points under the measured values (2026-11-12), so a regression fails
     func share(_ a: Int, _ n: Int) -> Double { 100 * Double(a) / Double(max(1, n)) }
-    #expect(share(rows[0].fixed, rows[0].scored) >= 87.5, "English misspellings fixed")
-    #expect(share(rows[0].wrong, rows[0].scored) <= 8, "English misspellings made a wrong word")
-    #expect(share(rows[1].fixed, rows[1].scored) >= 89.5, "Spanish misspellings fixed")
-    #expect(share(rows[1].wrong, rows[1].scored) <= 8.5, "Spanish misspellings made a wrong word")
+    #expect(share(rows[0].fixed, rows[0].scored) >= 86, "English misspellings fixed")
+    #expect(share(rows[0].wrong, rows[0].scored) <= 6, "English misspellings made a wrong word")
+    #expect(share(rows[1].fixed, rows[1].scored) >= 87.5, "Spanish misspellings fixed")
+    #expect(share(rows[1].wrong, rows[1].scored) <= 6, "Spanish misspellings made a wrong word")
     #expect(share(text[0].changed, text[0].words) <= 0.5, "correct English words changed")
     #expect(share(text[1].changed, text[1].words) <= 2.5, "correct Spanish words changed")
     #expect(share(text[2].changed, text[2].words) <= 0.5, "correct English words changed with Spanish on")
@@ -176,7 +176,8 @@ struct RealTypoEvalTests {
 /// fw the frequency weight, pn the proper-noun penalty, edits the most edits, first the extra cost of skipping
 /// the first touch, last the cost of a last letter left off, floor the lowest score a non-word's correction may
 /// have (write -inf as "floor=-inf"), lead the nats a completion must beat a correction by for the word to be
-/// left as unfinished, beam the beam width per lexicon. The third row types the English misspellings with
+/// left as unfinished, beam the beam width per lexicon, runner the nats the best correction must lead the next
+/// word by. The third row types the English misspellings with
 /// Spanish on as well, as a bilingual typist has it.
 struct RealTypoTuning {
   static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
@@ -205,6 +206,7 @@ struct RealTypoTuning {
           case "floor": s.correctionFloor = v
           case "lead": s.completionLead = v
           case "beam": s.beamWidth = Int(v)
+          case "runner": s.runnerUpLead = v
           default: Issue.record("unknown key \(p[0])")
           }
         }

@@ -129,6 +129,55 @@ Still different from Apple's keyboard, or unmeasured:
 - **A hyphen before an address** ("exmaple-site.com") still corrects its first part: a hyphen applies the
   correction, so compound words are corrected part by part.
 
+### Stretched words (2026-11-12)
+
+A letter typed three or more times in a row is stretched on purpose ("saaame", "soooo", "yessss"), and the
+nearest word is never what was meant: those became "salaam", "soon" and "yeasts". Such letters now stay as
+typed (`Suggester.stretchedRun`, `AutocorrectRulesTests`). The one exception is a run of exactly three that
+is one tap too many on a double letter ("boook" → "book", "cannnot" → "cannot"); four or more in a row is
+never corrected. The misspelling sets have 15 English and 4 Spanish words with a run of three and none
+longer, and all but two ("asssassans", "resssurecting") are the extra tap. English fixes go from 3,688 to
+3,687 of 4,122 with wrong words unchanged at 256, and Spanish does not move.
+
+### After a second typing log (2026-11-12, build 124)
+
+A second log from the same phone, 191 keys and 37 words on build 124, had 6 autocorrections. Replayed
+(`LogReplayEval`):
+
+| Typed | Meant | Build 124 | Now |
+| --- | --- | --- | --- |
+| acutally | actually | actually | actually |
+| ica | I can | ova | left as typed |
+| tye | type | the | the |
+| issus | issues | left as typed | left as typed |
+| ecpt | except | left as typed | left as typed |
+| lle | like | left as typed | left as typed |
+
+"ica" became "ova" with "ice" 0.1 behind it: when two different words are about as likely, either may be the
+one meant. The best correction must now lead the next word by 0.5 (`Suggester.runnerUpLead`), or the letters
+stay. On the misspelling sets that gives up about one fix for each wrong word avoided:
+
+| `runnerUpLead` | English fixed / wrong | Spanish fixed / wrong |
+| --- | --- | --- |
+| 0 (before) | 89.4% / 6.2% | 90.9% / 6.7% |
+| 0.25 | 88.6% / 5.2% | 90.1% / 5.6% |
+| 0.5 (now) | 87.7% / 4.5% | 89.4% / 4.6% |
+| 0.75 | 86.7% / 3.9% | 88.7% / 3.9% |
+| 1 | 85.6% / 3.3% | 87.8% / 3.3% |
+
+At 0.5 both logs keep every correction that was right; 0.75 would also have left "tye" alone, but it leaves
+"fnd" (find) and "som" (some) from the first log as typed. The meant word stays in the bar as often as before
+(93.7%).
+
+Still open from this log: "tye" becomes "the" where "type" was meant (0.6 ahead of "rye"); "issus" is in the
+English list, so it is a real word and stays; "ecpt" and "lle" are two slips in three or four letters and the
+bar does not offer the meant word.
+
+The same log is the first check of the edge-touch fix on a phone: delete presses within 30 pt of the screen
+edge took a median 18 ms from touch to deletion (2 presses) against 96 ms on build 123 (8 presses),
+and edge letters 29 ms from lift to key (5) against 38 ms (7); keys elsewhere stayed at 20 ms. The bar came up
+a median 4.5 ms after a key (95th percentile 8.8 ms) against 7.3 ms (19.9 ms).
+
 ## Where Gboard and SwiftKey differ
 
 - **Space can insert a prediction.** SwiftKey's space bar inserts the middle prediction when autocorrect is on,

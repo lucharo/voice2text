@@ -24,6 +24,26 @@ public enum KeyboardPage: Hashable, Sendable {
   public static func forField(numeric: Bool, current: KeyboardPage, emojiSearch: Bool) -> KeyboardPage? {
     numeric && current == .letters && !emojiSearch ? .numbers : nil
   }
+
+  /// The page after the host app changed the text: letters when it emptied a field that had text (a sent
+  /// message, the next sentence of a typing exercise), as Apple's keyboard does; nil leaves the page alone.
+  /// Never in a numeric field, whose page is numbers, or while emoji search owns the keys.
+  public static func afterHostEdit(emptied: Bool, numeric: Bool, current: KeyboardPage, emojiSearch: Bool) -> KeyboardPage? {
+    emptied && !numeric && current != .letters && !emojiSearch ? .letters : nil
+  }
+}
+
+/// Notices the host app emptying a field that had text. The keyboard notes whether the field has text after
+/// every refresh (its own edits included) and asks on each host callback; iOS sends the text and selection
+/// callbacks in either order, and the first one to see the empty field reports it, once.
+public struct HostTextWatch: Sendable {
+  public private(set) var hadText = false
+  public init() {}
+  public mutating func note(hasText: Bool) { hadText = hasText }
+  public mutating func emptied(hasText: Bool) -> Bool {
+    defer { hadText = hasText }
+    return hadText && !hasText
+  }
 }
 
 /// Which of Apple's keyboards the layout follows: the iPhone one; the iPad one (delete and return on the
