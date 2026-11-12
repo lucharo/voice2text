@@ -220,9 +220,12 @@ enum LogReplayEval {
   static func fold(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "’", with: "'") }
 
   /// Each exercise sentence's words against the words this replay finished while the sentence was on screen, in
-  /// the same boot of the phone. A sentence is not scored when the words finished or the words in the field at
-  /// Next differ in number from the sentence's (a word left out, run together, not replayed, or deleted after it
-  /// was finished), and nor is a word typed after a delete: which of the sentence's words it was is a guess.
+  /// the same boot of the phone. A sentence is scored only when those words, as the build that wrote the log left
+  /// them, are the words in the field at Next, one for one (capitals, punctuation and curly apostrophes aside),
+  /// and the field holds as many words as the sentence: otherwise a word was left out, run together, not
+  /// replayed, or deleted or changed after it was finished, and which of the sentence's words each one was is a
+  /// guess. A last word with nothing typed after it before Next was never finished, so the engine never decided on
+  /// it: it alone is not scored. A word typed after a delete is not scored either.
   static func scoreExercises(_ lines: [String], _ out: Outcome) -> [Scored] {
     var scored: [Scored] = []
     for line in lines {
@@ -232,8 +235,12 @@ enum LogReplayEval {
       let typed = out.words.filter { w in
         t <= w.t && w.t <= end && (anchor == nil || w.boot == nil || abs(anchor! - w.boot!) <= bootSlack)
       }
-      let final = TypingExerciseLog.words(o["typed"] as? String ?? "")
-      guard typed.count == want.count, final.count == want.count else {
+      let field = o["typed"] as? String ?? ""
+      let final = TypingExerciseLog.words(field)
+      let unfinished = field.last.map { !($0.isWhitespace || $0.isPunctuation || $0.isSymbol) } ?? false
+      let finished = unfinished ? final.count - 1 : final.count
+      guard final.count == want.count, typed.count == finished,
+            zip(typed, final).allSatisfy({ fold($0.logged ?? $0.typed) == fold($1) }) else {
         scored += want.map { Scored(score: .notScored, target: $0, word: nil) }
         continue
       }
@@ -245,24 +252,28 @@ enum LogReplayEval {
           : w.now != nil ? .wrongWord : .leftAsTyped
         scored.append(Scored(score: score, target: target, word: w))
       }
+      if unfinished, let last = want.last { scored.append(Scored(score: .notScored, target: last, word: nil)) }
     }
     return scored
   }
 
   @Test static func exerciseWordsAreScoredOnlyWhereTheyLineUp() {
     func word(_ typed: String, now: String? = nil, t: Double, deleted: Bool = false, bar: [String] = []) -> Word {
-      Word(typed: typed, previous: nil, logged: nil, now: now, bar: bar, t: t, deleted: deleted)
+      Word(typed: typed, previous: nil, logged: now, now: now, bar: bar, t: t, deleted: deleted)
     }
     var out = Outcome()
     // "The fox ran." typed as "teh" (corrected), "fox", then a delete before "ran"; "Sit by." with one word run on
     out.words = [word("teh", now: "the", t: 100, bar: ["teh", "the"]), word("fox", t: 200), word("ran", t: 300, deleted: true),
                  word("sitby", t: 1100), word("dog", now: "dig", t: 2100), word("cst", t: 2200),
                  // "go nw " finished, "nw" deleted and "now" typed: three words finished for two in the field
-                 word("go", t: 3100), word("nw", t: 3200), word("now", t: 3300, deleted: true)]
+                 word("go", t: 3100), word("nw", t: 3200), word("now", t: 3300, deleted: true),
+                 // "ok go now ": a word typed before the sentence's first
+                 word("ok", t: 4100), word("go", t: 4200), word("now", t: 4300)]
     let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran.","typed":"The fox ran."}"#,
                  #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by.","typed":"Sitby"}"#,
-                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst"}"#,
-                 #"{"t":3000,"e":"exercise","end":3400,"target":"go now","typed":"go now"}"#]
+                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst "}"#,
+                 #"{"t":3000,"e":"exercise","end":3400,"target":"go now","typed":"go now "}"#,
+                 #"{"t":4000,"e":"exercise","end":4400,"target":"go now","typed":"ok go now "}"#]
 
     let scored = scoreExercises(lines, out)
 
@@ -270,6 +281,7 @@ enum LogReplayEval {
       "The fixed by autocorrect true", "fox tapped right false", "ran not scored false",
       "Sit not scored false", "by not scored false",
       "dog made a different wrong word false", "cat left as typed false",
+      "go not scored false", "now not scored false",
       "go not scored false", "now not scored false",
     ])
   }
@@ -282,6 +294,32 @@ enum LogReplayEval {
     let lines = [#"{"t":50,"e":"exercise","end":400,"target":"Sit by.","typed":"Sit "}"#]
 
     #expect(scoreExercises(lines, out).map(\.score) == [.notScored, .notScored])
+  }
+
+  /// The words of "The quiz starts at eight, so be quick." as typed and finished, each tapped right.
+  static func quizWords(_ n: Int) -> [Word] {
+    ["The", "quiz", "starts", "at", "eight", "so", "be", "quick"].prefix(n).enumerated().map {
+      Word(typed: $0.element, previous: nil, logged: nil, now: nil, bar: [], t: Double(100 * ($0.offset + 1)))
+    }
+  }
+
+  @Test static func aFinishedWordReplacedBeforeNextLeavesTheSentenceUnscored() {
+    var out = Outcome()
+    // the whole sentence typed, then "quick." deleted and "slow" typed with nothing after it: the record for
+    // "quick" is stale and "slow" has none
+    out.words = quizWords(8)
+    let lines = [#"{"t":50,"e":"exercise","end":2000,"target":"The quiz starts at eight, so be quick.","typed":"The quiz starts at eight, so be slow"}"#]
+
+    #expect(scoreExercises(lines, out).map(\.score) == Array(repeating: .notScored, count: 8))
+  }
+
+  @Test static func aLastWordLeftUnfinishedAtNextIsTheOnlyOneNotScored() {
+    var out = Outcome()
+    // no full stop: "quick" was never ended, so the engine never decided on it
+    out.words = quizWords(7)
+    let lines = [#"{"t":50,"e":"exercise","end":2000,"target":"The quiz starts at eight, so be quick.","typed":"The quiz starts at eight, so be quick"}"#]
+
+    #expect(scoreExercises(lines, out).map(\.score) == Array(repeating: .tappedRight, count: 7) + [.notScored])
   }
 
   @Test static func wordsFromAnotherBootAreLeftOutOfTheSentence() {

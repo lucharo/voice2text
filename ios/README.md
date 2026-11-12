@@ -136,8 +136,10 @@ the keyboard's, and Clear log deletes them too.
   at 402 and 375 pt), from the `appear` line's width; iPad sessions get no offsets. The replay (below) prints
   `replay-exercise` lines when the log has exercises: each sentence word typed while it was on screen as tapped
   right, fixed by autocorrect, made a different wrong word or left as typed, whether the bar showed the
-  sentence's word, and a `replay-exercise-summary`. A word typed after a delete, and every word of a sentence
-  whose finished words or text at Next differ in number from it, is counted as not scored. Both tools match a
+  sentence's word, and a `replay-exercise-summary`. A sentence is scored only when its finished words, as the
+  logging build left them, are the field's words at Next one for one and as many as the sentence's; otherwise
+  every word of it is not scored. A last word with nothing typed after it before Next was never finished, so it
+  alone is not scored, and so is a word typed after a delete. Both tools match a
   sentence only with keyboard events from the same boot of the phone (the `wall` time less the uptime).
 - **Fetch.** `ios/tools/fetch_kb_log.sh` copies the log off a connected iPhone (`xcrun devicectl device copy from
   --domain-type appGroupDataContainer --domain-identifier group.es.luischav.v2t --source KeyboardLog`, which
