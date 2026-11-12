@@ -15,6 +15,11 @@ import V2TKeyboardCore
   let sentences: [ExerciseSentences.Sentence]
   @Published private(set) var index = 0
   @Published private(set) var done: [Done] = []
+  /// The field's text. Its first change after a sentence appears starts that sentence's typing time; Next clears it
+  /// before the next sentence's time is reset, so the clear is not counted as typing.
+  @Published var text = "" {
+    didSet { if firstEdit == nil, text != oldValue { firstEdit = clock() } }
+  }
   private let directory: URL?
   private let clock: @Sendable () -> TimeInterval
   private let now: () -> Date
@@ -43,20 +48,17 @@ import V2TKeyboardCore
     firstEdit = nil
   }
 
-  /// The field changed; the first change starts the typing time.
-  func edited() {
-    if firstEdit == nil { firstEdit = clock() }
-  }
-
-  /// Next: records what the field holds and moves on.
-  func next(typed: String) {
+  /// Next: records what the field holds, clears it and moves on to the next sentence, if there is one.
+  func next() {
     guard let sentence = current else { return }
-    let end = clock()
+    let end = clock(), typed = text
     if recording(), let directory {
       TypingExerciseLog.append(.init(id: sentence.id, target: sentence.text, typed: typed, start: shownAt, end: end, wall: shownWall), in: directory)
     }
     done.append(Done(sentence: sentence, typed: typed, seconds: firstEdit.map { end - $0 } ?? 0))
     index += 1
+    text = ""
+    if !finished { shown() }
   }
 
   /// The words that ended up different from their sentence, in order.
@@ -75,7 +77,6 @@ import V2TKeyboardCore
 /// keyboard debug log holds what was meant next to every touch. A summary follows the last sentence.
 struct TypingExerciseView: View {
   @StateObject private var session = TypingExerciseView.newSession()
-  @State private var text = ""
   /// The one line about the debug log, shown before the first sentence.
   @State private var logNote: String?
   @FocusState private var focused: Bool
@@ -117,18 +118,17 @@ struct TypingExerciseView: View {
           .accessibilityLabel("Type: \(sentence.text)")
           .accessibilityIdentifier("v2t.exercise.sentence")
         // a plain message field: its traits stay iOS's defaults, so the v2t keyboard corrects as it always does
-        TextField("Type the sentence here", text: $text)
+        TextField("Type the sentence here", text: $session.text)
           .textFieldStyle(.roundedBorder)
           .focused($focused)
           .onSubmit(next)
-          .onChange(of: text) { session.edited() }
           .accessibilityIdentifier("v2t.exercise.field")
         Button(action: next) {
           Text(session.index + 1 == session.sentences.count ? "Finish" : "Next").frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(text.isEmpty)
+        .disabled(session.text.isEmpty)
         .accessibilityIdentifier("v2t.exercise.next")
       }
       .padding()
@@ -172,10 +172,9 @@ struct TypingExerciseView: View {
   }
 
   private func next() {
-    guard !text.isEmpty, !session.finished else { return }
-    session.next(typed: text)
-    text = ""
-    if session.finished { focused = false } else { session.shown() }
+    guard !session.text.isEmpty, !session.finished else { return }
+    session.next()
+    if session.finished { focused = false }
   }
 
   /// The exercise is for the debug log: it turns it on for its 24 hours if it is off, and says so.

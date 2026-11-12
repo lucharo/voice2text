@@ -25,7 +25,8 @@ final class ExerciseClock: @unchecked Sendable {
 
     session.shown()
     clock.now = 1004.25
-    session.next(typed: "Can you grab some mikl?")
+    session.text = "Can you grab some mikl?"
+    session.next()
 
     #expect(lines() == [["t": 1_000_000, "e": "exercise", "end": 1_004_250, "wall": "2027-01-15T08:00:00Z",
                          "id": "en-01", "target": "Can you grab some milk?", "typed": "Can you grab some mikl?"] as NSDictionary])
@@ -36,7 +37,8 @@ final class ExerciseClock: @unchecked Sendable {
     let before = ProcessInfo.processInfo.systemUptime * 1000
 
     session.shown()
-    session.next(typed: "x")
+    session.text = "x"
+    session.next()
 
     let after = ProcessInfo.processInfo.systemUptime * 1000
     let t = lines().first?["t"] as? Double ?? -1, end = lines().first?["end"] as? Double ?? -1
@@ -47,7 +49,8 @@ final class ExerciseClock: @unchecked Sendable {
     let session = TypingExerciseSession(sentences: sentences, directory: dir, recording: { false })
 
     session.shown()
-    session.next(typed: "x")
+    session.text = "x"
+    session.next()
 
     #expect(!FileManager.default.fileExists(atPath: dir.appending(path: TypingExerciseLog.fileName).path))
     #expect(session.index == 1)
@@ -101,16 +104,16 @@ final class ExerciseClock: @unchecked Sendable {
 
     session.shown()
     clock.now = 1001
-    session.edited()
+    session.text = "C"
     clock.now = 1002
-    session.edited()  // only the first change starts the time
+    session.text = "Can you grab some mikl?"  // only the first change starts the time
     clock.now = 1005
-    session.next(typed: "Can you grab some mikl?")  // 23 characters in 4 s
-    session.shown()
+    session.next()  // 23 characters in 4 s
     clock.now = 1010
-    session.edited()
+    session.text = "I"  // read for 5 s after Next: the clear at Next is not typing
     clock.now = 1012
-    session.next(typed: "I'm late, sorry!")  // 16 in 2 s
+    session.text = "I'm late, sorry!"
+    session.next()  // 16 in 2 s
 
     #expect(session.finished)
     #expect(session.wrongWords.map { [$0.target, $0.typed] } == [["milk", "mikl"]])
