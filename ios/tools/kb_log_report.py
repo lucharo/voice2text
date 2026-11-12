@@ -274,18 +274,24 @@ class ExerciseWindow:
         self.downs: dict = {}
         self.taps: list[tuple[str, list]] = []  # letter keys tapped, with where the finger landed, until typed
         self.keys: list[float] = []
-        self.centres: dict | None = None  # the keyboard's letter centres, and one letter key's width
-        self.u = 1.0
+
+    def take_tap(self, letter: str) -> tuple:
+        """The oldest tap on `letter`'s key not yet typed, with the keyboard it landed on; taps before it went
+        without a key line (a slide to an accent, a swipe) and are dropped."""
+        for i, tap in enumerate(self.taps):
+            if tap[0] == letter:
+                del self.taps[: i + 1]
+                return tap[1:]
+        return (None, None, 1.0)
 
     def finish_word(self) -> None:
-        centres, u = self.centres, self.u
         word, self.word = self.word, []
         if not word or not self.word_clean or not self.known or self.word_at >= len(self.target):
             self.word_clean = True
             return
         meant_word = self.target[self.word_at]
         if len(meant_word) == len(word):
-            for meant, (hit, p) in zip(meant_word.lower(), ((c.lower(), p) for c, p in word)):
+            for meant, (hit, p, centres, u) in zip(meant_word.lower(), ((c.lower(), p, cs, u) for c, p, cs, u in word)):
                 if meant == hit:
                     if centres and p and meant in centres:
                         cx, cy = centres[meant]
@@ -294,15 +300,16 @@ class ExerciseWindow:
                     self.rep.hits[(meant, hit)] += 1
 
     def event(self, ev: dict, centres: dict | None, u: float) -> None:
-        self.centres, self.u = centres, u
         e = ev.get("e")
         if e == "down":
             self.downs[ev.get("n")] = ev.get("p")
         elif (e == "up" and ev.get("verdict") == "tap") or e == "rollover":
             k = str(ev.get("key", ""))
             if k.startswith("letters-"):
-                self.taps.append((k.removeprefix("letters-"), self.downs.get(ev.get("n")) or ev.get("p")))
-        elif e == "key" and not ev.get("search"):
+                self.taps.append((k.removeprefix("letters-"), self.downs.get(ev.get("n")) or ev.get("p"), centres, u))
+        elif e == "key" and ev.get("search"):
+            self.take_tap(str(ev.get("text", "")).lower())  # typed into emoji search: its touch is not the document's
+        elif e == "key":
             text = str(ev.get("text", ""))
             self.keys.append(ev.get("t", 0))
             if len(text) == 1 and (text.isalpha() or text in "'’"):
@@ -310,13 +317,7 @@ class ExerciseWindow:
                     self.word_at = len(words(self.doc))
                     # letters straight after a letter already in the field continue a word deleted back into
                     self.word_clean = not self.doc or self.doc[-1].isspace() or not self.doc[-1].isalnum()
-                p = None
-                for i, (letter, at) in enumerate(self.taps):
-                    if letter == text.lower():
-                        p = at
-                        del self.taps[: i + 1]
-                        break
-                self.word.append((text, p))
+                self.word.append((text, *self.take_tap(text.lower())))
             else:
                 self.finish_word()
         elif e == "act" and not ev.get("search"):
@@ -333,6 +334,10 @@ class ExerciseWindow:
             self.finish_word()
         elif e == "ins":
             self.doc += ev["text"] if "text" in ev else "█" * ev.get("chars", 0)
+            if "text" not in ev:  # dictated text, logged by length only: where its words end is unknown
+                self.known = False
+        elif e == "dictation":
+            self.known = False
         elif e == "del":
             self.doc = drop_last_character(self.doc)
         elif e == "host":
@@ -376,14 +381,18 @@ def analyse_exercises(events: list[dict], exercises: list[dict]) -> ExerciseRepo
         rep.sentences += 1
         rep.words += len(words(x.get("target", "")))
         rep.wrong += wrong_words(x.get("target", ""), x.get("typed", ""))
-    centres, u, anchor = None, 1.0, None
+    centres, u, anchor, language = None, 1.0, None, "en"
     for ev in events:
         t = ev.get("t", 0)
         if ev.get("e") == "appear":
             w = epoch(ev.get("wall"))
             anchor = w - t / 1000 if w is not None else None  # the wall time at uptime 0: one per boot
+            language = ev.get("layout", "en")
+        if ev.get("e") in ("appear", "page"):
+            # the keyboard's letter centres, and one letter key's width: a page line carries the width and form
+            # again when the keyboard is resized (an iPad's floating keyboard); iPad layouts get none
             phone = ev.get("form", "phone") == "phone" and ev.get("width")
-            centres, u = phone_letter_centres(ev["width"], ev.get("layout", "en")) if phone else (None, 1.0)
+            centres, u = phone_letter_centres(ev["width"], language) if phone else (None, 1.0)
         i = None
         for a, members in boots:
             if anchor is not None and a is not None and abs(a - anchor) > WALL_SLACK_S:
