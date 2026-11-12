@@ -103,7 +103,8 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
         if touched.contains(k) { out.append(String(raw)); continue }
         guard let rule = onDisk[k] else { continue }  // deleted elsewhere
         if placed.insert(k).inserted { out.append(rule == line ? String(raw) : rule) }
-        else if current.contains(line) { out.append(String(raw)) }  // a spare line the file still has
+        // a spare line the file still has, or one the draft itself added or edited
+        else if current.contains(line) || !before.contains(line) { out.append(String(raw)) }
       }
       let added = lines(text).filter { line in
         guard !line.isEmpty, !before.contains(line), !mine.contains(line) else { return false }

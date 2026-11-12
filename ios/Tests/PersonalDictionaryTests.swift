@@ -140,6 +140,18 @@ struct PersonalDictionaryTests {
     #expect(Set(app.changes.keys) == ["term:claude"])
   }
 
+  /// A second line for the same heard side is a spare: editing it or adding one in the draft is the user's
+  /// change, kept even though the entry's rule (its first line) did not change.
+  @Test(arguments: [
+    ("ai => AI\nAI => A.I!\n", "ai => AI\nAI => A.I!\n"),
+    ("ai => AI\nAI => A.I.\nAi => eh eye\n", "ai => AI\nAI => A.I.\nAi => eh eye\n"),
+  ])
+  func theTextEditorKeepsASpareLineTheDraftEditedOrAdded(draft: String, expected: String) throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    try app.saveEdit(draft, from: app.text)
+    #expect(PersonalDictionary(file: app.file).text == expected)
+  }
+
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
   @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
     let file = try dictionary("").file
