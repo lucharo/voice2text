@@ -62,8 +62,9 @@ public actor PieceTranscriber {
     try await enqueue { me in await me.complete(recording) }.get()
   }
 
-  /// Drops the dictation: no piece after the one being decoded now is decoded. Takes effect at once, not
-  /// after queued work, since it is not queued.
+  /// Drops the dictation: no piece after the one being decoded now is decoded, and `finish` throws
+  /// `CancellationError` instead of returning text, also when it is already under way. Takes effect at once,
+  /// not after queued work, since it is not queued.
   public func abandon() {
     abandoned = true
   }
@@ -78,23 +79,26 @@ public actor PieceTranscriber {
 
   private func complete(_ recording: [Float]) async -> Result<(String, Report), Error> {
     finished = true
-    if !failed, recording.count >= cutTotal {
+    if !failed, !abandoned, recording.count >= cutTotal {
       pending = Array(recording[cutTotal...])
       await decodeSettled(atFinish: true)
-      if !failed {
+      if !failed, !abandoned {
         if !pending.isEmpty {
           let padding = pieceCount > 0 ? max(0, minimumTail - pending.count) : 0
           await decodePiece(pending.count, atFinish: true, padding: padding)
         }
-        if !failed { return .success((texts.joined(separator: " "), report)) }
+        if !failed, !abandoned { return .success((texts.joined(separator: " "), report)) }
       }
     }
+    // dropped (Cancel, or the microphone session ended) while waiting or decoding: nothing more is decoded,
+    // not the tail and not the whole recording again, and no text comes back to be typed or kept
+    if abandoned { return .failure(CancellationError()) }
     report.fellBack = true
     do { return .success((try await decode(recording).trimmed, report)) } catch { return .failure(error) }
   }
 
   private func decodeSettled(atFinish: Bool) async {
-    while !failed, !abandoned || atFinish, let cut = cutter.cut(pending[...]) {
+    while !failed, !abandoned, let cut = cutter.cut(pending[...]) {
       await decodePiece(cut, atFinish: atFinish)
     }
   }
