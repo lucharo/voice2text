@@ -256,10 +256,13 @@ enum LogReplayEval {
     var out = Outcome()
     // "The fox ran." typed as "teh" (corrected), "fox", then a delete before "ran"; "Sit by." with one word run on
     out.words = [word("teh", now: "the", t: 100, bar: ["teh", "the"]), word("fox", t: 200), word("ran", t: 300, deleted: true),
-                 word("sitby", t: 1100), word("dog", now: "dig", t: 2100), word("cst", t: 2200)]
+                 word("sitby", t: 1100), word("dog", now: "dig", t: 2100), word("cst", t: 2200),
+                 // "go nw " finished, "nw" deleted and "now" typed: three words finished for two in the field
+                 word("go", t: 3100), word("nw", t: 3200), word("now", t: 3300, deleted: true)]
     let lines = [#"{"t":50,"e":"exercise","end":400,"target":"The fox ran.","typed":"The fox ran."}"#,
                  #"{"t":1000,"e":"exercise","end":1200,"target":"Sit by.","typed":"Sitby"}"#,
-                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst"}"#]
+                 #"{"t":2000,"e":"exercise","end":2300,"target":"dog cat","typed":"dig cst"}"#,
+                 #"{"t":3000,"e":"exercise","end":3400,"target":"go now","typed":"go now"}"#]
 
     let scored = scoreExercises(lines, out)
 
@@ -267,6 +270,7 @@ enum LogReplayEval {
       "The fixed by autocorrect true", "fox tapped right false", "ran not scored false",
       "Sit not scored false", "by not scored false",
       "dog made a different wrong word false", "cat left as typed false",
+      "go not scored false", "now not scored false",
     ])
   }
 
