@@ -76,26 +76,41 @@ final class PersonalDictionary: ObservableObject, @unchecked Sendable {
     try transaction { try write(newText) }
   }
 
-  /// Saves the "Edit as text" draft, which started as `snapshot`: an unchanged draft writes nothing, lines
-  /// another copy added to the file meanwhile (a word kept on the keyboard, an entry from iCloud) are kept at the
-  /// end, and lines it removed meanwhile (an entry deleted on another device) stay removed unless the draft
-  /// changed them. An entry edited elsewhere is both: its old line goes, its new one is kept. An entry the draft
-  /// added, edited or deleted keeps the draft's version, whatever happened to it elsewhere.
+  /// Saves the "Edit as text" draft, which started as `snapshot`, against the file as another copy may have left
+  /// it meanwhile (a word kept on the keyboard, a download from iCloud). An unchanged draft writes nothing. An
+  /// entry the draft added, edited or deleted keeps the draft's version, whatever happened to it elsewhere. Every
+  /// other entry takes the file's: its rule, the first line of its key, becomes the file's rule in place (spare
+  /// duplicate lines stay behind it, so none becomes the rule), it goes if the file lost it, and one only the file
+  /// has goes at the end. Comments the file lost meanwhile stay lost.
   func saveEdit(_ draft: String, from snapshot: String) throws {
     try transaction {
       guard draft != snapshot else { return }
-      let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) } }
+      let trim = { (l: Substring) in l.trimmingCharacters(in: .whitespaces) }
+      let lines = { (t: String) in t.split(whereSeparator: \.isNewline).map(trim) }
       let before = Set(lines(snapshot)), mine = Set(lines(draft)), current = Set(lines(text))
-      let was = Self.entryLines(snapshot), drafted = Self.entryLines(draft)
+      let was = Self.entryLines(snapshot), drafted = Self.entryLines(draft), onDisk = Self.entryLines(text)
       let touched = Set(was.keys).union(drafted.keys).filter { was[$0] != drafted[$0] }
-      let isTouched = { (line: String) in Self.item(line).map { touched.contains($0.key) } ?? false }
-      let added = lines(text).filter { line in
-        !line.isEmpty && !before.contains(line) && !mine.contains(line) && !isTouched(line)
+      var placed = Set<String>()
+      var out: [String] = []
+      for raw in draft.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+        let line = trim(raw)
+        guard let item = Self.item(line) else {
+          // a comment both copies had that the file lost meanwhile
+          if !line.isEmpty, before.contains(line), !current.contains(line) { continue }
+          out.append(String(raw)); continue
+        }
+        let k = item.key
+        if touched.contains(k) { out.append(String(raw)); continue }
+        guard let rule = onDisk[k] else { continue }  // deleted elsewhere
+        if placed.insert(k).inserted { out.append(rule == line ? String(raw) : rule) }
+        else if current.contains(line) { out.append(String(raw)) }  // a spare line the file still has
       }
-      let removed = before.intersection(mine).subtracting(current).subtracting([""]).filter { !isTouched($0) }
-      var t = removed.isEmpty ? draft
-        : draft.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-          .filter { !removed.contains($0.trimmingCharacters(in: .whitespaces)) }.joined(separator: "\n")
+      let added = lines(text).filter { line in
+        guard !line.isEmpty, !before.contains(line), !mine.contains(line) else { return false }
+        guard let item = Self.item(line) else { return true }
+        return !touched.contains(item.key) && !placed.contains(item.key)
+      }
+      var t = out.joined(separator: "\n")
       if !added.isEmpty, !t.isEmpty, !t.hasSuffix("\n") { t += "\n" }
       try write(t + added.map { $0 + "\n" }.joined())
     }

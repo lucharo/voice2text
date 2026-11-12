@@ -124,6 +124,22 @@ struct PersonalDictionaryTests {
     #expect(PersonalDictionary(file: app.file).text == "AI => A.I.\n")
   }
 
+  /// Two lines for one heard side, the first the rule: iCloud changes that rule while the draft edits another
+  /// entry. The downloaded rule takes the first line's place, so the second line stays a spare and nothing about
+  /// the rule is noted as changed here (a note would send the spare to iCloud over the download).
+  @Test func theTextEditorKeepsADownloadedRuleAheadOfItsSpareLine() throws {
+    let app = try dictionary("ai => AI\nAI => A.I.\n")
+    let snapshot = app.text
+    let sync = PersonalDictionary(file: app.file)
+    try sync.transaction { try sync.write("ai => Ai\nAI => A.I.\n", asChanges: false) }
+    try? FileManager.default.removeItem(at: app.changesFile)
+
+    try app.saveEdit("ai => AI\nAI => A.I.\nClaude\n", from: snapshot)
+
+    #expect(PersonalDictionary(file: app.file).text == "ai => Ai\nAI => A.I.\nClaude\n")
+    #expect(Set(app.changes.keys) == ["term:claude"])
+  }
+
   /// Writers on separate copies at the same time each keep their word (NSFileCoordinator serialises them).
   @Test func concurrentAddsFromSeparateCopiesAllLand() async throws {
     let file = try dictionary("").file
