@@ -22,6 +22,14 @@ struct ModelStore: Sendable {
 
   var isOnDevice: Bool { isComplete(modelFolder) }
 
+  /// A file left in the model's folder once the model has loaded on this device, so a later launch knows the
+  /// first load, which compiles the model for the Neural Engine, is done. Deleting the model removes it.
+  var loadedMarker: URL { modelFolder.appending(path: ".v2t-loaded") }
+
+  var hasLoaded: Bool { FileManager.default.fileExists(atPath: loadedMarker.path) }
+
+  func markLoaded() { try? Data().write(to: loadedMarker) }
+
   /// Bytes the speech models take on the device, compiled copies and partial downloads included.
   var bytes: Int64 { folders.reduce(0) { $0 + Self.bytes(in: $1) } }
 

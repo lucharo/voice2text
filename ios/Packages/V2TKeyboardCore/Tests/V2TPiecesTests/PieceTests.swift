@@ -234,6 +234,73 @@ private func record(_ audio: [Float], into t: PieceTranscriber) async {
     #expect(await model.calls == [208_800])
   }
 
+  /// Cancel after Done, while Stop is decoding the settled pieces: the piece already in the model ends, nothing
+  /// after it is decoded, and Stop returns no text.
+  @Test func abandoningDuringStopDecodesNoMorePiecesAndReturnsNoText() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(13) + silence(0.5) + speech(11.5) + silence(0.5) + speech(14)  // three settled cuts at once
+    await model.holdTheNextDecode()
+
+    let finishing = Task { try await t.finish(audio) }
+    await model.waitUntilHeld()
+    await t.abandon()
+    await model.release()
+    let result = await finishing.result
+
+    #expect(await model.calls == [208_800])
+    #expect(throws: CancellationError.self) { try result.get() }
+  }
+
+  /// Cancel while the last piece is in the model: its text, when it comes, is not returned.
+  @Test func abandoningWhileTheTailDecodesReturnsNoText() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(5)
+    await model.holdTheNextDecode()
+
+    let finishing = Task { try await t.finish(audio) }
+    await model.waitUntilHeld()
+    await t.abandon()
+    await model.release()
+    let result = await finishing.result
+
+    #expect(await model.calls == [80_000])
+    #expect(throws: CancellationError.self) { try result.get() }
+  }
+
+  /// Dropped before Stop reached it: Stop decodes nothing, not even the whole recording as a fallback.
+  @Test func stopAfterAbandoningDecodesNothing() async throws {
+    let model = FakeModel()
+    let t = transcriber(model)
+    let audio = speech(13) + silence(0.5) + speech(11)
+
+    await t.abandon()
+    let result = await Task { try await t.finish(audio) }.result
+
+    #expect(await model.calls == [])
+    #expect(throws: CancellationError.self) { try result.get() }
+  }
+
+  /// A piece failed, so Stop decodes the whole recording; Cancel while that decode runs: its text is not returned.
+  @Test func abandoningWhileTheWholeRecordingDecodesReturnsNoText() async throws {
+    let model = FakeModel()
+    await model.failing(on: 1)
+    let t = transcriber(model)
+    let audio = speech(13) + silence(0.5) + speech(11)
+    await record(audio, into: t)
+    await model.holdTheNextDecode()
+
+    let finishing = Task { try await t.finish(audio) }
+    await model.waitUntilHeld()
+    await t.abandon()
+    await model.release()
+    let result = await finishing.result
+
+    #expect(await model.calls == [208_800, 392_000])
+    #expect(throws: CancellationError.self) { try result.get() }
+  }
+
   @Test func audioAddedAfterFinishIsIgnored() async throws {
     let model = FakeModel()
     let t = transcriber(model)

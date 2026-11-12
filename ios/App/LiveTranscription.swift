@@ -44,8 +44,8 @@ let dictationLog = Logger(subsystem: "es.luischav.v2t", category: "dictation")
     timer = nil
   }
 
-  /// The dictation was dropped (the microphone session ended): stops feeding, and no piece after the one being
-  /// decoded now is decoded.
+  /// The dictation was dropped (Cancel after Done, or the microphone session ended): stops feeding, no piece
+  /// after the one being decoded now is decoded, and `finish` returns no text.
   func abandon() {
     stopFeeding()
     Task { await pieces.abandon() }

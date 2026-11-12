@@ -73,6 +73,13 @@ iOS gives keyboards no microphone, so the app records:
    moment near its 12 s mark (the Mac app's rule), so when you tap the mic again only the last piece is left. A
    dictation under 14.9 s is transcribed whole, as before (#112). Each dictation logs its timing under category
    `dictation`: how long speech took after Stop, and how many pieces were transcribed while you talked.
+6. A dictation can always be ended. The recording view keeps Cancel while the app transcribes or cleans up; Cancel
+   then, Stop microphone session, or the session's own expiry (counted from Done) stops the work after the piece
+   already in the model, and nothing of that dictation is typed or kept in History.
+7. The speech model's first load after its download compiles it for the device, and nobody has timed that on an
+   older chip. Until it has loaded once, the keyboard's mic opens v2t on "Preparing the speech model" instead of
+   recording audio that could not be transcribed until it ends. Later launches reload the compiled copy, and a
+   recording may start while they do. A file in the model's folder (`.v2t-loaded`) records the first load.
 
 ### What stays on the iPhone
 
@@ -145,12 +152,19 @@ Each line has `t` (milliseconds of system uptime, the clock of touch timestamps)
 
 ### Which model this iPhone gets
 
-One choice per iPhone, decided by Apple's own Apple Intelligence eligibility check (`SystemLanguageModel`):
+One choice per iPhone, in three tiers. Apple's own Apple Intelligence eligibility check (`SystemLanguageModel`)
+decides the top one; the hardware identifier (`utsname`, `Recommendation.notYetSupported`) the bottom one:
 
-| iPhone | Speech | Cleanup | Evidence |
-| --- | --- | --- | --- |
-| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air, Duo) | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
-| Every other iPhone that runs iOS 26 | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | FluidAudio's int8 Unified encoder failed to load on an A16 (#828, the Parakeet Unified sibling; Nemotron itself untried there) and is unverified on other earlier chips. Untested on these phones |
+| iPhone | Dictation | Speech | Cleanup | Evidence |
+| --- | --- | --- | --- | --- |
+| Apple Intelligence-compatible (iPhone 15 Pro and Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air, Duo) | Transcription and cleanup | Nemotron-Labs Unified ASR 0.6B, int8, 627 MB | Apple Intelligence with the Mac's prompt and guards; your dictionary's replacements otherwise | Measured on one iPhone 16 Pro only (#52, #85, #67) |
+| iPhone 13 and 14 families, iPhone 15 and 15 Plus, iPhone SE (3rd generation) (A15, A16), and any iPhone not listed | Transcription only, untested: the app says "Not yet tested on this iPhone model" | Parakeet TDT 0.6B v3 | Your dictionary's replacements only | FluidAudio's int8 Unified encoder failed to load on an A16 (#828, the Parakeet Unified sibling; Nemotron itself untried there) and is unverified on other earlier chips. Untested on these phones |
+| iPhone 11, 11 Pro, 11 Pro Max, SE (2nd generation), 12, 12 mini, 12 Pro, 12 Pro Max (A13, A14) | Not supported yet: no download; the app and the keyboard's mic say "Dictation isn't supported on this iPhone yet. The keyboard still works for typing." | None | None | None of these has passed a test run; a stuck transcription was reported from an iPhone 12 Pro |
+
+iPads follow the same rule. The iPads on iPadOS 26 with A12 to A14 chips are not supported yet: iPad mini (5th
+generation), iPad Air (3rd and 4th generation), iPad (8th, 9th and 10th generation), iPad Pro 11-inch (1st and 2nd
+generation) and iPad Pro 12.9-inch (3rd and 4th generation). Identifiers come from Xcode's own device table
+(`device_traits.db`), chips from Apple's iPad comparison page; the sources are in `App/Recommendation.swift`.
 
 Model files come from Hugging Face at pinned revisions (`App/SpeechEngine.swift`).
 
