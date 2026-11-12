@@ -79,14 +79,45 @@ struct SwipeDecoderTests {
     (164.7, 69), (168, 69)
   ].map { CGPoint(x: $0.0, y: $0.1) }
 
-  /// "E" read as a finished word is evidence for Spanish ("e", and), so every English word paid the language prior's
-  /// cap and the Spanish "kirchhoff" won. Letters with no space before the cursor are a word in progress, which the
-  /// swipe ends: they are not context. Once a space has finished them they are.
-  @Test func lettersStillBeingTypedAreNotTheSwipesContext() throws {
+  /// The keyboard as on the phone: English and Spanish on, an engine on an empty field, and a swipe decoder that reads
+  /// the words before the swipe from the engine (`TypingEngine.context`), as KeyboardViewController does.
+  static func keyboard() throws -> (engine: TypingEngine, decoder: MultiSwipeDecoder) {
     let layout = KeyboardLayout(width: 402, language: .english)
-    let m = MultiSwipeDecoder([try Fixtures.english.get(), try Fixtures.spanish.get()].map { SwipeDecoder(lexicon: $0, layout: layout) })
-    #expect(m.decode(Self.leaving, context: "E").first == "leaving")
-    #expect(m.decode(Self.leaving, context: "E ").first == "kirchhoff")
+    let lexicons = [try Fixtures.english.get(), try Fixtures.spanish.get()]
+    let e = TypingEngine(proxy: FakeProxy(), suggester: Suggester(lexicons: lexicons, layout: layout))
+    e.resync()
+    return (e, MultiSwipeDecoder(lexicons.map { SwipeDecoder(lexicon: $0, layout: layout) }))
+  }
+
+  /// "E" still being typed is not the word before the swipe: read as one, "e" (Spanish "and") made Spanish the
+  /// likelier language, every English word paid the language prior's cap, and the Spanish "kirchhoff" won. Once a
+  /// space has finished it, it is.
+  @Test func lettersStillBeingTypedAreNotTheSwipesContext() throws {
+    let (e, m) = try Self.keyboard()
+    e.character("E")
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "leaving")
+    e.space()
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "kirchhoff")
+  }
+
+  /// A swiped word has no space after it until the next word starts, and it is still the word before the next
+  /// swipe: a Spanish one makes Spanish the likelier language for it (the same trace with no word before is
+  /// "leaving").
+  @Test func aSwipedWordIsTheNextSwipesContext() throws {
+    let (e, m) = try Self.keyboard()
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "leaving")
+    e.swipe(["pero"])
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "kirchhoff")
+  }
+
+  /// A word picked from the bar is finished: it is the word before the next swipe, where the letters it replaced
+  /// were not.
+  @Test func aWordPickedFromTheBarIsTheNextSwipesContext() throws {
+    let (e, m) = try Self.keyboard()
+    for ch in "per" { e.character(String(ch)) }
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "leaving")
+    e.pick("pero")
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "kirchhoff")
   }
 
   @Test func aSingleTouchIsNotASwipe() throws {
