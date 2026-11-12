@@ -48,6 +48,32 @@ struct AutocorrectRulesTests {
     #expect(try suggester { $0.correctionFloor = -.infinity }.autocorrection(for: typed, context: context) == "catapult")
   }
 
+  /// A letter typed three or more times in a row is stretched on purpose; the second word is the answer
+  /// without the rule.
+  @Test(arguments: [("saaame", "salaam"), ("soooo", "soon"), ("nooo", "noon"), ("yessss", "yeasts"), ("hmmm", "hamm")])
+  func aStretchedWordIsLeftAsTyped(word: String, before: String) throws {
+    let typed = taps(word, Self.layout), context = TypingContext(before: "I think the ")
+    #expect(try suggester().autocorrection(for: typed, context: context) == nil)
+    #expect(try suggester { $0.stretchedRun = .max }.autocorrection(for: typed, context: context) == before)
+  }
+
+  @Test(arguments: [("boook", "book"), ("cannnot", "cannot"), ("agreeement", "agreement"), ("caballlo", "caballo")])
+  func oneTapTooManyOnADoubleLetterIsCorrected(word: String, expected: String) throws {
+    #expect(try suggester().autocorrection(for: taps(word, Self.layout), context: TypingContext(before: "I think the ")) == expected)
+  }
+
+  @Test func aRunOneLongerThanADoubleLetterSlipIsNeverCorrected() throws {
+    let typed = taps("booook", Self.layout), context = TypingContext(before: "I think the ")
+    #expect(try suggester().autocorrection(for: typed, context: context) == nil)
+    #expect(try suggester { $0.stretchedRun = .max }.autocorrection(for: typed, context: context) == "book")
+  }
+
+  @Test func letterRunsSplitAWordWhereTheLetterChanges() {
+    #expect(Suggester.letterRuns("boook").map(String.init) == ["b", "ooo", "k"])
+    #expect(Suggester.letterRuns("aab").map(String.init) == ["aa", "b"])
+    #expect(Suggester.letterRuns("").isEmpty)
+  }
+
   /// The bar holds "believe" as a completion of fewer letters, which outranks it as a correction of all six.
   @Test func aWordTheBarRanksAsACompletionIsStillACorrection() throws {
     let typed = taps("belive", Self.layout), context = TypingContext(before: "I think the ")

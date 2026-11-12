@@ -129,6 +129,16 @@ Still different from Apple's keyboard, or unmeasured:
 - **A hyphen before an address** ("exmaple-site.com") still corrects its first part: a hyphen applies the
   correction, so compound words are corrected part by part.
 
+### Stretched words (2026-11-12)
+
+A letter typed three or more times in a row is stretched on purpose ("saaame", "soooo", "yessss"), and the
+nearest word is never what was meant: those became "salaam", "soon" and "yeasts". Such letters now stay as
+typed (`Suggester.stretchedRun`, `AutocorrectRulesTests`). The one exception is a run of exactly three that
+is one tap too many on a double letter ("boook" → "book", "cannnot" → "cannot"); four or more in a row is
+never corrected. The misspelling sets have 15 English and 4 Spanish words with a run of three and none
+longer, and all but two ("asssassans", "resssurecting") are the extra tap. English fixes go from 3,688 to
+3,687 of 4,122 with wrong words unchanged at 256, and Spanish does not move.
+
 ## Where Gboard and SwiftKey differ
 
 - **Space can insert a prediction.** SwiftKey's space bar inserts the middle prediction when autocorrect is on,
