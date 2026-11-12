@@ -54,6 +54,7 @@ final class SuggestionBar: UIView {
     debugDot.backgroundColor = .systemRed
     debugDot.layer.cornerRadius = 3
     debugDot.isHidden = true
+    debugDot.isUserInteractionEnabled = false  // a tap on it reaches the chevron underneath
     debugDot.isAccessibilityElement = true
     debugDot.accessibilityIdentifier = "v2t.debugLog"
     debugDot.accessibilityLabel = "Keyboard debug log is on"
@@ -102,7 +103,12 @@ final class SuggestionBar: UIView {
     for (i, d) in dividers.enumerated() { d.frame = CGRect(x: inset + CGFloat(i + 1) * w, y: 11, width: hairline, height: 22) }
     dismissDivider.frame = CGRect(x: end, y: 11, width: hairline, height: 22)
     dismiss.frame = CGRect(x: end, y: 0, width: Self.dismissWidth, height: bounds.height)
-    debugDot.frame = CGRect(x: 3, y: 3, width: 6, height: 6)
+    // a badge at the chevron's top right, clear of the keyboard's rounded corners and of the words; without
+    // the chevron, at the bar's right edge, centred
+    debugDot.frame = showsDismiss
+      ? CGRect(x: end + Self.dismissWidth / 2 + 7, y: bounds.midY - 12, width: 6, height: 6)
+      : CGRect(x: bounds.width - 12, y: bounds.midY - 3, width: 6, height: 6)
+    bringSubviewToFront(debugDot)
     notice.frame = CGRect(x: inset, y: 0, width: end - inset, height: bounds.height)
   }
 
