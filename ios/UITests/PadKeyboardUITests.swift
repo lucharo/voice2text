@@ -3,7 +3,7 @@ import XCTest
 /// The iPad keyboard in an iPad Simulator: its own rows (delete and return on the right, a shift at each
 /// end, hide keyboard), typing through them, landscape, Spanish, and the hide key. Skipped on an iPhone.
 @MainActor final class PadKeyboardUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
   var field: XCUIElement { app.textFields["v2t.try"] }

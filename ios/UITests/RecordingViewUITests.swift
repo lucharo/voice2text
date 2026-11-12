@@ -3,7 +3,7 @@ import XCTest
 /// Screenshots of the keyboard's recording view, using the keyboard's preview mode (V2T_PREVIEW_RECORDING),
 /// which needs no microphone session or Full Access; and of the numbers and symbols pages.
 @MainActor final class RecordingViewUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
 

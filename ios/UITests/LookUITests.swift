@@ -3,7 +3,7 @@ import XCTest
 /// The keyboard's look in light and dark mode (the suggestion bar against the keys, the mic key, the space
 /// bar), as full-resolution screenshots, and the hide-keyboard control.
 @MainActor final class LookUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
   var field: XCUIElement { app.textFields["v2t.try"] }

@@ -5,7 +5,7 @@ extension XCTestCase {
   /// user would. On the iOS 27.1 Simulator the link opens Settings' top level rather than v2t's own page, so
   /// both routes are handled.
   @MainActor func allowFullAccess() {
-    let app = XCUIApplication()
+    let app = XCUIApplication.v2t()
     app.launch()
     app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Allow Full Access'")).firstMatch.tap()
     let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")

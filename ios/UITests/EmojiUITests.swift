@@ -3,7 +3,7 @@ import XCTest
 /// The emoji key and v2t's emoji panel in the Simulator: the key's slot, typing an emoji, the categories, a
 /// skin tone by long press, the recents, delete and ABC.
 @MainActor final class EmojiUITests: XCTestCase {
-  let app = XCUIApplication()
+  let app = XCUIApplication.v2t()
 
   func key(_ id: String) -> XCUIElement { app.descendants(matching: .any)["key.\(id)"] }
   func emoji(_ e: String) -> XCUIElement { app.descendants(matching: .any)["emoji.\(e)"].firstMatch }
