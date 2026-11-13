@@ -40,7 +40,8 @@ class FakeConnect:
         self.screenshots = {"APP_IPHONE_67": 3, "APP_IPAD_PRO_3GEN_129": 2}
         self.category = {"id": "PRODUCTIVITY"}
         self.item_state = "READY_FOR_REVIEW"  # of every review submission item
-        self.failing = {}  # {path: HTTP status} for GETs that fail with an empty body
+        self.failing = {}  # {path: HTTP status, or (status, body)} for GETs that fail
+        self.rating = {"gambling": False, "kidsAgeBand": None}  # the age rating declaration's attributes
         self.writes = []
         self.bodies = {}  # {(method, path): the last body written there}
 
@@ -56,7 +57,8 @@ class FakeConnect:
             return {}
         params = params or {}
         if path in self.failing:
-            raise asc.ApiError(method, path, self.failing[path], "")
+            status, body = self.failing[path] if isinstance(self.failing[path], tuple) else (self.failing[path], "")
+            raise asc.ApiError(method, path, status, body)
         if path == "builds":
             found = self.builds.get(params["filter[preReleaseVersion.version]"], [])
             if "filter[version]" in params:
@@ -88,7 +90,7 @@ class FakeConnect:
         if path == "appInfos/info/primaryCategory":
             return {"data": self.category}
         if path == "appInfos/info/ageRatingDeclaration":
-            return {"data": {"attributes": {"gambling": False, "kidsAgeBand": None}}}
+            return {"data": {"attributes": self.rating}}
         if path in (f"apps/{APP}/appPriceSchedule", f"apps/{APP}/appAvailabilityV2"):
             return {"data": {"id": APP}}
         if path == "reviewSubmissions":
@@ -313,6 +315,55 @@ class Release(unittest.TestCase):
 
         self.assertEqual(str(stop.exception), "missing before App Review can take it:\n  - price (HTTP 503)")
 
+    # What App Store Connect answered the testflight environment's upload key on 12 Nov (#132).
+    FORBIDDEN = '{"errors": [{"status": "403", "code": "FORBIDDEN_ERROR", ' \
+                '"detail": "The API key in use does not allow this request"}]}'
+
+    def test_key_that_cannot_create_a_version_stops_a_real_run_before_any_change(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {"1.1": [build("b127", "127")]})
+        fake.failing = {f"apps/{APP}/appPriceSchedule": (403, self.FORBIDDEN)}
+
+        with mock.patch.dict(asc.os.environ, {"ASC_KEY_ID": "UPLOADKEY"}), \
+                self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1-127", whats_new="New")
+
+        self.assertEqual(str(stop.exception),
+                         "the App Store Connect key UPLOADKEY cannot create an App Store version (App Store Connect "
+                         "refuses it the app's price: FORBIDDEN_ERROR); release with an App Manager or Admin key, "
+                         "which appstore.yml reads from ASC_RELEASE_KEY_ID and ASC_RELEASE_KEY_P8")
+        self.assertEqual(fake.writes, [])
+
+    def test_key_that_cannot_create_a_version_stops_a_dry_run_with_the_same_sentence(self):
+        fake = FakeConnect([version("v1", "1.0", "READY_FOR_SALE")], {"1.1": [build("b127", "127")]})
+        fake.failing = {f"apps/{APP}/appPriceSchedule": (403, self.FORBIDDEN),
+                        f"apps/{APP}/appAvailabilityV2": (403, self.FORBIDDEN)}
+
+        with mock.patch.dict(asc.os.environ, {"ASC_KEY_ID": "UPLOADKEY"}), \
+                self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, tag="ios-v1.1-127", whats_new="New", dry_run=True)
+
+        self.assertTrue(str(stop.exception).startswith("the App Store Connect key UPLOADKEY cannot create"),
+                        str(stop.exception))
+
+    def test_age_rating_questions_apple_accepted_unanswered_are_not_missing(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
+        fake.rating = {"gambling": False, "kidsAgeBand": None, "socialMediaAgeRestricted": None,
+                       "gracRatingClassificationNumber": None}
+
+        out = self.run_release(fake, dry_run=True)
+
+        self.assertIn("dry run: the listing has everything the API can check", out)
+
+    def test_an_unanswered_age_rating_question_is_still_missing(self):
+        fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
+        fake.rating = {"gambling": None, "socialMediaAgeRestricted": None}
+
+        with self.assertRaises(SystemExit) as stop:
+            self.run_release(fake, dry_run=True)
+
+        self.assertEqual(str(stop.exception), "missing before App Review can take it:\n"
+                         "  - age rating (unanswered: gambling)")
+
     def test_dry_run_fails_listing_the_missing_screenshots(self):
         fake = FakeConnect([version("v1", "1.0", "PREPARE_FOR_SUBMISSION")], {"1.0": [build("b113", "113")]})
         fake.screenshots = {"APP_IPHONE_67": 3}
@@ -343,6 +394,42 @@ class WaitForBuild(unittest.TestCase):
 
         self.assertIn("build 113: GET builds: HTTP 503", out)
         self.assertIn("build 113 is processed and ready for TestFlight", out)
+
+    def wait_on_a_clock(self, listed_after_minutes: float | None) -> float:
+        """Apple lists the build as VALID after `listed_after_minutes` (never if None); returns minutes waited."""
+        clock = [0.0]
+
+        def fake_call(method, path, params=None, body=None):
+            listed = listed_after_minutes is not None and clock[0] >= listed_after_minutes * 60
+            return {"data": [build("b126", "126")] if listed else []}
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with mock.patch.object(asc, "call", fake_call), mock.patch.object(asc.time, "sleep", sleep), \
+                mock.patch.object(asc.time, "monotonic", lambda: clock[0]), redirect_stdout(io.StringIO()):
+            try:
+                asc.wait_for_build("126")
+            finally:
+                self.waited = clock[0] / 60
+        return self.waited
+
+    def test_a_build_apple_lists_after_45_minutes_passes(self):
+        # build 126 (run 43292640253) was unlisted at 30.4 minutes and listed by 44.8
+        waited = self.wait_on_a_clock(listed_after_minutes=45)
+
+        self.assertGreaterEqual(waited, 45)
+
+    def test_a_build_still_unlisted_at_the_limit_says_to_rerun_the_job(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.wait_on_a_clock(listed_after_minutes=None)
+
+        self.assertEqual(str(stop.exception),
+                         "build 126 is still 'not listed yet' after 60 minutes. Apple is slow or refused it: "
+                         "re-run this failed job (Re-run failed jobs), which waits again without a new upload. If "
+                         "it is still not listed, App Store Connect's TestFlight tab, or any email from Apple about "
+                         "build 126, says whether Apple refused it.")
+        self.assertGreaterEqual(self.waited, 60)
 
     def test_refused_key_fails_at_once(self):
         responses = [asc.ApiError("GET", "builds", 401, "{}"), [build("b113", "113")]]

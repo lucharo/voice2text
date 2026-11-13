@@ -14,7 +14,8 @@ ASC_KEY_ID and ASC_ISSUER_ID from the environment.
                                            submit a TestFlight build for App Store review (see `release` below)
 
 `wait` exists because an upload that succeeds can still fail Apple's processing, and such a build may never
-appear in the build list, so running out of time here means the build was refused or Apple is slow.
+appear in the build list, so running out of time here means the build was refused or Apple is slow. It runs in
+its own job in testflight.yml, so rerunning that job after a timeout waits again without a new upload.
 
 `release ios-v1.1` submits the newest processed build of version 1.1; `release ios-v1.1-104` submits build 104,
 which must be version 1.1. It reuses the App Store version, the build link and any draft or rejected submission
@@ -39,7 +40,12 @@ import jwt
 API = "https://api.appstoreconnect.apple.com"
 APP_ID = "6831059370"  # "v2t" in App Store Connect
 EXPORT_OPTIONS = Path(__file__).with_name("ExportOptions-manual.plist")
-WAIT_MINUTES = 30  # Apple: processing takes up to 30 minutes
+# How long `wait` polls for a build to be listed as VALID. In the 26 testflight.yml runs that reached the wait
+# (6 to 12 Nov 2026), Apple listed builds 102 to 123 1.5 to 3.5 minutes after the upload, 124 after 6.6, 125 after
+# 8.6 and 127 after 12.7; 126 was still unlisted at 30.4 minutes (the old limit; run 43292640253) and listed by
+# 44.8, when the next run picked 127. Every build went from unlisted straight to VALID: none was seen PROCESSING.
+# Sixty minutes covers the slowest seen with room; past it, rerunning the job waits again.
+WAIT_MINUTES = 60
 POLL_SECONDS = 30
 RETRYABLE = {408, 429, 500, 502, 503, 504}  # HTTP statuses that mean "try again shortly"
 TAG = re.compile(r"ios-v(?P<version>\d+\.\d+(?:\.\d+)?)(?:-(?P<build>\d+))?")
@@ -54,9 +60,11 @@ RELEASED = {"READY_FOR_DISTRIBUTION", "READY_FOR_SALE"}
 # Screenshot sets App Review accepts for an app that runs on iPhone and iPad (TARGETED_DEVICE_FAMILY "1,2").
 IPHONE_SETS = {"APP_IPHONE_69", "APP_IPHONE_67", "APP_IPHONE_65"}
 IPAD_SETS = {"APP_IPAD_PRO_3GEN_129", "APP_IPAD_PRO_129"}
-# Age rating fields that stay empty on a complete declaration: overrides, the kids band, an optional link.
+# Age rating fields that stay empty on a complete declaration: overrides, the kids band, an optional link. The
+# last two were empty when 1.1 was submitted on 12 Nov 2026 (the run printed "age rating (unanswered:
+# socialMediaAgeRestricted, gracRatingClassificationNumber)") and Apple accepted the submission anyway (#132).
 OPTIONAL_RATING_FIELDS = {"kidsAgeBand", "ageRatingOverride", "ageRatingOverrideV2", "koreaAgeRatingOverride",
-                          "developerAgeRatingInfoUrl"}
+                          "developerAgeRatingInfoUrl", "socialMediaAgeRestricted", "gracRatingClassificationNumber"}
 
 
 class ApiError(Exception):
@@ -138,7 +146,10 @@ def wait_for_build(build: str) -> None:
                 sys.exit(f"Apple refused build {build}: {state}")
         print(f"build {build}: {state}", flush=True)
         time.sleep(POLL_SECONDS)
-    sys.exit(f"build {build} is still '{state}' after {WAIT_MINUTES} minutes: refused by Apple, or Apple is slow")
+    sys.exit(f"build {build} is still '{state}' after {WAIT_MINUTES} minutes. Apple is slow or refused it: re-run "
+             f"this failed job (Re-run failed jobs), which waits again without a new upload. If it is still not "
+             f"listed, App Store Connect's TestFlight tab, or any email from Apple about build {build}, says whether "
+             f"Apple refused it.")
 
 
 def status() -> None:
@@ -240,7 +251,22 @@ class Release:
             f"create App Store version {self.version_string}")
         return created.get("data")
 
+    def check_key(self) -> None:
+        """Stop before anything else when the key's role cannot create an App Store version. The API has no call
+        that names a key's role, so this reads the app's price, which needs the same role: the upload key in the
+        testflight environment got FORBIDDEN_ERROR on both on 12 Nov (#132)."""
+        try:
+            get(f"apps/{APP_ID}/appPriceSchedule")
+        except ApiError as error:
+            if error.status != 403:
+                return  # not a question of the key's role: check_app reports it with the rest of the listing
+            sys.exit(f"the App Store Connect key {os.environ.get('ASC_KEY_ID')} cannot create an App Store version "
+                     f"(App Store Connect refuses it the app's price: {error.detail.split(':')[0]}); release with "
+                     f"an App Manager or Admin key, which appstore.yml reads from ASC_RELEASE_KEY_ID and "
+                     f"ASC_RELEASE_KEY_P8")
+
     def run(self) -> None:
+        self.check_key()
         versions = get(f"apps/{APP_ID}/appStoreVersions", **{"filter[platform]": "IOS", "limit": "50"})
         first_release = not any(state_of(v) in RELEASED for v in versions)
         done = [v for v in versions if v["attributes"]["versionString"] == self.version_string
