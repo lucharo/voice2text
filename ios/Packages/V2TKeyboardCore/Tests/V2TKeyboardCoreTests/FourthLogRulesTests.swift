@@ -55,4 +55,25 @@ struct FourthLogRulesTests {
     #expect(s.languagePrior.capShortWord("te", [-13, -4.9]) == [-13, -4.9])
     #expect(s.languagePrior.priors([en, es], primary: "en", context: TypingContext(before: "Can u ")).first == 0)
   }
+
+  // MARK: space
+
+  // "[needsme]" and "Weneed", typed without the space
+  static let needsme = keys([("n", 280.3, 140.3), ("e", 90.7, 10), ("e", 93.3, 27.7), ("d", 121.3, 83.3), ("s", 70.7, 74), ("m", 331, 128), ("e", 95, 20)])
+  static let weneed = keys([("W", 61.3, 34.3), ("e", 113.7, 37.7), ("n", 282, 146.7), ("e", 108, 19), ("e", 100.7, 21.3), ("d", 135.3, 74)])
+
+  @Test(arguments: [(needsme, "[", "needs me", "needs"), (weneed, "", "We need", "Weened")])
+  func aSpaceLeftOutIsPutBack(typed: [TypedKey], before: String, expected: String, without: String) throws {
+    let context = TypingContext(before: before)
+    #expect(try suggester().autocorrection(for: typed, context: context) == expected)
+    #expect(try suggester { $0.missingSpacePenalty = .infinity }.autocorrection(for: typed, context: context) == without)
+  }
+
+  /// The bar shows the two words in its middle slot, as the word a space would put in.
+  @Test func theBarOffersTheTwoWords() throws {
+    let e = TypingEngine(proxy: FakeProxy(), suggester: try suggester())
+    e.resync()
+    for k in Self.weneed { e.character(String(k.character), at: k.point) }
+    #expect(e.suggestions().map(\.word)[1] == "We need")
+  }
 }

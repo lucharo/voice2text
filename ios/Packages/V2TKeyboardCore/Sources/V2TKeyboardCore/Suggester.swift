@@ -104,6 +104,14 @@ public final class Suggester: @unchecked Sendable {
   /// ("asssassans", "resssurecting") are the extra tap. Without the rule "saaame" became "salaam", "soooo"
   /// "soon" and "yessss" "yeasts".
   public var stretchedRun = 3
+  /// A space left out between two words ("needsme", "Weneed"): letters that are two words of one list, the
+  /// second among the words that most often follow the first (the next-word statistics), become the two words
+  /// when they score above the best correction. The pair scores as the first word would as a correction typed
+  /// exactly, plus ln P(second | first), less this many nats. Infinity turns the rule off. With one space taken
+  /// out of NoisyTypingEval's Enron sentences (MissingSpaceEval), 3 puts back 41.9% of the pairs and makes a
+  /// wrong word of 19.2% (none and 41.0% without the rule); 5 and 7 put back 37.5% and 28.7%. On RealTypoEval 3
+  /// costs 1 Spanish fix for 1 more wrong word, 0 cost 1 English and 4 Spanish fixes for 1 and 5.
+  public var missingSpacePenalty: Double = 3
   /// When the language being written knows no words that follow the previous one, another language's do not
   /// count either (in the bar's next words, or as a bonus to its completions) unless that language is within this
   /// many nats of it (`followerLanguages`): after "Can u" the words that follow Spanish "u" (otros, otra) are
@@ -295,12 +303,15 @@ public final class Suggester: @unchecked Sendable {
     let oneTapFewer: Set<[UInt8]>? = longest == stretchedRun
       ? Set(runs.filter { $0.count == stretchedRun }.map { run in Lexicon.fold(String(lower[..<run.startIndex] + lower[lower.index(after: run.startIndex)...])) })
       : nil
+    // two words with the space between them left out ("needsme"); a capitalised word in mid-sentence is a name
+    let pair = context.sentenceStart || !Self.isTitleCase(literal) ? missingSpace(in: literal, context: context) : nil
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
     // a last letter left off competes with the corrections of the same length ("som": some against son)
     let rank = ranking(for: typed, context: context)
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
-    guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
+    guard let best = candidates.max(by: { $0.score < $1.score }) else { return pair?.words }
+    if let pair, pair.score >= best.score { return pair.words }
     if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
     // two different words about as likely as each other ("ica": ova against ice): the letters stay
     let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
@@ -369,6 +380,43 @@ public final class Suggester: @unchecked Sendable {
     guard EntryCase(word) == .name else { return false }
     let key = Lexicon.fold(word)
     return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0) == word } }
+  }
+
+  /// The ways `literal` cuts into two words of one lexicon, each a lowercase word the bar may suggest (frequency
+  /// above 0; not a name or an acronym: "saaame" is not "SAA" and "Ame"): (lexicon, first entry, second entry).
+  func twoWords(_ literal: String, minPart: Int = 1) -> [(lex: Int, first: Int, second: Int)] {
+    let letters = Array(literal)
+    guard minPart < letters.count, letters.count >= 2 * max(1, minPart), letters.allSatisfy(\.isLetter) else { return [] }
+    var out: [(lex: Int, first: Int, second: Int)] = []
+    for cut in max(1, minPart)..<letters.count where letters.count - cut >= minPart {
+      let a = String(letters[..<cut]), b = String(letters[cut...])
+      for (n, lex) in lexicons.enumerated() {
+        guard let ea = lex.entry(of: a), lex.frequency(ea) > 0, EntryCase(lex.word(ea)) == .lower,
+              let eb = lex.entry(of: b), lex.frequency(eb) > 0, EntryCase(lex.word(eb)) == .lower else { continue }
+        out.append((n, ea, eb))
+      }
+    }
+    return out
+  }
+
+  /// "needsme" -> "needs me": the likeliest pair of words `literal` is with a space left out, the second (two
+  /// letters or more: "Mary" is not "Mar y") among the words that most often follow the first, scored as
+  /// `missingSpacePenalty` says; nil when there is none.
+  func missingSpace(in literal: String, context: TypingContext) -> (words: String, score: Double)? {
+    guard missingSpacePenalty < .infinity else { return nil }
+    let cuts = twoWords(literal).filter { lexicons[$0.lex].keyLength($0.second) >= 2 }
+    guard !cuts.isEmpty else { return nil }
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
+    var best: (words: String, score: Double)?
+    for (n, a, b) in cuts {
+      let lex = lexicons[n]
+      guard let f = lex.followers(of: a).first(where: { $0.entry == b }) else { continue }
+      let bonus = bigramWeight > 0 && followed[n] ? context.followerBonus(in: lex, weight: bigramWeight)[a] ?? 0 : 0
+      let score = prior(lex.frequency(a)) + priors[n] + bonus + f.logProbability - missingSpacePenalty
+      if best == nil || score > best!.score { best = (lex.word(a) + " " + lex.word(b), score) }
+    }
+    return best.map { (Self.applyCase(of: literal, to: $0.words), $0.score) }
   }
 
   /// The lexicons spell apostrophes straight; the long press types the curly one.

@@ -183,6 +183,7 @@ struct RealTypoEvalTests {
 /// a key may be from the touch, in key widths. The third row types the English misspellings with Spanish on as
 /// well, as a bilingual typist has it. `NoisyTypingTuning` reads the same settings.
 /// short and fgap are QualityTuning's.
+/// space: the nats two words typed without the space between them pay against the best correction.
 struct RealTypoTuning {
   static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
 
@@ -211,6 +212,7 @@ struct RealTypoTuning {
           case "std": s.touchStd = v
           case "nfloor": s.neighbourFloor = v
           case "ncut": s.neighbourCutoff = v
+          case "space": s.missingSpacePenalty = v
           case "short": s.languagePrior.shortWordCap = v
           case "fgap": s.followerLanguageGap = v
           default: Issue.record("unknown key \(p[0])")
