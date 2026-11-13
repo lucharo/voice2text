@@ -92,6 +92,13 @@ final class Settings: @unchecked Sendable {
     set { defaults.set(newValue?.timeIntervalSince1970, forKey: "keyboardDebugLogUntil") }
   }
 
+  /// The install (`DebuggingVisibility.install(of:)`) the app last found may use Debugging; nil when none may. The
+  /// keyboard logs only for that install outside debug and Simulator builds.
+  var debuggingInstall: String? {
+    get { defaults.string(forKey: "debuggingInstall") }
+    set { defaults.set(newValue, forKey: "debuggingInstall") }
+  }
+
   /// Apple Intelligence tidies each dictation when this is on and the model is available.
   var cleanupEnabled: Bool {
     get { defaults.object(forKey: "cleanupEnabled") as? Bool ?? true }

@@ -27,12 +27,38 @@ struct DictationTimings: Codable, Equatable, Sendable {
   /// Segments cleaned while recording and kept; nil when cleanup did not run, or before cleanup while recording.
   var cleanedWhileRecording: Int? = nil
 
-  /// One line for History: "Ready in 1.4 s · speech 0.1 s, cleanup 1.2 s · 45 s spoken".
+  /// One line for the dictation log: "Ready in 1.4 s · speech 0.1 s, cleanup 1.2 s · 45 s spoken".
   var summary: String {
-    func s(_ x: Double) -> String { x < 10 ? String(format: "%.1f s", x) : String(format: "%.0f s", x) }
+    func s(_ x: Double) -> String { "\(Self.number(x)) s" }
     var parts = ["speech \(s(speech))"]
     if let cleanup { parts.append("cleanup \(s(cleanup))") }
     return "Ready in \(s(total)) · \(parts.joined(separator: ", ")) · \(s(audio)) spoken"
+  }
+
+  /// "0.1", "45": a tenth of a second under 10 s, whole seconds above.
+  static func number(_ x: Double) -> String { x < 10 ? String(format: "%.1f", x) : String(format: "%.0f", x) }
+}
+
+/// One figure on a History card: its SF Symbol, what it shows, and what VoiceOver reads instead.
+struct DictationStat: Equatable, Sendable {
+  var symbol: String
+  var text: String
+  var spoken: String
+}
+
+extension Dictation {
+  /// The History card's figures: the words, then speech, cleanup (when it ran) and spoken time when the dictation
+  /// has timings; one saved before timings has its words only.
+  var stats: [DictationStat] {
+    let words = text.split(whereSeparator: \.isWhitespace).count
+    let w = words == 1 ? "1 word" : "\(words) words"
+    var out = [DictationStat(symbol: "text.alignleft", text: w, spoken: w)]
+    guard let t = timings else { return out }
+    func n(_ x: Double) -> String { DictationTimings.number(x) }
+    out.append(DictationStat(symbol: "waveform", text: "\(n(t.speech)) s", spoken: "speech \(n(t.speech)) seconds"))
+    if let c = t.cleanup { out.append(DictationStat(symbol: "sparkles", text: "\(n(c)) s", spoken: "cleanup \(n(c)) seconds")) }
+    out.append(DictationStat(symbol: "mic", text: "\(n(t.audio)) s", spoken: "\(n(t.audio)) seconds spoken"))
+    return out
   }
 }
 

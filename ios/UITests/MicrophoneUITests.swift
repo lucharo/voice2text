@@ -36,7 +36,7 @@ import XCTest
     shot("20-app-microphone")
 
     let field = app.textFields["v2t.try"]
-    for _ in 0..<4 where !field.isHittable { app.swipeDown(velocity: .slow) }
+    revealAbove(field, in: app)  // clear of the navigation bar: under it the field reads hittable but the tap misses
     sleep(1)
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
     for _ in 0..<2 where !key("letters-q").exists {

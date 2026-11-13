@@ -36,11 +36,8 @@ import XCTest
     }
   }
 
-  /// Languages and typing › Debugging › Typing exercise, then the v2t keyboard in its field.
+  /// Debugging › Typing exercise on the home page, then the v2t keyboard in its field.
   func openExercise() {
-    let settings = app.buttons["Languages and typing"]
-    reveal(settings, in: app)
-    settings.tap()
     let link = app.buttons["settings.typingExercise"]
     reveal(link, in: app)
     XCTAssertTrue(link.waitForExistence(timeout: 5), app.debugDescription)

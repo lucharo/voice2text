@@ -33,12 +33,11 @@ import XCTest
     for _ in 0..<8 where !(element.exists && element.isHittable && element.frame.maxY < bottom) { app.swipeUp(velocity: .slow) }
   }
 
-  func openKeyboardSettings() {
-    let link = app.buttons["Languages and typing"]
-    scrollIntoView(link)
-    link.tap()
+  /// The home page's Debugging section, scrolled into view: its rows are on the first page, with no screen to open.
+  func scrollToDebugging() {
     scrollIntoView(logSwitch)
     XCTAssertTrue(logSwitch.waitForExistence(timeout: 5), app.debugDescription)
+    XCTAssertTrue(app.navigationBars["v2t"].exists, "Debugging is not on the first page")
   }
 
   /// The Log row's text ("Log", then "Empty" or a size), however SwiftUI exposes the LabeledContent.
@@ -46,20 +45,6 @@ import XCTest
     let row = app.descendants(matching: .any)["settings.debugLogSize"].firstMatch
     guard row.waitForExistence(timeout: 5) else { return "" }
     return "\(row.label) \(row.value as? String ?? "") " + row.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
-  }
-
-  /// Back to the app's first page. On iOS 27 the back button is not a Button to XCUITest, so it is found by its
-  /// label, with an edge swipe if it has none.
-  func back() {
-    let bar = app.navigationBars.firstMatch
-    let button = bar.descendants(matching: .any).matching(NSPredicate(format: "label IN {'v2t', 'Back'}")).firstMatch
-    if button.exists && button.isHittable {
-      button.tap()
-    } else {
-      let w = app.windows.firstMatch
-      w.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).press(forDuration: 0.05, thenDragTo: w.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
-    }
-    XCTAssertTrue(app.navigationBars["v2t"].waitForExistence(timeout: 5), "still not back on the first page")
   }
 
   func flip(_ s: XCUIElement) { s.switches.firstMatch.exists ? s.switches.firstMatch.tap() : s.tap() }
@@ -80,17 +65,16 @@ import XCTest
       app.launch()
       app.terminate()
     }
-    openKeyboardSettings()
+    scrollToDebugging()
     XCTAssertEqual(logSwitch.value as? String, "0", "off by default")
     XCTAssertTrue(logSize.contains("Empty"), "log row: \(logSize)")
     flip(logSwitch)
     XCTAssertEqual(logSwitch.value as? String, "1")
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'On until'")).firstMatch.exists)
     shot("20-debug-log-switch-on")
-    back()
 
     // the keyboard: its dot shows, and what is typed is recorded
-    for _ in 0..<6 where !(field.exists && field.isHittable) { app.swipeDown(velocity: .slow) }
+    revealAbove(field, in: app)  // back up the long first page, from Debugging at its foot
     // a tap while the list still glides after the swipe can miss the field: tap until a keyboard shows
     for _ in 0..<3 where !(key("letters-q").exists || app.keyboards.firstMatch.exists) {
       field.tap()
@@ -134,7 +118,7 @@ import XCTest
     app.launch()
 
     // the app now has a log to export; then the switch goes off again for the other tests
-    openKeyboardSettings()
+    scrollToDebugging()
     XCTAssertFalse(logSize.contains("Empty"), "nothing was recorded; log row: \(logSize)")
     XCTAssertTrue(app.buttons["settings.debugLogExport"].isEnabled)
     shot("22-debug-log-recorded")

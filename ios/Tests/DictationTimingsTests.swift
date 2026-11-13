@@ -15,6 +15,37 @@ import Testing
     #expect(t.summary == "Ready in 0.1 s · speech 0.1 s · 6.3 s spoken")
   }
 
+  func dictation(_ text: String, _ timings: DictationTimings?) -> Dictation {
+    Dictation(text: text, date: Date(timeIntervalSince1970: 1_000), language: "en", timings: timings)
+  }
+
+  @Test func statsNameWordsAndEachStage() {
+    let d = dictation("Call me back  after\nlunch.", DictationTimings(audio: 45.2, speech: 0.08, cleanup: 1.24, total: 1.4, piecesWhileRecording: 3))
+
+    #expect(d.stats == [
+      DictationStat(symbol: "text.alignleft", text: "5 words", spoken: "5 words"),
+      DictationStat(symbol: "waveform", text: "0.1 s", spoken: "speech 0.1 seconds"),
+      DictationStat(symbol: "sparkles", text: "1.2 s", spoken: "cleanup 1.2 seconds"),
+      DictationStat(symbol: "mic", text: "45 s", spoken: "45 seconds spoken"),
+    ])
+  }
+
+  @Test func statsLeaveOutCleanupThatDidNotRun() {
+    let d = dictation("Hola", DictationTimings(audio: 6.3, speech: 0.09, cleanup: nil, total: 0.1))
+
+    #expect(d.stats == [
+      DictationStat(symbol: "text.alignleft", text: "1 word", spoken: "1 word"),
+      DictationStat(symbol: "waveform", text: "0.1 s", spoken: "speech 0.1 seconds"),
+      DictationStat(symbol: "mic", text: "6.3 s", spoken: "6.3 seconds spoken"),
+    ])
+  }
+
+  @Test func aDictationSavedBeforeTimingsShowsItsWordsOnly() {
+    let d = dictation("Mañana a las nueve.", nil)
+
+    #expect(d.stats == [DictationStat(symbol: "text.alignleft", text: "4 words", spoken: "4 words")])
+  }
+
   @Test func historySavedBeforeTimingsStillLoads() throws {
     let dir = FileManager.default.temporaryDirectory.appending(path: "v2t-timings-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

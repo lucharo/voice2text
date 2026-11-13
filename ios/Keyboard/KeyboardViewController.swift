@@ -324,7 +324,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   /// which iOS opens to it only with Full Access: without it the switch reads off and nothing is recorded. When it
   /// can read the switch but not write there, the log goes to the keyboard's own container instead.
   private func applyDebugLog() {
-    guard let until = Settings.shared.keyboardDebugLogUntil, until > Date() else {
+    // only for an install the app has found may use Debugging: not an App Store build that replaced a TestFlight
+    // one with the log on, before v2t is opened (a path compare, no StoreKit call while the keyboard appears)
+    let install = DebuggingVisibility.install(of: Bundle.main.bundleURL)
+    guard let until = DebuggingVisibility.keyboardLogUntil(settings: .shared, thisInstall: install) else {
       debugLog?.stop()
       setDebugLog(nil)
       return

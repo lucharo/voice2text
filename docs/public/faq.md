@@ -62,7 +62,7 @@ Yes. [Benchmarks](benchmarks.md#on-the-iphone) separates speech recognition, cle
 
 ## Where is the iPhone keyboard debug log?
 
-In the app, open **Languages and typing → Debugging → Keyboard debug log**. See [Typing](iphone.md#typing) for what it records and how to export it. Check the version in TestFlight when a newly released feature is missing.
+In the app, scroll to **Debugging → Keyboard debug log** on the first page (TestFlight builds only). See [Typing](iphone.md#typing) for what it records and how to export it. Check the version in TestFlight when a newly released feature is missing.
 
 ## How do TestFlight builds reach the App Store?
 

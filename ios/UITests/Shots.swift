@@ -30,6 +30,15 @@ extension XCTestCase {
     app.buttons["Next keyboard"].firstMatch.tap()
   }
 
+  /// Swipes `app`'s main list down until `element` sits below the navigation bar, where a tap reaches it: a row
+  /// under the bar still reads as hittable, but the tap lands on the bar.
+  @MainActor func revealAbove(_ element: XCUIElement, in app: XCUIApplication) {
+    let bar = app.navigationBars.firstMatch
+    for _ in 0..<10 where !(element.exists && element.isHittable && element.frame.minY >= bar.frame.maxY) {
+      app.swipeDown(velocity: .slow)
+    }
+  }
+
   /// Swipes `app`'s main list up until `element` can be tapped (at most six swipes).
   @MainActor func reveal(_ element: XCUIElement, in app: XCUIApplication) {
     for _ in 0..<6 where !(element.exists && element.isHittable) { app.swipeUp(velocity: .slow) }

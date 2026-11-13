@@ -53,7 +53,7 @@ import XCTest
     shot("12-mic-session-on")
 
     let field = app.textFields["v2t.try"]
-    for _ in 0..<4 where !field.isHittable { app.swipeDown(velocity: .slow) }  // revealing the stop row scrolled it away
+    revealAbove(field, in: app)  // revealing the stop row scrolled it away, maybe to under the navigation bar
     sleep(1)  // let the list settle, or the tap lands on whatever scrolled under it
     let key = { (id: String) in app.descendants(matching: .any)["key.\(id)"] }
     // an earlier test may have left Apple's keyboard up: step through the keyboards to v2t's, as a user would.
@@ -98,6 +98,9 @@ import XCTest
     let history = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'History'")).firstMatch
     reveal(history, in: app)
     history.tap()
+    let heard = app.buttons["v2t.history.heard"].firstMatch  // closed by default: open the newest card's
+    XCTAssertTrue(heard.waitForExistence(timeout: 5), app.debugDescription)
+    heard.tap()
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Heard: '")).firstMatch.waitForExistence(timeout: 5))
     shot("16-history-heard")
   }

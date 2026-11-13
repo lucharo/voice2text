@@ -1,9 +1,11 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import V2TCleanup
 
-/// Measuring time to text on the phone (#122): History's timings as CSV for `ios/tools/timings_plot.py`, and the
-/// same recent dictations cleaned three ways (off, casual, thorough) and timed, to compare cleanup settings.
+/// History's exports. Export shares every dictation as JSON Lines. For measuring time to text on the phone (#122):
+/// History's timings as CSV for `ios/tools/timings_plot.py`, and the same recent dictations cleaned three ways (off,
+/// casual, thorough) and timed, to compare cleanup settings.
 enum TimingsCSV {
   /// One row per dictation that has timings, oldest first; no text, so it is safe to paste anywhere.
   static func make(_ items: [Dictation]) -> String {
@@ -16,6 +18,50 @@ enum TimingsCSV {
         + "\(cleanup),\(String(format: "%.3f", t.total)),\(t.piecesWhileRecording),\(t.cleanedWhileRecording.map(String.init) ?? "")\n"
     }
     return out
+  }
+}
+
+/// Every dictation for the share sheet, as JSON Lines: one per line, oldest first, in History's own format (id,
+/// date, language, the cleaned `text`, `heard` when cleanup or the dictionary changed it, `timings` when kept).
+/// Unlike `TimingsCSV` it holds the dictated words, so it is only ever written for the user's own Export.
+enum HistoryJSONL {
+  static func make(_ items: [Dictation]) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    var out = Data()
+    for d in items.reversed() {
+      out += try encoder.encode(d)
+      out += Data("\n".utf8)
+    }
+    return out
+  }
+
+  static func fileName(_ now: Date) -> String {
+    "v2t-history-\(now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))).jsonl"
+  }
+
+  /// Writes the export into `directory` and removes any earlier one there, so the dictated words sit in one
+  /// temporary file at a time.
+  static func write(_ items: [Dictation], to directory: URL, now: Date = Date()) throws -> URL {
+    let fm = FileManager.default
+    for f in (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+    where f.lastPathComponent.hasPrefix("v2t-history-") && f.pathExtension == "jsonl" {
+      try? fm.removeItem(at: f)
+    }
+    let url = directory.appending(path: fileName(now))
+    try make(items).write(to: url, options: [.atomic, .completeFileProtection])
+    return url
+  }
+}
+
+/// History's Export, built as `KeyboardLogExport` builds the log's: a temporary file the share sheet reads.
+struct HistoryExport: Transferable {
+  let items: [Dictation]
+  static var transferRepresentation: some TransferRepresentation {
+    FileRepresentation(exportedContentType: .plainText) { export in
+      SentTransferredFile(try HistoryJSONL.write(export.items, to: FileManager.default.temporaryDirectory))
+    }
   }
 }
 
@@ -79,6 +125,13 @@ enum CleanupComparison {
 struct TimingsToolbar: ToolbarContent {
   @EnvironmentObject var history: History
   var body: some ToolbarContent {
+    ToolbarItem(placement: .primaryAction) {
+      ShareLink(item: HistoryExport(items: history.items), preview: SharePreview("v2t history")) {
+        Label("Export", systemImage: "square.and.arrow.up")
+      }
+      .disabled(history.items.isEmpty)
+      .accessibilityIdentifier("v2t.history.export")
+    }
     ToolbarItem(placement: .primaryAction) {
       Menu {
         Button("Copy timings (CSV)", systemImage: "doc.on.doc") { UIPasteboard.general.string = TimingsCSV.make(history.items) }

@@ -37,6 +37,28 @@ import XCTest
     XCTAssertFalse(app.staticTexts[term].waitForExistence(timeout: 2), "deleted term came back")
   }
 
+  /// The keyboard's settings and, in a test build, Debugging are sections of the first page, with nothing to open.
+  func testKeyboardAndDebuggingAreSectionsOfTheHomePage() {
+    continueAfterFailure = false
+    app.launch()
+    XCTAssertFalse(app.buttons["Languages and typing"].exists)
+    let skinTone = app.buttons["settings.skinTone"].firstMatch
+    reveal(skinTone, in: app)
+    XCTAssertTrue(skinTone.exists, app.debugDescription)
+    XCTAssertTrue(app.buttons["Layout"].firstMatch.exists || app.staticTexts["Layout"].exists, app.debugDescription)
+    shot("25-home-keyboard")
+    let log = app.switches["settings.debugLog"].firstMatch
+    reveal(log, in: app)
+    XCTAssertTrue(log.exists, "no Debugging section on the home page of a test build")
+    XCTAssertTrue(app.staticTexts["Debugging"].exists || app.staticTexts["DEBUGGING"].exists, app.debugDescription)
+    XCTAssertTrue(app.buttons["settings.debugLogExport"].exists)
+    let exercise = app.buttons["settings.typingExercise"]
+    reveal(exercise, in: app)
+    XCTAssertTrue(exercise.exists)
+    XCTAssertTrue(app.navigationBars["v2t"].exists, "Debugging opened a screen of its own")
+    shot("26-home-debugging")
+  }
+
   func testCleanupSwitchDrivesTheRecommendationCard() {
     continueAfterFailure = false
     app.launch()
@@ -44,7 +66,9 @@ import XCTest
     let cleanup = app.switches["v2t.cleanup"].firstMatch
     reveal(cleanup, in: app)
     guard cleanup.isEnabled else {
-      XCTAssertTrue(app.staticTexts["Cleanup: none, your dictionary's replacements only"].exists)
+      let none = app.staticTexts["Cleanup: none, your dictionary's replacements only"]
+      reveal(none, in: app)
+      XCTAssertTrue(none.exists)
       shot("22-cleanup-unavailable")
       return
     }
@@ -54,11 +78,21 @@ import XCTest
     XCTAssertTrue(card.exists)
     shot("22-cleanup-on")
 
-    cleanup.switches.firstMatch.tap()
-    XCTAssertTrue(app.staticTexts["Cleanup: off (turned off above)"].waitForExistence(timeout: 3))
+    // the Keyboard section sits between the switch and the card: back up to the switch, down to the card
+    flip(cleanup)
+    let off = app.staticTexts["Cleanup: off (turned off above)"]
+    reveal(off, in: app)
+    XCTAssertTrue(off.waitForExistence(timeout: 3))
     shot("23-cleanup-off")
-    cleanup.switches.firstMatch.tap()
+    flip(cleanup)
+    reveal(card, in: app)
     XCTAssertTrue(card.waitForExistence(timeout: 3))
+  }
+
+  /// Scrolls back up to `toggle`, clear of the navigation bar, and flips it.
+  func flip(_ toggle: XCUIElement) {
+    revealAbove(toggle, in: app)
+    toggle.switches.firstMatch.tap()
   }
 
   func testACachedModelNeverShowsAsDownloading() {

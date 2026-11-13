@@ -60,8 +60,8 @@ iOS gives keyboards no microphone, so the app records:
 
 1. With no microphone session running, the keyboard's mic opens v2t once. v2t starts recording at once and asks you
    to swipe back to the app you were typing in (iOS offers no way to send you back automatically).
-2. The session then stays on for 15 minutes after your last dictation (Keyboard settings: 5 min, 15 min, 1 hour or
-   until turned off). During that time the mic records from the keyboard without leaving your app. The orange
+2. The session then stays on for 15 minutes after your last dictation (Keep the mic ready for, under the switch:
+   5 min, 15 min, 1 hour or until turned off). During that time the mic records from the keyboard without leaving your app. The orange
    microphone dot shows while the session is on, and the app has a Stop microphone session button.
 3. Only what you say between tapping the mic and tapping it again is kept; nothing else is buffered or saved.
 4. The keyboard's recording view and the app name the microphone in use ("iPhone Microphone", a wired headset).
@@ -88,16 +88,31 @@ iOS gives keyboards no microphone, so the app records:
   opens v2t on its download screen instead of recording.
 - History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
   saved: the app holds it in memory while it transcribes, then drops it.
+- History shows each dictation as a card of one height: the cleaned text in three lines (tap for all of it), a
+  divider, then its figures (words, speech and cleanup time, spoken length; words only for dictations saved before
+  timings), the date, **Heard** (the words before cleanup, closed by default) and **Copy**. Export in its toolbar
+  shares every dictation as `v2t-history-<stamp>.jsonl`: one JSON object per line, oldest first, in History's own
+  format (`date`, `text`, `heard` when it differs, `language`, `timings`), written to a temporary file for the
+  share sheet only, replacing the last export.
 
 ### Keyboard debug log
 
 An opt-in log of everything the keyboard does while you type, to find where it gets typing wrong (#162). Off by
-default; **Languages and typing** › Debugging turns it on for 24 hours, and a red dot in the suggestion bar shows
+default; the home page's Debugging section turns it on for 24 hours, and a red dot in the suggestion bar shows
 while it records. It is written by `KeyboardDebugLog` (V2TKeyboardCore) as JSON lines to `KeyboardLog/keyboard.jsonl`
 in the App Group, moving to `keyboard.1.jsonl` past 4 MB, so it never holds more than 8 MB. The app's Export
 shares both files joined; Clear log deletes them.
 
-**Typing exercise** (Debugging › Typing exercise) is a typing test for the log: it shows ten sentences one at a
+Debugging shows in TestFlight builds, debug builds and the Simulator, and is hidden in App Store builds
+(`App/DebuggingVisibility+StoreKit.swift`): a release build reads `AppTransaction.environment`, which is `.sandbox`
+for TestFlight and `.production` for the App Store. The App Store build is the TestFlight binary promoted, so only
+that environment tells them apart. Where the section is hidden, the app turns the log off. Where it shows, the app
+records which install it approved (the app bundle's path, which iOS changes when a build replaces another), and
+outside debug and Simulator builds the keyboard records only for that install (`Shared/DebuggingVisibility.swift`).
+So a log switched on in a TestFlight build stops as soon as an App Store build replaces it, even when the keyboard
+is used before v2t is opened, rather than recording out its 24 hours.
+
+**Typing exercise** (in Debugging) is a typing test for the log: it shows ten sentences one at a
 time (seven English and three Spanish when Spanish is among the suggestion languages, picked at random from 24 and
 8 written for v2t, `App/ExerciseSentences.swift`), the person types each with the v2t keyboard in a field with
 iOS's default traits, and a summary shows the words that came out different and characters per second. It turns
