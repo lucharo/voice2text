@@ -582,8 +582,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     decoder.languagePrior = engine.suggester.languagePrior  // the language last written in, as the bar's
     let t0 = CACurrentMediaTime()
     let epoch = inputEpoch, document = documentID
-    // the words before the swipe pick the language and promote the words that usually come next
-    let context = textDocumentProxy.documentContextBeforeInput ?? ""
+    // the words before the swipe pick the language and promote the words that usually come next; the engine's
+    // leave out a word still being typed, which the swipe ends, and keep a swiped one, which has no space yet
+    let context = engine.context
     // decided now: by the time the decode returns, focus may have moved out of a field the log must skip
     let loggable = debugLog?.isOn == true, liftedAt = ProcessInfo.processInfo.systemUptime
     decodeQueue.async {

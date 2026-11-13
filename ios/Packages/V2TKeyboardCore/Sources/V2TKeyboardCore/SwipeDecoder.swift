@@ -217,7 +217,15 @@ public struct MultiSwipeDecoder: Sendable {
 
   /// `decode`'s words with their scores (nats, higher is better), for the keyboard's debug log.
   public func decodeScored(_ trace: [CGPoint], context: String = "", limit: Int = 4) -> [SwipeDecoder.Candidate] {
-    let ctx = TypingContext(before: context)
+    decodeScored(trace, context: TypingContext(before: context), limit: limit)
+  }
+
+  /// The same with the words before the swipe as the keyboard reads them: `TypingEngine.context`, which leaves out
+  /// a word still being typed (the swipe ends it, so it is not yet a word the swipe follows) and keeps a swiped
+  /// word, which has no space after it until the next word starts. A typing log had "E" left from a mistyped word
+  /// when a swipe for "leaving" began: read as the word before, it made Spanish the likelier language, every
+  /// English word paid `LanguagePrior.cap`, and the Spanish "kirchhoff" won.
+  public func decodeScored(_ trace: [CGPoint], context ctx: TypingContext, limit: Int = 4) -> [SwipeDecoder.Candidate] {
     let priors = languagePrior.priors(decoders.map(\.lexicon), primary: decoders.first?.layout.language.rawValue, context: ctx)
     let merged = zip(decoders, priors).flatMap { d, p in
       let bonus = ctx.followerBonus(in: d.lexicon, weight: bigramWeight)

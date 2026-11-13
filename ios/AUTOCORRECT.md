@@ -226,6 +226,88 @@ edge took a median 18 ms from touch to deletion (2 presses) against 96 ms on bui
 and edge letters 29 ms from lift to key (5) against 38 ms (7); keys elsewhere stayed at 20 ms. The bar came up
 a median 4.5 ms after a key (95th percentile 8.8 ms) against 7.3 ms (19.9 ms).
 
+### After a third typing log (2026-11-12, builds 124 to 127)
+
+A longer log from the same phone (11,585 events, with the second log in it) had three kinds of wrong result. One is
+fixed; for the other two no rule held up on the evals, so the letters still become the same words.
+
+| Typed | Meant | Became | Now |
+| --- | --- | --- | --- |
+| a swipe from l to f | leaving | kirchhoff | leaving |
+| tye, thse (twice), ut | type, these, out | the, the, it | the, the, it |
+| thag'd | that'd | that's | that's |
+
+**The swipe** began while "E" was still being typed: the first letter of a mistyped "Eavin", left after deleting
+the rest. The keyboard passed the text before the cursor to the swipe decoder as it was, so "E" read as the word
+before, and "e" (Spanish for "and") made Spanish the likelier language by more than `LanguagePrior.cap`: every
+English word paid 6 nats, and the Spanish list's "kirchhoff" won at -9.05 against "leaving" at -10.41. The logged
+48 points of the trace give the same scores to 0.02. The keyboard now gives the decoder the engine's own words
+before the cursor (`TypingEngine.context`): they leave out the word being typed, which the swipe ends, and keep a
+swiped word, which has no space after it until the next word starts (`SwipeDecoderTests`: letters still being
+typed, a swiped word, a word picked from the bar). QualityEval's swipe rows do not move.
+
+A first version cut any letters with no space after them, and so also the word a swipe had just put in: Luis swipes
+words one after another, and the next swipe read the word before that one instead. Typed again through the log
+(the replay's text, each trace decoded as the keyboard would; all 20 come out as the phone logged them with the text
+as it was), that version read the wrong word before 7 of the 20 swipes and turned one "to" into "too"; the engine's
+words change 1 of the 20, "kirchhoff" to "leaving". 8 of the 20 were in fields whose text the log does not hold.
+
+Tried first, from the brief, and dropped (QualityEval, top-1):
+
+| Setting | Clean EN words | Sloppy EN words | Sloppy ES words | Sloppy EN sentences |
+| --- | --- | --- | --- | --- |
+| Now | 90.9% | 79.5% | 79.7% | 89.6% |
+| A word not starting with the key under the first point pays 1 nat | 91.0% | 76.6% | 77.5% | 88.5% |
+| ... 2 nats (the least that fixes this swipe) | 90.5% | 73.8% | 74.5% | 87.2% |
+| ... 3 nats | 90.1% | 71.6% | 72.9% | 85.2% |
+
+A lower language cap (3, 4 or 5 nats) moved no QualityEval row, and it would let more Spanish words into English
+sentences, so it stays at 6.
+
+**"the" for "tye", "thse" and "ut".** "the" beat "type" by 1.3 nats (-7.08 against -8.39, "rye" -7.75 between),
+reading the y, tapped 12 pt from its centre, as an h; "the" beat "these" by 3.7 nats by skipping an s tapped 2 pt
+from its centre; and "out" is never a candidate for "ut", since a missed first letter is not searched. Two rules
+were measured on `NoisyTypingEval`'s development split (real taps; the misspelling lists tap every key at its
+centre and cannot tell a clean tap from another), as fixed / wrong word of the mistapped words:
+
+| Setting | Dev, all | Dev, full-size with popups | RealTypo EN / ES fixed, wrong | Fixes |
+| --- | --- | --- | --- | --- |
+| Now | 74.2% / 5.5% | 79.9% / 2.9% | 87.7% 4.5%, 89.4% 4.6% | |
+| A tap within 0.5 key widths of its key's centre costs 2 nats more to read as a neighbour | 70.9% / 6.8% | 77.1% / 3.6% | | tye |
+| ... 3 nats | 68.5% / 8.2% | 74.7% / 4.9% | | tye |
+| ... 2 nats within 0.4 | 72.2% / 6.4% | 78.3% / 3.3% | | tye |
+| ... 2 nats within 0.6 | 69.7% / 7.2% | 76.3% / 3.7% | | tye |
+| ... 1 nat within 0.25 | 73.9% / 5.7% | 79.7% / 3.1% | | |
+| ... 0.5 nats within 0.5 | 73.5% / 5.9% | 79.3% / 2.9% | | |
+| Skipping such a tap, or reading it as a far letter, costs 4 nats more | 74.3% / 5.3% | 79.6% / 3.0% | 82.0% 5.7%, 87.8% 4.8% | thse left as typed |
+| ... 5 nats | 74.2% / 5.4% | 79.5% / 3.0% | 80.1% 5.9%, 86.9% 4.8% | thse left as typed ("these" 0.16 ahead of "those") |
+| Skipping it only, 2 or 4 nats | 74.1% / 5.4%, 74.0% / 5.5% | 79.7% / 2.9%, 79.5% / 2.9% | | |
+| A letter missed costs 4 rather than 5 (letters added only) | 74.0% / 5.7% | 79.7% / 3.2% | | |
+| ... 3 | 73.4% / 6.0% | 79.5% / 3.3% | | tye |
+| A missed first letter searched, at 5 | 74.1% / 5.6% | 79.8% / 2.8% | | ("out" -7.67, "it" -5.62) |
+
+On real taps a touch near a key's centre is often not the key meant, so making it dearer to read otherwise lost
+fixes; the variants that left the real-tap rows about level cost 5 to 8 points of RealTypo's English fixes, whose
+taps are all at the centres. Raising `runnerUpLead` instead leaves "fnd" and "som" from the first log as typed.
+
+**"that's" for "thag'd".** The d was tapped 1.2 pt on d's side of the s/d boundary, so the touch model reads s and
+d as equally likely, and "that's" is the commoner word (-5.44 against -6.77). A rule that the letters typed after an
+apostrophe stay as typed needs at least 1.9 nats to fix it. Neither misspelling list has an apostrophe and the
+noisy-typing references have none, so it was measured on the 305 contractions of the English correct text, each
+typed 20 times with real taps drawn per letter from the noisy-typing development split (6,080 typings, 2,901 with a
+letter tapped wrong; no contraction tapped right was changed in any setting):
+
+| Extra cost of changing a letter after an apostrophe | Fixed | Wrong word | Left as typed |
+| --- | --- | --- | --- |
+| 0 (now) | 2,238 | 336 | 327 |
+| 1 | 2,243 | 337 | 321 |
+| 2 | 2,223 | 342 | 336 |
+| 3 | 2,194 | 374 | 333 |
+
+On the full-size keyboards with popups alone (6,060 typings, 2,333 tapped wrong), 2 nats fixed 1,852 against 1,863
+and made 265 wrong words against 258. A tap on the boundary is as likely meant for either key, and 's is much the
+commoner ending, so the frequency is right more often than the letter typed.
+
 ## Where Gboard and SwiftKey differ
 
 - **Space can insert a prediction.** SwiftKey's space bar inserts the middle prediction when autocorrect is on,
