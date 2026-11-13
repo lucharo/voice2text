@@ -10,28 +10,69 @@ struct DebuggingVisibilityTests {
   let testFlight = "/var/containers/Bundle/Application/1A2B3C4D-0000-4000-8000-000000000001/V2T.app"
   let appStore = "/var/containers/Bundle/Application/5E6F7A8B-0000-4000-8000-000000000002/V2T.app"
 
-  @Test func appStoreBuildHidesIt() {
-    #expect(DebuggingVisibility.shows(environment: .production, debugBuild: false, simulator: false) == false)
+  typealias Build = DebuggingVisibility.Build
+
+  @Test func anAppStoreBuildHidesIt() {
+    #expect(Build(environment: .production, receipt: "receipt").showsDebugging == false)
   }
 
-  @Test func testFlightBuildShowsIt() {
-    #expect(DebuggingVisibility.shows(environment: .sandbox, debugBuild: false, simulator: false) == true)
+  @Test func aTestFlightBuildShowsIt() {
+    #expect(Build(environment: .sandbox, receipt: "sandboxReceipt").showsDebugging == true)
+  }
+
+  /// Build 130 on a TestFlight install: StoreKit gave no app transaction, and Debugging was hidden.
+  @Test func aTestFlightBuildShowsItWhenStoreKitGivesNoAnswer() {
+    #expect(Build(environment: nil, receipt: "sandboxReceipt").showsDebugging == true)
+  }
+
+  @Test func aTestFlightBuildShowsItWhenTheBundleNamesNoReceipt() {
+    #expect(Build(environment: .sandbox, receipt: nil).showsDebugging == true)
   }
 
   @Test func storeKitTestingInXcodeShowsIt() {
-    #expect(DebuggingVisibility.shows(environment: .xcode, debugBuild: false, simulator: false) == true)
+    #expect(Build(environment: .xcode, receipt: nil).showsDebugging == true)
   }
 
-  @Test func anUnreadableEnvironmentHidesIt() {
-    #expect(DebuggingVisibility.shows(environment: nil, debugBuild: false, simulator: false) == false)
+  @Test func aSandboxReceiptShowsItWhateverStoreKitSays() {
+    #expect(Build(environment: .production, receipt: "sandboxReceipt").showsDebugging == true)
   }
 
-  @Test func aDebugBuildShowsItWhateverTheEnvironment() {
-    #expect(DebuggingVisibility.shows(environment: .production, debugBuild: true, simulator: false) == true)
+  @Test func anAppStoreReceiptWithNoStoreKitAnswerHidesIt() {
+    #expect(Build(environment: nil, receipt: "receipt").showsDebugging == false)
   }
 
-  @Test func theSimulatorShowsItWhateverTheEnvironment() {
-    #expect(DebuggingVisibility.shows(environment: nil, debugBuild: false, simulator: true) == true)
+  @Test func noSignalAtAllHidesIt() {
+    #expect(Build(environment: nil, receipt: nil).showsDebugging == false)
+  }
+
+  @Test func aDebugBuildShowsItWhateverTheSignals() {
+    #expect(Build(environment: .production, receipt: "receipt", debugBuild: true).showsDebugging == true)
+  }
+
+  @Test func theSimulatorShowsItWhateverTheSignals() {
+    #expect(Build(environment: nil, receipt: "receipt", simulator: true).showsDebugging == true)
+  }
+
+  @Test func theLabelNamesEachKindOfBuild() {
+    #expect(Build(environment: nil, receipt: "sandboxReceipt").label == "TestFlight")
+    #expect(Build(environment: .sandbox, receipt: nil).label == "TestFlight")
+    #expect(Build(environment: .production, receipt: "receipt").label == "App Store")
+    #expect(Build(environment: .production, receipt: "receipt", debugBuild: true).label == "debug build")
+    #expect(Build(environment: nil, receipt: "receipt", simulator: true).label == "Simulator")
+  }
+
+  @Test func theLabelSaysWhatEachSignalReadWhenTheyDoNotSettleIt() {
+    #expect(Build(environment: nil, receipt: "receipt").label == "build type unsure (StoreKit: no answer, receipt: receipt)")
+    #expect(Build(environment: .production, receipt: nil).label == "build type unsure (StoreKit: Production, receipt: none)")
+    #expect(Build(environment: nil, receipt: nil).label == "build type unsure (StoreKit: no answer, receipt: none)")
+  }
+
+  @Test func theVersionLineCarriesVersionBuildNumberAndKind() {
+    let info: [String: Any] = ["CFBundleShortVersionString": "1.1", "CFBundleVersion": "131"]
+
+    let line = HomeView.versionLine(build: Build(environment: nil, receipt: "sandboxReceipt"), info: info)
+
+    #expect(line == "v2t 1.1 (131), TestFlight")
   }
 
   @Test func hidingItTurnsTheDebugLogOffForEveryInstall() {

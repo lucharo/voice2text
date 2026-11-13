@@ -37,4 +37,21 @@ import XCTest
     XCTAssertFalse(app.buttons["v2t.about.continue"].exists, "the row's page has Back, not Continue")
     shot("06-about-from-row")
   }
+
+  /// The line under the About v2t row: which version, which build, and what kind of build the app takes itself for.
+  func testTheHomePageEndsWithTheVersionAndTheKindOfBuild() {
+    continueAfterFailure = false
+    app.launchEnvironment["V2T_FIRST_LAUNCH"] = "0"
+    app.launch()
+    let line = app.staticTexts["v2t.version"]
+    reveal(line, in: app)
+
+    let label = line.label
+
+    XCTAssertTrue(label.hasPrefix("v2t "), label)
+    // UI tests run a debug build in the Simulator; either name is this build told apart from the App Store's
+    XCTAssertTrue(label.hasSuffix(", debug build") || label.hasSuffix(", Simulator"), label)
+    XCTAssertTrue(app.switches["settings.debugLog"].exists, "such a build shows Debugging: \(app.debugDescription)")
+    shot("07-home-version-line")
+  }
 }

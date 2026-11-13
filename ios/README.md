@@ -107,9 +107,14 @@ in the App Group, moving to `keyboard.1.jsonl` past 4 MB, so it never holds more
 shares both files joined; Clear log deletes them.
 
 Debugging shows in TestFlight builds, debug builds and the Simulator, and is hidden in App Store builds
-(`App/DebuggingVisibility+StoreKit.swift`): a release build reads `AppTransaction.environment`, which is `.sandbox`
-for TestFlight and `.production` for the App Store. The App Store build is the TestFlight binary promoted, so only
-that environment tells them apart. Where the section is hidden, the app turns the log off. Where it shows, the app
+(`App/DebuggingVisibility+StoreKit.swift`). The App Store build is the TestFlight binary promoted, so only where
+the install came from tells them apart, and a release build reads that from two signals: `AppTransaction.environment`
+(`.sandbox` for TestFlight, `.production` for the App Store) and the file name of the App Store receipt
+(`sandboxReceipt` for TestFlight, `receipt` for the App Store). Either one naming the sandbox shows Debugging; with
+neither, it stays hidden. Build 130 read StoreKit alone, got no answer on a TestFlight install and hid the section.
+The line under About v2t on the home page gives the version, the build number and the build type the app settled
+on, and when the signals do not settle it, what each one read. Where the section is hidden, the app turns the log
+off. Where it shows, the app
 records which install it approved (the app bundle's path, which iOS changes when a build replaces another), and
 outside debug and Simulator builds the keyboard records only for that install (`Shared/DebuggingVisibility.swift`).
 So a log switched on in a TestFlight build stops as soon as an App Store build replaces it, even when the keyboard
