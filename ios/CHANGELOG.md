@@ -5,7 +5,11 @@ What changed for people using the app and keyboard, newest first. The Mac app ha
 
 ## Unreleased
 
-Nothing yet.
+- Keyboard settings and Debugging are sections of the app's home page.
+- Debugging shows in TestFlight builds only.
+- History cards are one height; tap one to read all of it.
+- Copy a dictation, or export all of History from its share button.
+- A swipe begun with a stray letter in the field no longer picks an odd word.
 
 ## 1.1
 
