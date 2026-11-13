@@ -334,9 +334,9 @@ public final class Suggester: @unchecked Sendable {
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
     guard let best = candidates.max(by: { $0.score < $1.score }) else { return pair?.words }
     if let pair, pair.score >= best.score { return pair.words }
-    // two words run together that are not a likely pair, whose best correction is unlikely: a compound the lists
+    // two words run together whose pair, if any, lost, and whose best correction is unlikely: a compound the lists
     // lack, left as typed
-    if pair == nil, best.score < compoundFloor, isCompound(literal) { return nil }
+    if best.score < compoundFloor, isCompound(literal) { return nil }
     if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
     // two different words about as likely as each other ("ica": ova against ice): the letters stay
     let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }

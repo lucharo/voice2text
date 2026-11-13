@@ -88,6 +88,16 @@ struct FourthLogRulesTests {
     #expect(try suggester { $0.compoundFloor = -.infinity }.autocorrection(for: Self.changelog, context: context) == "changeling")
   }
 
+  /// "venirlos" (venir, los: a Spanish infinitive with its pronoun, which the list lacks) is a pair the next-word
+  /// statistics hold, but "venir los" scores -14.55 against the correction "venirles" at -14.03: the pair that
+  /// lost does not take the compound's protection away.
+  @Test func aPairThatLosesStillLeavesTheCompoundAsTyped() throws {
+    let typed = taps("venirlos", Self.layout)
+    #expect(try suggester().autocorrection(for: typed, context: .empty) == nil)
+    #expect(try suggester().missingSpace(in: "venirlos", context: .empty) != nil)
+    #expect(try suggester { $0.compoundFloor = -.infinity }.autocorrection(for: typed, context: .empty) == "venirles")
+  }
+
   // MARK: tap
 
   // "Gappy" at the start of a message, the G touched on the G key's edge with the H
