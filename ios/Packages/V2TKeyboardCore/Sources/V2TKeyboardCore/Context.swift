@@ -76,7 +76,8 @@ public struct LanguagePrior: Sendable {
   /// list holds no single letters but "a" and "I", so a "u" or an "o" (Spanish words, and in English a chat
   /// spelling or a slip) counted as an unknown word, 13 nats against English, more than the English words before
   /// it ("Can u" read as Spanish, 3.9 nats ahead; at 1 English leads by 3.6, "Oki u" by 1, where 2 ties).
-  /// Infinity weighs them as any word. 0, 1 and 2 move no row of QualityEval, and 1 none of LanguageEval.
+  /// Infinity weighs them as any word. 0, 1, 2 and infinity move no row of QualityEval, and 0, 1 and infinity
+  /// none of LanguageEval.
   public var shortWordCap: Double = 1
   static let shortWord = 1
 

@@ -109,18 +109,18 @@ public final class Suggester: @unchecked Sendable {
   /// when they score above the best correction. The pair scores as the first word would as a correction typed
   /// exactly, plus ln P(second | first), less this many nats. Infinity turns the rule off. With one space taken
   /// out of NoisyTypingEval's Enron sentences (MissingSpaceEval), 3 puts back 41.9% of the pairs and makes a
-  /// wrong word of 19.2% (none and 41.0% without the rule); 5 and 7 put back 37.5% and 28.7%. On RealTypoEval 3
-  /// costs 1 Spanish fix for 1 more wrong word, 0 cost 1 English and 4 Spanish fixes for 1 and 5.
+  /// wrong word of 19.2% (none and 41.0% without the rule); 5 and 7 put back 37.3% and 28.6%. On RealTypoEval 3
+  /// costs 1 Spanish fix for 1 more wrong word, 0 costs 1 English and 4 Spanish fixes for 1 and 5.
   public var missingSpacePenalty: Double = 3
   /// Letters that are two words of one list, each three letters or more, that `missingSpacePenalty` does not
   /// take as a pair and whose best correction scores under this, are a compound the list lacks rather than a
   /// slip ("changelog": change, log; its correction "changeling" scored -15.0): autocorrect leaves them as typed
-  /// instead of making a third word of them. -infinity turns the rule off. Of the 36,703 words of Webster's
+  /// instead of making a third word of them. -infinity turns the rule off. Of the 36,886 words of Webster's
   /// Second the English list lacks that are two English words (MissingSpaceEval), -14 makes another word of
-  /// 10.4% (25.3% without the rule). On RealTypoEval -14 gave up 9 English and 15 Spanish fixes for 2 and 12
-  /// fewer wrong words, -12 gave up 19 and 45 for 5 and 22, and -16 0 and 4 for 2 and 4 but leaves "changelog"
-  /// (-15.0) to become "changeling". Leaving every such word as typed, whatever its correction scored, lost 10
-  /// points of English fixes.
+  /// 10.5% (25.5% without the rule). On RealTypoEval -14 gives up 5 English and 12 Spanish fixes for 1 and 11
+  /// fewer wrong words, -12 13 and 36 for 3 and 20, and -16 0 and 4 for 1 and 3 but leaves "changelog" (-15.0)
+  /// to become "changeling". Leaving every such word as typed, whatever its correction scored, lost 6.3 points
+  /// of English fixes and 6.2 of Spanish.
   public var compoundFloor: Double = -14
   /// When the language being written knows no words that follow the previous one, another language's do not
   /// count either (in the bar's next words, or as a bonus to its completions) unless that language is within this
@@ -133,7 +133,7 @@ public final class Suggester: @unchecked Sendable {
   /// the neighbouring key makes replaces it when that neighbour cost no more than `ambiguousTapCost` nats and the
   /// word, with the words before it, scores `ambiguousTapGap` nats above the one typed. A cost of -infinity turns
   /// the rule off. On NoisyTypingEval's development split 1 and 2 fix 172 more mistapped words (74.2% to 77.1%)
-  /// for 14 more wrong words and 1 more word tapped right changed; on the test split 478 more (69.3% to 71.7%)
+  /// for 14 more wrong words and 1 more word tapped right changed; on the test split 478 more (69.4% to 71.8%)
   /// for 36 (7.6% to 7.8%). A cost of 0.5 with a gap of 4 fixed 48 more for 6; 2 and 2, 208 for 17; a gap of 0
   /// changed 31 words tapped right. RealTypoEval does not move: at a key's centre no neighbour costs under 3
   /// nats.

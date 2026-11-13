@@ -312,8 +312,9 @@ commoner ending, so the frequency is right more often than the letter typed.
 
 An afternoon's log from the same phone (239 words replayed, 25 autocorrections with their words) showed four
 kinds of wrong result besides the ones above. Each is now a rule with its own setting in `Suggester` (or
-`LanguagePrior`), tested on the log's touches in `FourthLogRulesTests`, with the old answer back when it is off.
-Replayed (`LogReplayEval`), three of the log's autocorrections change and none of the earlier logs' do:
+`LanguagePrior`), tested on the log's touches in `FourthLogRulesTests`, with the old answer back when it is off,
+and chat abbreviations are English words (`ChatWordsTests`). Replayed (`LogReplayEval`), three of the log's
+autocorrections change and none of the earlier logs' do:
 
 | Typed | Meant | Builds 124 and 127 | Now | Rule |
 | --- | --- | --- | --- | --- |
@@ -322,6 +323,7 @@ Replayed (`LogReplayEval`), three of the log's autocorrections change and none o
 | changelog | changelog | changeling | left as typed | two words run together |
 | Gappy | Happy | left as typed | Happy | a touch on a key's edge |
 | Can u sho | show | ahora, hombres in the bar | show, short | one short Spanish word |
+| idk | idk | I'd in bold | idk, kept | chat abbreviations |
 
 **A space left out** (`missingSpacePenalty`). Letters that are two words of one list, the second among the words
 the next-word statistics have following the first, become the two words when the pair outscores the best
@@ -334,31 +336,34 @@ words before it). The Tatoeba sentences fed the statistics, so the Enron row is 
 | Enron, 4,279, before | 0% | 41.0% | off |
 | Enron, now | 41.9% | 15.2% | 3 |
 | Enron, the space rule alone | 41.9% | 19.2% | 3 |
-| Enron, other penalties | 37.5%, 28.7% | 22.7%, 29.6% | 5, 7 |
+| Enron, the space rule alone, other penalties | 37.3%, 28.6% | 22.8%, 29.6% | 5, 7 |
 | Tatoeba English, 5,379, now | 49.9% | 13.8% | 3 |
 | Tatoeba Spanish, 5,670, now | 43.5% (0% before) | 18.9% (41.0% before) | 3 |
 
-The second word must be two letters or more ("Mary" became "Mar y" 56 times in the Spanish sentences), and both
-lowercase words, not names or acronyms ("saaame" is not "SAA Ame"). Letting any pair win over the correction
-turned Spanish misspellings into two words ("haciendolo": haciendo lo, "estan": es tan); scored against it, they
-keep their accent fix.
+On RealTypoEval the rule costs 1 Spanish fix for 1 more wrong word at 3, and 1 English and 4 Spanish fixes for
+1 and 5 at 0. The second word must be two letters or more, and both must be lowercase words, not names or
+acronyms ("saaame" is not "SAA Ame"): with a single letter allowed, "Mary" became "Mar y" and RealTypoEval's
+Spanish correct text had 56 more words changed. Letting any pair win over the correction turned Spanish
+misspellings into two words ("haciendolo": haciendo lo, "estan": es tan); scored against it, they keep their
+accent fix. (Those two variants were measured before the rule was committed and not kept.)
 
 **Two words run together** (`compoundFloor`). Letters that are two words of three letters or more, not a pair
-the rule above takes, and whose best correction scores under -14 stay as typed. The measure is the 36,703 words
-of Webster's Second International (1934, public domain, `/usr/share/dict/web2` on a Mac) the English list lacks
-that are two English words of three letters or more:
+the rule above takes as a pair (none, or one that scores under the correction), and whose best correction
+scores under -14 stay as typed. The measure is the 36,886 words of Webster's Second International (1934, public
+domain, `/usr/share/dict/web2` on a Mac) the English list lacks that are two English words of three letters or
+more, with the space rule on:
 
 | `compoundFloor` | Compounds made another word | RealTypo EN fixed / wrong | RealTypo ES fixed / wrong |
 | --- | --- | --- | --- |
-| off | 25.3% | 3,615 / 184 | 14,042 / 721 |
-| -16 | 19.1%* (and "changelog", at -15.0, becomes "changeling") | 3,615 / 182 | 14,038 / 717 |
-| -14 (kept) | 10.4% | 3,606 / 182 | 14,027 / 709 |
-| -12 | 5.9%* | 3,596 / 179 | 13,997 / 699 |
-| every such word, whatever its correction scored | 0% | 3,210 / 172 | 12,911 / 703 |
+| off | 25.5% | 3,615 / 184 | 14,042 / 721 |
+| -16 | 17.4% (and "changelog", at -15.0, becomes "changeling") | 3,615 / 183 | 14,038 / 718 |
+| -14 (kept) | 10.5% | 3,610 / 183 | 14,030 / 710 |
+| -12 | 5.1% | 3,602 / 181 | 14,006 / 701 |
+| every such word, whatever its correction scored | 0% | 3,355 / 176 | 13,060 / 670 |
 
-\* On the first list of 42,825 compounds, before names and acronyms were left out of the two words (on it, -14
-made another word of 11.7% and off 27.2%). With them left out, -14 makes RealTypoEval's counts 3,610 / 183 and
-14,030 / 710.
+A pair that loses to the correction does not lift the rule: "venirlos" (venir, los) is a stored pair at -14.55
+against "venirles" at -14.03, and stays as typed. Of the 47,952 stored pairs of words of three letters or more
+typed as one at a sentence's start, 5 were such losing pairs, all Spanish.
 
 **One short Spanish word** (`LanguagePrior.shortWordCap`, `followerLanguageGap`). The language of the context
 summed each word's evidence, and a word missing from a list cost that language 13 nats. The English list holds
@@ -374,7 +379,7 @@ and the Enron development sentences, both languages on: English 27.1% and 40.2% 
 31.9%, before and now).
 
 The typing path already leaves the word being typed out of the context (`TypingEngine.context`); the swipe path
-did not, which `MultiSwipeDecoder.finishedText` fixes on its own branch.
+did not until #199.
 
 **A touch on a key's edge** (`ambiguousTapCost`, `ambiguousTapGap`). A word in the list was never corrected. Now
 one whose touch lands within 1 nat of a neighbouring key becomes the word that key makes when that word scores 2
@@ -389,8 +394,8 @@ nats of a neighbour, so it does not move:
 | 1 / 0 | 77.7% / 5.9% | 31 |
 | 2 / 2 | 77.7% / 5.8% | 4 |
 
-On the test split it fixes 71.8% of the mistapped words against 69.4% on main and makes a wrong word of 7.8%
-against 7.6%: 474 more fixes for 37 more wrong words.
+On the test split it fixes 71.8% of the mistapped words against 69.4% without it and makes a wrong word of 7.8%
+against 7.6%: 478 more fixes for 36 more wrong words.
 
 | Set | Fixed | Wrong word |
 | --- | --- | --- |
@@ -403,16 +408,20 @@ against 7.6%: 474 more fixes for 37 more wrong words.
 | Noisy test full-size with popups, main | 70.2% | 6.4% |
 | Noisy test full-size with popups, now | 72.6% | 6.5% |
 
+**Chat abbreviations** (`ios/tools/chat_words_en.txt`, added by `build_lexicons.py` at `CHAT_FREQUENCY`). The
+learned words only stop autocorrect changing a word; they are not a word list, so the bar never completes them and
+a swipe never makes them, and a word joins them only when a correction is taken back or the word is picked as
+typed ("idk" was, at line 5804; btw, pls and ofc were left as typed, so nothing was taken back). The English list
+now has 22 chat abbreviations from two places: btw, pls, ofc and idk, which the owner typed and kept in his logs,
+and the keywords of CLDR's English emoji annotations (already shipped for the emoji bar) that the list lacks and
+that stand for a phrase or a longer word (lol, omg, brb, thx and 14 more). They come in at 60, the frequency the
+list gives its one chat abbreviation, "BTW" (100, less 40 as an abbreviation). With them, "idk" and a space stay
+"idk" (I'd was in bold), and the swipe for "idk" in the log decodes to "idk" first (it was oak, irk, Isaak,
+outrank). RealTypoEval and QualityEval do not move; on NoisyTypingEval's test split the same words are fixed and
+one more becomes a wrong word (1,553 to 1,554 of 19,952).
+
 Not changed:
 
-- **Words the lists lack** (btw, pls, ofc, idk). The learned words only stop autocorrect changing a word; they are
-  not a word list, so the bar never completes them and a swipe never makes them, and a word joins them only when a
-  correction is taken back or the word is picked as typed ("idk" was, at line 5804; btw, pls and ofc were left as
-  typed, so nothing was taken back). The English list has "BTW" (an acronym, demoted) and "pls" (never suggested).
-  No short list of chat words under a licence compatible with the app's GPL-2.0 was found: Wiktionary's is CC
-  BY-SA, and CLDR's emoji keywords (already shipped) hold idk, lol, omg, brb, smh and thx but not btw, pls or ofc.
-  The swipe for "idk" in the log (oak, irk, Isaak, outrank) decodes to "idk" first once the English list has it at
-  any frequency from 60 up.
 - **"Leavn" at the start of a message** offered "Llevan": with no words before it, the language is the last one
   written; with English last it is "Lean". **"clade"** still becomes "clad".
 
