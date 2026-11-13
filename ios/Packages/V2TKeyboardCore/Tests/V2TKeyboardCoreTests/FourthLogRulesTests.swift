@@ -76,4 +76,15 @@ struct FourthLogRulesTests {
     for k in Self.weneed { e.character(String(k.character), at: k.point) }
     #expect(e.suggestions().map(\.word)[1] == "We need")
   }
+
+  // MARK: compound
+
+  // "changelog": "chan" is what delete left of the correction "channel" (no touches), then g, e, l, o, g
+  static let changelog = "chan".map { TypedKey($0) } + keys([("g", 203, 74), ("e", 99.3, 33), ("l", 358.3, 75.3), ("o", 350.3, 16.3), ("g", 185.7, 91.7)])
+
+  @Test func twoWordsThatAreNotAPairAreLeftAsTyped() throws {
+    let context = TypingContext(before: "readable ")
+    #expect(try suggester().autocorrection(for: Self.changelog, context: context) == nil)
+    #expect(try suggester { $0.compoundFloor = -.infinity }.autocorrection(for: Self.changelog, context: context) == "changeling")
+  }
 }

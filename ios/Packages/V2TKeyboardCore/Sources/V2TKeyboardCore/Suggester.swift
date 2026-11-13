@@ -112,6 +112,16 @@ public final class Suggester: @unchecked Sendable {
   /// wrong word of 19.2% (none and 41.0% without the rule); 5 and 7 put back 37.5% and 28.7%. On RealTypoEval 3
   /// costs 1 Spanish fix for 1 more wrong word, 0 cost 1 English and 4 Spanish fixes for 1 and 5.
   public var missingSpacePenalty: Double = 3
+  /// Letters that are two words of one list, each three letters or more, that `missingSpacePenalty` does not
+  /// take as a pair and whose best correction scores under this, are a compound the list lacks rather than a
+  /// slip ("changelog": change, log; its correction "changeling" scored -15.0): autocorrect leaves them as typed
+  /// instead of making a third word of them. -infinity turns the rule off. Of the 36,703 words of Webster's
+  /// Second the English list lacks that are two English words (MissingSpaceEval), -14 makes another word of
+  /// 10.4% (25.3% without the rule). On RealTypoEval -14 gave up 9 English and 15 Spanish fixes for 2 and 12
+  /// fewer wrong words, -12 gave up 19 and 45 for 5 and 22, and -16 0 and 4 for 2 and 4 but leaves "changelog"
+  /// (-15.0) to become "changeling". Leaving every such word as typed, whatever its correction scored, lost 10
+  /// points of English fixes.
+  public var compoundFloor: Double = -14
   /// When the language being written knows no words that follow the previous one, another language's do not
   /// count either (in the bar's next words, or as a bonus to its completions) unless that language is within this
   /// many nats of it (`followerLanguages`): after "Can u" the words that follow Spanish "u" (otros, otra) are
@@ -312,6 +322,9 @@ public final class Suggester: @unchecked Sendable {
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
     guard let best = candidates.max(by: { $0.score < $1.score }) else { return pair?.words }
     if let pair, pair.score >= best.score { return pair.words }
+    // two words run together that are not a likely pair, whose best correction is unlikely: a compound the lists
+    // lack, left as typed
+    if pair == nil, best.score < compoundFloor, isCompound(literal) { return nil }
     if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
     // two different words about as likely as each other ("ica": ova against ice): the letters stay
     let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
@@ -417,6 +430,11 @@ public final class Suggester: @unchecked Sendable {
       if best == nil || score > best!.score { best = (lex.word(a) + " " + lex.word(b), score) }
     }
     return best.map { (Self.applyCase(of: literal, to: $0.words), $0.score) }
+  }
+
+  /// `literal` is two words of one lexicon, each three letters or more ("changelog": change, log).
+  func isCompound(_ literal: String) -> Bool {
+    !twoWords(literal, minPart: 3).isEmpty
   }
 
   /// The lexicons spell apostrophes straight; the long press types the curly one.
