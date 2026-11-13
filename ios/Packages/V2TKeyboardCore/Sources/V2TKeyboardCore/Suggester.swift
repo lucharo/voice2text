@@ -129,6 +129,16 @@ public final class Suggester: @unchecked Sendable {
   /// move no row of QualityEval or LanguageEval (RealTypoEval's Tatoeba sentences and the Enron ones, 34,000 next
   /// words and first letters); 0 keeps the bar English after "I'd le", where Spanish is 0.47 behind.
   public var followerLanguageGap: Double = 0
+  /// A real word typed with one touch near the edge of its key ("Gappy" with the G touched by the H): the word
+  /// the neighbouring key makes replaces it when that neighbour cost no more than `ambiguousTapCost` nats and the
+  /// word, with the words before it, scores `ambiguousTapGap` nats above the one typed. A cost of -infinity turns
+  /// the rule off. On NoisyTypingEval's development split 1 and 2 fix 172 more mistapped words (74.2% to 77.1%)
+  /// for 14 more wrong words and 1 more word tapped right changed; on the test split 478 more (69.3% to 71.7%)
+  /// for 36 (7.6% to 7.8%). A cost of 0.5 with a gap of 4 fixed 48 more for 6; 2 and 2, 208 for 17; a gap of 0
+  /// changed 31 words tapped right. RealTypoEval does not move: at a key's centre no neighbour costs under 3
+  /// nats.
+  public var ambiguousTapCost: Double = 1
+  public var ambiguousTapGap: Double = 2
 
   private let centers: [CGPoint?]
   private let memoLock = NSLock()
@@ -297,7 +307,9 @@ public final class Suggester: @unchecked Sendable {
     // a real word, as typed, stays, unless it is a rare spelling of a common word with an apostrophe or
     // accent ("cant", "ano") or an i that should be I ("i'm"); a missing accent or apostrophe on a non-word
     // ("cancion", "dont") is corrected below
-    if isWord(literal) { return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) }
+    if isWord(literal) {
+      return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) ?? ambiguousTap(typed, context: context)
+    }
     // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
     for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
       if isWord(String(literal.dropLast(suffix.count))) { return nil }
@@ -430,6 +442,47 @@ public final class Suggester: @unchecked Sendable {
       if best == nil || score > best!.score { best = (lex.word(a) + " " + lex.word(b), score) }
     }
     return best.map { (Self.applyCase(of: literal, to: $0.words), $0.score) }
+  }
+
+  /// For a real word as typed, the word one touch near the edge of its key makes with the neighbouring key, when
+  /// that word is far likelier here (`ambiguousTapCost`, `ambiguousTapGap`); nil to leave the word.
+  func ambiguousTap(_ typed: [TypedKey], context: TypingContext) -> String? {
+    guard ambiguousTapCost > -.infinity else { return nil }
+    let literal = String(typed.map(\.character)), lower = literal.lowercased()
+    let keys = typed.map { Lexicon.fold(String($0.character)) }
+    guard keys.allSatisfy({ $0.count == 1 }) else { return nil }
+    let letters = keys.map { $0[0] }
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
+    let bonuses = lexicons.indices.map { bigramWeight > 0 && followed[$0] ? context.followerBonus(in: lexicons[$0], weight: bigramWeight) : [:] }
+    let typedLower = literal == lower
+    /// The best entry spelled by `key` (only `exactly` when given), scored as the bar scores a finished word.
+    func best(_ key: [UInt8], exactly: String? = nil) -> (word: String, score: Double)? {
+      var out: (word: String, score: Double)?
+      for (n, lex) in lexicons.enumerated() {
+        for i in lex.exactRange(key) where lex.frequency(i) > 0 {
+          let w = lex.word(i)
+          if let e = exactly, w.lowercased() != e { continue }
+          var s = prior(lex.frequency(i)) + priors[n] + (bonuses[n][i] ?? 0)
+          if typedLower, EntryCase(w) != .lower { s -= properNounPenalty + (EntryCase(w) == .acronym ? acronymPenalty : 0) }
+          if out == nil || s > out!.score { out = (w, s) }
+        }
+      }
+      return out
+    }
+    guard let base = best(letters, exactly: lower) else { return nil }
+    let unit = Double(layout.unitWidth)
+    var found: (word: String, score: Double)?
+    for (i, t) in typed.enumerated() {
+      guard let p = t.point else { continue }
+      for (c, cost) in letterOptions(letters[i], p, unit: unit) where c != letters[i] && cost <= ambiguousTapCost {
+        var k = letters
+        k[i] = c
+        guard let w = best(k), w.score - cost - base.score >= ambiguousTapGap else { continue }
+        if found == nil || w.score - cost > found!.score { found = (w.word, w.score - cost) }
+      }
+    }
+    return found.map { Self.applyCase(of: literal, to: $0.word) }
   }
 
   /// `literal` is two words of one lexicon, each three letters or more ("changelog": change, log).

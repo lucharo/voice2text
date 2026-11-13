@@ -87,4 +87,19 @@ struct FourthLogRulesTests {
     #expect(try suggester().autocorrection(for: Self.changelog, context: context) == nil)
     #expect(try suggester { $0.compoundFloor = -.infinity }.autocorrection(for: Self.changelog, context: context) == "changeling")
   }
+
+  // MARK: tap
+
+  // "Gappy" at the start of a message, the G touched on the G key's edge with the H
+  static let gappy = keys([("G", 217.3, 88.7), ("a", 39.7, 80.7), ("p", 365, 24.3), ("p", 372, 22.7), ("y", 226.7, 26.7)])
+
+  @Test func aRareWordTypedOnAKeyEdgeBecomesTheCommonOneTheNeighbourMakes() throws {
+    #expect(try suggester().autocorrection(for: Self.gappy, context: .empty) == "Happy")
+    #expect(try suggester { $0.ambiguousTapCost = -.infinity }.autocorrection(for: Self.gappy, context: .empty) == nil)
+  }
+
+  /// The same letters at the key centres: no touch is near another key, so the word as typed stays.
+  @Test func aRareWordTypedAtTheKeyCentresStays() throws {
+    #expect(try suggester().autocorrection(for: taps("gappy", Self.layout), context: .empty) == nil)
+  }
 }

@@ -185,6 +185,7 @@ struct RealTypoEvalTests {
 /// short and fgap are QualityTuning's.
 /// space: the nats two words typed without the space between them pay against the best correction.
 /// cfloor: the score under which a correction of two words run together is not applied.
+/// tapcost and tapgap: the ambiguous-tap rule's cost and gap.
 struct RealTypoTuning {
   static let spec = ProcessInfo.processInfo.environment["V2T_TYPO_TUNE"]
 
@@ -217,6 +218,8 @@ struct RealTypoTuning {
           case "cfloor": s.compoundFloor = v
           case "short": s.languagePrior.shortWordCap = v
           case "fgap": s.followerLanguageGap = v
+          case "tapcost": s.ambiguousTapCost = v
+          case "tapgap": s.ambiguousTapGap = v
           default: Issue.record("unknown key \(p[0])")
           }
         }
