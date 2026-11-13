@@ -59,10 +59,22 @@ extension DebuggingVisibility {
           debugBuild: debugBuild, simulator: simulator)
   }
 
+  /// Decides for this install and records each answer for the keyboard as soon as it is known. A build the receipt
+  /// already names as TestFlight approves its install before StoreKit is asked: Debugging is on screen from the
+  /// first frame, and a typing exercise started while StoreKit is still answering must find the keyboard allowed
+  /// to record. Without that evidence nothing is approved until StoreKit answers, and nothing at all if it says no.
+  @MainActor static func settle(launch: Build, install: String?, settings: Settings,
+                                storeKit: @MainActor (Build) async -> Build = { await current(from: $0) }) async -> Build {
+    if launch.showsDebugging { apply(shows: true, install: install, to: settings) }
+    let build = await storeKit(launch)
+    apply(shows: build.showsDebugging, install: install, to: settings)
+    return build
+  }
+
   /// This install, once StoreKit has answered or declined to. An unverified app transaction still names its
   /// environment, which is enough to decide whether to show a debugging section.
-  static func current() async -> Build {
-    var build = buildAtLaunch
+  static func current(from launch: Build = buildAtLaunch) async -> Build {
+    var build = launch
     if let result = try? await AppTransaction.shared {
       switch result {
       case .verified(let t), .unverified(let t, _): build.environment = t.environment

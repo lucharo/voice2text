@@ -139,9 +139,8 @@ struct HomeView: View {
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
     .task {
-      build = await DebuggingVisibility.current()
-      DebuggingVisibility.apply(shows: build.showsDebugging,
-                                install: DebuggingVisibility.install(of: Bundle.main.bundleURL), to: .shared)
+      build = await DebuggingVisibility.settle(launch: build, install: DebuggingVisibility.install(of: Bundle.main.bundleURL),
+                                               settings: .shared)
     }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
     // the keyboard's mic opened v2t before it was ever opened: recording comes first, About waits for a later launch

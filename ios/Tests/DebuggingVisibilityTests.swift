@@ -75,6 +75,60 @@ struct DebuggingVisibilityTests {
     #expect(line == "v2t 1.1 (131), TestFlight")
   }
 
+  /// The finding this guards (roborev 942): Debugging is on screen at once in a TestFlight build, so the keyboard
+  /// must be allowed to record before StoreKit has answered, not only after.
+  @Test @MainActor func aTestFlightReceiptApprovesTheInstallBeforeStoreKitAnswers() async {
+    let settings = Settings(defaults: defaults)
+    settings.keyboardDebugLogUntil = until
+    var approvedWhileStoreKitWasAsked: String?
+
+    let build = await DebuggingVisibility.settle(launch: Build(environment: nil, receipt: "sandboxReceipt"),
+                                                 install: testFlight, settings: settings) { launch in
+      approvedWhileStoreKitWasAsked = Settings(defaults: self.defaults).debuggingInstall
+      return launch
+    }
+
+    #expect(approvedWhileStoreKitWasAsked == testFlight)
+    #expect(build.showsDebugging == true)
+    #expect(Settings(defaults: defaults).debuggingInstall == testFlight)
+    #expect(Settings(defaults: defaults).keyboardDebugLogUntil == until)
+  }
+
+  @Test @MainActor func withoutATestFlightSignalNothingIsApprovedUntilStoreKitAnswers() async {
+    let settings = Settings(defaults: defaults)
+    settings.keyboardDebugLogUntil = until
+    var approvedWhileStoreKitWasAsked: String?
+
+    let build = await DebuggingVisibility.settle(launch: Build(environment: nil, receipt: nil),
+                                                 install: testFlight, settings: settings) { launch in
+      approvedWhileStoreKitWasAsked = Settings(defaults: self.defaults).debuggingInstall
+      var answered = launch
+      answered.environment = .sandbox
+      return answered
+    }
+
+    #expect(approvedWhileStoreKitWasAsked == nil)
+    #expect(build.showsDebugging == true)
+    #expect(Settings(defaults: defaults).debuggingInstall == testFlight)
+  }
+
+  @Test @MainActor func anAppStoreAnswerApprovesNothingAndTurnsTheLogOff() async {
+    let settings = Settings(defaults: defaults)
+    settings.keyboardDebugLogUntil = until
+    settings.debuggingInstall = testFlight
+
+    let build = await DebuggingVisibility.settle(launch: Build(environment: nil, receipt: "receipt"),
+                                                 install: appStore, settings: settings) { launch in
+      var answered = launch
+      answered.environment = .production
+      return answered
+    }
+
+    #expect(build.showsDebugging == false)
+    #expect(Settings(defaults: defaults).debuggingInstall == nil)
+    #expect(Settings(defaults: defaults).keyboardDebugLogUntil == nil)
+  }
+
   @Test func hidingItTurnsTheDebugLogOffForEveryInstall() {
     let settings = Settings(defaults: defaults)
     settings.keyboardDebugLogUntil = until
