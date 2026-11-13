@@ -11,6 +11,11 @@ What changed for people using the app and keyboard, newest first. The Mac app ha
 - History cards are one height; tap one to read all of it.
 - Copy a dictation, or export all of History from its share button.
 - A swipe begun with a stray letter in the field no longer picks an odd word.
+- A space left out between two words is put back: "needsme" becomes "needs me".
+- Words made of two words, like "changelog", stay as you typed them.
+- One short Spanish word no longer turns the suggestions Spanish in an English sentence.
+- Chat abbreviations such as idk, btw and pls count as words, typed or swiped.
+- More mistyped words are corrected when a tap lands on the edge of a key.
 
 ## 1.1
 

@@ -1,0 +1,29 @@
+# Chat abbreviations the AOSP English word list lacks, added to the English lexicon by build_lexicons.py.
+# One word a line, then a tab and where it comes from. Two sources only:
+#   CLDR  - a keyword of Unicode CLDR 47.0.0's English emoji annotations (Unicode License v3), as shipped in
+#           ios/Keyboard/emoji-keywords-en.txt: the keywords the AOSP list lacks that stand for a phrase or a
+#           longer word in messages (initialisms and shortenings; not interjections, slang words or names).
+#   log   - typed by the app's owner and kept as typed in his keyboard debug logs (2026-11-12): btw, pls, ofc at
+#           lines 4212, 9915 and 4144 of the build 124 to 127 log; idk picked as typed at line 5804.
+bday	CLDR (🥳 🎂)
+bff	CLDR (👯)
+brb	CLDR (🔜)
+btw	log
+cya	CLDR (👋)
+gtg	CLDR (👋)
+idk	CLDR (🤷); log
+ily	CLDR (🥰)
+lmao	CLDR (🤣)
+lol	CLDR (😄)
+ofc	log
+omg	CLDR (😝)
+omw	CLDR (👣 🔜)
+pls	log
+smh	CLDR (😒)
+tbt	CLDR (📻)
+thx	CLDR (🙏)
+tmi	CLDR (🙉)
+ttfn	CLDR (👋)
+ttyl	CLDR (👋)
+wtv	CLDR (🫥)
+yolo	CLDR (😜)

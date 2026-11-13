@@ -146,6 +146,8 @@ enum QualityEval {
     var editPenalty: Double?
     var substitutionPenalty: Double?
     var vowelSubstitutionPenalty: Double?
+    var shortWordCap: Double?
+    var followerLanguageGap: Double?
 
     func apply(_ d: SwipeDecoder) {
       if let v = frequencyWeight { d.frequencyWeight = v }
@@ -157,6 +159,7 @@ enum QualityEval {
       var m = MultiSwipeDecoder(decoders)
       if let v = otherLanguage { m.languagePrior.otherLanguage = v }
       if let v = languageCap { m.languagePrior.cap = v }
+      if let v = shortWordCap { m.languagePrior.shortWordCap = v }
       if let v = swipeBigram { m.bigramWeight = v }
       if let v = alternativeMargin { m.alternativeMargin = v }
       return m
@@ -176,6 +179,8 @@ enum QualityEval {
       if let v = editPenalty { s.editPenalty = v }
       if let v = substitutionPenalty { s.substitutionPenalty = v }
       if let v = vowelSubstitutionPenalty { s.vowelSubstitutionPenalty = v }
+      if let v = shortWordCap { s.languagePrior.shortWordCap = v }
+      if let v = followerLanguageGap { s.followerLanguageGap = v }
       return s
     }
   }

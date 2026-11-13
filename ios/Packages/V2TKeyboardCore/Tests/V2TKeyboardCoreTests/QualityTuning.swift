@@ -12,7 +12,9 @@ import Testing
 /// language other than the layout's, sb/sbg the swipe and suggestion bigram weights, sf the suggestion
 /// frequency weight, sac the suggestion acronym penalty, mcp the letters typed before completions are offered,
 /// lead the nats a completion must beat a correction by for autocorrect to leave the word as unfinished; std,
-/// nfloor, ncut, edit, sub and vow the suggestion touch model and edit penalties, as RealTypoTuning's.
+/// nfloor, ncut, edit, sub and vow the suggestion touch model and edit penalties, as RealTypoTuning's; short the
+/// most a context word of two letters or fewer moves the languages, fgap how far behind the likeliest language
+/// another's next-word statistics still count ("inf" for infinity).
 /// `V2T_LEXICON_DIR` points at other lexicons.
 struct QualityTuning {
   static let env = ProcessInfo.processInfo.environment
@@ -22,7 +24,7 @@ struct QualityTuning {
       let parts = item.split(separator: ":", maxSplits: 1)
       var c = QualityEval.Config()
       for kv in parts.count > 1 ? parts[1].split(separator: ",") : [] {
-        let p = kv.split(separator: "="), v = Double(p[1])!
+        let p = kv.split(separator: "="), v = p[1] == "inf" ? Double.infinity : Double(p[1])!
         switch p[0] {
         case "fw": c.frequencyWeight = v
         case "pn": c.properNounPenalty = v
@@ -42,6 +44,8 @@ struct QualityTuning {
         case "edit": c.editPenalty = v
         case "sub": c.substitutionPenalty = v
         case "vow": c.vowelSubstitutionPenalty = v
+        case "short": c.shortWordCap = v
+        case "fgap": c.followerLanguageGap = v
         default: Issue.record("unknown key \(p[0])")
         }
       }

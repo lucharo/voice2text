@@ -104,6 +104,41 @@ public final class Suggester: @unchecked Sendable {
   /// ("asssassans", "resssurecting") are the extra tap. Without the rule "saaame" became "salaam", "soooo"
   /// "soon" and "yessss" "yeasts".
   public var stretchedRun = 3
+  /// A space left out between two words ("needsme", "Weneed"): letters that are two words of one list, the
+  /// second among the words that most often follow the first (the next-word statistics), become the two words
+  /// when they score above the best correction. The pair scores as the first word would as a correction typed
+  /// exactly, plus ln P(second | first), less this many nats. Infinity turns the rule off. With one space taken
+  /// out of NoisyTypingEval's Enron sentences (MissingSpaceEval), 3 puts back 41.9% of the pairs and makes a
+  /// wrong word of 19.2% (none and 41.0% without the rule); 5 and 7 put back 37.3% and 28.6%. On RealTypoEval 3
+  /// costs 1 Spanish fix for 1 more wrong word, 0 costs 1 English and 4 Spanish fixes for 1 and 5.
+  public var missingSpacePenalty: Double = 3
+  /// Letters that are two words of one list, each three letters or more, that `missingSpacePenalty` does not
+  /// take as a pair and whose best correction scores under this, are a compound the list lacks rather than a
+  /// slip ("changelog": change, log; its correction "changeling" scored -15.0): autocorrect leaves them as typed
+  /// instead of making a third word of them. -infinity turns the rule off. Of the 36,886 words of Webster's
+  /// Second the English list lacks that are two English words (MissingSpaceEval), -14 makes another word of
+  /// 10.5% (25.5% without the rule). On RealTypoEval -14 gives up 5 English and 12 Spanish fixes for 1 and 11
+  /// fewer wrong words, -12 13 and 36 for 3 and 20, and -16 0 and 4 for 1 and 3 but leaves "changelog" (-15.0)
+  /// to become "changeling". Leaving every such word as typed, whatever its correction scored, lost 6.3 points
+  /// of English fixes and 6.2 of Spanish.
+  public var compoundFloor: Double = -14
+  /// When the language being written knows no words that follow the previous one, another language's do not
+  /// count either (in the bar's next words, or as a bonus to its completions) unless that language is within this
+  /// many nats of it (`followerLanguages`): after "Can u" the words that follow Spanish "u" (otros, otra) are
+  /// not offered in an English sentence. Infinity lets every language's count as before. 0, 1 and infinity
+  /// move no row of QualityEval or LanguageEval (RealTypoEval's Tatoeba sentences and the Enron ones, 34,000 next
+  /// words and first letters); 0 keeps the bar English after "I'd le", where Spanish is 0.47 behind.
+  public var followerLanguageGap: Double = 0
+  /// A real word typed with one touch near the edge of its key ("Gappy" with the G touched by the H): the word
+  /// the neighbouring key makes replaces it when that neighbour cost no more than `ambiguousTapCost` nats and the
+  /// word, with the words before it, scores `ambiguousTapGap` nats above the one typed. A cost of -infinity turns
+  /// the rule off. On NoisyTypingEval's development split 1 and 2 fix 172 more mistapped words (74.2% to 77.1%)
+  /// for 14 more wrong words and 1 more word tapped right changed; on the test split 478 more (69.4% to 71.8%)
+  /// for 36 (7.6% to 7.8%). A cost of 0.5 with a gap of 4 fixed 48 more for 6; 2 and 2, 208 for 17; a gap of 0
+  /// changed 31 words tapped right. RealTypoEval does not move: at a key's centre no neighbour costs under 3
+  /// nats.
+  public var ambiguousTapCost: Double = 1
+  public var ambiguousTapGap: Double = 2
 
   private let centers: [CGPoint?]
   private let memoLock = NSLock()
@@ -161,7 +196,7 @@ public final class Suggester: @unchecked Sendable {
   /// What a ranking depends on besides the keys, the words before them and the search.
   private var rankTuning: [Double] {
     searchTuning + [frequencyWeight, completionPenalty, Double(minCompletionPrefix), properNounPenalty, acronymPenalty, bigramWeight,
-                    lastLetterPenalty, languagePrior.otherLanguage, languagePrior.cap]
+                    lastLetterPenalty, languagePrior.otherLanguage, languagePrior.cap, languagePrior.shortWordCap, followerLanguageGap]
       + (languagePrior.recentLanguage.map { $0.unicodeScalars.map { Double($0.value) } } ?? [])
   }
 
@@ -184,7 +219,8 @@ public final class Suggester: @unchecked Sendable {
     var scored: [String: Suggestion] = [:], lastLetter: [String: Suggestion] = [:], corrections: [String: Suggestion] = [:]
     let typedLower = literal == literal.lowercased()
     let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
-    let bonuses = bigramWeight > 0 ? lexicons.map { context.followerBonus(in: $0, weight: bigramWeight) } : lexicons.map { _ in [:] }
+    let followed = followerLanguages(context)
+    let bonuses = lexicons.indices.map { bigramWeight > 0 && followed[$0] ? context.followerBonus(in: lexicons[$0], weight: bigramWeight) : [:] }
     func offer(_ word: String, _ kind: Suggestion.Kind, _ raw: Double, lastLetter missed: Bool = false) {
       var score = raw
       if typedLower {
@@ -271,7 +307,9 @@ public final class Suggester: @unchecked Sendable {
     // a real word, as typed, stays, unless it is a rare spelling of a common word with an apostrophe or
     // accent ("cant", "ano") or an i that should be I ("i'm"); a missing accent or apostrophe on a non-word
     // ("cancion", "dont") is corrected below
-    if isWord(literal) { return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) }
+    if isWord(literal) {
+      return !context.sentenceStart && Self.isTitleCase(literal) ? nil : markedVariant(of: literal) ?? ambiguousTap(typed, context: context)
+    }
     // a possessive of a real word ("parents'", "Tom's") keeps its apostrophe
     for suffix in ["'", "'s"] where Self.straightApostrophes(lower).hasSuffix(suffix) {
       if isWord(String(literal.dropLast(suffix.count))) { return nil }
@@ -287,12 +325,18 @@ public final class Suggester: @unchecked Sendable {
     let oneTapFewer: Set<[UInt8]>? = longest == stretchedRun
       ? Set(runs.filter { $0.count == stretchedRun }.map { run in Lexicon.fold(String(lower[..<run.startIndex] + lower[lower.index(after: run.startIndex)...])) })
       : nil
+    // two words with the space between them left out ("needsme"); a capitalised word in mid-sentence is a name
+    let pair = context.sentenceStart || !Self.isTitleCase(literal) ? missingSpace(in: literal, context: context) : nil
     // look past the bar's three slots: completions may fill them, but only a correction autocorrects
     let all = suggestions(for: typed, context: context, limit: 10)
     // a last letter left off competes with the corrections of the same length ("som": some against son)
     let rank = ranking(for: typed, context: context)
     let candidates = [rank.corrections.first, rank.lastLetter.first].compactMap { $0 }
-    guard let best = candidates.max(by: { $0.score < $1.score }) else { return nil }
+    guard let best = candidates.max(by: { $0.score < $1.score }) else { return pair?.words }
+    if let pair, pair.score >= best.score { return pair.words }
+    // two words run together whose pair, if any, lost, and whose best correction is unlikely: a compound the lists
+    // lack, left as typed
+    if best.score < compoundFloor, isCompound(literal) { return nil }
     if let oneTapFewer, !oneTapFewer.contains(Lexicon.fold(best.word)) { return nil }
     // two different words about as likely as each other ("ica": ova against ice): the letters stay
     let others = (rank.corrections + rank.lastLetter).filter { $0.word.lowercased() != best.word.lowercased() }
@@ -363,6 +407,89 @@ public final class Suggester: @unchecked Sendable {
     return lexicons.contains { lex in lex.exactRange(key).contains { lex.word($0) == word } }
   }
 
+  /// The ways `literal` cuts into two words of one lexicon, each a lowercase word the bar may suggest (frequency
+  /// above 0; not a name or an acronym: "saaame" is not "SAA" and "Ame"): (lexicon, first entry, second entry).
+  func twoWords(_ literal: String, minPart: Int = 1) -> [(lex: Int, first: Int, second: Int)] {
+    let letters = Array(literal)
+    guard minPart < letters.count, letters.count >= 2 * max(1, minPart), letters.allSatisfy(\.isLetter) else { return [] }
+    var out: [(lex: Int, first: Int, second: Int)] = []
+    for cut in max(1, minPart)..<letters.count where letters.count - cut >= minPart {
+      let a = String(letters[..<cut]), b = String(letters[cut...])
+      for (n, lex) in lexicons.enumerated() {
+        guard let ea = lex.entry(of: a), lex.frequency(ea) > 0, EntryCase(lex.word(ea)) == .lower,
+              let eb = lex.entry(of: b), lex.frequency(eb) > 0, EntryCase(lex.word(eb)) == .lower else { continue }
+        out.append((n, ea, eb))
+      }
+    }
+    return out
+  }
+
+  /// "needsme" -> "needs me": the likeliest pair of words `literal` is with a space left out, the second (two
+  /// letters or more: "Mary" is not "Mar y") among the words that most often follow the first, scored as
+  /// `missingSpacePenalty` says; nil when there is none.
+  func missingSpace(in literal: String, context: TypingContext) -> (words: String, score: Double)? {
+    guard missingSpacePenalty < .infinity else { return nil }
+    let cuts = twoWords(literal).filter { lexicons[$0.lex].keyLength($0.second) >= 2 }
+    guard !cuts.isEmpty else { return nil }
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
+    var best: (words: String, score: Double)?
+    for (n, a, b) in cuts {
+      let lex = lexicons[n]
+      guard let f = lex.followers(of: a).first(where: { $0.entry == b }) else { continue }
+      let bonus = bigramWeight > 0 && followed[n] ? context.followerBonus(in: lex, weight: bigramWeight)[a] ?? 0 : 0
+      let score = prior(lex.frequency(a)) + priors[n] + bonus + f.logProbability - missingSpacePenalty
+      if best == nil || score > best!.score { best = (lex.word(a) + " " + lex.word(b), score) }
+    }
+    return best.map { (Self.applyCase(of: literal, to: $0.words), $0.score) }
+  }
+
+  /// For a real word as typed, the word one touch near the edge of its key makes with the neighbouring key, when
+  /// that word is far likelier here (`ambiguousTapCost`, `ambiguousTapGap`); nil to leave the word.
+  func ambiguousTap(_ typed: [TypedKey], context: TypingContext) -> String? {
+    guard ambiguousTapCost > -.infinity else { return nil }
+    let literal = String(typed.map(\.character)), lower = literal.lowercased()
+    let keys = typed.map { Lexicon.fold(String($0.character)) }
+    guard keys.allSatisfy({ $0.count == 1 }) else { return nil }
+    let letters = keys.map { $0[0] }
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
+    let bonuses = lexicons.indices.map { bigramWeight > 0 && followed[$0] ? context.followerBonus(in: lexicons[$0], weight: bigramWeight) : [:] }
+    let typedLower = literal == lower
+    /// The best entry spelled by `key` (only `exactly` when given), scored as the bar scores a finished word.
+    func best(_ key: [UInt8], exactly: String? = nil) -> (word: String, score: Double)? {
+      var out: (word: String, score: Double)?
+      for (n, lex) in lexicons.enumerated() {
+        for i in lex.exactRange(key) where lex.frequency(i) > 0 {
+          let w = lex.word(i)
+          if let e = exactly, w.lowercased() != e { continue }
+          var s = prior(lex.frequency(i)) + priors[n] + (bonuses[n][i] ?? 0)
+          if typedLower, EntryCase(w) != .lower { s -= properNounPenalty + (EntryCase(w) == .acronym ? acronymPenalty : 0) }
+          if out == nil || s > out!.score { out = (w, s) }
+        }
+      }
+      return out
+    }
+    guard let base = best(letters, exactly: lower) else { return nil }
+    let unit = Double(layout.unitWidth)
+    var found: (word: String, score: Double)?
+    for (i, t) in typed.enumerated() {
+      guard let p = t.point else { continue }
+      for (c, cost) in letterOptions(letters[i], p, unit: unit) where c != letters[i] && cost <= ambiguousTapCost {
+        var k = letters
+        k[i] = c
+        guard let w = best(k), w.score - cost - base.score >= ambiguousTapGap else { continue }
+        if found == nil || w.score - cost > found!.score { found = (w.word, w.score - cost) }
+      }
+    }
+    return found.map { Self.applyCase(of: literal, to: $0.word) }
+  }
+
+  /// `literal` is two words of one lexicon, each three letters or more ("changelog": change, log).
+  func isCompound(_ literal: String) -> Bool {
+    !twoWords(literal, minPart: 3).isEmpty
+  }
+
   /// The lexicons spell apostrophes straight; the long press types the curly one.
   /// The stretches of one letter repeated, each as a slice of `s` ("boook": b, ooo, k).
   static func letterRuns(_ s: String) -> [Substring] {
@@ -381,8 +508,9 @@ public final class Suggester: @unchecked Sendable {
   /// often follow the previous one (or start a sentence), in the language the context is written in.
   public func predictions(context: TypingContext, limit: Int = 3) -> [Suggestion] {
     let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
     var best: [String: Suggestion] = [:]
-    for (n, lex) in lexicons.enumerated() {
+    for (n, lex) in lexicons.enumerated() where followed[n] {
       for f in context.followers(in: lex) {
         let w = lex.word(f.entry), score = f.logProbability + priors[n]
         if let old = best[w.lowercased()], old.score >= score { continue }
@@ -402,6 +530,30 @@ public final class Suggester: @unchecked Sendable {
     }
     return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
+
+  /// Which lexicons' next-word statistics count after `context`. All of them while the language the last
+  /// `followerWindow` words are likeliest in has the previous word as a word ("me", "buenos": English knows
+  /// both), and otherwise only the languages within `followerLanguageGap` of that one by those words: a word the
+  /// language being written lacks is a slip or a chat spelling there ("te" for "the", "u"), and what follows it
+  /// in another language describes a sentence nobody is writing. The last words, not the whole context, so that
+  /// two words in another language ("I told her que te") switch.
+  func followerLanguages(_ context: TypingContext) -> [Bool] {
+    let all = lexicons.map { _ in true }
+    guard followerLanguageGap < .infinity, lexicons.count > 1, let previous = context.previous,
+          Lexicon.fold(previous).count <= Self.followerShortWord else { return all }
+    let recent = TypingContext(words: Array(context.words.suffix(Self.followerWindow)), sentenceStart: context.sentenceStart)
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: recent)
+    guard let best = priors.indices.max(by: { priors[$0] < priors[$1] }), lexicons[best].entry(of: previous) == nil else { return all }
+    return priors.map { $0 >= -followerLanguageGap }
+  }
+
+  /// The words before the cursor `followerLanguages` reads: two words of another language in a row switch, and
+  /// the previous word and the one before it tell an English "for te" from a Spanish "que te".
+  static let followerWindow = 2
+  /// The longest previous word `followerLanguages` holds to the language being written: the log's words were
+  /// one and two letters (u, o, e, te, le). Any length lost 26 Spanish next words on RealTypoEval's Tatoeba
+  /// sentences for 3 gained ("tom tiene": English knows Tom, not tiene).
+  static let followerShortWord = 2
 
   static let vowels: Set<UInt8> = Set("aeiou".utf8)
 

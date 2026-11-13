@@ -126,6 +126,9 @@ public final class TypingEngine {
     // apostrophe joins it ("we're") rather than starting a word of its own
     if revertPhrase != nil, ch.isLetter || ch.isNumber || Self.isApostrophe(ch) {
       composing = Self.trailingWord(before)
+      // the phrase was a correction of text read back from the document ("needsme" -> "needs me"): its last word,
+      // typed on, still is, for the debug log (#162)
+      composingResynced = !composing.isEmpty && correctionReadBack
       revertOffer = nil
     }
     if ch.isLetter || ch.isNumber || Self.isApostrophe(ch) && !composing.isEmpty {

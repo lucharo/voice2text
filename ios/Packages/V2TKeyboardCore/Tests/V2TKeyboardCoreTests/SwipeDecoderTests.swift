@@ -91,12 +91,15 @@ struct SwipeDecoderTests {
 
   /// "E" still being typed is not the word before the swipe: read as one, "e" (Spanish "and") made Spanish the
   /// likelier language, every English word paid the language prior's cap, and the Spanish "kirchhoff" won. Once a
-  /// space has finished it, it is.
+  /// space has finished it, it is, but a single letter now moves the language by at most
+  /// `LanguagePrior.shortWordCap`: weighed as any word, it makes "kirchhoff" again.
   @Test func lettersStillBeingTypedAreNotTheSwipesContext() throws {
-    let (e, m) = try Self.keyboard()
+    var (e, m) = try Self.keyboard()
     e.character("E")
     #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "leaving")
     e.space()
+    #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "leaving")
+    m.languagePrior.shortWordCap = .infinity
     #expect(m.decodeScored(Self.leaving, context: e.context).first?.word == "kirchhoff")
   }
 
