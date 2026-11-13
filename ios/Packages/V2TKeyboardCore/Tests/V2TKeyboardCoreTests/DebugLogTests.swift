@@ -186,6 +186,26 @@ struct DebugLogTests {
     #expect(!e.holdsReadBackText)
   }
 
+  /// A correction into two words ("needsme" -> "needs me") reopens as a phrase after delete; typing on makes its
+  /// last word the word being typed, and that word is still the text read back.
+  @Test func aTwoWordCorrectionOfAWordReadBackStaysReadBackWhenTypedOn() throws {
+    let p = FakeProxy()
+    p.text = "needsme"
+    let e = TypingEngine(proxy: p, suggester: Suggester(lexicons: [try Fixtures.english.get()], layout: KeyboardLayout(width: 402, language: .english)))
+    e.resync()
+    e.space()
+    #expect(p.text == "needs me ")
+    #expect(e.holdsReadBackText)
+    e.delete()  // the original is offered back
+    #expect(e.holdsReadBackText)
+    e.character("s")  // typing on: the word is "mes", the last of the phrase
+    #expect(e.literal == "mes")
+    #expect(e.holdsReadBackText)
+    e.space()
+    e.character("a")
+    #expect(!e.holdsReadBackText)
+  }
+
   @Test func overlappingFlushesKeepTheOrder() {
     let dir = tempDir()
     let log = KeyboardDebugLog(directory: dir, flushCount: 3, flushDelay: 0.001)
