@@ -6,7 +6,8 @@ What changed for people using the app and keyboard, newest first. The Mac app ha
 ## Unreleased
 
 - Keyboard settings and Debugging are sections of the app's home page.
-- Debugging shows in TestFlight builds only.
+- Debugging shows in TestFlight builds only. (Build 130 hid it there too; fixed.)
+- The home page ends with the version, the build number and the kind of build.
 - History cards are one height; tap one to read all of it.
 - Copy a dictation, or export all of History from its share button.
 - A swipe begun with a stray letter in the field no longer picks an odd word.

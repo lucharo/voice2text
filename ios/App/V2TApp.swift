@@ -65,8 +65,9 @@ struct HomeView: View {
   @State private var keyboardSeen = Settings.shared.keyboardFullAccessSeen
   /// About v2t over the setup list, once after install; dismissing it shows the setup list.
   @State private var showAbout = !Settings.shared.aboutShown
-  /// Debugging, for TestFlight, debug and Simulator builds; a release build learns which it is from StoreKit.
-  @State private var showsDebugging = DebuggingVisibility.shownByBuild
+  /// Which build this is: Debugging is for TestFlight, debug and Simulator builds. Known in part at launch (the
+  /// receipt's name), in full once StoreKit has answered.
+  @State private var build = DebuggingVisibility.buildAtLaunch
 
   var body: some View {
     NavigationStack {
@@ -116,10 +117,12 @@ struct HomeView: View {
         KeyboardSection()
         Section("This \(dictation.recommendation.deviceName)") { RecommendationCard(rec: dictation.recommendation) }
         Section("Storage") { StorageRows() }
-        if showsDebugging { KeyboardLogSection() }
+        if build.showsDebugging { KeyboardLogSection() }
         Section {
           NavigationLink("About v2t") { AboutView() }
             .accessibilityIdentifier("v2t.about.open")
+        } footer: {
+          Text(HomeView.versionLine(build: build)).accessibilityIdentifier("v2t.version")
         }
       }
       .navigationTitle("v2t")
@@ -136,9 +139,8 @@ struct HomeView: View {
     }
     .onChange(of: tryText) { keyboardSeen = Settings.shared.keyboardFullAccessSeen }
     .task {
-      let shows = await DebuggingVisibility.current()
-      showsDebugging = shows
-      DebuggingVisibility.apply(shows: shows, install: DebuggingVisibility.install(of: Bundle.main.bundleURL), to: .shared)
+      build = await DebuggingVisibility.settle(launch: build, install: DebuggingVisibility.install(of: Bundle.main.bundleURL),
+                                               settings: .shared)
     }
     .fullScreenCover(isPresented: $dictation.cameFromKeyboard) { KeyboardHandoffView() }
     // the keyboard's mic opened v2t before it was ever opened: recording comes first, About waits for a later launch
@@ -146,6 +148,16 @@ struct HomeView: View {
            onDismiss: { if !dictation.cameFromKeyboard { Settings.shared.aboutShown = true } }) {
       AboutView { showAbout = false }
     }
+  }
+}
+
+extension HomeView {
+  /// The line under About v2t: the version, the build number and which kind of build this is, so a report can say
+  /// which build it is about and a phone where Debugging is missing shows what the app made of itself.
+  nonisolated static func versionLine(build: DebuggingVisibility.Build, info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+    let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+    let number = info?["CFBundleVersion"] as? String ?? "?"
+    return "v2t \(version) (\(number)), \(build.label)"
   }
 }
 

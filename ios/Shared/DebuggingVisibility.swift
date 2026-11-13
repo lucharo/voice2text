@@ -1,7 +1,7 @@
 import Foundation
 
 /// Whether this install may use Debugging (the keyboard debug log, the typing exercise): TestFlight builds, debug
-/// builds and the Simulator, never a build from the App Store. The app decides with StoreKit
+/// builds and the Simulator, never a build from the App Store. The app decides from StoreKit and the receipt's name
 /// (`DebuggingVisibility+StoreKit.swift`) and records the install it decided for; the keyboard, which must not wait
 /// on StoreKit when it appears, logs only for that same install.
 enum DebuggingVisibility {
@@ -33,7 +33,7 @@ enum DebuggingVisibility {
     return until
   }
 
-  private static var debugBuild: Bool {
+  static var debugBuild: Bool {
     #if DEBUG
     true
     #else
@@ -41,7 +41,7 @@ enum DebuggingVisibility {
     #endif
   }
 
-  private static var simulator: Bool {
+  static var simulator: Bool {
     #if targetEnvironment(simulator)
     true
     #else
