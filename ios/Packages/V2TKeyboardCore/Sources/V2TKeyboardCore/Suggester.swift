@@ -104,6 +104,13 @@ public final class Suggester: @unchecked Sendable {
   /// ("asssassans", "resssurecting") are the extra tap. Without the rule "saaame" became "salaam", "soooo"
   /// "soon" and "yessss" "yeasts".
   public var stretchedRun = 3
+  /// When the language being written knows no words that follow the previous one, another language's do not
+  /// count either (in the bar's next words, or as a bonus to its completions) unless that language is within this
+  /// many nats of it (`followerLanguages`): after "Can u" the words that follow Spanish "u" (otros, otra) are
+  /// not offered in an English sentence. Infinity lets every language's count as before. 0, 1 and infinity
+  /// move no row of QualityEval or LanguageEval (RealTypoEval's Tatoeba sentences and the Enron ones, 34,000 next
+  /// words and first letters); 0 keeps the bar English after "I'd le", where Spanish is 0.47 behind.
+  public var followerLanguageGap: Double = 0
 
   private let centers: [CGPoint?]
   private let memoLock = NSLock()
@@ -161,7 +168,7 @@ public final class Suggester: @unchecked Sendable {
   /// What a ranking depends on besides the keys, the words before them and the search.
   private var rankTuning: [Double] {
     searchTuning + [frequencyWeight, completionPenalty, Double(minCompletionPrefix), properNounPenalty, acronymPenalty, bigramWeight,
-                    lastLetterPenalty, languagePrior.otherLanguage, languagePrior.cap]
+                    lastLetterPenalty, languagePrior.otherLanguage, languagePrior.cap, languagePrior.shortWordCap, followerLanguageGap]
       + (languagePrior.recentLanguage.map { $0.unicodeScalars.map { Double($0.value) } } ?? [])
   }
 
@@ -184,7 +191,8 @@ public final class Suggester: @unchecked Sendable {
     var scored: [String: Suggestion] = [:], lastLetter: [String: Suggestion] = [:], corrections: [String: Suggestion] = [:]
     let typedLower = literal == literal.lowercased()
     let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
-    let bonuses = bigramWeight > 0 ? lexicons.map { context.followerBonus(in: $0, weight: bigramWeight) } : lexicons.map { _ in [:] }
+    let followed = followerLanguages(context)
+    let bonuses = lexicons.indices.map { bigramWeight > 0 && followed[$0] ? context.followerBonus(in: lexicons[$0], weight: bigramWeight) : [:] }
     func offer(_ word: String, _ kind: Suggestion.Kind, _ raw: Double, lastLetter missed: Bool = false) {
       var score = raw
       if typedLower {
@@ -381,8 +389,9 @@ public final class Suggester: @unchecked Sendable {
   /// often follow the previous one (or start a sentence), in the language the context is written in.
   public func predictions(context: TypingContext, limit: Int = 3) -> [Suggestion] {
     let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: context)
+    let followed = followerLanguages(context)
     var best: [String: Suggestion] = [:]
-    for (n, lex) in lexicons.enumerated() {
+    for (n, lex) in lexicons.enumerated() where followed[n] {
       for f in context.followers(in: lex) {
         let w = lex.word(f.entry), score = f.logProbability + priors[n]
         if let old = best[w.lowercased()], old.score >= score { continue }
@@ -402,6 +411,30 @@ public final class Suggester: @unchecked Sendable {
     }
     return Array(best.values.sorted { $0.score != $1.score ? $0.score > $1.score : $0.word < $1.word }.prefix(limit))
   }
+
+  /// Which lexicons' next-word statistics count after `context`. All of them while the language the last
+  /// `followerWindow` words are likeliest in has the previous word as a word ("me", "buenos": English knows
+  /// both), and otherwise only the languages within `followerLanguageGap` of that one by those words: a word the
+  /// language being written lacks is a slip or a chat spelling there ("te" for "the", "u"), and what follows it
+  /// in another language describes a sentence nobody is writing. The last words, not the whole context, so that
+  /// two words in another language ("I told her que te") switch.
+  func followerLanguages(_ context: TypingContext) -> [Bool] {
+    let all = lexicons.map { _ in true }
+    guard followerLanguageGap < .infinity, lexicons.count > 1, let previous = context.previous,
+          Lexicon.fold(previous).count <= Self.followerShortWord else { return all }
+    let recent = TypingContext(words: Array(context.words.suffix(Self.followerWindow)), sentenceStart: context.sentenceStart)
+    let priors = languagePrior.priors(lexicons, primary: layout.language.rawValue, context: recent)
+    guard let best = priors.indices.max(by: { priors[$0] < priors[$1] }), lexicons[best].entry(of: previous) == nil else { return all }
+    return priors.map { $0 >= -followerLanguageGap }
+  }
+
+  /// The words before the cursor `followerLanguages` reads: two words of another language in a row switch, and
+  /// the previous word and the one before it tell an English "for te" from a Spanish "que te".
+  static let followerWindow = 2
+  /// The longest previous word `followerLanguages` holds to the language being written: the log's words were
+  /// one and two letters (u, o, e, te, le). Any length lost 26 Spanish next words on RealTypoEval's Tatoeba
+  /// sentences for 3 gained ("tom tiene": English knows Tom, not tiene).
+  static let followerShortWord = 2
 
   static let vowels: Set<UInt8> = Set("aeiou".utf8)
 

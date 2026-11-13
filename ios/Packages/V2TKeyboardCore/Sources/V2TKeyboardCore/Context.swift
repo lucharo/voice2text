@@ -72,6 +72,13 @@ public struct LanguagePrior: Sendable {
   static let frequencyScale: Double = 10
   /// What a context word missing from a lexicon costs that language, beyond its rarest word.
   static let unknownWord: Double = 3
+  /// The most a context word of `shortWord` letters moves one language against another, in nats. The English
+  /// list holds no single letters but "a" and "I", so a "u" or an "o" (Spanish words, and in English a chat
+  /// spelling or a slip) counted as an unknown word, 13 nats against English, more than the English words before
+  /// it ("Can u" read as Spanish, 3.9 nats ahead; at 1 English leads by 3.6, "Oki u" by 1, where 2 ties).
+  /// Infinity weighs them as any word. 0, 1 and 2 move no row of QualityEval, and 1 none of LanguageEval.
+  public var shortWordCap: Double = 1
+  static let shortWord = 1
 
   public init() {}
 
@@ -94,12 +101,18 @@ public struct LanguagePrior: Sendable {
     let baseIndex = lexicons.firstIndex { $0.language == base } ?? 0
     var scores = lexicons.indices.map { $0 == baseIndex ? 0 : -otherLanguage }
     for w in context.words {
-      for (n, lex) in lexicons.enumerated() {
-        let f = lex.frequency(of: w)
-        scores[n] += f.map { Self.frequencyScale * (Double($0) / 255 - 1) } ?? -(Self.frequencyScale + Self.unknownWord)
+      let each = lexicons.map { lex in
+        lex.frequency(of: w).map { Self.frequencyScale * (Double($0) / 255 - 1) } ?? -(Self.frequencyScale + Self.unknownWord)
       }
+      for (n, e) in capShortWord(w, each).enumerated() { scores[n] += e }
     }
     return scores
+  }
+
+  /// A short word's evidence for each language, no language more than `shortWordCap` behind the best.
+  func capShortWord(_ word: String, _ evidence: [Double]) -> [Double] {
+    guard shortWordCap < .infinity, Lexicon.fold(word).count <= Self.shortWord, let best = evidence.max() else { return evidence }
+    return evidence.map { max($0, best - shortWordCap) }
   }
 }
 
