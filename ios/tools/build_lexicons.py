@@ -34,7 +34,7 @@ import unicodedata
 import urllib.request
 from pathlib import Path
 
-BUILD = 3  # bump when the output changes for the same inputs, so setup.sh rebuilds
+BUILD = 4  # bump when the output changes for the same inputs, so setup.sh rebuilds
 COMMIT = "127336e9f29d69607eab55982324b210279ae8c5"  # LatinIME main, 2025-02-26
 URL = "https://android.googlesource.com/platform/packages/inputmethods/LatinIME/+/{commit}/dictionaries/{name}?format=TEXT"
 LISTS = {
@@ -60,6 +60,13 @@ SILENCED = {"nonword", "offensive"}
 # beat 12 and 12 on every sentence row (Spanish sentences 84.6% to 89.7% top-1) at 0.1 MB per language.
 MIN_PREV, MIN_PAIR, FOLLOWERS, START_FOLLOWERS = 3, 2, 24, 300
 START = 0xFFFFFFFF
+# Chat abbreviations the English list lacks (chat_words_en.txt, each with its source), at the frequency the list
+# gives its one chat abbreviation, "BTW" (100, less DEMOTION as an abbreviation). At 60 the swipe for "idk" in
+# the owner's log decodes to it; RealTypoEval and QualityEval do not move, and NoisyTypingEval fixes as many
+# mistapped words with one more wrong word of 19,952 on its test split (ios/AUTOCORRECT.md, "After a fourth
+# typing log").
+CHAT_WORDS = {"en": Path(__file__).with_name("chat_words_en.txt")}
+CHAT_FREQUENCY = 60
 TOKEN = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
 
@@ -91,6 +98,16 @@ def parse(text: str) -> dict[str, tuple[int, str]]:
         if word not in out or out[word][0] < freq:
             out[word] = (freq, key)
     return out
+
+
+def add_chat_words(entries: dict[str, tuple[int, str]], path: Path) -> None:
+    """Adds each word of `path` (word, tab, source; "#" comments) at CHAT_FREQUENCY, or keeps a higher one."""
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        word = line.split("\t")[0]
+        old = entries.get(word, (0, fold(word)))[0]
+        entries[word] = (max(old, CHAT_FREQUENCY), fold(word))
 
 
 def sort_rows(entries: dict[str, tuple[int, str]]) -> list[tuple[bytes, int, str]]:
@@ -191,11 +208,15 @@ def main() -> None:
     for lang, (name, sha) in LISTS.items():
         target = out / f"{lang}.v2tlex"
         stamp = out / f"{lang}.v2tlex.src"
-        source = f"{BUILD} {COMMIT} {sha} {TATOEBA_REV} {TATOEBA_SHA}\n"
+        chat = CHAT_WORDS.get(lang)
+        chat_sha = hashlib.sha256(chat.read_bytes()).hexdigest() if chat else "-"
+        source = f"{BUILD} {COMMIT} {sha} {TATOEBA_REV} {TATOEBA_SHA} {chat_sha}\n"
         if target.exists() and stamp.exists() and stamp.read_text() == source:
             continue
         sentences = sentences or tatoeba()
         entries = parse(gzip.decompress(fetch(name, sha)).decode())
+        if chat:
+            add_chat_words(entries, chat)
         rows = sort_rows(entries)
         pairs = bigrams(rows, sentences[lang])
         target.write_bytes(compile_lexicon(rows, pairs))

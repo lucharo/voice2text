@@ -56,6 +56,9 @@ CLDR's English and Spanish emoji annotations and derived annotations,
 https://github.com/unicode-org/cldr-json at tag 47.0.0 (© 2015-2024 Unicode, Inc., the same licence). The emoji
 are drawn by Apple's system font; no emoji images are shipped.
 
+Most of the chat abbreviations `tools/build_lexicons.py` adds to the English word list (`tools/chat_words_en.txt`:
+idk, lol, omg, brb and the others marked CLDR) are English keywords of the same annotations.
+
 ```
 UNICODE LICENSE V3
 
