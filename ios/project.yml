@@ -12,12 +12,11 @@ settings:
     MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: "3"  # for local uploads only; raise it above the last upload first. CI numbers its own (.github/workflows/testflight.yml)
 packages:
-  FluidAudio:
-    url: https://github.com/FluidInference/FluidAudio
-    # 55f65d9: the revision the phone bench measured Nemotron Unified with (utils/phone_bench/project.yml)
-    revision: 55f65d9c887244a93c45f18225a35b3533516446
   V2TKeyboardCore:
     path: Packages/V2TKeyboardCore
+  # the speech engine, with FluidAudio pinned in its Package.swift
+  V2TSpeech:
+    path: Packages/V2TSpeech
 targets:
   V2T:
     type: application
@@ -29,7 +28,8 @@ targets:
         com.apple.security.application-groups: [group.es.luischav.v2t]
     dependencies:
       - target: V2TKeyboard
-      - package: FluidAudio
+      - package: V2TSpeech
+        product: V2TSpeech
       - package: V2TKeyboardCore
         product: V2TKeyboardCore
       - package: V2TKeyboardCore

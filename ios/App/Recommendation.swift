@@ -1,13 +1,12 @@
 import Foundation
 import UIKit
-#if canImport(FoundationModels)
-import FoundationModels
-#endif
+import V2TSpeech
 
 /// The one speech model and cleanup this iPhone or iPad gets. There is no catalogue: each hardware class has a single
 /// choice, grounded in what was measured on an iPhone 16 Pro (#52, #85, #67) and on FluidAudio's known limits.
 struct Recommendation: Equatable {
-  enum Speech: String { case nemotron, parakeet }
+  /// The model itself is chosen in V2TSpeech, which other apps share.
+  typealias Speech = SpeechEngine.Model
   enum Cleanup: String { case appleIntelligence, dictionaryOnly }
   /// What dictation this device gets (the owner's tiers, 2026-11-12: "Tiers now, measure next").
   enum Tier: String {
@@ -32,19 +31,9 @@ struct Recommendation: Equatable {
   var appleIntelligenceCompatible = true
   var tier = Tier.full
 
-  var speechName: String {
-    switch speech {
-    case .nemotron: "NVIDIA Nemotron-Labs Unified ASR 0.6B (int8)"
-    case .parakeet: "NVIDIA Parakeet TDT 0.6B v3"
-    }
-  }
+  var speechName: String { speech.displayName }
 
-  var downloadMB: Int {
-    switch speech {
-    case .nemotron: 627  // HF FluidInference/nemotron-labs-unified-asr-0.6b-coreml@bd13ddd: int8 encoder, decoder, joint, vocab
-    case .parakeet: 630  // the Mac app's listed size for the same Core ML files (v2t/backends.py)
-    }
-  }
+  var downloadMB: Int { speech.downloadMB }
 
   var cleanupName: String {
     switch cleanup {
@@ -72,9 +61,8 @@ struct Recommendation: Equatable {
   struct Device: Equatable {
     /// Apple Intelligence's on-device model is available now.
     var appleIntelligence: Bool
-    /// An Apple Intelligence-compatible iPhone (apple.com/apple-intelligence, 2026-11-02: iPhone 15 Pro and
-    /// Pro Max, the iPhone 16 and 17 families, 18 Pro and Pro Max, 16e, 17e, Air and Duo; A17 Pro chips and later), whether
-    /// or not the user has turned it on. SystemLanguageModel reports `.deviceNotEligible` for every other one.
+    /// An Apple Intelligence-compatible device, whether or not the user has turned it on
+    /// (`AppleIntelligenceStatus.compatible` lists them).
     var appleIntelligenceCompatible: Bool
     /// The hardware identifier (utsname machine), e.g. "iPhone17,1".
     var model: String = ""
@@ -133,10 +121,11 @@ struct Recommendation: Equatable {
 
   private static func chooseModel(for d: Device) -> Recommendation {
     let device = d.deviceName
+    let speech = Speech.forDevice(appleIntelligenceCompatible: d.appleIntelligenceCompatible)
     if d.appleIntelligenceCompatible {
       let measured = "Measured on an iPhone 16 Pro: the fewest mistakes of the phone models tested (1.7% of words wrong on clear English, 3.4% on harder English, 3.4% on Spanish), text ready about 0.1 s after you stop, or about 1 to 1.5 s with Apple Intelligence cleanup."
       return Recommendation(
-        speech: .nemotron,
+        speech: speech,
         cleanup: d.appleIntelligence ? .appleIntelligence : .dictionaryOnly,
         reason: measured + (d.appleIntelligence
           ? " Apple Intelligence is on, so it tidies punctuation on the \(device) without a download."
@@ -146,12 +135,12 @@ struct Recommendation: Equatable {
     if tier(for: d) == .notSupported {
       // the model this device would get, kept so storage can still name and delete one downloaded before
       return Recommendation(
-        speech: .parakeet, cleanup: .dictionaryOnly,
+        speech: speech, cleanup: .dictionaryOnly,
         reason: "Dictation isn't supported on this \(device) yet: these \(device) models have not passed a test run. The keyboard still works for typing.",
         measured: false)
     }
     return Recommendation(
-      speech: .parakeet, cleanup: .dictionaryOnly,
+      speech: speech, cleanup: .dictionaryOnly,
       reason: "FluidAudio reports its int8 Unified encoders failing to load on the A16 chip (FluidAudio #828, the Parakeet Unified sibling of Nemotron) and calls other earlier chips unverified, so this \(device) gets Parakeet, which on an iPhone 16 Pro got 1.9% of words wrong on clear English, 3.9% on harder English and 4.1% on Spanish. Neither model has been tested on this \(device).",
       measured: false)
   }
@@ -161,18 +150,11 @@ struct Recommendation: Equatable {
 
 extension Recommendation.Device {
   @MainActor static var current: Recommendation.Device {
-    var available = false, compatible = false
-    #if canImport(FoundationModels)
-    switch SystemLanguageModel.default.availability {
-    case .available: available = true; compatible = true
-    case .unavailable(.deviceNotEligible): break
-    case .unavailable: compatible = true  // not turned on, model still downloading, or language not supported
-    }
-    #endif
+    let ai = AppleIntelligenceStatus.current
     var info = utsname()
     uname(&info)
     let model = withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-    return .init(appleIntelligence: available, appleIntelligenceCompatible: compatible, model: model,
+    return .init(appleIntelligence: ai.available, appleIntelligenceCompatible: ai.compatible, model: model,
                  deviceName: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")
   }
 }

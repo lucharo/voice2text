@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import V2T
+import V2TSpeech
 
 /// A speech model that loads at once and names each decode by its length; the next load or decode can be held
 /// until `release()`, standing in for a slow compile or a decode that never ends.

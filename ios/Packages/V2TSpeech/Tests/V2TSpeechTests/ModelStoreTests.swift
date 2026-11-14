@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import V2T
+@testable import V2TSpeech
 
 /// The speech model's files: on the device or not, their size, and deleting them with the compiled copy.
 struct ModelStoreTests {
