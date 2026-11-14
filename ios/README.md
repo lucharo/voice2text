@@ -16,6 +16,7 @@ cd ios
 ./setup.sh                 # word lists (pinned AOSP commit) and next-word counts (pinned Tatoeba revision) via uv, then V2T.xcodeproj with xcodegen
 ./setup.sh test            # the app's unit and UI tests on an iPhone simulator (iPad UI tests skip there)
 (cd Packages/V2TKeyboardCore && swift test)   # keyboard engines and cleanup guard, on the Mac
+(cd Packages/V2TSpeech && swift test)         # the speech engine's model choice, files and progress, on the Mac
 ```
 
 Set `V2T_TEAM` to your Apple development team if it is not the default. `tools/ExportOptions.plist` exports an
@@ -52,9 +53,10 @@ xcodebuild -exportArchive -archivePath /tmp/V2T.xcarchive -exportOptionsPlist to
 | Part | Where | What it does |
 | --- | --- | --- |
 | Keyboard engines | `Packages/V2TKeyboardCore` (`V2TKeyboardCore`) | Layouts, word lists, autocorrect and suggestions, swipe decoding, the typing rules. No UIKit; tested on the Mac. |
+| Speech engine | `Packages/V2TSpeech` (`V2TSpeech`) | The model each device gets, its files on the device, downloading and loading it, and 16 kHz mono samples to text (FluidAudio on the Neural Engine, pinned in its `Package.swift`). No UIKit; other apps use it too (below). |
 | Cleanup guard | `Packages/V2TKeyboardCore` (`V2TCleanup`) | The Mac app's cleanup prompt and `keep_spoken_words` guard, ported to Swift and checked against the Python output (`tools/cleanup_golden.py`). |
 | Keyboard | `Keyboard/` | The keyboard extension: keys drawn with Core Animation, touch handling, previews, long-press accents, swipe trail, held delete, space-bar cursor, the suggestion bar and the mic. |
-| App | `App/` | About v2t (opens by itself on the first launch, then from its row), setup, the model download (only when you tap Download), the microphone session, transcription (FluidAudio on the Neural Engine), cleanup, dictionary, history. |
+| App | `App/` | About v2t (opens by itself on the first launch, then from its row), setup, the model download (only when you tap Download), the microphone session, transcription (through `V2TSpeech`), cleanup, dictionary, history. |
 | Shared | `Shared/` | Settings and the dictionary in the App Group, and the keyboard-to-app dictation channel. |
 
 ### Dictation from the keyboard
@@ -214,7 +216,33 @@ generation), iPad Air (3rd and 4th generation), iPad (8th, 9th and 10th generati
 generation) and iPad Pro 12.9-inch (3rd and 4th generation). Identifiers come from Xcode's own device table
 (`device_traits.db`), chips from Apple's iPad comparison page; the sources are in `App/Recommendation.swift`.
 
-Model files come from Hugging Face at pinned revisions (`App/SpeechEngine.swift`).
+Model files come from Hugging Face at pinned revisions (`Packages/V2TSpeech/Sources/V2TSpeech/SpeechEngine.swift`).
+
+### The speech engine in another app
+
+Another iPhone app can transcribe with the same engine. SwiftPM reads a package only at a repository's root, so the
+repository's root `Package.swift` offers the `V2TSpeech` product, built from `Packages/V2TSpeech`'s sources. Depend
+on a commit or a branch, not a version: FluidAudio is pinned by revision, which SwiftPM refuses under a version
+requirement.
+
+```swift
+.package(url: "https://github.com/lucharo/voice2text", revision: "<commit>"),
+.product(name: "V2TSpeech", package: "voice2text"),
+```
+
+```swift
+import V2TSpeech
+
+let model = SpeechEngine.Model.forThisDevice              // .nemotron or .parakeet, as v2t chooses
+print(model.displayName, model.downloadMB)                // name and download size in MB
+let store = ModelStore.forDevice(model)                   // store.isOnDevice: all of the model's files are there
+let engine = SpeechEngine(speech: model)
+try await engine.prepare(language: "en", allowDownload: true) { state in print(state) }  // .downloading(0.4), .loading, …
+let text = try await engine.transcribe(samples, language: "en")  // samples: [Float], 16 kHz mono
+```
+
+With `allowDownload: false`, `prepare` loads only files already on the device and never downloads. The files go
+where FluidAudio keeps them, under that app's own Application Support; preparations must not overlap.
 
 ## How close it is to Apple's keyboard
 

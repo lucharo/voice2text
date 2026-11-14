@@ -17,7 +17,7 @@ Luis confirmed on 5 November 2026 that current user and maintainer documentation
 | `docs/public/reference/config.md` | Configuration keys and defaults | evergreen | `v2t/config.py`, `v2t/backends.py` |
 | `docs/public/benchmarks.md` | Interpret published historical measurements | evergreen | `docs/public/assets/benchmarks.json`, `docs/public/javascripts/benchmarks.js`, `utils/model_intake/*` |
 | `docs/public/maintainers/index.md` | Build, check and release | evergreen | `justfile`, `.github/workflows/*` |
-| `ios/README.md` | Current iOS contributor instructions | evergreen | `ios/App/*`, `ios/Shared/*`, `ios/project.yml` |
+| `ios/README.md` | Current iOS contributor instructions | evergreen | `ios/App/*`, `ios/Shared/*`, `ios/Packages/V2TSpeech/*`, `ios/project.yml`, `Package.swift` |
 | `docs/DICTIONARY.md` | Load-bearing terminology | evergreen | — |
 | `internal/**`, dated reports, experiment logs and raw result records | Preserve historical decisions and measurements | point-in-time | — |
 <!-- doc-index:end -->

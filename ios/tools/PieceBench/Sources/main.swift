@@ -14,7 +14,7 @@
 //           that takes longer than the audio after it); `wait_s` = backlog_s + `finish_s`, the time from Stop
 //           to text.
 // Models: Nemotron Unified int8 (the app's choice on Apple Intelligence iPhones), told the clip's language,
-// and Parakeet v3 int8 (every other iPhone), loaded as the app loads them (App/SpeechEngine.swift).
+// and Parakeet v3 int8 (every other iPhone), loaded as the app loads them (Packages/V2TSpeech/Sources/V2TSpeech/SpeechEngine.swift).
 import FluidAudio
 import Foundation
 import V2TPieces
