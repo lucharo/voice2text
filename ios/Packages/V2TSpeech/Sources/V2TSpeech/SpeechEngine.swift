@@ -109,13 +109,21 @@ public actor SpeechEngine {
   public static var defaultModelsDirectory: URL { MLModelConfigurationUtils.defaultModelsDirectory() }
 
   /// `FluidAudio/Models` in the container of `appGroup`, an App Group this app belongs to: every app of the group
-  /// that passes it downloads the model once and loads the same files. Nil when the app is not in the group.
+  /// that passes it downloads the model once and loads the same files. Created and kept out of device backups:
+  /// the files download again on request, and Apple's storage guidelines ask for that. Nil when the app is not in
+  /// the group.
   public static func modelsDirectory(appGroup: String) -> URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup).map(modelsDirectory(inContainer:))
   }
 
   static func modelsDirectory(inContainer container: URL) -> URL {
-    container.appending(path: "FluidAudio/Models", directoryHint: .isDirectory)
+    var models = container.appending(path: "FluidAudio/Models", directoryHint: .isDirectory)
+    // on the folder, so it covers every file downloaded into it later; a failure leaves the files in backups
+    try? FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try? models.setResourceValues(values)
+    return models
   }
 
   /// Moves this app's download of `speech` from `oldDirectory` (FluidAudio's default) into `modelsDirectory`, and

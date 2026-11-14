@@ -54,6 +54,14 @@ struct ModelsDirectoryTests {
     #expect(SpeechEngine.modelsDirectory(inContainer: root).path == root.appending(path: "FluidAudio/Models").path)
   }
 
+  /// The model downloads again on request, so it stays out of device backups (it is 0.6 GB).
+  @Test func theSharedFolderIsKeptOutOfBackups() throws {
+    let models = SpeechEngine.modelsDirectory(inContainer: root)
+
+    let values = try models.resourceValues(forKeys: [.isExcludedFromBackupKey])
+    #expect(values.isExcludedFromBackup == true)
+  }
+
   /// Offline, with every file in the named folder, FluidAudio gets past its check for missing files there and
   /// tries to load them (these are not real models, so loading fails); looking anywhere else, it finds nothing.
   @Test func prepareLoadsNemotronFromTheNamedFolder() async throws {
