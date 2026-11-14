@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import V2T
+import V2TSpeech
 
 /// An AudioSource that records nothing (named apart from #127's SpyAudio, so both test files build together).
 final class SilentAudio: AudioSource, @unchecked Sendable {

@@ -1,6 +1,6 @@
 import FluidAudio
 import Testing
-@testable import V2T
+@testable import V2TSpeech
 
 struct SpeechEngineTests {
   @Test func aCachedModelNeverShowsAsDownloading() {

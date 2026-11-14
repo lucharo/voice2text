@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SwiftUI
+import V2TSpeech
 
 /// The app's side of dictation: a warm microphone session the keyboard drives over the App Group, on-device
 /// transcription, the dictionary and cleanup, and the result sent back to the keyboard.
@@ -80,7 +81,7 @@ import SwiftUI
     self.history = history
     self.dictionary = dictionary
     self.engine = engine ?? SpeechEngine(speech: recommendation.speech)
-    self.store = store ?? .forDevice(modelFolder: SpeechEngine.modelFolder(for: recommendation.speech), isComplete: SpeechEngine.isComplete(recommendation.speech))
+    self.store = store ?? .forDevice(recommendation.speech)
     self.defaults = defaults
     self.now = now
     observers = [

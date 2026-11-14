@@ -24,3 +24,8 @@ site/
 # marimo session snapshots
 __marimo__/
 .ignored_scripts/
+
+# SwiftPM, when the root Package.swift (V2TSpeech for other apps) is built here
+/.build/
+/.swiftpm/
+/Package.resolved

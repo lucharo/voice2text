@@ -1,22 +1,12 @@
 import FluidAudio
 import Foundation
 
-/// The speech model as DictationService uses it: `SpeechEngine` in the app, a stub in unit tests (as
-/// `AudioSource` stands in for the microphone).
-protocol SpeechModel: Sendable {
-  func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (SpeechEngine.State) -> Void) async throws
-  func unload() async
-  func transcribe(_ samples: [Float], language: String) async throws -> String
-}
-
-extension SpeechEngine: SpeechModel {}
-
 /// On-device speech to text through FluidAudio on the Neural Engine. The model is fetched once from Hugging
 /// Face at a pinned revision, then loaded from the app's own storage; audio never leaves the phone.
-actor SpeechEngine {
-  enum State: Equatable {
+public actor SpeechEngine {
+  public enum State: Equatable, Sendable {
     case notDownloaded, downloading(Double), loading, ready, failed(String)
-    var isPreparing: Bool {
+    public var isPreparing: Bool {
       switch self {
       case .downloading, .loading: true
       default: false
@@ -25,20 +15,20 @@ actor SpeechEngine {
   }
 
   /// Model repositories pinned to the revisions the phone benchmarks used (checked 2026-11-02).
-  static let pins = [
+  public static let pins = [
     "FluidInference/nemotron-labs-unified-asr-0.6b-coreml": "bd13ddde81d3134719c520845346b3252daf3175",
     "FluidInference/parakeet-tdt-0.6b-v3-coreml": "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
   ]
 
-  let speech: Recommendation.Speech
+  public let speech: Model
   private var nemotron: UnifiedAsrManager?
   private var nemotronLanguage: NemotronUnifiedLanguage?
   private var parakeet: AsrManager?
-  private(set) var state: State = .notDownloaded
+  public private(set) var state: State = .notDownloaded
   /// Bumped by unload(): work that awaited across it finds the number changed and drops its result.
   private var generation = 0
 
-  init(speech: Recommendation.Speech) {
+  public init(speech: Model) {
     self.speech = speech
     ModelRegistry.revisionOverrides = Self.pins
   }
@@ -46,8 +36,9 @@ actor SpeechEngine {
   /// Loads the model, downloading what is missing only when `allowDownload` (the user tapped Download or Try
   /// again). Otherwise FluidAudio runs offline: nothing is fetched, and a damaged copy is reported, never
   /// deleted and downloaded again. `progress` reports `.downloading` only while files actually download.
-  func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
-    ModelHub.offlineMode = !allowDownload  // preparations never overlap: DictationService runs one at a time
+  public func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
+    // FluidAudio-wide, so preparations must never overlap: the v2t app's DictationService runs one at a time
+    ModelHub.offlineMode = !allowDownload
     state = .loading
     let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
@@ -72,7 +63,7 @@ actor SpeechEngine {
   }
 
   /// Drops the loaded model, before its files are deleted.
-  func unload() {
+  public func unload() {
     generation += 1  // a language reload already under way must not attach its model afterwards
     nemotron = nil
     nemotronLanguage = nil
@@ -81,7 +72,7 @@ actor SpeechEngine {
   }
 
   /// Whether `folder` holds every file the model loads (FluidAudio's own lists at the pinned 55f65d9).
-  static func isComplete(_ speech: Recommendation.Speech) -> @Sendable (URL) -> Bool {
+  public static func isComplete(_ speech: Model) -> @Sendable (URL) -> Bool {
     switch speech {
     case .nemotron:
       let family = UnifiedConfig(family: .nemotronMultilingual(.en)).family
@@ -94,7 +85,7 @@ actor SpeechEngine {
   }
 
   /// Where FluidAudio keeps this model's downloaded files (its default under Application Support).
-  static func modelFolder(for speech: Recommendation.Speech) -> URL {
+  public static func modelFolder(for speech: Model) -> URL {
     switch speech {
     case .nemotron: MLModelConfigurationUtils.defaultModelsDirectory(for: UnifiedConfig(family: .nemotronMultilingual(.en)).family.repo)
     case .parakeet: AsrModels.defaultCacheDirectory(for: .v3)
@@ -102,7 +93,7 @@ actor SpeechEngine {
   }
 
   /// 16 kHz mono samples to text.
-  func transcribe(_ samples: [Float], language: String) async throws -> String {
+  public func transcribe(_ samples: [Float], language: String) async throws -> String {
     switch speech {
     case .nemotron:
       guard state == .ready else { throw EngineError.notReady }  // unloaded (deleted): never reload from files
@@ -138,9 +129,9 @@ actor SpeechEngine {
     }
   }
 
-  enum EngineError: LocalizedError {
+  public enum EngineError: LocalizedError {
     case notReady
-    var errorDescription: String? { "The speech model is not loaded yet." }
+    public var errorDescription: String? { "The speech model is not loaded yet." }
   }
 
   /// "auto" lets Nemotron pick, which measured slightly worse on Spanish (FLEURS 3.60% vs 3.38% told, #85).
