@@ -74,6 +74,17 @@ struct ModelsDirectoryTests {
     #expect(missing == false, "FluidAudio looked for the files elsewhere: \(String(describing: error))")
   }
 
+  /// Deleting the model removes the folder and its exclusion; the next preparation, before any download into it,
+  /// excludes it again.
+  @Test func aNamedFolderIsKeptOutOfBackupsWhenPreparationRecreatesIt() async throws {
+    let engine = SpeechEngine(speech: .nemotron, modelsDirectory: shared)
+
+    _ = try? await engine.prepare(language: "en", allowDownload: false) { _ in }  // nothing there: fails offline
+
+    let values = try shared.resourceValues(forKeys: [.isExcludedFromBackupKey])
+    #expect(values.isExcludedFromBackup == true)
+  }
+
   @Test func aMovedDownloadIsUsedFromTheSharedFolder() throws {
     try writeCompleteNemotron(in: own)
 

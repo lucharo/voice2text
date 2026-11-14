@@ -52,14 +52,28 @@ import Testing
     #expect(exists(old) == false)
   }
 
-  /// The app's mark of a first load stays behind: the next load may compile again at the new path.
-  @Test func theOldMarkOfAFirstLoadDoesNotMove() throws {
+  /// The marks of a first load stay behind, this app's and the one every app wrote before: the next load may
+  /// compile again at the new path.
+  @Test func theOldMarksOfAFirstLoadDoNotMove() throws {
     try writeComplete(old, tag: "old")
+    let store = ModelStore(modelFolder: old, folders: []) { _ in true }
+    store.markLoaded()
     try write(0, to: old.appending(path: ".v2t-loaded"))
 
     try ModelStore.moveDownload(from: old, to: new, isComplete: isComplete)
 
-    #expect(exists(new.appending(path: ".v2t-loaded")) == false)
+    let moved = try FileManager.default.contentsOfDirectory(atPath: new.path).sorted()
+    #expect(moved == ["Encoder.mlmodelc", "old", "vocab.json"])
+  }
+
+  /// Asked to move a folder onto itself (the caller named the default folder), it leaves the download alone.
+  @Test func aFolderMovedOntoItselfStays() throws {
+    try writeComplete(old, tag: "old")
+
+    try ModelStore.moveDownload(from: old, to: old, isComplete: isComplete)
+
+    #expect(isComplete(old))
+    #expect(exists(old.appending(path: "old")))
   }
 
   /// Another app of the group downloaded the model first: its copy stays, the duplicate goes.

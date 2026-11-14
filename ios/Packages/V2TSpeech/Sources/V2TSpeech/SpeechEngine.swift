@@ -32,7 +32,8 @@ public actor SpeechEngine {
   private var generation = 0
 
   /// `modelsDirectory`: where the model's files live (see `modelsDirectory(appGroup:)` to share them between the
-  /// apps of one App Group); nil keeps FluidAudio's default. `ModelStore.forDevice` takes the same folder.
+  /// apps of one App Group); nil keeps FluidAudio's default. `ModelStore.forDevice` takes the same folder. A
+  /// named folder is kept out of device backups, as the model downloads again on request.
   public init(speech: Model, modelsDirectory: URL? = nil) {
     self.speech = speech
     self.modelsDirectory = modelsDirectory
@@ -45,6 +46,8 @@ public actor SpeechEngine {
   public func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
     // FluidAudio-wide, so preparations must never overlap: the v2t app's DictationService runs one at a time
     ModelHub.offlineMode = !allowDownload
+    // deleting the model removes the folder, and with it the folder's exclusion from backups
+    if let modelsDirectory { Self.keepOutOfBackups(modelsDirectory) }
     state = .loading
     let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
@@ -117,13 +120,19 @@ public actor SpeechEngine {
   }
 
   static func modelsDirectory(inContainer container: URL) -> URL {
-    var models = container.appending(path: "FluidAudio/Models", directoryHint: .isDirectory)
-    // on the folder, so it covers every file downloaded into it later; a failure leaves the files in backups
-    try? FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+    let models = container.appending(path: "FluidAudio/Models", directoryHint: .isDirectory)
+    keepOutOfBackups(models)
+    return models
+  }
+
+  /// Creates `folder` and excludes it from device backups. On the folder, so it covers every file downloaded into
+  /// it later; a failure leaves the files in backups.
+  static func keepOutOfBackups(_ folder: URL) {
+    var folder = folder
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
-    try? models.setResourceValues(values)
-    return models
+    try? folder.setResourceValues(values)
   }
 
   /// Moves this app's download of `speech` from `oldDirectory` (FluidAudio's default) into `modelsDirectory`, and

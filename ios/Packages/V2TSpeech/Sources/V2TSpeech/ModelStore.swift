@@ -38,11 +38,11 @@ public struct ModelStore: Sendable {
   /// load, which compiles the model for the Neural Engine into the app's own Caches, is done. Named after the app:
   /// another app sharing the folder has a compiled copy of its own. Deleting the model removes it.
   public var loadedMarker: URL {
-    modelFolder.appending(path: ".v2t-loaded-\(Bundle.main.bundleIdentifier ?? "es.luischav.v2t")")
+    modelFolder.appending(path: "\(Self.loadedMarkerPrefix)-\(Bundle.main.bundleIdentifier ?? "es.luischav.v2t")")
   }
 
-  /// The mark before the folder could be shared, one for every app.
-  static let legacyLoadedMarker = ".v2t-loaded"
+  /// Every app's mark starts so, and so did the one mark all apps wrote before the folder could be shared.
+  static let loadedMarkerPrefix = ".v2t-loaded"
 
   public var hasLoaded: Bool { FileManager.default.fileExists(atPath: loadedMarker.path) }
 
@@ -90,16 +90,17 @@ public struct ModelStore: Sendable {
   public static func moveDownload(from old: URL, to new: URL, isComplete: (URL) -> Bool) throws {
     let fm = FileManager.default
     for folder in [old, new] { sweepDiscarded(beside: folder) }
-    guard fm.fileExists(atPath: old.path) else { return }
+    guard fm.fileExists(atPath: old.path), old.standardizedFileURL.path != new.standardizedFileURL.path else { return }
     if fm.fileExists(atPath: new.path) {
       if isComplete(new) || !isComplete(old) { return try discard(old) }
       try discard(new)
     }
+    // whether Core ML reuses the compiled copy at the new path is unknown, so the next load counts as a first one
+    // again: the marks of a first load go before the move, so an interruption cannot carry one across
+    let items = (try? fm.contentsOfDirectory(at: old, includingPropertiesForKeys: nil)) ?? []
+    for item in items where item.lastPathComponent.hasPrefix(loadedMarkerPrefix) { try fm.removeItem(at: item) }
     try fm.createDirectory(at: new.deletingLastPathComponent(), withIntermediateDirectories: true)
     try fm.moveItem(at: old, to: new)
-    // this app's mark of a first load stayed in the old folder's name; whether Core ML reuses the compiled copy
-    // for the new path is unknown, so the next load counts as a first one again
-    try? fm.removeItem(at: new.appending(path: Self.legacyLoadedMarker))
   }
 
   static let discardedPrefix = ".v2t-discarded-"
