@@ -84,13 +84,19 @@ iOS gives keyboards no microphone, so the app records:
 7. The speech model's first load after its download compiles it for the device, and nobody has timed that on an
    older chip. Until it has loaded once, the keyboard's mic opens v2t on "Preparing the speech model" instead of
    recording audio that could not be transcribed until it ends. Later launches reload the compiled copy, and a
-   recording may start while they do. A file in the model's folder (`.v2t-loaded`) records the first load.
+   recording may start while they do. A file in the model's folder (`.v2t-loaded-<bundle id>`, one for each app
+   that loads the model) records the first load.
 
 ### What stays on the iPhone
 
 - The speech model downloads only when you tap Download in the app (size in the table below). Storage in the app
   shows the space it takes, with its Neural Engine copy, and deletes it. Without the model, the keyboard's mic
   opens v2t on its download screen instead of recording.
+- The model's files live in the App Group's container (`group.es.luischav.v2t`, under `FluidAudio/Models`), so
+  another app of the group can load the same download, and they are kept out of device backups: after a restore
+  the model downloads again on request. A download made in v2t's own Application Support by an earlier version
+  moves there at launch, by renames only; while that move fails, the old copy is used where it is. Deleting the
+  model in v2t deletes it for every app of the group.
 - History keeps each dictation as text only, in one file; Storage shows its size and clears it. Audio is never
   saved: the app holds it in memory while it transcribes, then drops it.
 - History shows each dictation as a card of one height: the cleaned text in three lines (tap for all of it), a
@@ -235,14 +241,20 @@ import V2TSpeech
 
 let model = SpeechEngine.Model.forThisDevice              // .nemotron or .parakeet, as v2t chooses
 print(model.displayName, model.downloadMB)                // name and download size in MB
-let store = ModelStore.forDevice(model)                   // store.isOnDevice: all of the model's files are there
-let engine = SpeechEngine(speech: model)
+let models = SpeechEngine.modelsDirectory(appGroup: "group.es.luischav.v2t")  // nil when not in the App Group
+let store = ModelStore.forDevice(model, modelsDirectory: models)  // store.isOnDevice: all of the model's files are there
+let engine = SpeechEngine(speech: model, modelsDirectory: models)
 try await engine.prepare(language: "en", allowDownload: true) { state in print(state) }  // .downloading(0.4), .loading, …
 let text = try await engine.transcribe(samples, language: "en")  // samples: [Float], 16 kHz mono
 ```
 
-With `allowDownload: false`, `prepare` loads only files already on the device and never downloads. The files go
-where FluidAudio keeps them, under that app's own Application Support; preparations must not overlap.
+With `allowDownload: false`, `prepare` loads only files already on the device and never downloads; preparations
+must not overlap. `modelsDirectory` is the App Group's `FluidAudio/Models`, the folder v2t uses, so v2t and an app
+in the group `group.es.luischav.v2t` (its App ID and entitlements must list it) share one download, whichever of
+them made it. With `modelsDirectory` nil, the files stay under the app's own Application Support. Give
+`ModelStore` and `SpeechEngine` the same folder. To move a download made in the app's own folder, call
+`SpeechEngine.moveDownload(of: model, into: models)` before both and use the folder it returns. Each app keeps its
+own Neural Engine copy in its own Caches, so the first load in each app compiles the model.
 
 ## How close it is to Apple's keyboard
 
