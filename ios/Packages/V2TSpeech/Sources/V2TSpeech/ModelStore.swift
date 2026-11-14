@@ -1,8 +1,9 @@
 import Foundation
 
 /// The speech model's files on the device: whether they are there, how much space they take, and deleting them.
-/// FluidAudio keeps downloads under Application Support/FluidAudio/Models; Core ML keeps its compiled copy for the
-/// Neural Engine in the app's Caches (com.apple.e5rt.e5bundlecache), which grows with every reinstall.
+/// FluidAudio keeps downloads in a models folder (by default Application Support/FluidAudio/Models; an App Group's
+/// container when the apps of the group share them); Core ML keeps its compiled copy for the Neural Engine in each
+/// app's own Caches (com.apple.e5rt.e5bundlecache), which grows with every reinstall.
 public struct ModelStore: Sendable {
   /// The folder holding the downloaded files of the model this device uses.
   public let modelFolder: URL
@@ -18,24 +19,30 @@ public struct ModelStore: Sendable {
     self.isComplete = isComplete
   }
 
-  /// The files of `model` where FluidAudio keeps them in this app.
-  public static func forDevice(_ model: SpeechEngine.Model) -> ModelStore {
-    forDevice(modelFolder: SpeechEngine.modelFolder(for: model), isComplete: SpeechEngine.isComplete(model))
-  }
-
-  public static func forDevice(modelFolder: URL, isComplete: @escaping @Sendable (URL) -> Bool) -> ModelStore {
+  /// The files of `model` in `modelsDirectory`, the folder given to `SpeechEngine(speech:modelsDirectory:)`; nil
+  /// for FluidAudio's default in this app. Measured and deleted with them: everything else in that folder, this
+  /// app's own FluidAudio folder when that is another one (a download made before the model moved), and this
+  /// app's compiled copy.
+  public static func forDevice(_ model: SpeechEngine.Model, modelsDirectory: URL? = nil) -> ModelStore {
     let bundle = Bundle.main.bundleIdentifier ?? "es.luischav.v2t"
-    return ModelStore(modelFolder: modelFolder, folders: [
-      URL.applicationSupportDirectory.appending(path: "FluidAudio/Models"),
+    let own = SpeechEngine.defaultModelsDirectory, models = modelsDirectory ?? own
+    let downloads = models.standardizedFileURL.path == own.standardizedFileURL.path ? [own] : [models, own]
+    return ModelStore(modelFolder: SpeechEngine.modelFolder(for: model, in: modelsDirectory), folders: downloads + [
       URL.cachesDirectory.appending(path: "\(bundle)/com.apple.e5rt.e5bundlecache"),
-    ], isComplete: isComplete)
+    ], isComplete: SpeechEngine.isComplete(model))
   }
 
   public var isOnDevice: Bool { isComplete(modelFolder) }
 
-  /// A file left in the model's folder once the model has loaded on this device, so a later launch knows the
-  /// first load, which compiles the model for the Neural Engine, is done. Deleting the model removes it.
-  public var loadedMarker: URL { modelFolder.appending(path: ".v2t-loaded") }
+  /// A file left in the model's folder once the model has loaded in this app, so a later launch knows the first
+  /// load, which compiles the model for the Neural Engine into the app's own Caches, is done. Named after the app:
+  /// another app sharing the folder has a compiled copy of its own. Deleting the model removes it.
+  public var loadedMarker: URL {
+    modelFolder.appending(path: ".v2t-loaded-\(Bundle.main.bundleIdentifier ?? "es.luischav.v2t")")
+  }
+
+  /// The mark before the folder could be shared, one for every app.
+  static let legacyLoadedMarker = ".v2t-loaded"
 
   public var hasLoaded: Bool { FileManager.default.fileExists(atPath: loadedMarker.path) }
 
@@ -73,6 +80,42 @@ public struct ModelStore: Sendable {
   public static func allBundlesLoadReady(in folder: URL) -> Bool {
     guard let items = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return false }
     return !hasPartialDownload(folder) && items.filter { $0.pathExtension == "mlmodelc" }.allSatisfy(isLoadReady)
+  }
+
+  /// Moves a model folder from `old` to `new` (another models folder), keeping whichever copy is complete: the
+  /// old one when nothing is at `new` yet, complete or not (a partial download resumes there); the new one when it
+  /// is complete or the old one is not. Each step renames within one volume, so an interruption leaves each folder
+  /// whole, and a copy thrown away is renamed out of FluidAudio's sight before it is deleted, so a half-deleted
+  /// folder never reads as complete. Run it again after a failure or an interruption: it carries on.
+  public static func moveDownload(from old: URL, to new: URL, isComplete: (URL) -> Bool) throws {
+    let fm = FileManager.default
+    for folder in [old, new] { sweepDiscarded(beside: folder) }
+    guard fm.fileExists(atPath: old.path) else { return }
+    if fm.fileExists(atPath: new.path) {
+      if isComplete(new) || !isComplete(old) { return try discard(old) }
+      try discard(new)
+    }
+    try fm.createDirectory(at: new.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try fm.moveItem(at: old, to: new)
+    // this app's mark of a first load stayed in the old folder's name; whether Core ML reuses the compiled copy
+    // for the new path is unknown, so the next load counts as a first one again
+    try? fm.removeItem(at: new.appending(path: Self.legacyLoadedMarker))
+  }
+
+  static let discardedPrefix = ".v2t-discarded-"
+
+  /// Renames `folder` to a name FluidAudio never reads, then deletes it.
+  static func discard(_ folder: URL) throws {
+    let trash = folder.deletingLastPathComponent().appending(path: discardedPrefix + UUID().uuidString)
+    try FileManager.default.moveItem(at: folder, to: trash)
+    try FileManager.default.removeItem(at: trash)
+  }
+
+  /// Deletes what an interrupted `discard` left beside `folder`.
+  static func sweepDiscarded(beside folder: URL) {
+    let parent = folder.deletingLastPathComponent()
+    let items = (try? FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? []
+    for item in items where item.lastPathComponent.hasPrefix(discardedPrefix) { try? FileManager.default.removeItem(at: item) }
   }
 
   public func delete() throws {

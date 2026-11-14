@@ -114,6 +114,18 @@ struct ModelStoreTests {
     #expect(FileManager.default.fileExists(atPath: compiled.path) == false)
   }
 
+  /// Each app sharing the folder compiles its own copy, so another app's first load, or the mark every app wrote
+  /// before the folder could be shared, says nothing about this one's.
+  @Test func onlyThisAppsMarkOfAFirstLoadCounts() throws {
+    try write(0, to: store.modelFolder.appending(path: ".v2t-loaded-es.luischav.other"))
+    try write(0, to: store.modelFolder.appending(path: ".v2t-loaded"))
+    #expect(store.hasLoaded == false)
+
+    store.markLoaded()
+
+    #expect(store.hasLoaded)
+  }
+
   @Test func deletingWhenNothingIsThereSucceeds() throws {
     try store.delete()
 
