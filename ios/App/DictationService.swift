@@ -80,8 +80,9 @@ import V2TSpeech
     self.recommendation = recommendation
     self.history = history
     self.dictionary = dictionary
-    self.engine = engine ?? SpeechEngine(speech: recommendation.speech)
-    self.store = store ?? .forDevice(recommendation.speech)
+    let models = store == nil ? Self.modelsDirectory(for: recommendation.speech) : nil
+    self.engine = engine ?? SpeechEngine(speech: recommendation.speech, modelsDirectory: models)
+    self.store = store ?? .forDevice(recommendation.speech, modelsDirectory: models)
     self.defaults = defaults
     self.now = now
     observers = [
@@ -110,6 +111,13 @@ import V2TSpeech
   }
 
   // MARK: model
+
+  /// The speech model's folder: FluidAudio/Models in the App Group's container, where another app of the group
+  /// can load the same download. A download an earlier version made in v2t's own Application Support moves there
+  /// first, and stays in use where it is while that move fails. Nil (v2t's own folder) without the App Group.
+  static func modelsDirectory(for speech: SpeechEngine.Model) -> URL? {
+    SpeechEngine.modelsDirectory(appGroup: Settings.group).map { SpeechEngine.moveDownload(of: speech, into: $0) }
+  }
 
   /// Re-reads whether the model is on the device and its size, and tells the keyboard: without the model, its
   /// mic key opens v2t, which offers the download, instead of recording something it cannot transcribe.

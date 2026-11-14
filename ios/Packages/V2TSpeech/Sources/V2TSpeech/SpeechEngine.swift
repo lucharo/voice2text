@@ -21,6 +21,9 @@ public actor SpeechEngine {
   ]
 
   public let speech: Model
+  /// The folder FluidAudio downloads to and loads from, holding one folder per model; nil for FluidAudio's own
+  /// default under this app's Application Support.
+  public let modelsDirectory: URL?
   private var nemotron: UnifiedAsrManager?
   private var nemotronLanguage: NemotronUnifiedLanguage?
   private var parakeet: AsrManager?
@@ -28,8 +31,12 @@ public actor SpeechEngine {
   /// Bumped by unload(): work that awaited across it finds the number changed and drops its result.
   private var generation = 0
 
-  public init(speech: Model) {
+  /// `modelsDirectory`: where the model's files live (see `modelsDirectory(appGroup:)` to share them between the
+  /// apps of one App Group); nil keeps FluidAudio's default. `ModelStore.forDevice` takes the same folder. A
+  /// named folder is kept out of device backups, as the model downloads again on request.
+  public init(speech: Model, modelsDirectory: URL? = nil) {
     self.speech = speech
+    self.modelsDirectory = modelsDirectory
     ModelRegistry.revisionOverrides = Self.pins
   }
 
@@ -39,6 +46,8 @@ public actor SpeechEngine {
   public func prepare(language: String, allowDownload: Bool, progress: @escaping @Sendable (State) -> Void) async throws {
     // FluidAudio-wide, so preparations must never overlap: the v2t app's DictationService runs one at a time
     ModelHub.offlineMode = !allowDownload
+    // deleting the model removes the folder, and with it the folder's exclusion from backups
+    if let modelsDirectory { Self.keepOutOfBackups(modelsDirectory) }
     state = .loading
     let handler: ProgressHandler = { p in progress(Self.state(for: p)) }
     do {
@@ -46,11 +55,14 @@ public actor SpeechEngine {
       case .nemotron:
         let lang = Self.nemotronLanguage(language)
         let m = UnifiedAsrManager(config: UnifiedConfig(family: .nemotronMultilingual(lang)), encoderPrecision: .int8)
-        try await m.loadModels(to: nil, configuration: nil, progressHandler: handler)
+        // Nemotron takes the folder that holds the model's folder, Parakeet the model's folder itself
+        try await m.loadModels(to: modelsDirectory, configuration: nil, progressHandler: handler)
         nemotron = m
         nemotronLanguage = lang
       case .parakeet:
-        let models = try await AsrModels.downloadAndLoad(version: .v3, encoderPrecision: .int8V2, progressHandler: handler)
+        let models = try await AsrModels.downloadAndLoad(
+          to: modelsDirectory.map { Self.modelFolder(for: .parakeet, in: $0) }, version: .v3, encoderPrecision: .int8V2,
+          progressHandler: handler)
         let m = AsrManager(config: .default)
         try await m.loadModels(models)
         parakeet = m
@@ -84,11 +96,57 @@ public actor SpeechEngine {
     }
   }
 
-  /// Where FluidAudio keeps this model's downloaded files (its default under Application Support).
-  public static func modelFolder(for speech: Model) -> URL {
-    switch speech {
-    case .nemotron: MLModelConfigurationUtils.defaultModelsDirectory(for: UnifiedConfig(family: .nemotronMultilingual(.en)).family.repo)
-    case .parakeet: AsrModels.defaultCacheDirectory(for: .v3)
+  /// Where this model's downloaded files live: FluidAudio's folder for it inside `modelsDirectory`, or inside
+  /// FluidAudio's default (`defaultModelsDirectory`) when that is nil.
+  public static func modelFolder(for speech: Model, in modelsDirectory: URL? = nil) -> URL {
+    // FluidAudio's path for the model's repository, two folders deep for Nemotron (`MLModelConfigurationUtils.
+    // defaultModelsDirectory(for:)`, `AsrModels.defaultCacheDirectory(for: .v3)` at the pinned 55f65d9)
+    let repo: Repo = switch speech {
+    case .nemotron: UnifiedConfig(family: .nemotronMultilingual(.en)).family.repo
+    case .parakeet: .parakeetV3
+    }
+    return (modelsDirectory ?? defaultModelsDirectory).appending(path: repo.folderName, directoryHint: .isDirectory)
+  }
+
+  /// FluidAudio's own models folder, under this app's Application Support: where the model lives by default.
+  public static var defaultModelsDirectory: URL { MLModelConfigurationUtils.defaultModelsDirectory() }
+
+  /// `FluidAudio/Models` in the container of `appGroup`, an App Group this app belongs to: every app of the group
+  /// that passes it downloads the model once and loads the same files. Created and kept out of device backups:
+  /// the files download again on request, and Apple's storage guidelines ask for that. Nil when the app is not in
+  /// the group.
+  public static func modelsDirectory(appGroup: String) -> URL? {
+    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup).map(modelsDirectory(inContainer:))
+  }
+
+  static func modelsDirectory(inContainer container: URL) -> URL {
+    let models = container.appending(path: "FluidAudio/Models", directoryHint: .isDirectory)
+    keepOutOfBackups(models)
+    return models
+  }
+
+  /// Creates `folder` and excludes it from device backups. On the folder, so it covers every file downloaded into
+  /// it later; a failure leaves the files in backups.
+  static func keepOutOfBackups(_ folder: URL) {
+    var folder = folder
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try? folder.setResourceValues(values)
+  }
+
+  /// Moves this app's download of `speech` from `oldDirectory` (FluidAudio's default) into `modelsDirectory`, and
+  /// returns the folder to give `init` and `ModelStore.forDevice`: `modelsDirectory`, or `oldDirectory` while the
+  /// move fails and the download there is complete, so a failed move never costs a working model. Call it at every
+  /// launch, before the model loads: once the old folder is gone it does nothing, and after an interruption it
+  /// carries on (`ModelStore.moveDownload`).
+  public static func moveDownload(of speech: Model, into modelsDirectory: URL, from oldDirectory: URL = defaultModelsDirectory) -> URL {
+    let old = modelFolder(for: speech, in: oldDirectory)
+    do {
+      try ModelStore.moveDownload(from: old, to: modelFolder(for: speech, in: modelsDirectory), isComplete: isComplete(speech))
+      return modelsDirectory
+    } catch {
+      return isComplete(speech)(old) ? oldDirectory : modelsDirectory
     }
   }
 
@@ -103,7 +161,7 @@ public actor SpeechEngine {
         // the language prompt is fixed per manager: reload with the new one from the local files, offline
         ModelHub.offlineMode = true
         let m = UnifiedAsrManager(config: UnifiedConfig(family: .nemotronMultilingual(lang)), encoderPrecision: .int8)
-        try await m.loadModels(to: nil, configuration: nil, progressHandler: nil)
+        try await m.loadModels(to: modelsDirectory, configuration: nil, progressHandler: nil)
         guard started == generation else { throw EngineError.notReady }  // unloaded meanwhile
         nemotron = m
         nemotronLanguage = lang
