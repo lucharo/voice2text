@@ -41,12 +41,19 @@ final class Recorder: AudioSource, @unchecked Sendable {
     let session = AVAudioSession.sharedInstance()
     let choice = Settings.shared.microphoneChoice
     try session.setCategory(.playAndRecord, mode: .default, options: Self.options(for: choice))
+    // iOS mutes haptics and system sounds while an app records, and the input runs for the whole warm session:
+    // without this the keyboard's key haptics and clicks go quiet for as long as the mic is ready
+    try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
     try session.setActive(true)
     // a wired headset would otherwise take over the input even with the iPhone's microphone chosen
     let builtIn = session.availableInputs?.first { $0.portType == .builtInMic }
     try? session.setPreferredInput(choice == .iPhone ? builtIn : nil)
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      release()
+      throw NSError(domain: "Recorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone input format is unavailable."])
+    }
     converter = AVAudioConverter(from: format, to: target)
     input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in self?.append(buffer) }
     engine.prepare()
@@ -80,8 +87,10 @@ final class Recorder: AudioSource, @unchecked Sendable {
   private func release() {
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
+    engine.reset()
+    converter = nil
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    lock.lock(); capturing = false; samples = []; lock.unlock()
+    lock.lock(); capturing = false; samples = []; lastLevel = 0; lock.unlock()
   }
 
   func begin() {
