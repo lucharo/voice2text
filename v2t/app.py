@@ -769,12 +769,12 @@ class VoiceToText:
                 stt, self.stt = self.stt, None
                 getattr(stt, "close", lambda: None)()  # a model its library holds (Whisper)
                 del stt
-            if preview:
-                self.preview = None
+            if preview or (speech and not getattr(backends.STT[new.backend], "streaming", False)):
+                self.preview = None  # its settings changed, or the new speech model cannot stream
             if cleanup:
                 self.cleaner = None
             if speech or preview or cleanup:
-                self._free_models()
+                self._free_models()  # before any load: the old and new never share memory
             if speech:
                 self._load_stt()
             if not self.can_stream() or new.preview != "nemotron":
@@ -803,6 +803,8 @@ class VoiceToText:
         gc.collect()
         if "mlx.core" in sys.modules:  # a Core ML-only engine never imports MLX
             backends.release_cache()
+        if "v2t.coreml" in sys.modules:  # inputs a dropped Core ML model handed over (#66)
+            sys.modules["v2t.coreml"].release_orphaned()
 
     def _reload(self) -> None:
         """Replace this process with a fresh one: Restart v2t, or a setting that cannot
