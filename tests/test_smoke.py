@@ -1033,6 +1033,34 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(states, ["loading-stt", "loaded", "idle"])
         self.assertEqual(voice.preview, "stream")
 
+    def test_a_dropped_core_ml_model_keeps_its_inputs_until_core_ml_lets_go(self):
+        from v2t import coreml
+
+        model = coreml.CoreMLParakeet.__new__(coreml.CoreMLParakeet)
+        array = np.zeros(4, np.float32)  # `array` stands in for Core ML's own reference
+        address = id(array)
+        model._held = {address: array}
+        del model  # a settings change drops the model before Core ML lets go
+        coreml.release_orphaned()
+        while_core_ml_holds_it = address in coreml._orphaned
+        del array  # Core ML releases it on its queue
+        coreml.release_orphaned()
+
+        self.assertTrue(while_core_ml_holds_it)
+        self.assertNotIn(address, coreml._orphaned)
+
+    def test_switching_to_whisper_drops_the_nemotron_preview_before_loading(self):
+        voice, _events, _states = self._running_voice(**{"transcription.preview": "nemotron"})
+        voice.preview = object()
+        preview_at_load = []
+        app.backends.make_stt.side_effect = lambda backend, model="": preview_at_load.append(voice.preview) or types.SimpleNamespace(streaming=False, sample_rate=16000)
+
+        with mock.patch.object(voice, "_transcribe_whole"):
+            self._apply(voice, **{"transcription.backend": "whisper"})
+
+        self.assertEqual(preview_at_load, [None])
+        self.assertIsNone(voice.preview)
+
     def test_leaving_whisper_frees_the_weights_mlx_whisper_keeps(self):
         holder = type("ModelHolder", (), {"model": "weights", "model_path": "/models/whisper"})
         module = types.SimpleNamespace(ModelHolder=holder)
