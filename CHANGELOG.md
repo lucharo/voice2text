@@ -2,6 +2,7 @@
 
 ## 0.5.25
 
+- **The pill says when v2t is starting, loading, restarting or stopping.** Until now only the menu said so, and a hotkey pressed during a start or restart was met with nothing. A small pill now shows under the menu bar icon (or at the bottom of the screen when the icon is hidden) reading Starting…, Loading speech model…, Loading cleanup model…, Restarting… or Stopping…, then Ready or Stopped for a moment. A restart to apply a setting, where the engine replaces itself and clears its status first, now reads Restarting… instead of nothing. Pill set to Off hides these too.
 - **Updating from the menu no longer leaves the app stuck on "Stopping…".** After an update the menu app quits and reopens itself, and quitting waits for the engine to exit. It asked to quit from inside a block on the main queue, and the engine's exit is also reported on the main queue, which runs one block at a time, so the quit waited on itself: on 20 Nov the app sat on "Stopping…" with the engine long gone, and only a force quit let the new version open. It now asks to quit from the run loop. A small app built the old way still hung after 4 s, and quit at once built the new way. The same wait could hang the hand-over from a stray copy to /Applications, and the 5-second kill for an engine whose shutdown hangs never fired during a quit; both are fixed.
 
 ## 0.5.24

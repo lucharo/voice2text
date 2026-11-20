@@ -19,7 +19,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var engine: Process?
     private var timer: Timer?
-    private var phase = "off"
+    private var phase = "off" {
+        didSet { noteLifecycle(from: oldValue) }
+    }
+    /// A restart in progress (Restart, an update, a setting applied by the engine), so the
+    /// pill says "Restarting…" for the stop and keeps going through the loads.
+    private var restarting = false
+    /// "Ready" or "Stopped", shown on the pill for a moment after a start or a stop ends.
+    private var lifecycleFlash: (text: String, icon: PillView.StatusIcon, until: Date)?
     private var status: [String: Any] = [:]
     private var externalEngine = false
     private var lockFD: Int32 = -1
@@ -107,6 +114,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         pill.onUndo = { [weak self] in self?.undoDictation() }
         pill.onLog = { [weak self] in self?.appendLog($0) }
+        pill.anchor = { [weak self] in self?.item.button?.window?.frame }
         menu.delegate = self
         listenForLiveEvents()
         render()
@@ -511,9 +519,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func restartEngine() {
         if let pid = status["pid"] as? Int, engineOwnsLock(pid), engineRestartsOnSignal {
             appendLog("restart requested")
+            restarting = true
             kill(pid_t(pid), SIGHUP)
         } else if let engine {
             appendLog("restart requested: stopping, then starting")
+            restarting = true
             terminateEngine(engine)
             phase = "stopping"
             restartWhenStopped = true  // after the reset in a Stop, which this is not
@@ -681,6 +691,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             launchEngine()
             return
         }
+        // Our engine is still running but has cleared its status: it is replacing itself to
+        // apply a setting or a Restart (`os.execv`, same PID). Say so until it reports a load.
+        if !live, engine != nil, ["idle", "cancelled", "delivering"].contains(phase) {
+            restarting = true
+            phase = "starting"
+        }
         if !live && engine == nil && !["permissions", "permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
             phase = "off"
             status = [:]
@@ -690,8 +706,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine == nil, let message = try? String(contentsOf: home.appendingPathComponent("run/last-error"), encoding: .utf8), !message.isEmpty {
             phase = "error"
         }
-        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
-                    liveTranscript: status["live_transcript"] as? Bool ?? false)
         sendPendingReload()
         render()
     }
@@ -760,11 +774,58 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return owner == String(pid)
     }
 
+    /// What the pill says while the engine starts, loads, stops or restarts, so a hotkey
+    /// pressed then is not met with silence; nil when nothing is starting or stopping.
+    private var lifecycleStatus: (text: String, icon: PillView.StatusIcon)? {
+        switch phase {
+        case "permissions", "starting": return (restarting ? "Restarting…" : "Starting…", .spinner)
+        case "loading-stt": return ("Loading speech model…", .spinner)
+        case "loading-cleanup": return ("Loading cleanup model…", .spinner)
+        case "stopping": return (restarting || restartWhenStopped || updating ? "Restarting…" : "Stopping…", .spinner)
+        default: break
+        }
+        if let flash = lifecycleFlash, flash.until > Date() { return (flash.text, flash.icon) }
+        return nil
+    }
+
+    private func updatePill() {
+        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
+                    liveTranscript: status["live_transcript"] as? Bool ?? false, lifecycle: lifecycleStatus)
+    }
+
+    /// Ends a start or a stop with a short "Ready" or "Stopped" on the pill.
+    private func noteLifecycle(from before: String) {
+        guard phase != before else { return }
+        let loading: Set = ["starting", "loading-stt", "loading-cleanup"]
+        var flash: (String, PillView.StatusIcon)?
+        if phase == "idle" && loading.contains(before) {
+            flash = ("Ready", .check)
+            restarting = false
+        } else if phase == "off" && before == "stopping" {
+            // A restart's stop is followed by its start; a quit takes the pill with it.
+            if !restarting && !restartWhenStopped && !terminationPending { flash = ("Stopped", .stopped) }
+        } else if ["error", "permission-error", "no-engine", "off"].contains(phase) {
+            restarting = false
+        }
+        guard let (text, icon) = flash else { return }
+        let until = Date().addingTimeInterval(Self.lifecycleFlashSeconds)
+        lifecycleFlash = (text, icon, until)
+        let timer = Timer(fire: until.addingTimeInterval(0.05), interval: 0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            if let flash = self.lifecycleFlash, flash.until <= Date() { self.lifecycleFlash = nil }
+            self.updatePill()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    static let lifecycleFlashSeconds: TimeInterval = 1.4
+
     // The menu is rebuilt on every state change and every open. Layout, top to
     // bottom: state (bold, with its symbol) and the models under it in small
     // grey type; start/stop; the last transcription with a copy action; the two
     // permission rows with coloured status dots; links; quit.
     private func render() {
+        updatePill()
         let microphone = microphoneGranted
         let accessibility = AXIsProcessTrusted()
         let stt = status["stt"] as? String ?? ""
@@ -1266,6 +1327,8 @@ final class Pill: NSObject {
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     var onLog: ((String) -> Void)?
+    /// The menu bar icon's frame on screen: the engine's start and stop show under it.
+    var anchor: (() -> NSRect?)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     var style: PillStyle {
         get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
@@ -1310,7 +1373,17 @@ final class Pill: NSObject {
 
     /// Keep the recording waveform when placement or transcript visibility changes.
     /// Words show only with the experimental `live_transcript` config key on.
-    func update(phase: String, partial: String, liveTranscript: Bool) {
+    func update(phase: String, partial: String, liveTranscript: Bool,
+                lifecycle: (text: String, icon: PillView.StatusIcon)? = nil) {
+        let dictationPhases: Set = ["recording", "transcribing", "cleaning", "cancelled", "delivering"]
+        if let lifecycle, !dictationPhases.contains(phase) {
+            showStatus(lifecycle)
+            return
+        }
+        if view.phase == "status" {  // the start or stop is over: put it away first
+            hide()
+            view.phase = "idle"
+        }
         if phase == "recording" && view.phase != "recording" {
             followGeneration += 1
             following = false
@@ -1348,6 +1421,29 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
+    /// The engine starting, loading a model, stopping or restarting, then "Ready" or
+    /// "Stopped": a small chip under the menu bar icon (the bottom of the screen when
+    /// the icon is hidden), whatever the pill's placement. Off hides this too.
+    private func showStatus(_ lifecycle: (text: String, icon: PillView.StatusIcon)) {
+        guard style != .off else { hide(); return }
+        let changed = view.phase != "status" || view.statusText != lifecycle.text || view.statusIcon != lifecycle.icon
+        view.phase = "status"
+        view.statusText = lifecycle.text
+        view.statusIcon = lifecycle.icon
+        undoButton.isHidden = true
+        panel.ignoresMouseEvents = true
+        guard changed || !visible else { return }
+        onLog?("pill status: \(lifecycle.text)")
+        target = nil
+        pane = nil
+        view.style = .compactBottom
+        let anchorFrame = anchor?()
+        let location = anchorFrame.map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
+        screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
+        if !visible { show() } else { position() }
+        view.needsDisplay = true
+    }
+
     /// A speech bubble up and to the right of the caret, its tail curling down-left
     /// at 45 degrees to just above it, so neither the caret nor the text beside it
     /// is covered (placed on a design surface, 2026-10-06). Without room above, it
@@ -1355,7 +1451,7 @@ final class Pill: NSObject {
     /// is assumed at its start; a box taller than 40% of the screen with no caret
     /// is a document or terminal pane, and the pill sits at its bottom centre.
     private func show() {
-        guard place() else { return }
+        guard view.phase == "status" ? screen != nil : place() else { return }
         position()
         panel.invalidateShadow()
         panel.alphaValue = 0
@@ -1399,7 +1495,7 @@ final class Pill: NSObject {
     /// timeout) and move the bubble when the caret or the field changed. The
     /// Undo chip stays put: it belongs to the dictation just cancelled.
     private func follow() {
-        guard visible, !following, view.phase != "cancelled", style == .cursorBubble else { return }
+        guard visible, !following, view.phase != "cancelled", view.phase != "status", style == .cursorBubble else { return }
         following = true
         let generation = followGeneration
         followQueue.async { [weak self] in
@@ -1461,6 +1557,9 @@ final class Pill: NSObject {
                 y = target.minY - 8 - tail - size.height
                 view.tailBelow = false
             }
+        } else if view.phase == "status", let icon = anchor?(), NSMouseInRect(NSPoint(x: icon.midX, y: icon.midY), screen.frame, false) {
+            x = icon.midX - size.width / 2
+            y = icon.minY - 6 - size.height
         } else {
             let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
             x = base.midX - size.width / 2
@@ -1865,6 +1964,10 @@ final class Pill: NSObject {
 /// Input levels scroll while recording; transcription travels across the bars;
 /// cleanup pulses in place. Optional live words have no placeholder/status text.
 final class PillView: NSView {
+    /// The engine's start or stop: bars travelling while it works, then a mark.
+    enum StatusIcon: Equatable { case spinner, check, stopped }
+    var statusText = ""
+    var statusIcon = StatusIcon.spinner
     var style = PillStyle.cursorBubble
     var phase = "idle" {
         didSet {
@@ -1890,7 +1993,9 @@ final class PillView: NSView {
     var compactSize: NSSize {
         // Reuse the waveform-only pill width when there are no words to show.
         let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
+        let statusWidth = ceil((statusText as NSString).size(withAttributes: [.font: Self.font]).width)
         let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16
+            : phase == "status" ? 14 + (statusIcon == .spinner ? 28 : 16) + 8 + statusWidth + 16
             : phase == "cleaning" ? 132 : 116
         return NSSize(width: width, height: 34 + (style == .cursorBubble ? Self.tail : 0))
     }
@@ -1971,6 +2076,26 @@ final class PillView: NSView {
         NSColor(white: 1, alpha: 0.14).setStroke()
         capsule.stroke()
         NSGraphicsContext.restoreGraphicsState()
+        if phase == "status" {
+            let mark: CGFloat = statusIcon == .spinner ? 28 : 16
+            if statusIcon == .spinner {
+                drawBars(in: NSRect(x: 14, y: body.minY + 10, width: mark, height: body.height - 20))
+            } else if let image = NSImage(systemSymbolName: statusIcon == .check ? "checkmark" : "stop.fill",
+                                          accessibilityDescription: statusText)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold)) {
+                let tinted = NSImage(size: image.size, flipped: false) { rect in
+                    image.draw(in: rect)
+                    NSColor(white: 1, alpha: 0.9).set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(in: NSRect(x: 14 + (mark - image.size.width) / 2, y: body.midY - image.size.height / 2,
+                                       width: image.size.width, height: image.size.height))
+            }
+            drawText(statusText, in: NSRect(x: 14 + mark + 8, y: body.minY, width: body.width - mark - 36, height: body.height),
+                     color: NSColor(white: 1, alpha: 0.9))
+            return
+        }
         if phase == "cancelled" {
             drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 112, height: bounds.height),
                      color: NSColor(white: 1, alpha: 0.9))
