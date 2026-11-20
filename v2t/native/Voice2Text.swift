@@ -1313,6 +1313,18 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.rendered = ""
             self?.render()
         }
+        appState.importLegacyHistory = { [weak self] done in
+            guard let self, let python = self.pythonExecutable,
+                  !FileManager.default.fileExists(atPath: self.home.appendingPathComponent("history/history.sqlite").path),
+                  FileManager.default.fileExists(atPath: self.home.appendingPathComponent("history/transcriptions.jsonl").path)
+            else { done(); return }
+            let environment = self.engineEnvironment(python: python)
+            DispatchQueue.global(qos: .userInitiated).async {
+                // reading the history creates the database and imports the JSONL, which stays
+                _ = Self.engineJSON(python, ["history", "--last", "1", "--json"], environment)
+                DispatchQueue.main.async { done() }
+            }
+        }
         appState.agentsCommand = { [weak self] arguments, done in
             guard let self, let python = self.pythonExecutable else { done(nil); return }
             let environment = self.engineEnvironment(python: python)

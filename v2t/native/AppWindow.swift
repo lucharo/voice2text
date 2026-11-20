@@ -144,6 +144,8 @@ final class AppState: ObservableObject {
     @Published var onboarding: OnboardingStep?
     @Published var agents: AgentsStatus?
     @Published var agentsBusy = false
+    /// Set when the last agents command failed, until the next one succeeds.
+    @Published var agentsFailed = false
     @Published var look: WindowLook = WindowLook(rawValue: UserDefaults.standard.string(forKey: "windowLook") ?? "") ?? .sidebar {
         didSet { UserDefaults.standard.set(look.rawValue, forKey: "windowLook") }
     }
@@ -156,6 +158,9 @@ final class AppState: ObservableObject {
     var requestMicrophone: () -> Void = {}
     var requestAccessibility: () -> Void = {}
     var finishOnboarding: () -> Void = {}
+    /// Imports a legacy transcriptions.jsonl into history.sqlite (through `v2t history`),
+    /// then calls back; calls back at once when there is nothing to import.
+    var importLegacyHistory: (@escaping () -> Void) -> Void = { $0() }
     /// Runs `v2t agents <arguments> --json` in the background; nil when it failed.
     var agentsCommand: ([String], @escaping ([String: Any]?) -> Void) -> Void = { _, done in done(nil) }
 
@@ -188,8 +193,16 @@ final class AppState: ObservableObject {
     func runAgents(_ arguments: [String]) {
         agentsBusy = true
         agentsCommand(arguments) { [weak self] json in
-            self?.agentsBusy = false
-            if let status = AgentsStatus(json) { self?.agents = status }
+            guard let self else { return }
+            self.agentsBusy = false
+            if let status = AgentsStatus(json) {
+                self.agents = status
+                self.agentsFailed = false
+            } else {
+                self.agentsFailed = true
+                // a change may have half happened: show what is on disk now
+                if !arguments.isEmpty { self.agentsCommand([]) { if let s = AgentsStatus($0) { self.agents = s } } }
+            }
         }
     }
 
@@ -202,14 +215,17 @@ final class AppState: ObservableObject {
         var query = "SELECT id, ts, audio_s, COALESCE(raw, ''), COALESCE(clean, '') FROM transcriptions"
             + " WHERE (COALESCE(raw, '') != '' OR COALESCE(clean, '') != '')"
         let term = search.trimmingCharacters(in: .whitespaces)
-        if !term.isEmpty { query += " AND (raw LIKE ?1 OR clean LIKE ?1)" }
+        if !term.isEmpty { query += " AND (raw LIKE ?1 ESCAPE '\\' OR clean LIKE ?1 ESCAPE '\\')" }
         query += " ORDER BY id DESC LIMIT \(limit)"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
         if !term.isEmpty {
             let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-            sqlite3_bind_text(statement, 1, "%\(term)%", -1, transient)
+            // the search is literal: % and _ in it match themselves, as in `v2t history TERM`
+            let literal = term.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+            sqlite3_bind_text(statement, 1, "%\(literal)%", -1, transient)
         }
         func text(_ column: Int32) -> String {
             sqlite3_column_text(statement, column).map { String(cString: $0) } ?? ""
@@ -453,7 +469,7 @@ struct HistorySection: View {
                     .listStyle(.inset)
             }
         }
-        .onAppear(perform: reload)
+        .onAppear { state.importLegacyHistory { reload() } }
         .onChange(of: search) { _ in reload() }
         .onChange(of: state.phase) { phase in if phase == "idle" { reload() } }
     }
@@ -532,6 +548,12 @@ struct AgentsSection: View {
                 }
             } else {
                 Section { Text(state.agentsBusy ? "Checking…" : "Could not check the agents: is v2t up to date?").foregroundStyle(.secondary) }
+            }
+            if state.agentsFailed && state.agents != nil {
+                Section {
+                    StatusLabel(text: "That didn't work: the file may not be writable. Open Log in the menu for details.",
+                                symbol: "exclamationmark.triangle", tint: .primary)
+                }
             }
         }
         .onAppear { state.refreshAgents() }
@@ -722,8 +744,12 @@ struct StatusFooter: View {
 
     var body: some View {
         switch state.phase {
-        case "idle", "recording", "transcribing", "cleaning", "delivering", "cancelled":
+        case "idle", "cancelled":
             StatusLabel(text: "Ready · hold \(state.hotkeyName) to dictate", symbol: "waveform")
+        case "recording": StatusLabel(text: "Recording…", symbol: "waveform.circle")
+        case "transcribing": StatusLabel(text: "Transcribing…", symbol: "ellipsis.circle")
+        case "cleaning": StatusLabel(text: "Cleaning up…", symbol: "ellipsis.circle")
+        case "delivering": StatusLabel(text: "Pasting…", symbol: "ellipsis.circle")
         case "starting", "permissions", "loading-stt", "loading-cleanup":
             StatusLabel(text: "Starting…", symbol: "hourglass")
         case "error", "permission-error", "no-engine", "awaiting-accessibility":
