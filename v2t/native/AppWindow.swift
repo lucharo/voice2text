@@ -480,7 +480,7 @@ struct HistorySection: View {
         }
         .onAppear { state.importLegacyHistory { reload() } }
         .onChange(of: search) { _ in reload() }
-        .onChange(of: state.phase) { phase in if phase == "idle" { reload() } }
+        .onChange(of: state.phase) { phase in if phase == "idle" { state.importLegacyHistory { reload() } } }
     }
 
     private func reload() { entries = state.history(search: search) }
