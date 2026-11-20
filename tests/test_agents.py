@@ -88,11 +88,46 @@ class AgentsTests(unittest.TestCase):
         agents.add_line("pi")
         agents.add_line("pi")
 
-        self.assertEqual(instructions.read_text(encoding="utf-8"), original + "\n" + agents.LINE + "\n")
+        self.assertEqual(instructions.read_text(encoding="utf-8"), original + "\n" + agents.LINE.replace(agents.MARKER, agents.MARKER_WITH_BLANK) + "\n")
 
         agents.remove_line("pi")
 
         self.assertEqual(instructions.read_text(encoding="utf-8"), original)
+
+    def test_remove_line_keeps_a_blank_line_the_file_already_ended_with(self):
+        home = self._home_case()
+        instructions = home / ".claude" / "CLAUDE.md"
+        instructions.parent.mkdir(parents=True, exist_ok=True)
+        instructions.write_text("alpha\n\n", encoding="utf-8")
+
+        agents.add_line("claude")
+        added = instructions.read_text(encoding="utf-8")
+        agents.remove_line("claude")
+
+        self.assertEqual(added, "alpha\n\n" + agents.LINE + "\n")
+        self.assertEqual(instructions.read_text(encoding="utf-8"), "alpha\n\n")
+
+    def test_bytes_that_are_not_utf8_survive_adding_and_removing_the_line(self):
+        home = self._home_case()
+        instructions = home / ".codex" / "AGENTS.md"
+        instructions.parent.mkdir(parents=True, exist_ok=True)
+        original = b"caf\xe9 latin-1\n"
+        instructions.write_bytes(original)
+
+        agents.add_line("codex")
+        self.assertTrue(instructions.read_bytes().startswith(original))
+        agents.remove_line("codex")
+
+        self.assertEqual(instructions.read_bytes(), original)
+
+    def test_cli_json_before_the_action_still_prints_json(self):
+        self._home_case()
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            cli.main(["agents", "--json", "install", "line", "pi"])
+
+        self.assertTrue(json.loads(stdout.getvalue())["harnesses"])
 
     def test_cli_install_line_json_reports_pi_line_present(self):
         self._home_case()

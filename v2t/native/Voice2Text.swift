@@ -1328,7 +1328,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func beginOnboardingIfNew() {
         let defaults = UserDefaults.standard
         let fresh = !FileManager.default.fileExists(atPath: editableConfigFile.path)
-            && !FileManager.default.fileExists(atPath: home.appendingPathComponent("history/history.sqlite").path)
+            && !["history/history.sqlite", "history/transcriptions.jsonl"].contains {
+                FileManager.default.fileExists(atPath: home.appendingPathComponent($0).path)
+            }
         guard fresh || (defaults.bool(forKey: "onboardingStarted") && !defaults.bool(forKey: "onboardingDone")) else { return }
         if fresh {
             runConfig(["set", "cleanup.enabled", "false"])
@@ -1344,7 +1346,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showWindow(_ section: WindowSection?, activate: Bool) {
-        settingsReadForWindowAt = nil
+        runConfig([])  // a model pulled or downloaded since changes no config.toml date
+        settingsReadForWindowAt = Date()
         appWindow.show(section, activate: activate)
         syncAppState()
     }
@@ -1356,9 +1359,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if state[keyPath: key] != value { state[keyPath: key] = value }
         }
         let shown = appWindow.isVisible || state.onboarding != nil
-        // the window shows whether each model is downloaded: re-read after a load, at most every 3 s
-        if shown, Date().timeIntervalSince(settingsReadForWindowAt ?? .distantPast) > 3,
-           settings.isEmpty || modified(configFile) != configDate {
+        // The window shows whether each model is downloaded or pulled: re-read when config.toml
+        // changed (at most every 3 s) and every 15 s anyway, since a download changes no file of ours.
+        let sinceRead = Date().timeIntervalSince(settingsReadForWindowAt ?? .distantPast)
+        if shown, sinceRead > 15 || (sinceRead > 3 && (settings.isEmpty || modified(configFile) != configDate)) {
             settingsReadForWindowAt = Date()
             runConfig([])
         }

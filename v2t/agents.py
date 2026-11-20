@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import resources
+import os
 from pathlib import Path
 import shutil
+import tempfile
 
 MARKER = "<!-- voice2text -->"
+# The same line when add_line also put a blank line before it, so remove_line takes
+# that blank line too and leaves one the file already had.
+MARKER_WITH_BLANK = "<!-- voice2text +blank -->"
+_MARK = "<!-- voice2text"  # what both start with
 LINE = (
     "I dictate with voice2text (v2t), so my messages can contain misheard words: "
     "when you spot one, offer to add it to my v2t dictionary with the v2t-dictionary "
@@ -84,8 +90,7 @@ def _lookup_harness(harness_id: str) -> Harness:
 def _contains_marker(path: Path) -> bool:
     if not path.exists():
         return False
-    text = path.read_text(encoding="utf-8", errors="surrogateescape")
-    return any(MARKER in line for line in text.splitlines())
+    return any(_MARK in line for line in _read_text(path).splitlines())
 
 
 def _read_bytes(node) -> bytes:
@@ -175,44 +180,59 @@ def remove_skills(harness_id: str) -> None:
         _remove_path(harness.skills_dir / name)
 
 
-def _ends_with_blank_line(text: str) -> bool:
-    if not text or not text.endswith("\n"):
-        return False
-    lines = text.splitlines()
-    return not lines or lines[-1] == ""
+def _read_text(path: Path) -> str:
+    """The file's text, any bytes that are not UTF-8 kept as they are (surrogateescape)."""
+    return path.read_bytes().decode("utf-8", errors="surrogateescape")
+
+
+def _write_text(path: Path, text: str) -> None:
+    """Writes `text` (encoded back with surrogateescape, so other bytes survive) to a
+    temporary file beside the real target, then renames it over: a failure leaves the
+    original whole. A symlinked instructions file is written through to its target."""
+    target = path.resolve()
+    data = text.encode("utf-8", errors="surrogateescape")
+    mode = target.stat().st_mode & 0o7777 if target.exists() else 0o644
+    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.chmod(temporary, mode)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def add_line(harness_id: str) -> None:
     harness = _lookup_harness(harness_id)
     harness.instructions.parent.mkdir(parents=True, exist_ok=True)
-    text = ""
-    if harness.instructions.exists():
-        text = harness.instructions.read_text(encoding="utf-8", errors="surrogateescape")
-    if any(MARKER in line for line in text.splitlines()):
+    text = _read_text(harness.instructions) if harness.instructions.exists() else ""
+    if any(_MARK in line for line in text.splitlines()):
         return
+    line = LINE
     if text:
         if not text.endswith("\n"):
             text += "\n"
-        if not _ends_with_blank_line(text):
+        if not text.endswith("\n\n"):
             text += "\n"
-    text += LINE + "\n"
-    harness.instructions.write_text(text, encoding="utf-8")
+            line = LINE.replace(MARKER, MARKER_WITH_BLANK)
+    _write_text(harness.instructions, text + line + "\n")
 
 
 def remove_line(harness_id: str) -> None:
-    """Drops every line carrying MARKER, with the blank line add_line put before it,
-    and leaves the rest of the file as it was."""
+    """Drops every line carrying the marker, and the blank line before it only when
+    add_line put it there; the rest of the file stays as it was."""
     harness = _lookup_harness(harness_id)
     if not harness.instructions.exists():
         return
-    lines = harness.instructions.read_text(encoding="utf-8", errors="surrogateescape").splitlines(keepends=True)
-    if not any(MARKER in line for line in lines):
+    lines = _read_text(harness.instructions).splitlines(keepends=True)
+    if not any(_MARK in line for line in lines):
         return
     kept: list[str] = []
     for line in lines:
-        if MARKER in line:
-            if kept and not kept[-1].strip():
+        if _MARK in line:
+            if MARKER_WITH_BLANK in line and kept and not kept[-1].strip():
                 kept.pop()
             continue
         kept.append(line)
-    harness.instructions.write_text("".join(kept), encoding="utf-8")
+    _write_text(harness.instructions, "".join(kept))

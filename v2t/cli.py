@@ -819,7 +819,8 @@ def cmd_agents(argv: list[str]) -> int:
         sub = subparsers.add_parser(action)
         sub.add_argument("target", choices=["skills", "line"])
         sub.add_argument("harness")
-        sub.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+        # SUPPRESS: unset here leaves the top-level --json (`v2t agents --json install …`) as given
+        sub.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     if args.action is None:

@@ -161,6 +161,14 @@ final class AppState: ObservableObject {
 
     var recommendedSpeech: ModelRow? { speech.first(where: \.recommended) ?? speech.first }
     var recommendedCleanup: ModelRow? { cleanup.first(where: \.recommended) ?? cleanup.first { $0.id != "off" } }
+    /// The cleanup model that runs when the switch is on: the one config.toml names, which
+    /// turning cleanup off keeps (the picker marks only Off as current then).
+    var chosenCleanup: ModelRow? { cleanup.first { $0.current && $0.id != "off" } ?? recommendedCleanup }
+
+    /// Cleanup on or off, changing only `cleanup.enabled`, so a chosen engine and model stay.
+    var cleanupSwitch: Binding<Bool> {
+        Binding(get: { self.cleanupEnabled }, set: { self.choose(["cleanup.enabled", $0 ? "true" : "false"]) })
+    }
     var hotkeyName: String {
         switch hotkey {
         case "cmd_r": "Right ⌘"
@@ -391,10 +399,7 @@ struct CleanupSection: View {
 
     var body: some View {
         Section {
-            Toggle(isOn: Binding(get: { state.cleanupEnabled }, set: { on in
-                if on, let row = state.recommendedCleanup { state.choose(row.pairs) }
-                else if !on { state.choose(["cleanup.enabled", "false"]) }
-            })) {
+            Toggle(isOn: state.cleanupSwitch) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Clean up text")
                     Text(state.cleanupEnabled
@@ -675,8 +680,14 @@ struct TabsLook: View {
 struct PageLook: View {
     @ObservedObject var state: AppState
 
+    /// Models is the page itself; History or Agents, asked for by the menu or a link, is pushed on it.
+    private var path: Binding<[WindowSection]> {
+        Binding(get: { state.section == .models ? [] : [state.section] },
+                set: { state.section = $0.last ?? .models })
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: path) {
             Form {
                 Section {
                     HStack(spacing: 12) {
@@ -689,15 +700,18 @@ struct PageLook: View {
                 }
                 ModelsSection(state: state)
                 Section {
-                    NavigationLink { HistorySection(state: state).navigationTitle("History") } label: {
+                    NavigationLink(value: WindowSection.history) {
                         Label("History", systemImage: WindowSection.history.symbol)
                     }
-                    NavigationLink { Form { AgentsSection(state: state) }.formStyle(.grouped).navigationTitle("Agents") } label: {
+                    NavigationLink(value: WindowSection.agents) {
                         Label("Agents", systemImage: WindowSection.agents.symbol)
                     }
                 }
             }
             .formStyle(.grouped)
+            .navigationDestination(for: WindowSection.self) { section in
+                SectionContent(state: state, section: section).navigationTitle(section.title)
+            }
         }
     }
 }
@@ -794,15 +808,12 @@ struct StepBody: View {
                     Text("Reading models…").foregroundStyle(.secondary)
                 }
             case .cleanup:
-                Toggle(isOn: Binding(get: { state.cleanupEnabled }, set: { on in
-                    if on, let row = state.recommendedCleanup { state.choose(row.pairs) }
-                    else if !on { state.choose(["cleanup.enabled", "false"]) }
-                })) {
+                Toggle(isOn: state.cleanupSwitch) {
                     Text("Clean up my text")
                 }
                 .toggleStyle(.switch)
                 Text(state.cleanupEnabled
-                     ? "On: \(state.recommendedCleanup?.name ?? "a small local model") (\(state.recommendedCleanup?.size ?? "")) adds punctuation and drops ums. It takes a moment more per dictation."
+                     ? "On: \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? "")) adds punctuation and drops ums. It takes a moment more per dictation."
                      : "Off: you get your words as heard, plus your dictionary's replacements. You can turn it on later under Models.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
