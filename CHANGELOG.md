@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.25
+
+- **Updating from the menu no longer leaves the app stuck on "Stopping…".** After an update the menu app quits and reopens itself, and quitting waits for the engine to exit. It asked to quit from inside a block on the main queue, and the engine's exit is also reported on the main queue, which runs one block at a time, so the quit waited on itself: on 20 Nov the app sat on "Stopping…" with the engine long gone, and only a force quit let the new version open. It now asks to quit from the run loop. A small app built the old way still hung after 4 s, and quit at once built the new way. The same wait could hang the hand-over from a stray copy to /Applications, and the 5-second kill for an engine whose shutdown hangs never fired during a quit; both are fixed.
+
 ## 0.5.24
 
 - **Long dictations paste almost at once after Stop.** Speech was already transcribed while you talked, but cleanup waited for Stop and then cleaned every 120-word chunk one after another: a 25-minute dictation on 11 Nov waited 29.5 s. v2t now cleans each settled stretch of 80 words or more that ends at a sentence end while you are still talking, as the iPhone app does since #165, so after Stop only the rest is cleaned. Replaying 47 dictations of 30 s or more from the maintainer's history, the wait after Stop went from 1.28 s to 0.62 s at the median and from 31.8 s to 0.5 s for that dictation, and a 4-minute dictation spoken through the app's own recording path pasted 0.81 s after Stop instead of 9.42 s; the cleanup itself takes as long as before, only earlier. Each stretch is cleaned without the sentences after it, so the text can differ slightly from cleaning it all at once: it was identical on 18 of 47, and on the other 29 an LLM judge (gpt-6.1-sol) scored the two level, 3.17 against 3.15 out of 5, and would rather paste the streamed text 19 times and the batch text 10. History records `cleaned_while_recording` and `early_cleanup_s`.

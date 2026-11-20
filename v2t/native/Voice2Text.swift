@@ -172,7 +172,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let pid = process.processIdentifier
         let status = home.appendingPathComponent("run/status.json").path
         var clearedAt: Date?
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+        // In the common modes: while quitting, AppKit waits for the engine in its modal
+        // panel mode, where a default-mode timer never fires and a hung teardown would hold
+        // the quit forever.
+        let timer = Timer(timeInterval: 1, repeats: true) { timer in
             guard process.isRunning else { timer.invalidate(); return }
             guard !FileManager.default.fileExists(atPath: status) else { clearedAt = nil; return }
             let since = clearedAt ?? Date()
@@ -182,6 +185,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 timer.invalidate()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Quits from the run loop rather than from inside a main-queue block. Quitting
+    /// waits for the engine to exit, and the engine's exit is reported on the main
+    /// queue, which cannot run another block while one is still running: called from
+    /// a `DispatchQueue.main.async` block, `NSApp.terminate` waited on itself and the
+    /// menu said "Stopping…" until a force quit (after an in-app update, 20 Nov 2026).
+    private func quitSoon() {
+        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
     }
 
     private func acquireAppLock() -> Bool {
@@ -311,11 +324,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.render()
                     return
                 }
-                guard ownIsUserCopy else { NSApp.terminate(nil); return }
+                guard ownIsUserCopy else { self.quitSoon(); return }
                 self.repointLoginAgent(from: own, to: Self.systemCopy)
                 // Quit only once the move is done; quitting first abandons it.
                 NSWorkspace.shared.recycle([own]) { _, _ in
-                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                    DispatchQueue.main.async { self.quitSoon() }
                 }
             }
         }
@@ -644,7 +657,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLog("quitting to relaunch: \(command.joined(separator: " "))")
-        NSApp.terminate(nil)
+        quitSoon()
     }
 
     private func refresh() {
