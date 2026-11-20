@@ -65,7 +65,9 @@ def wait_idle(home: Path, expect: dict, proc: subprocess.Popen, since: float) ->
 
 
 def write(home: Path, pairs: list[tuple[str, str]]) -> None:
+    # V2T_CONFIG wins over V2T_HOME, so both point at the temporary home
     os.environ["V2T_HOME"] = str(home)
+    os.environ["V2T_CONFIG"] = str(home / "config.toml")
     config.set_values(pairs)
 
 
@@ -81,6 +83,7 @@ def run_checkout(name: str, source: Path, scratch: Path, rnd: int, log) -> list[
     env = dict(
         os.environ,
         V2T_HOME=str(home),
+        V2T_CONFIG=str(home / "config.toml"),
         HOME=str(scratch / "home"),
         HF_HOME=str(scratch / "hf"),
         HF_HUB_OFFLINE="1",
@@ -151,6 +154,7 @@ def main() -> int:
     p.add_argument("--checkout", action="append", required=True, help="name=path to a v2t checkout")
     p.add_argument("--max-load", type=float, default=25.0, help="wait while the 1-minute load is above this")
     a = p.parse_args()
+    a.scratch = a.scratch.resolve()  # the engines run with their temporary home as cwd
     checkouts = [(n, Path(s).resolve()) for n, s in (c.split("=", 1) for c in a.checkout)]
     rows = []
     with open(a.scratch / "results.jsonl", "a") as log:

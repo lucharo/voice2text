@@ -1015,6 +1015,45 @@ class V2TSmokeTests(unittest.TestCase):
 
         app.os.execv.assert_called_once_with(sys.executable, sys.orig_argv)
 
+    def test_an_engine_launched_with_overriding_flags_restarts_on_sighup_to_keep_them(self):
+        voice, events, _states = self._running_voice()
+        voice.reloadable = False
+
+        self._apply(voice, **{"cleanup.mode": "strict"})
+
+        self.assertEqual(events, [])
+        app.os.execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_turning_on_the_nemotron_preview_shows_loading_until_it_is_ready(self):
+        voice, _events, states = self._running_voice()
+
+        with mock.patch.object(voice, "_load_preview", side_effect=lambda: states.append("loaded") or "stream"):
+            self._apply(voice, **{"transcription.preview": "nemotron"})
+
+        self.assertEqual(states, ["loading-stt", "loaded", "idle"])
+        self.assertEqual(voice.preview, "stream")
+
+    def test_leaving_whisper_frees_the_weights_mlx_whisper_keeps(self):
+        holder = type("ModelHolder", (), {"model": "weights", "model_path": "/models/whisper"})
+        module = types.SimpleNamespace(ModelHolder=holder)
+        stt = app.backends.WhisperSTT.__new__(app.backends.WhisperSTT)
+        stt.model_path = "/models/whisper"
+
+        with mock.patch.dict(sys.modules, {"mlx_whisper.transcribe": module}):
+            stt.close()
+
+        self.assertEqual((holder.model, holder.model_path), (None, None))
+
+    def test_a_hotkey_event_queued_before_a_hotkey_change_still_settles_its_count(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.hotkey = "fn"
+        voice._queue_key("up", "fn", app.time.perf_counter())  # queued as the hotkey
+        voice.hotkey = "cmd_r"  # a settings change lands before the hotkey thread runs
+
+        voice._handle_key_event(*voice.key_events.get_nowait())
+
+        self.assertEqual(voice.hotkey_pending, 0)
+
     def test_a_stop_during_a_settings_change_exits_at_once(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
         voice.startup_complete = True
@@ -5340,7 +5379,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(opened, [], "the tap only queues the key")
         self.assertEqual(
             [voice.key_events.get_nowait() for _ in range(2)],
-            [("down", "HOTKEY", 100.0), ("up", "HOTKEY", 100.2)],
+            [("down", "HOTKEY", 100.0, True), ("up", "HOTKEY", 100.2, True)],
         )
 
         app.time.perf_counter.return_value = 102.0  # the microphone took 1.8 s to open

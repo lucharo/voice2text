@@ -722,6 +722,9 @@ class VoiceToText:
         that fails to load restarts the engine with os.execv, as every change did
         before. Runs on the model-owning thread, claimed by _begin_reload."""
         self.reload_requested.clear()  # a change saved from here on is applied after this one
+        if not self.reloadable:  # launch flags override config.toml: only a restart keeps them
+            self._reload()
+            return
         t0 = time.perf_counter()
         try:
             new = config.load()
@@ -763,7 +766,9 @@ class VoiceToText:
                     logger.warning(warning)
             # every model that goes is freed before any new one loads (16 GB Macs)
             if speech:
-                self.stt = None
+                stt, self.stt = self.stt, None
+                getattr(stt, "close", lambda: None)()  # a model its library holds (Whisper)
+                del stt
             if preview:
                 self.preview = None
             if cleanup:
@@ -775,6 +780,7 @@ class VoiceToText:
             if not self.can_stream() or new.preview != "nemotron":
                 self.preview = None  # a preview kept from before a speech model that cannot stream
             elif self.preview is None and (preview or speech):
+                self._set_state("loading-stt")  # its download, compile and warmup take a while
                 self.preview = self._load_preview()
             if cleanup and new.cleanup_enabled:
                 self._load_cleanup()
@@ -1677,7 +1683,10 @@ class VoiceToText:
                 self.pred_last_tap = at
 
     def _queue_key(self, kind: str, key, at: float) -> None:
-        if key == self.hotkey:
+        # whether this event counts in hotkey_pending, kept with it: a settings change may
+        # swap the hotkey before the hotkey thread handles it (_apply_settings)
+        counted = key == self.hotkey
+        if counted:
             with self.pending_lock:
                 if not self.hotkey_pending and not self.esc_waiting:  # nothing queued: start from the real state
                     self.pred_latched, self.pred_last_tap = self.latched, self.last_tap_at
@@ -1691,9 +1700,9 @@ class VoiceToText:
                 if kind == "down":
                     self.last_press_queued_at = at
                     self.queued_presses += 1
-        self.key_events.put((kind, key, at))
+        self.key_events.put((kind, key, at, counted))
 
-    def _handle_key_event(self, kind: str, key, at) -> None:
+    def _handle_key_event(self, kind: str, key, at, counted: bool | None = None) -> None:
         try:
             if kind == "esc":
                 try:
@@ -1726,7 +1735,7 @@ class VoiceToText:
                     self.chords_for[press] -= 1
                     if not self.chords_for[press]:
                         del self.chords_for[press]
-            if kind in ("down", "up") and key == self.hotkey:
+            if kind in ("down", "up") and (key == self.hotkey if counted is None else counted):
                 with self.pending_lock:
                     self.hotkey_pending -= 1
                     self.presses_pending -= kind == "down"
