@@ -34,4 +34,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: zsh tests/release-tag-check.zsh
-      - run: xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices
+      - run: xcrun swiftc -typecheck -parse-as-library -target "$(uname -m)-apple-macos13.0" v2t/native/*.swift -framework AppKit -framework AVFoundation -framework ApplicationServices -framework SwiftUI

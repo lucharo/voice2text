@@ -35,6 +35,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var terminationPending = false
     private var lastTranscription: String?
     private let pill = Pill()
+    /// What the Voice2Text window (AppWindow.swift) shows, kept current by `syncAppState`.
+    private let appState = AppState()
+    private lazy var appWindow = AppWindow(state: appState)
+    private var settingsReadForWindowAt: Date?
     private var liveSource: DispatchSourceRead?
     private var liveSocketID: (device: dev_t, inode: ino_t)?
     private var menuIsOpen = false
@@ -127,10 +131,22 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // them, Start stays a deliberate click that leads to the prompts.
         refresh()
         checkForUpdate()
+        connectAppState()
+        beginOnboardingIfNew()
+        if let index = CommandLine.arguments.firstIndex(of: "--window") {
+            let name = CommandLine.arguments.dropFirst(index + 1).first
+            showWindow(name.flatMap(WindowSection.init(rawValue:)), activate: false)
+        }
         let granted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && AXIsProcessTrusted()
         if CommandLine.arguments.contains("--start") || granted {
             start()
         }
+    }
+
+    /// Opening the app again (Finder, Spotlight, `open -a Voice2Text`) while it runs opens its window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow(nil, activate: true)
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -826,6 +842,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // permission rows with coloured status dots; links; quit.
     private func render() {
         updatePill()
+        syncAppState()
         let microphone = microphoneGranted
         let accessibility = AXIsProcessTrusted()
         let stt = status["stt"] as? String ?? ""
@@ -929,10 +946,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        add(microphone ? "Microphone · Granted" : "Microphone · Click to grant",
-            action: #selector(openMicrophone), image: statusDot(microphone))
-        add(accessibility ? "Accessibility · Granted" : "Accessibility · Click to grant",
-            action: #selector(openAccessibility), image: statusDot(accessibility))
+        // Only what still needs doing: granted permissions no longer take two rows.
+        if !microphone {
+            add("Microphone · Click to grant", action: #selector(openMicrophone), image: statusDot(false))
+        }
+        if !accessibility {
+            add("Accessibility · Click to grant", action: #selector(openAccessibility), image: statusDot(false))
+        }
         if globeKeyOpensSomething {
             let row = add("Globe Key · Click to set Do Nothing", action: #selector(openKeyboardSettings), image: statusDot(false))
             row.toolTip = "Until \"Press 🌐 key to\" is Do Nothing, pressing Fn can also open the emoji picker or switch input source, and dictated text can land there."
@@ -940,7 +960,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ["permission-error", "awaiting-accessibility"].contains(phase) {
             add("Reset Permissions", action: #selector(resetPermissions), image: symbol("arrow.counterclockwise"))
         }
-        menu.addItem(.separator())
+        if !microphone || !accessibility || globeKeyOpensSomething { menu.addItem(.separator()) }
 
         let pillStyles = NSMenu()
         for style in PillStyle.allCases {
@@ -950,6 +970,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.state = style == pill.style ? .on : .off
             pillStyles.addItem(row)
         }
+        if appState.onboarding != nil {
+            add("Finish Setting Up…", action: #selector(openWindow), image: symbol("checklist"))
+        }
+        add("Open Voice2Text…", action: #selector(openWindow), image: symbol("macwindow"), key: ",")
         add("Pill", image: symbol("capsule")).submenu = pillStyles
         if let rows = models["transcription"] as? [[String: Any]], !rows.isEmpty {
             transcriptionPicker = NSMenu()
@@ -1265,7 +1289,106 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         open.arguments = ["-t", file.path]
         try? open.run()
     }
-    @objc private func openHistory() { NSWorkspace.shared.open(home.appendingPathComponent("history")) }
+    @objc private func openHistory() { showWindow(.history, activate: true) }
+    @objc private func openWindow() { showWindow(nil, activate: true) }
+
+    // MARK: The window
+
+    /// Wires the window's buttons to the menu's own code paths.
+    private func connectAppState() {
+        appState.historyFile = home.appendingPathComponent("history/history.sqlite")
+        appState.choose = { [weak self] pairs in
+            // the same path as a menu row: chooseSetting reads the pairs from the item
+            let row = NSMenuItem()
+            row.representedObject = pairs
+            self?.chooseSetting(row)
+        }
+        appState.start = { [weak self] in self?.start() }
+        appState.requestMicrophone = { [weak self] in self?.openMicrophone() }
+        appState.requestAccessibility = { [weak self] in self?.openAccessibility() }
+        appState.finishOnboarding = { [weak self] in
+            UserDefaults.standard.set(true, forKey: "onboardingDone")
+            self?.appState.onboarding = nil
+            self?.appState.section = .models
+            self?.rendered = ""
+            self?.render()
+        }
+        appState.agentsCommand = { [weak self] arguments, done in
+            guard let self, let python = self.pythonExecutable else { done(nil); return }
+            let environment = self.engineEnvironment(python: python)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Self.engineJSON(python, ["agents"] + arguments + ["--json"], environment)
+                DispatchQueue.main.async { done(result) }
+            }
+        }
+    }
+
+    /// A first launch (no config.toml and no history yet), or one that quit mid-setup,
+    /// opens the onboarding. New installs start with cleanup off; the onboarding offers it.
+    private func beginOnboardingIfNew() {
+        let defaults = UserDefaults.standard
+        let fresh = !FileManager.default.fileExists(atPath: editableConfigFile.path)
+            && !FileManager.default.fileExists(atPath: home.appendingPathComponent("history/history.sqlite").path)
+        guard fresh || (defaults.bool(forKey: "onboardingStarted") && !defaults.bool(forKey: "onboardingDone")) else { return }
+        if fresh {
+            runConfig(["set", "cleanup.enabled", "false"])
+            defaults.set(false, forKey: "onboardingDone")
+        }
+        defaults.set(true, forKey: "onboardingStarted")
+        appState.onboarding = .welcome
+        // After launch has finished, when an app opened from Finder is active: it comes
+        // to the front then, and one started in the background opens behind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.showWindow(nil, activate: false)
+        }
+    }
+
+    private func showWindow(_ section: WindowSection?, activate: Bool) {
+        settingsReadForWindowAt = nil
+        appWindow.show(section, activate: activate)
+        syncAppState()
+    }
+
+    /// Copies what the menu knows into the window's state, changing only what changed.
+    private func syncAppState() {
+        let state = appState
+        func assign<T: Equatable>(_ key: ReferenceWritableKeyPath<AppState, T>, _ value: T) {
+            if state[keyPath: key] != value { state[keyPath: key] = value }
+        }
+        let shown = appWindow.isVisible || state.onboarding != nil
+        // the window shows whether each model is downloaded: re-read after a load, at most every 3 s
+        if shown, Date().timeIntervalSince(settingsReadForWindowAt ?? .distantPast) > 3,
+           settings.isEmpty || modified(configFile) != configDate {
+            settingsReadForWindowAt = Date()
+            runConfig([])
+        }
+        assign(\.phase, phase)
+        assign(\.engineInstalled, pythonExecutable != nil)
+        assign(\.microphone, microphoneGranted)
+        assign(\.accessibility, AXIsProcessTrusted())
+        assign(\.cleanupEnabled, settings["cleanup.enabled"] as? Bool ?? false)
+        assign(\.hotkey, settings["hotkey.key"] as? String ?? "fn")
+        assign(\.speech, (models["transcription"] as? [[String: Any]] ?? []).map(ModelRow.init))
+        assign(\.cleanup, (models["cleanup"] as? [[String: Any]] ?? []).map(ModelRow.init))
+        var bytes: Int64?
+        if shown, ["starting", "permissions", "loading-stt"].contains(phase),
+           let folder = state.speech.first(where: \.current)?.downloadDir {
+            bytes = Self.folderSize(URL(fileURLWithPath: folder))
+        }
+        assign(\.downloadedBytes, bytes)
+    }
+
+    /// The bytes under `folder`, partial downloads included: how far a first download has got.
+    private static func folderSize(_ folder: URL) -> Int64? {
+        guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey, .isSymbolicLinkKey])
+        else { return nil }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink != true { total += Int64(values?.fileSize ?? 0) }
+        }
+        return total
+    }
     @objc private func openDictionary() {
         let url = home.appendingPathComponent("dictionary.txt")
         if !FileManager.default.fileExists(atPath: url.path) {
