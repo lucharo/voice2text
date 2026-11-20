@@ -832,14 +832,196 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(app, "_resolve_hotkey", return_value=object()),
             mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
             mock.patch.object(voice, "warmup", side_effect=warmup),
-            mock.patch.object(voice, "_reload", side_effect=reload),
+            mock.patch.object(voice, "_apply_settings", side_effect=reload),
+            mock.patch.object(voice, "_reload") as restart,
             mock.patch.object(app.config, "write_status") as write_status,
             contextlib.suppress(RuntimeError),
         ):
             voice.run()
 
         self.assertEqual(reloads, [True])
+        restart.assert_not_called()
         self.assertTrue(write_status.call_args_list[0].args[0]["reload"])
+        self.assertEqual(write_status.call_args_list[0].args[0]["restart_signal"], "USR2")
+
+    def test_restart_v2t_sigusr2_replaces_the_process_even_with_no_setting_changed(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        deadline = app.time.perf_counter() + 5
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return app.time.perf_counter() < deadline
+
+        handlers = {}
+
+        def restart():
+            voice.stopping = True  # what exec would end: leave the loop
+
+        with (
+            mock.patch.object(app, "_listener", return_value=Listener()),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(voice, "warmup", side_effect=lambda: handlers[signal.SIGUSR2](signal.SIGUSR2, None)),
+            mock.patch.object(voice, "_apply_settings") as apply,
+            mock.patch.object(voice, "_reload", side_effect=restart) as reload,
+            mock.patch.object(app.config, "write_status"),
+            contextlib.suppress(RuntimeError),
+        ):
+            voice.run()
+
+        reload.assert_called_once_with()
+        apply.assert_not_called()
+
+    def _running_voice(self, **settings):
+        """An engine whose models loaded from config.toml written with `settings`,
+        the way warmup leaves it; the loaders are fakes that record each call."""
+        pairs = [(key, str(value).lower() if isinstance(value, bool) else str(value)) for key, value in settings.items()]
+        if pairs:
+            config.set_values(pairs)
+        voice = app.VoiceToText(config.load())
+        voice.startup_complete = True
+        events = []
+
+        class Model:
+            def __init__(self, kind, *args):
+                self.kind, self.args = kind, args
+                self.streaming, self.sample_rate = True, 16000
+                self.vocabulary = ()
+                events.append(("load", kind, args))
+
+            def decode(self, _audio):
+                return ""
+
+            def cleanup(self, text, _mode):
+                return text, None, 0.0
+
+        voice.stt = Model("stt", voice.cfg.backend, voice.cfg.stt_model)
+        voice.cleaner = Model("cleanup", voice.cfg.cleanup_model) if voice.cfg.cleanup_enabled else None
+        events.clear()
+        states = []
+        patches = [
+            mock.patch.object(app.backends, "make_stt", side_effect=lambda backend, model="": Model("stt", backend, model)),
+            mock.patch.object(app.backends, "make_cleanup", side_effect=lambda engine, model="", url="": Model("cleanup", model)),
+            mock.patch.object(voice, "_free_models", side_effect=lambda: events.append(("free",))),
+            mock.patch.object(voice, "_set_state", side_effect=lambda state, *a, **k: states.append(state)),
+            mock.patch.object(app, "_resolve_hotkey", side_effect=lambda name: f"key:{name}"),
+            mock.patch.object(app.os, "execv"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return voice, events, states
+
+    def _apply(self, voice, **settings):
+        config.set_values([(key, str(value).lower() if isinstance(value, bool) else str(value)) for key, value in settings.items()])
+        voice.request_reload()
+        self.assertTrue(voice._begin_reload())
+        voice._apply_settings()
+
+    def test_a_new_cleanup_model_replaces_only_the_cleaner_freeing_the_old_one_first(self):
+        voice, events, states = self._running_voice(**{"cleanup.model": "mlx-community/Qwen3.5-2B-4bit"})
+        stt = voice.stt
+        voice.vocabulary = ["Claude"]
+
+        self._apply(voice, **{"cleanup.model": "mlx-community/Qwen3.5-0.8B-4bit"})
+
+        self.assertEqual(events, [("free",), ("load", "cleanup", ("mlx-community/Qwen3.5-0.8B-4bit",))])
+        self.assertIs(voice.stt, stt)
+        self.assertEqual(voice.cleaner.vocabulary, ("Claude",))
+        self.assertEqual(states, ["loading-cleanup", "idle"])
+        self.assertEqual(voice.status_details["cleanup"], "Qwen3.5-0.8B")
+        self.assertFalse(voice.reloading)
+        self.assertFalse(voice.reload_requested.is_set())
+        app.os.execv.assert_not_called()
+
+    def test_a_new_speech_model_replaces_only_speech(self):
+        voice, events, states = self._running_voice()
+        cleaner = voice.cleaner
+
+        self._apply(voice, **{"transcription.backend": "parakeet"})
+
+        self.assertEqual(events, [("free",), ("load", "stt", ("parakeet", ""))])
+        self.assertIs(voice.cleaner, cleaner)
+        self.assertEqual(states, ["loading-stt", "idle"])
+        self.assertEqual(voice.status_details["stt"], "parakeet-v3")
+        app.os.execv.assert_not_called()
+
+    def test_cleanup_turned_off_drops_the_cleaner_and_loads_nothing(self):
+        voice, events, states = self._running_voice()
+
+        self._apply(voice, **{"cleanup.enabled": False})
+
+        self.assertIsNone(voice.cleaner)
+        self.assertEqual(events, [("free",)])
+        self.assertEqual(states, ["idle"])
+        self.assertEqual(voice.status_details["cleanup"], "off")
+
+    def test_a_new_hotkey_or_mode_applies_without_touching_a_model(self):
+        voice, events, states = self._running_voice()
+
+        self._apply(voice, **{"hotkey.key": "cmd_r", "cleanup.mode": "strict", "transcription.live_transcript": True})
+
+        self.assertEqual(events, [])
+        self.assertEqual(voice.hotkey, "key:cmd_r")
+        self.assertEqual((voice.cfg.mode, voice.cfg.live_transcript), ("strict", True))
+        self.assertEqual(voice.status_details["mode"], "strict")
+        self.assertEqual(states, ["idle"])
+        app.os.execv.assert_not_called()
+
+    def test_a_nemotron_preview_survives_a_speech_change_and_goes_when_turned_off(self):
+        voice, events, _states = self._running_voice(**{"transcription.preview": "nemotron"})
+        preview = voice.preview = object()
+
+        with mock.patch.object(voice, "_load_preview") as load_preview:
+            self._apply(voice, **{"transcription.backend": "parakeet"})
+            kept = voice.preview
+            self._apply(voice, **{"transcription.preview": "backend"})
+
+        load_preview.assert_not_called()
+        self.assertIs(kept, preview)
+        self.assertIsNone(voice.preview)
+
+    def test_what_cannot_change_in_place_restarts_the_engine(self):
+        for name, write in (
+            ("a new capture rate", lambda: config.set_values([("audio.sample_rate", "48000")])),
+            ("a config that no longer validates", lambda: config.config_path().write_text('[cleanup]\nmode = "loud"\n')),
+            ("unreadable TOML", lambda: config.config_path().write_text("[cleanup\n")),
+        ):
+            with self.subTest(name):
+                config.config_path().unlink(missing_ok=True)
+                voice, events, _states = self._running_voice()
+                write()
+                voice.request_reload()
+                self.assertTrue(voice._begin_reload())
+                voice._apply_settings()
+                self.assertEqual(events, [])
+                app.os.execv.assert_called_once_with(sys.executable, sys.orig_argv)
+                app.os.execv.reset_mock()
+
+    def test_a_model_that_fails_to_load_restarts_the_engine(self):
+        voice, _events, _states = self._running_voice()
+        app.backends.make_cleanup.side_effect = OSError("no such model")
+
+        self._apply(voice, **{"cleanup.model": "mlx-community/missing"})
+
+        app.os.execv.assert_called_once_with(sys.executable, sys.orig_argv)
+
+    def test_a_stop_during_a_settings_change_exits_at_once(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.startup_complete = True
+        voice.reloading = True  # claimed: a model is loading
+
+        with self.assertRaises(SystemExit):
+            voice._handle_signal(signal.SIGTERM)
 
     def test_a_stop_during_a_reload_shuts_down_instead_of_restarting(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -2716,6 +2898,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "streaming": False,
                     "live_transcript": False,
                     "reload": True,
+                    "restart_signal": "USR2",
                     "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
@@ -2742,6 +2925,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "streaming": False,
                 "live_transcript": False,
                 "reload": True,
+                "restart_signal": "USR2",
                 "config": str(config.config_path()),
                 "error": "",
                 "warning": "",
@@ -2774,6 +2958,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "streaming": available,
                     "live_transcript": available and live,
                     "reload": True,
+                    "restart_signal": "USR2",
                     "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
