@@ -63,7 +63,7 @@ url = "http://localhost:11434"
 | `behavior.keep_last_audio` | Boolean | Keep the latest recording |
 | `ollama.url` | URL | Ollama endpoint |
 
-The menu's **Settings**, **Transcription Model** and **Cleanup Model** choices update their corresponding settings. For other changes, use `v2t config set SECTION.KEY VALUE` and restart the engine.
+The menu's **Settings**, **Transcription Model** and **Cleanup Model** choices update their corresponding settings, and the running engine applies them in place once the dictation in hand is done: a new model replaces only that model, and every other setting takes effect without reloading anything. A new `audio.sample_rate` restarts the engine. For other changes, use `v2t config set SECTION.KEY VALUE` and restart the engine, or send it SIGHUP (`kill -HUP <pid>`, with the `pid` from `~/.v2t/run/status.json`) to apply them the same way.
 
 ??? note "Preview language codes"
 

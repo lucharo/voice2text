@@ -268,6 +268,24 @@ def _import_coremltools():
     return coremltools
 
 
+# Inputs of models already dropped (a settings change that swaps the model) that Core ML
+# may still be about to release: a model hands its `_held` here when it is freed, and
+# each array stays until its count is this dict's alone (CoreMLParakeet._predict, #66).
+_orphaned: dict[int, np.ndarray] = {}
+
+
+def orphan_held(model) -> None:
+    """Keep a model's held inputs alive past the model itself: its `__del__`."""
+    _orphaned.update(getattr(model, "_held", None) or {})
+
+
+def release_orphaned() -> None:
+    """Free the orphaned inputs Core ML has finished with (see `_release_held`)."""
+    for address in list(_orphaned):
+        if ctypes.c_ssize_t.from_address(address).value == 1:
+            del _orphaned[address]
+
+
 class CoreMLParakeet:
     """Parakeet v3's four Core ML models; `decode(audio)` for 16 kHz float32 audio.
 
@@ -343,6 +361,10 @@ class CoreMLParakeet:
         for address in list(self._held):
             if ctypes.c_ssize_t.from_address(address).value == 1:
                 del self._held[address]
+        release_orphaned()
+
+    def __del__(self) -> None:
+        orphan_held(self)  # Core ML may release the last inputs after the model is gone
 
     def window(self, pcm: np.ndarray) -> str:
         """Text for at most one WINDOW of audio, zero-padded to it (numpy refuses more)."""

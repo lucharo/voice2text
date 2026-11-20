@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -428,6 +429,14 @@ class WhisperSTT:
         return self._mlx_whisper.transcribe(wav_path, path_or_hf_repo=self.model_path)[
             "text"
         ].strip()
+
+    def close(self) -> None:
+        """Let go of the weights, which mlx-whisper keeps on a class (ModelHolder), not
+        on this object: a settings change to another model frees them first."""
+        # the package's `transcribe` is the function; its module holds ModelHolder
+        holder = getattr(sys.modules.get("mlx_whisper.transcribe"), "ModelHolder", None)
+        if holder is not None and getattr(holder, "model_path", None) == self.model_path:
+            holder.model = holder.model_path = None
 
 
 class QwenASRSTT:

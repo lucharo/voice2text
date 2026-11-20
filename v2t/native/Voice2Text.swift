@@ -402,8 +402,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func chooseSetting(_ sender: NSMenuItem) {
         guard let pairs = sender.representedObject as? [String], pairs.count >= 2, pairs.count % 2 == 0 else { return }
         guard runConfig(["set"] + pairs) else { NSSound.beep(); return }
-        // The engine reads config.toml once, at start. SIGHUP asks it to restart
-        // itself once nothing is in hand, so a dictation is never cut off.
+        // SIGHUP asks the engine to apply config.toml once nothing is in hand, so a
+        // dictation is never cut off: it swaps only what changed (one model, the
+        // hotkey) in place; an engine older than `restart_signal` restarts itself.
         if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
             if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
         } else if engine != nil {
@@ -493,12 +494,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         status["reload"] is Bool
     }
 
-    /// Restarts only the engine, never this app: SIGHUP, so it restarts itself once
+    /// Restarts only the engine, never this app: a signal, so it restarts itself once
     /// nothing is in hand (same PID, fresh code and config), else Stop then Start.
+    /// SIGUSR2 where the engine names it (SIGHUP there only applies settings in place).
     @objc private func restartEngine() {
         if let pid = status["pid"] as? Int, engineOwnsLock(pid), engineRestartsOnSignal {
             appendLog("restart requested")
-            kill(pid_t(pid), SIGHUP)
+            kill(pid_t(pid), status["restart_signal"] as? String == "USR2" ? SIGUSR2 : SIGHUP)
         } else if let engine {
             appendLog("restart requested: stopping, then starting")
             terminateEngine(engine)
