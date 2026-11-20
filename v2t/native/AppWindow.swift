@@ -480,7 +480,10 @@ struct HistorySection: View {
         }
         .onAppear { state.importLegacyHistory { reload() } }
         .onChange(of: search) { _ in reload() }
-        .onChange(of: state.phase) { phase in if phase == "idle" { state.importLegacyHistory { reload() } } }
+        // after a dictation, and after a stop (the engine finishes and saves the one in hand first)
+        .onChange(of: state.phase) { phase in
+            if phase == "idle" || phase == "off" { state.importLegacyHistory { reload() } }
+        }
     }
 
     private func reload() { entries = state.history(search: search) }
@@ -840,6 +843,9 @@ struct StepBody: View {
                     }
                     RecommendationNote(centred: centred)
                     DownloadProgress(state: state, model: model)
+                } else if !state.engineInstalled {
+                    Text("Install v2t first, in Terminal: uv tool install --python 3.13 voice2text")
+                        .textSelection(.enabled)
                 } else {
                     Text("Reading models…").foregroundStyle(.secondary)
                 }
