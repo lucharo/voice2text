@@ -22,7 +22,7 @@ Files skip LLM cleanup by default. `--clean` enables it; dictionary replacements
 | Strict | Also remove false starts and restructure sentences |
 | Off | Skip the cleanup model |
 
-Choose a mode in the menu's **Settings**, or for one terminal run:
+Turn cleanup on or off and pick its model under **Models** in the Voice2Text window (**Open Voice2Text…** in the menu). New installs start with cleanup off. Choose a mode in the menu's **Settings**, or for one terminal run:
 
 ```bash
 v2t --strict
@@ -39,7 +39,7 @@ v2t history --last 3 --raw
 v2t history standup
 ```
 
-History keeps raw and cleaned text with timings and input details. **Copy Last Transcription** in the menu recovers text that landed in the wrong window.
+History keeps raw and cleaned text with timings and input details. In the menu app, **Transcription History** opens the window's History page: search, switch between the cleaned text and the words as heard, and copy any dictation. **Copy Last Transcription** in the menu recovers text that landed in the wrong window.
 
 By default, each new recording replaces the last saved recording. To transcribe it again:
 
@@ -60,6 +60,19 @@ v2t dictionary apply transcript.txt
 ```
 
 A plain term is a hint to the cleanup model. A `heard => written` entry applies a case-insensitive replacement after cleanup, including when cleanup is off. `apply` lets you check replacements on a text file, or on standard input when no file is given.
+
+## Coding agents
+
+Give Claude Code, Codex or Pi the `v2t-transcribe` and `v2t-dictionary` skills, and a line telling them you dictate so they offer to add misheard words to your dictionary:
+
+```bash
+v2t agents
+v2t agents install skills claude
+v2t agents install line claude
+v2t agents remove line claude
+```
+
+The harnesses are `claude`, `codex` and `pi`. The **Agents** page in the Voice2Text window does the same with one click. Nothing is written until you ask; the line ends with `<!-- voice2text -->`.
 
 See the [CLI reference](reference/cli.md) for the full commands and options.
 

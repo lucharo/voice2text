@@ -87,6 +87,25 @@ def signing_flags(identity: str) -> list[str]:
     return flags
 
 
+# The menu app is every .swift file in v2t/native, compiled as one module: the
+# AppKit menu and pill (Voice2Text.swift) and the SwiftUI window (AppWindow.swift).
+SWIFT_FRAMEWORKS = [
+    flag for name in ("AppKit", "AVFoundation", "ApplicationServices", "SwiftUI")
+    for flag in ("-framework", name)
+]
+MINIMUM_MACOS = "13.0"  # LSMinimumSystemVersion; the target makes swiftc refuse newer APIs
+
+
+def swift_sources(folder: Path) -> list[Path]:
+    return sorted(folder.glob("*.swift"))
+
+
+def swift_target() -> str:
+    import platform
+
+    return f"{platform.machine()}-apple-macos{MINIMUM_MACOS}"
+
+
 def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None) -> Path:
     """Compile the bundled Swift source into a small, grantable app bundle at
     `bundle` (a `.app` path; anything already there is replaced only once the
@@ -109,7 +128,7 @@ def build(bundle: Path, *, bake_paths: bool = True, identity: str | None = None)
 
 
 def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
-    source = files("v2t").joinpath("native", "Voice2Text.swift")
+    native = files("v2t").joinpath("native")
     entitlements = files("v2t").joinpath("native", "Voice2Text.entitlements.plist")
     icon = files("v2t").joinpath("native", "AppIcon.icns")
     contents = bundle / "Contents"
@@ -125,7 +144,7 @@ def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": "1",
-        "LSMinimumSystemVersion": "13.0",
+        "LSMinimumSystemVersion": MINIMUM_MACOS,
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": "Voice2Text uses the microphone for fully local transcription.",
         "NSPrincipalClass": "NSApplication",
@@ -138,22 +157,10 @@ def _compile(bundle: Path, *, bake_paths: bool, identity: str | None) -> Path:
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     (contents / "Resources").mkdir()
     (contents / "Resources" / "AppIcon.icns").write_bytes(icon.read_bytes())
-    with as_file(source) as source_path, as_file(entitlements) as entitlements_path:
+    with as_file(native) as native_path, as_file(entitlements) as entitlements_path:
         subprocess.run(
-            [
-                "xcrun",
-                "swiftc",
-                "-parse-as-library",
-                str(source_path),
-                "-o",
-                str(executable),
-                "-framework",
-                "AppKit",
-                "-framework",
-                "AVFoundation",
-                "-framework",
-                "ApplicationServices",
-            ],
+            ["xcrun", "swiftc", "-parse-as-library", "-target", swift_target(),
+             *map(str, swift_sources(Path(native_path))), "-o", str(executable), *SWIFT_FRAMEWORKS],
             check=True,
         )
         executable.chmod(0o755)

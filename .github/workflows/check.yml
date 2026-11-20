@@ -23,7 +23,7 @@ jobs:
           uv run --no-project --python 3.12
           --with 'numpy<2.4' --with scipy --with sounddevice --with loguru
           --with 'kaldialign>=0.12' --with num2words --with regex
-          python -m unittest -v tests.test_smoke tests.test_cleanup_eval tests.test_cleanup_judge
+          python -m unittest -v tests.test_smoke tests.test_cleanup_eval tests.test_cleanup_judge tests.test_agents
       - name: App Store submission script (ios/tools/asc.py), against a fake App Store Connect
         run: uv run --no-project --python 3.12 --with 'pyjwt[crypto]==2.10.1' python -m unittest -v tests.test_asc
       - run: uv build
@@ -34,4 +34,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: zsh tests/release-tag-check.zsh
-      - run: xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices
+      - run: xcrun swiftc -typecheck -parse-as-library -target "$(uname -m)-apple-macos13.0" v2t/native/*.swift -framework AppKit -framework AVFoundation -framework ApplicationServices -framework SwiftUI

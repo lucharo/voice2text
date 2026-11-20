@@ -14,6 +14,7 @@ Use `v2t --help` or `v2t <command> --help` for usage. `v2t` and `v2t run` both s
 | [`config`](#config) | Read or change configuration |
 | [`menubar`](#menubar) | Install, open or build the menu app |
 | [`service`](#service) | Manage the login item |
+| [`agents`](#agents) | Give coding agents the v2t skills and note |
 | [`update`](#update) | Check for updates and print upgrade commands |
 
 ## v2t
@@ -131,6 +132,18 @@ For a prebuilt app, use [Homebrew](../getting-started.md#the-menu-app-optional).
 | `start`, `stop` | Start or stop it now |
 | `status` | Show whether it is loaded |
 | `uninstall` | Remove the login item |
+
+## agents
+
+| Argument or option | Effect |
+|---|---|
+| (none) | Show, for Claude Code, Codex and Pi, whether the v2t skills are installed and the note line is present |
+| `install skills HARNESS` | Copy `v2t-transcribe` and `v2t-dictionary` into that agent's skills folder, replacing older copies |
+| `install line HARNESS` | Append the note line to that agent's `CLAUDE.md` or `AGENTS.md` |
+| `remove skills HARNESS`, `remove line HARNESS` | Undo either; other skills and lines are left alone |
+| `--json` | Print the status as JSON (the menu app reads this) |
+
+`HARNESS` is `claude` (`~/.claude/skills`, `~/.claude/CLAUDE.md`), `codex` (`~/.agents/skills`, `~/.codex/AGENTS.md`) or `pi` (`~/.pi/agent/skills`, `~/.pi/agent/AGENTS.md`). The note line ends with `<!-- voice2text -->`.
 
 ## update
 

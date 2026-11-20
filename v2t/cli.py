@@ -10,6 +10,7 @@ v2t setup           guided first-run config (pick models, detect Ollama)
     v2t stop            stop a running v2t
     v2t menubar         install/open the optional native menu-bar app
     v2t service         start the menu app automatically at login
+    v2t agents          install or inspect v2t skills for coding agents
     v2t update          is a newer v2t out, and the commands that upgrade it
 """
 
@@ -785,6 +786,76 @@ def cmd_service(argv: list[str]) -> int:
     return 0
 
 
+def _format_agents_status(result: dict) -> str:
+    lines = [
+        f"Shipped skills: {', '.join(result['skills'])}",
+        f"Instruction line: {result['line']}",
+    ]
+    for harness in result["harnesses"]:
+        availability = "present" if harness["present"] else "not present"
+        lines.extend(
+            [
+                f"{harness['name']} ({harness['id']}): {availability}",
+                f"  skills dir: {harness['skills_dir']}",
+                f"  instructions: {harness['instructions']}",
+                f"  note line: {'present' if harness['line_present'] else 'missing'}",
+            ]
+        )
+        for skill in harness["skills"]:
+            lines.append(f"  {skill['name']}: {skill['state']}")
+    return "\n".join(lines)
+
+
+def cmd_agents(argv: list[str]) -> int:
+    from . import agents
+
+    parser = argparse.ArgumentParser(
+        prog="v2t agents",
+        description="inspect or install the v2t agent skills and instruction note",
+    )
+    parser.add_argument("--json", action="store_true", help="as JSON (the menu app reads this)")
+    subparsers = parser.add_subparsers(dest="action")
+    for action in ("install", "remove"):
+        sub = subparsers.add_parser(action)
+        sub.add_argument("target", choices=["skills", "line"])
+        sub.add_argument("harness")
+        # SUPPRESS: unset here leaves the top-level --json (`v2t agents --json install …`) as given
+        sub.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+
+    if args.action is None:
+        result = agents.status()
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print(_format_agents_status(result))
+        return 0
+
+    harness = agents._lookup_harness(args.harness)
+    if args.action == "install":
+        if args.target == "skills":
+            agents.install_skills(args.harness)
+            where = harness.skills_dir
+        else:
+            agents.add_line(args.harness)
+            where = harness.instructions
+    else:
+        if args.target == "skills":
+            agents.remove_skills(args.harness)
+            where = harness.skills_dir
+        else:
+            agents.remove_line(args.harness)
+            where = harness.instructions
+
+    result = agents.status()
+    if args.json:
+        print(json.dumps(result))
+    else:
+        verb = {"install": "installed", "remove": "removed"}[args.action]
+        print(f"{verb} {args.target} for {harness.name} at {where}")
+    return 0
+
+
 def cmd_update(argv: list[str]) -> int:
     from . import update
 
@@ -856,6 +927,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop": cmd_stop,
         "service": cmd_service,
         "menubar": cmd_menubar,
+        "agents": cmd_agents,
         "update": cmd_update,
     }
     if argv and argv[0] in table:
