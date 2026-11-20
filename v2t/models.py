@@ -76,6 +76,22 @@ def _downloaded(choice: backends.ModelChoice, cfg: config.Config) -> bool | None
     return backends.cached_locally(model)
 
 
+def _download_dir(choice: backends.ModelChoice) -> str | None:
+    """The Hugging Face cache folder a first use downloads into, so the menu app can
+    show how far a download has got by its size; None when v2t does not download
+    the model there (Off, Ollama, Bark's compiled copy, a local folder)."""
+    model = choice.model or _default_model(choice.backend)
+    if choice.backend in ("off", "ollama") or "/" not in model or Path(model).expanduser().is_dir():
+        return None
+    if choice.backend == "parakeet-coreml" and choice.model:  # Bark: compiled into the v2t home
+        return None
+    try:
+        from huggingface_hub import constants
+    except ImportError:
+        return None
+    return str(Path(constants.HF_HUB_CACHE) / f"models--{model.replace('/', '--')}")
+
+
 def _size(gb: float) -> str:
     return f"{gb:.2g} GB"
 
@@ -103,6 +119,7 @@ def _row(choice: backends.ModelChoice, cfg: config.Config, current: bool, defaul
         "available": available,
         "current": current,
         "note": note,
+        "download_dir": _download_dir(choice) if downloaded is False else None,
         "set": settings,
     }
 
@@ -112,7 +129,7 @@ def _custom(model: str) -> dict:
     return {
         "id": "custom", "label": backends.short_model(model), "size_gb": None,
         "downloaded": None, "available": False, "current": True,
-        "note": "set in config.toml", "set": [],
+        "note": "set in config.toml", "download_dir": None, "set": [],
     }
 
 

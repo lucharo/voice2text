@@ -3894,8 +3894,21 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([r["current"] for r in rows], [False] * 6 + [True])
         self.assertEqual(rows[-1], {
             "id": "custom", "label": "whisper-small", "size_gb": None, "downloaded": None,
-            "available": False, "current": True, "note": "set in config.toml", "set": [],
+            "available": False, "current": True, "note": "set in config.toml", "download_dir": None, "set": [],
         })
+
+    def test_a_model_still_to_download_names_the_cache_folder_it_downloads_into(self):
+        # The menu app's window measures this folder to show how far a first download has got.
+        cache = Path(self.tempdir.name) / "hub"
+        with mock.patch("huggingface_hub.constants.HF_HUB_CACHE", str(cache)):
+            rows = {r["id"]: r for r in self._pickers(config.Config())["transcription"]}
+            cleanup = {r["id"]: r for r in self._pickers(config.Config())["cleanup"]}
+
+        self.assertEqual(rows["parakeet-coreml"]["download_dir"],
+                         str(cache / "models--FluidInference--parakeet-tdt-0.6b-v3-coreml"))
+        # Bark is compiled into the v2t home, Off and Ollama download nothing of v2t's
+        self.assertIsNone(rows["parakeet-coreml:ConwayResearch/Underdog-Bark-3.0-Pro"]["download_dir"])
+        self.assertEqual([cleanup["off"]["download_dir"], cleanup["ollama"]["download_dir"]], [None, None])
 
     def test_cleanup_picker_offers_off_the_mlx_sizes_and_ollama_once_pulled(self):
         for pulled, note in (((), "needs: ollama pull qwen3:4b-instruct-2507-q4_K_M"),
