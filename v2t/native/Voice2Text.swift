@@ -460,6 +460,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func launchEngine() {
         guard engine == nil else { return }
+        writeCleanupOffIfPending()
         guard let python = pythonExecutable else {
             phase = "no-engine"
             render()
@@ -1298,6 +1299,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func connectAppState() {
         appState.historyFile = home.appendingPathComponent("history/history.sqlite")
         appState.choose = { [weak self] pairs in
+            if pairs.contains("cleanup.enabled") { UserDefaults.standard.set(false, forKey: "cleanupOffPending") }
             // the same path as a menu row: chooseSetting reads the pairs from the item
             let row = NSMenuItem()
             row.representedObject = pairs
@@ -1346,7 +1348,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         guard fresh || (defaults.bool(forKey: "onboardingStarted") && !defaults.bool(forKey: "onboardingDone")) else { return }
         if fresh {
-            runConfig(["set", "cleanup.enabled", "false"])
+            defaults.set(true, forKey: "cleanupOffPending")
+            writeCleanupOffIfPending()
             defaults.set(false, forKey: "onboardingDone")
         }
         defaults.set(true, forKey: "onboardingStarted")
@@ -1355,6 +1358,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // to the front then, and one started in the background opens behind.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.showWindow(nil, activate: false)
+        }
+    }
+
+    /// A new install starts with cleanup off. Written as soon as an engine can write it:
+    /// with no engine installed yet the write waits, retried before each start and while
+    /// the window shows, and a choice made in the window (either way) settles it.
+    private func writeCleanupOffIfPending() {
+        guard UserDefaults.standard.bool(forKey: "cleanupOffPending"), pythonExecutable != nil else { return }
+        if runConfig(["set", "cleanup.enabled", "false"]) {
+            UserDefaults.standard.set(false, forKey: "cleanupOffPending")
         }
     }
 
@@ -1375,6 +1388,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The window shows whether each model is downloaded or pulled: re-read when config.toml
         // changed (at most every 3 s) and every 15 s anyway, since a download changes no file of ours.
         let sinceRead = Date().timeIntervalSince(settingsReadForWindowAt ?? .distantPast)
+        if shown && sinceRead > 3 { writeCleanupOffIfPending() }
         if shown, sinceRead > 15 || (sinceRead > 3 && (settings.isEmpty || modified(configFile) != configDate)) {
             settingsReadForWindowAt = Date()
             runConfig([])
