@@ -560,7 +560,7 @@ struct AgentsSection: View {
             }
             if state.agentsFailed && state.agents != nil {
                 Section {
-                    StatusLabel(text: "That didn't work: the file may not be writable. Open Log in the menu for details.",
+                    StatusLabel(text: "That didn't work. Check the file or folder can be written, or run v2t agents in a terminal to see why.",
                                 symbol: "exclamationmark.triangle", tint: .primary)
                 }
             }
