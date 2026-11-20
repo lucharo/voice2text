@@ -1316,8 +1316,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.render()
         }
         appState.importLegacyHistory = { [weak self] done in
+            // whenever the JSONL is there: the import is incremental (meta.legacy_offset), so it also
+            // takes lines an older engine appended since, and retries one that was cut short
             guard let self, let python = self.pythonExecutable,
-                  !FileManager.default.fileExists(atPath: self.home.appendingPathComponent("history/history.sqlite").path),
                   FileManager.default.fileExists(atPath: self.home.appendingPathComponent("history/transcriptions.jsonl").path)
             else { done(); return }
             let environment = self.engineEnvironment(python: python)

@@ -190,18 +190,27 @@ final class AppState: ObservableObject {
         runAgents([])
     }
 
+    /// One command at a time, the buttons disabled meanwhile: a second Install still running
+    /// after a Remove would put the skills back.
     func runAgents(_ arguments: [String]) {
+        guard !agentsBusy else { return }
         agentsBusy = true
         agentsCommand(arguments) { [weak self] json in
             guard let self else { return }
-            self.agentsBusy = false
             if let status = AgentsStatus(json) {
                 self.agents = status
                 self.agentsFailed = false
-            } else {
+                self.agentsBusy = false
+            } else if arguments.isEmpty {
                 self.agentsFailed = true
-                // a change may have half happened: show what is on disk now
-                if !arguments.isEmpty { self.agentsCommand([]) { if let s = AgentsStatus($0) { self.agents = s } } }
+                self.agentsBusy = false
+            } else {
+                // a change may have half happened: show what is on disk now, still busy until then
+                self.agentsFailed = true
+                self.agentsCommand([]) {
+                    if let s = AgentsStatus($0) { self.agents = s }
+                    self.agentsBusy = false
+                }
             }
         }
     }
@@ -583,6 +592,7 @@ struct HarnessRows: View {
             }
         }
         .help(skills.joined(separator: ", "))
+        .disabled(state.agentsBusy)
         HStack {
             let file = (harness.instructions as NSString).lastPathComponent
             StatusLabel(text: harness.linePresent ? "Line in \(file)" : "Line not in \(file)",
