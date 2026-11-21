@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SwiftUI
+import UIKit
 import V2TSpeech
 
 /// The app's side of dictation: a warm microphone session the keyboard drives over the App Group, on-device
@@ -49,7 +50,7 @@ import V2TSpeech
   }
   private let defaults: UserDefaults
   private var observers: [DarwinObserver] = []
-  private var routeObserver: NSObjectProtocol?
+  private var notificationObservers: [NotificationObserver] = []
   private var heartbeat: Timer?
   /// Samples the microphone level 20 times a second while listening, for the keyboard's waveform.
   private var meter: Timer?
@@ -71,6 +72,8 @@ import V2TSpeech
   private var liveCleanup: LiveCleanup?
   /// The stopped dictation being transcribed now, so Cancel or the end of the session can stop it.
   private var finishing: (id: Int, task: Task<Void, Never>, live: LiveTranscription?, cleanup: LiveCleanup?)?
+  /// Keeps background execution alive while `finish()` completes after "Stop after each recording" cools down audio.
+  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   /// `recorder`, `store`, `engine`, `defaults` and `now` are for unit tests; the app records from the
   /// microphone (or the UI tests' fixture clip) and transcribes with FluidAudio.
@@ -91,9 +94,22 @@ import V2TSpeech
       DictationChannel.observe(DictationChannel.cancel) { [weak self] in self?.cancelTranscription() },
     ]
     // a headset plugged in or AirPods connected mid-session can change the input
-    routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-      MainActor.assumeIsolated { self?.publishMicrophone() }
+    (self.recorder as? Recorder)?.onUnexpectedStop = { [weak self] in
+      guard let self, self.recorder.running || self.state != .needsApp else { return }
+      self.coolDown()
     }
+    notificationObservers = [
+      NotificationObserver(AVAudioSession.routeChangeNotification) { [weak self] _ in
+        MainActor.assumeIsolated { self?.publishMicrophone() }
+      },
+      NotificationObserver(AVAudioSession.interruptionNotification) { [weak self] note in
+        let typeValue = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+        MainActor.assumeIsolated {
+          guard let self, let typeValue, AVAudioSession.InterruptionType(rawValue: typeValue) == .began else { return }
+          if self.recorder.running || self.state != .needsApp { self.coolDown() }
+        }
+      },
+    ]
     refreshModelStorage()
   }
 
@@ -244,10 +260,8 @@ import V2TSpeech
     liveCleanup = nil
     recorder.coolDown()
     publishMicrophone()
-    heartbeat?.invalidate()
-    heartbeat = nil
-    warmUntil = nil
-    defaults.set(0, forKey: DictationChannel.heartbeatKey)
+    stopHeartbeat()
+    endFinishBackgroundTask()
     publish(.needsApp)
   }
 
@@ -268,9 +282,13 @@ import V2TSpeech
     if recorder.running { extendWarmth() }
   }
 
+  private var warmMinutes: Int {
+    defaults.object(forKey: "warmMinutes") as? Int ?? Settings.defaultWarmMinutes
+  }
+
   private func extendWarmth() {
-    let minutes = Settings.shared.warmMinutes
-    warmUntil = minutes == 0 ? nil : now().addingTimeInterval(TimeInterval(minutes * 60))
+    let minutes = warmMinutes
+    warmUntil = minutes <= 0 ? nil : now().addingTimeInterval(TimeInterval(minutes * 60))
   }
 
   /// Every second while the session is warm (internal for tests). Stop sets the session's time from Done, so a
@@ -342,6 +360,15 @@ import V2TSpeech
     live?.stopFeeding()
     liveCleanup?.stop()  // a segment still queued is cleaned with the tail, not sent while the tail is decoded
     let samples = recorder.end()
+    if warmMinutes < 0 {
+      // Request background execution time before deactivating audio so iOS does not suspend the app mid-decode.
+      // If denied, keep the session alive until `finish()` delivers the text and cool down in its defer.
+      beginFinishBackgroundTask()
+      if backgroundTask != .invalid {
+        recorder.coolDown()
+        publishMicrophone()
+      }
+    }
     publish(.transcribing)
     extendWarmth()
     let id = recording, request = requestId, live = live, language = language, liveCleanup = liveCleanup
@@ -365,7 +392,39 @@ import V2TSpeech
     f.live?.abandon()
     f.cleanup?.abandon()
     dictationLog.log("transcription cancelled")
-    if f.id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+    if f.id == recording {
+      if warmMinutes < 0, recorder.running {
+        recorder.coolDown()
+        publishMicrophone()
+      }
+      if !recorder.running { stopHeartbeat() }
+      endFinishBackgroundTask()
+      if state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+    }
+  }
+
+  private func beginFinishBackgroundTask() {
+    endFinishBackgroundTask()
+    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "v2t.finish") { [weak self] in
+      Task { @MainActor in
+        self?.cancelTranscription()
+        self?.endFinishBackgroundTask()
+      }
+    }
+  }
+
+  private func endFinishBackgroundTask() {
+    guard backgroundTask != .invalid else { return }
+    let id = backgroundTask
+    backgroundTask = .invalid
+    UIApplication.shared.endBackgroundTask(id)
+  }
+
+  private func stopHeartbeat() {
+    heartbeat?.invalidate()
+    heartbeat = nil
+    warmUntil = nil
+    defaults.set(0, forKey: DictationChannel.heartbeatKey)
   }
 
   private func finish(
@@ -374,7 +433,17 @@ import V2TSpeech
   ) async {
     defer { liveCleanup?.abandon() }  // an early return (a stray tap, no text) leaves nothing cleaning
     // only the latest recording owns the state: a reset session may already be listening again
-    defer { if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) } }
+    defer {
+      if id == recording {
+        if warmMinutes < 0, recorder.running {
+          recorder.coolDown()
+          publishMicrophone()
+        }
+        if !recorder.running { stopHeartbeat() }
+        if state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+        endFinishBackgroundTask()
+      }
+    }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if let preparing {
       // a download or repair the user started (Download, Try again) is under way: wait for it, so the
@@ -446,4 +515,14 @@ import V2TSpeech
 
 extension Duration {
   var seconds: Double { Double(components.seconds) + Double(components.attoseconds) / 1e18 }
+}
+
+private final class NotificationObserver {
+  private let token: NSObjectProtocol
+  init(_ name: Notification.Name, handler: @escaping @Sendable (Notification) -> Void) {
+    token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: handler)
+  }
+  deinit {
+    NotificationCenter.default.removeObserver(token)
+  }
 }

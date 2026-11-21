@@ -44,9 +44,13 @@ final class Settings: @unchecked Sendable {
     set { StoredSkinTone(tone: newValue, date: Date().timeIntervalSince1970).save(to: defaults) }
   }
 
-  /// Minutes the mic stays warm after the last dictation (0 = until turned off).
+  /// Minutes the mic stays warm after the last dictation (0 = until turned off, -1 = off after each recording).
+  /// -1 frees the microphone at once, but iOS never lets a background app start recording, so the keyboard's next
+  /// mic tap opens v2t again: opt-in only.
+  static let defaultWarmMinutes = 15
+
   var warmMinutes: Int {
-    get { defaults.object(forKey: "warmMinutes") as? Int ?? 15 }
+    get { defaults.object(forKey: "warmMinutes") as? Int ?? Self.defaultWarmMinutes }
     set { defaults.set(newValue, forKey: "warmMinutes") }
   }
 
