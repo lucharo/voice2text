@@ -227,6 +227,28 @@ final class TestClock: @unchecked Sendable {
     #expect(defaults.double(forKey: DictationChannel.heartbeatKey) == 0)
     #expect(defaults.string(forKey: DictationChannel.resultKey) == "<208800> <192000> <231200>")
   }
+
+  /// Cancelling after Done with "Stop after each recording" frees the mic, stops the heartbeat and delivers nothing.
+  @Test func cancelAfterDoneWithStopAfterEachRecordingStopsHeartbeat() async throws {
+    defaults.set(-1, forKey: "warmMinutes")
+    let speech = StubSpeech()
+    let audio = StoppedAudio()
+    let dictation = try service(speech, recorder: audio)
+    await dictation.prepareModel()
+    dictation.warmUp()
+    dictation.start()
+    await speech.holdTheNextDecode()
+    dictation.stop()
+    await speech.waitUntilHeld()
+
+    dictation.cancelTranscription()
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(audio.running == false)
+    #expect(dictation.state == .needsApp)
+    #expect(defaults.double(forKey: DictationChannel.heartbeatKey) == 0)
+    expectNothingDelivered(dictation)
+  }
 }
 
 /// While the speech model loads for the first time, the keyboard's mic opens v2t instead of recording.

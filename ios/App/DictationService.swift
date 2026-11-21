@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SwiftUI
+import UIKit
 import V2TSpeech
 
 /// The app's side of dictation: a warm microphone session the keyboard drives over the App Group, on-device
@@ -71,6 +72,8 @@ import V2TSpeech
   private var liveCleanup: LiveCleanup?
   /// The stopped dictation being transcribed now, so Cancel or the end of the session can stop it.
   private var finishing: (id: Int, task: Task<Void, Never>, live: LiveTranscription?, cleanup: LiveCleanup?)?
+  /// Keeps background execution alive while `finish()` completes after "Stop after each recording" cools down audio.
+  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   /// `recorder`, `store`, `engine`, `defaults` and `now` are for unit tests; the app records from the
   /// microphone (or the UI tests' fixture clip) and transcribes with FluidAudio.
@@ -91,6 +94,10 @@ import V2TSpeech
       DictationChannel.observe(DictationChannel.cancel) { [weak self] in self?.cancelTranscription() },
     ]
     // a headset plugged in or AirPods connected mid-session can change the input
+    (self.recorder as? Recorder)?.onUnexpectedStop = { [weak self] in
+      guard let self, self.recorder.running || self.state != .needsApp else { return }
+      self.coolDown()
+    }
     notificationObservers = [
       NotificationObserver(AVAudioSession.routeChangeNotification) { [weak self] _ in
         MainActor.assumeIsolated { self?.publishMicrophone() }
@@ -98,7 +105,8 @@ import V2TSpeech
       NotificationObserver(AVAudioSession.interruptionNotification) { [weak self] note in
         let typeValue = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
         MainActor.assumeIsolated {
-          if let typeValue, AVAudioSession.InterruptionType(rawValue: typeValue) == .began { self?.coolDown() }
+          guard let self, let typeValue, AVAudioSession.InterruptionType(rawValue: typeValue) == .began else { return }
+          if self.recorder.running || self.state != .needsApp { self.coolDown() }
         }
       },
     ]
@@ -253,6 +261,7 @@ import V2TSpeech
     recorder.coolDown()
     publishMicrophone()
     stopHeartbeat()
+    endFinishBackgroundTask()
     publish(.needsApp)
   }
 
@@ -352,8 +361,13 @@ import V2TSpeech
     liveCleanup?.stop()  // a segment still queued is cleaned with the tail, not sent while the tail is decoded
     let samples = recorder.end()
     if warmMinutes < 0 {
-      recorder.coolDown()
-      publishMicrophone()
+      // Request background execution time before deactivating audio so iOS does not suspend the app mid-decode.
+      // If denied, keep the session alive until `finish()` delivers the text and cool down in its defer.
+      beginFinishBackgroundTask()
+      if backgroundTask != .invalid {
+        recorder.coolDown()
+        publishMicrophone()
+      }
     }
     publish(.transcribing)
     extendWarmth()
@@ -378,8 +392,32 @@ import V2TSpeech
     f.live?.abandon()
     f.cleanup?.abandon()
     dictationLog.log("transcription cancelled")
-    if f.id == recording, !recorder.running { stopHeartbeat() }
-    if f.id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+    if f.id == recording {
+      if warmMinutes < 0, recorder.running {
+        recorder.coolDown()
+        publishMicrophone()
+      }
+      if !recorder.running { stopHeartbeat() }
+      endFinishBackgroundTask()
+      if state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+    }
+  }
+
+  private func beginFinishBackgroundTask() {
+    endFinishBackgroundTask()
+    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "v2t.finish") { [weak self] in
+      Task { @MainActor in
+        self?.cancelTranscription()
+        self?.endFinishBackgroundTask()
+      }
+    }
+  }
+
+  private func endFinishBackgroundTask() {
+    guard backgroundTask != .invalid else { return }
+    let id = backgroundTask
+    backgroundTask = .invalid
+    UIApplication.shared.endBackgroundTask(id)
   }
 
   private func stopHeartbeat() {
@@ -396,8 +434,15 @@ import V2TSpeech
     defer { liveCleanup?.abandon() }  // an early return (a stray tap, no text) leaves nothing cleaning
     // only the latest recording owns the state: a reset session may already be listening again
     defer {
-      if id == recording, !recorder.running { stopHeartbeat() }
-      if id == recording, state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+      if id == recording {
+        if warmMinutes < 0, recorder.running {
+          recorder.coolDown()
+          publishMicrophone()
+        }
+        if !recorder.running { stopHeartbeat() }
+        if state == .transcribing || state == .cleaningUp { publish(recorder.running ? .idle : .needsApp) }
+        endFinishBackgroundTask()
+      }
     }
     guard samples.count > 16_000 / 4 else { return }  // under a quarter second: a stray tap
     if let preparing {

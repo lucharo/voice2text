@@ -111,10 +111,21 @@ final class RecordingPanel: UIView {
   func hide() {
     isHidden = true
     stoppedAt = nil  // the controller took it before hiding; a later wait (the app hand-off) starts afresh
-    timer?.invalidate()
-    timer = nil
+    stopTimer()
     levels = []
     state = .idle
+  }
+
+  /// Stops the 30 Hz UI timer when the keyboard disappears or the view leaves its window so it never leaks or
+  /// polls `dictation-levels.bin` off-screen; `show()` restarts it when the keyboard reappears.
+  func stopTimer() {
+    timer?.invalidate()
+    timer = nil
+  }
+
+  override func willMove(toWindow newWindow: UIWindow?) {
+    super.willMove(toWindow: newWindow)
+    if newWindow == nil { stopTimer() }
   }
 
   override func layoutSubviews() {
