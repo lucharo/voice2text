@@ -852,6 +852,10 @@ struct OnboardingButtons: View {
         .onAppear {
             if flow.canContinue(step) && (step == .microphone || step == .accessibility) { flow.next(after: step) }
         }
+        // v2t installed in Terminal while setup waited on the model step: start it now
+        .onChange(of: state.engineInstalled) { installed in
+            if installed && step == .model && state.microphone && state.accessibility { state.start() }
+        }
     }
 }
 
