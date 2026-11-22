@@ -269,21 +269,27 @@ def _import_coremltools():
 
 
 # Inputs of models already dropped (a settings change that swaps the model) that Core ML
-# may still be about to release: a model hands its `_held` here when it is freed, and
-# each array stays until its count is this dict's alone (CoreMLParakeet._predict, #66).
-_orphaned: dict[int, np.ndarray] = {}
+# may still be about to release: a model hands over its `_held` dict itself when it is
+# freed, so no array's count changes during the handover (Core ML drops its reference
+# without the GIL, #66); each array goes once its count is that dict's alone.
+_orphaned: list[dict[int, np.ndarray]] = []
 
 
 def orphan_held(model) -> None:
     """Keep a model's held inputs alive past the model itself: its `__del__`."""
-    _orphaned.update(getattr(model, "_held", None) or {})
+    held = getattr(model, "_held", None)
+    if held:
+        _orphaned.append(held)
 
 
 def release_orphaned() -> None:
     """Free the orphaned inputs Core ML has finished with (see `_release_held`)."""
-    for address in list(_orphaned):
-        if ctypes.c_ssize_t.from_address(address).value == 1:
-            del _orphaned[address]
+    for held in list(_orphaned):
+        for address in list(held):
+            if ctypes.c_ssize_t.from_address(address).value == 1:
+                del held[address]
+        if not held:
+            _orphaned.remove(held)
 
 
 class CoreMLParakeet:

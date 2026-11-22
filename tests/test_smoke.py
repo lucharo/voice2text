@@ -1040,14 +1040,18 @@ class V2TSmokeTests(unittest.TestCase):
         array = np.zeros(4, np.float32)  # `array` stands in for Core ML's own reference
         address = id(array)
         model._held = {address: array}
+        held = model._held
         del model  # a settings change drops the model before Core ML lets go
         coreml.release_orphaned()
-        while_core_ml_holds_it = address in coreml._orphaned
+        handed_over = any(d is held for d in coreml._orphaned)  # the dict itself, no copy
+        while_core_ml_holds_it = address in held
         del array  # Core ML releases it on its queue
         coreml.release_orphaned()
 
+        self.assertTrue(handed_over)
         self.assertTrue(while_core_ml_holds_it)
-        self.assertNotIn(address, coreml._orphaned)
+        self.assertNotIn(address, held)
+        self.assertFalse(any(d is held for d in coreml._orphaned))
 
     def test_switching_to_whisper_drops_the_nemotron_preview_before_loading(self):
         voice, _events, _states = self._running_voice(**{"transcription.preview": "nemotron"})
