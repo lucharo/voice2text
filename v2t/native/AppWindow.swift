@@ -835,6 +835,11 @@ struct DownloadProgress: View {
 
     var body: some View {
         switch state.phase {
+        case "error", "no-engine", "permission-error":
+            StatusLabel(text: state.phase == "permission-error" ? "A permission is missing: allow it, then Start v2t in the menu"
+                        : state.phase == "no-engine" ? "v2t is not installed: run uv tool install --python 3.13 voice2text"
+                        : "Could not start: open Log in the menu, then Start v2t again",
+                        symbol: "exclamationmark.triangle", tint: .primary)
         case "idle", "recording", "transcribing", "cleaning", "delivering", "cancelled", "loading-cleanup":
             StatusLabel(text: model.downloaded == true ? "Already on this Mac, ready" : "Downloaded and ready",
                         symbol: "checkmark.circle.fill", tint: .primary)

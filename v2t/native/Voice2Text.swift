@@ -1389,8 +1389,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the window shows, and a choice made in the window (either way) settles it.
     private func writeCleanupOffIfPending() {
         guard UserDefaults.standard.bool(forKey: "cleanupOffPending"), pythonExecutable != nil else { return }
-        if runConfig(["set", "cleanup.enabled", "false"]) {
-            UserDefaults.standard.set(false, forKey: "cleanupOffPending")
+        guard runConfig(["set", "cleanup.enabled", "false"]) else { return }
+        UserDefaults.standard.set(false, forKey: "cleanupOffPending")
+        // an engine already running (one from Terminal, or ours) reloads it, as chooseSetting asks
+        if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
+            if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+        } else if engine != nil {
+            reloadWhenReady = true
         }
     }
 
