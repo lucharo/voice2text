@@ -21,7 +21,8 @@ def _ours(line: str) -> bool:
     return MARKER in line or MARKER_WITH_BLANK in line
 LINE = (
     "I dictate with voice2text (v2t), so my messages can contain misheard words. "
-    "When one looks wrong, check the raw transcript with `v2t history --last 1 --raw` "
+    "Whenever one looks wrong, find that message's raw transcript with "
+    "`v2t history \"<words near it>\" --raw` (it searches every dictation, not just the last) "
     f"and offer to add the fix to my v2t dictionary with the v2t-dictionary skill. {MARKER}"
 )
 
