@@ -39,7 +39,7 @@ v2t history --last 3 --raw
 v2t history standup
 ```
 
-History keeps raw and cleaned text with timings and input details. In the menu app, **Transcription History** opens the window's History page: search, switch between the cleaned text and the words as heard, and copy any dictation. **Copy Last Transcription** in the menu recovers text that landed in the wrong window.
+History keeps raw and cleaned text with timings and input details. In the menu app, **Transcription History** opens the window's History page: search, switch between the cleaned and the raw text, and copy any dictation. **Copy Last Transcription** in the menu recovers text that landed in the wrong window.
 
 By default, each new recording replaces the last saved recording. To transcribe it again:
 

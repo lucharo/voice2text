@@ -156,6 +156,12 @@ final class AppState: ObservableObject {
     var cleanupSwitch: Binding<Bool> {
         Binding(get: { self.cleanupEnabled }, set: { self.choose(["cleanup.enabled", $0 ? "true" : "false"]) })
     }
+    /// The keys `hotkey.key` takes, as the menu's Hotkey submenu lists them.
+    static let hotkeys = [
+        ("fn", "fn (Globe)"), ("cmd_r", "Right Command"), ("cmd_l", "Left Command"),
+        ("alt_r", "Right Option"), ("alt_l", "Left Option"), ("ctrl_r", "Right Control"), ("ctrl_l", "Left Control"),
+    ]
+
     var hotkeyName: String {
         switch hotkey {
         case "cmd_r": "Right ⌘"
@@ -409,7 +415,7 @@ struct CleanupSection: View {
                     Text("Clean up text")
                     Text(state.cleanupEnabled
                          ? "A small local model adds punctuation and drops ums before pasting."
-                         : "Off: you get your words as heard, with your dictionary's replacements.")
+                         : "Off: you get the raw text, plus your dictionary's replacements. On, it cleans up with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once).")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -436,7 +442,7 @@ struct HistorySection: View {
                 TextField("Search", text: $search).textFieldStyle(.plain)
                 Picker("", selection: $showRaw) {
                     Text("Cleaned").tag(false)
-                    Text("As heard").tag(true)
+                    Text("Raw text").tag(true)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 180)
@@ -731,10 +737,17 @@ struct StepBody: View {
                 .toggleStyle(.switch)
                 Text(state.cleanupEnabled
                      ? "On: \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? "")) adds punctuation and drops ums. It takes a moment more per dictation."
-                     : "Off: you get your words as heard, plus your dictionary's replacements. You can turn it on later under Models.")
+                     : "Off: you get the raw text, plus your dictionary's replacements. Turn it on to clean up with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once), now or later under Models.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .tryIt:
+                HStack(spacing: 14) {
+                    KeyCap(name: state.hotkeyName)
+                    Picker("Dictation key", selection: Binding(get: { state.hotkey }, set: { state.choose(["hotkey.key", $0]) })) {
+                        ForEach(AppState.hotkeys, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .frame(maxWidth: 260)
+                }
                 Text("Hold \(state.hotkeyName), speak, and let go: the text is pasted where you're typing. Double-tap \(state.hotkeyName) to keep recording hands-free, and tap again to stop.")
                     .fixedSize(horizontal: false, vertical: true)
                 TextField("Click here, then hold \(state.hotkeyName) and speak", text: $tryText, axis: .vertical)
@@ -743,6 +756,22 @@ struct StepBody: View {
                 StatusFooter(state: state)
             }
         }
+    }
+}
+
+/// The dictation key drawn as a key, so the try-it step shows what to press.
+struct KeyCap: View {
+    let name: String
+
+    var body: some View {
+        Text(name == "fn" ? "fn  🌐" : name)
+            .font(.system(size: 20, weight: .medium, design: .rounded))
+            .padding(.horizontal, 16)
+            .frame(minWidth: 64, minHeight: 52)
+            .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.secondary.opacity(0.5)))
+            .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
+            .accessibilityLabel("Dictation key: \(name)")
     }
 }
 
@@ -764,7 +793,10 @@ struct DownloadProgress: View {
     var body: some View {
         switch state.phase {
         case "idle", "recording", "transcribing", "cleaning", "delivering", "cancelled", "loading-cleanup":
-            StatusLabel(text: "Downloaded and ready", symbol: "checkmark.circle.fill", tint: .primary)
+            StatusLabel(text: model.downloaded == true ? "Already on this Mac, ready" : "Downloaded and ready",
+                        symbol: "checkmark.circle.fill", tint: .primary)
+        case _ where model.downloaded == true:
+            StatusLabel(text: "Already on this Mac, nothing to download · loading…", symbol: "checkmark.circle", tint: .primary)
         case "starting", "permissions", "loading-stt":
             if let bytes = state.downloadedBytes, let total = model.sizeGB, model.downloaded == false {
                 let fraction = min(0.99, Double(bytes) / (total * 1e9))

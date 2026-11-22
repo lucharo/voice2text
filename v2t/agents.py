@@ -15,9 +15,9 @@ MARKER = "<!-- voice2text -->"
 MARKER_WITH_BLANK = "<!-- voice2text +blank -->"
 _MARK = "<!-- voice2text"  # what both start with
 LINE = (
-    "I dictate with voice2text (v2t), so my messages can contain misheard words: "
-    "when you spot one, offer to add it to my v2t dictionary with the v2t-dictionary "
-    f"skill. {MARKER}"
+    "I dictate with voice2text (v2t), so my messages can contain misheard words. "
+    "When one looks wrong, check the raw transcript with `v2t history --last 1 --raw` "
+    f"and offer to add the fix to my v2t dictionary with the v2t-dictionary skill. {MARKER}"
 )
 
 
