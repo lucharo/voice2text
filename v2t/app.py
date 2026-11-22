@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import collections
 import ctypes
+import dataclasses
 import faulthandler
+import gc
 import json
 import os
 import queue
+import shutil
 import signal
 import socket
 import subprocess
@@ -67,6 +70,15 @@ SLOW_KEY_S = 0.25
 # more than a paste holds it (0.31 s including the clipboard restore in the log).
 ESC_LOCK_WAIT_S = 0.5
 SOUND_PANE = "x-apple.systempreferences:com.apple.Sound-Settings.extension"
+# How a changed config.toml reaches a running engine on SIGHUP (_apply_settings). These
+# replace one model each; every other setting but the capture rate is read where it is
+# used (each dictation, each key event, each status write), so a new value just applies.
+SPEECH_SETTINGS = ("backend", "stt_model")
+CLEANUP_SETTINGS = ("cleanup_enabled", "cleanup_engine", "cleanup_model", "ollama_url")
+PREVIEW_SETTINGS = ("preview", "preview_language")
+# The microphone opens at this rate and held audio is not resampled, so a new rate
+# restarts the engine as every change did before.
+RESTART_SETTINGS = ("sample_rate",)
 # A cleanup slower than 5 s plus one second per 200 characters has stalled. Qwen3.5-2B
 # usually cleans 600 to 1,200 characters a second (the 0.8B default is faster); 11 of 1,217 MLX cleanups in the
 # maintainer's history crossed this mark, the 28.1 s one for 2,177 characters on
@@ -419,7 +431,8 @@ class VoiceToText:
         self.recording = False
         self.processing = False
         self.reload_requested = threading.Event()  # SIGHUP: a setting changed
-        self.reloading = False
+        self.restart_requested = threading.Event()  # SIGUSR2: Restart v2t, a fresh process
+        self.reloading = False  # claimed by _begin_reload: applying settings or restarting
         # False when launched with flags that override config.toml: a reload
         # would reapply them, so the menu must not promise a change applies.
         self.reloadable = True
@@ -502,11 +515,17 @@ class VoiceToText:
         self.vocabulary: list[str] = []  # from dictionary.txt; refreshed per dictation
         self.replacements: list[tuple[str, str]] = []
         self.dictionary_mtime = -1.0
+        self.status_details = self._details(cfg)
+
+    @staticmethod
+    def _details(cfg: Config) -> dict:
+        """The models and mode the status file names, for the menu."""
+        stt_model = cfg.stt_model or backends.STT[cfg.backend].default_model
         cleanup_model = (
             cfg.cleanup_model or backends.CLEANUP[cfg.cleanup_engine].default_model
         )
-        self.status_details = {
-            "stt": backends.short_model(self.stt_model),
+        return {
+            "stt": backends.short_model(stt_model),
             "cleanup": backends.short_model(cleanup_model)
             if cfg.cleanup_enabled
             else "off",
@@ -530,6 +549,9 @@ class VoiceToText:
                 "streaming": self.can_stream(),
                 "live_transcript": self.cfg.live_transcript and self.can_stream(),
                 "reload": self.reloadable,  # the menu app may send SIGHUP after a setting changes
+                # SIGHUP applies settings in this process; Restart v2t sends this one for a
+                # fresh process (new code). Engines without the key restart on SIGHUP.
+                "restart_signal": "USR2",
                 "config": str(config.config_path()),
                 "error": clean_error,
                 "warning": self.warning,
@@ -663,14 +685,19 @@ class VoiceToText:
         """SIGHUP, sent by the menu app after it changes a setting in config.toml."""
         self.reload_requested.set()
 
+    def request_restart(self, _signum=None, _frame=None) -> None:
+        """SIGUSR2, sent by the menu app's Restart v2t (and after an update): a fresh
+        process, so new code and a new config.toml both load."""
+        self.restart_requested.set()
+
     def _begin_reload(self) -> bool:
-        """Claim the restart once nothing is in hand: no recording (a held key
-        records from the press, before anything shows), no queued or running
+        """Claim a reload or restart once nothing is in hand: no recording (a held
+        key records from the press, before anything shows), no queued or running
         transcription, no Undo window and no double-tap pending. New recordings
-        are refused from here, so none can be cut off by the exec."""
+        are refused from here, so none can be cut off by a model swap or the exec."""
         with self.lifecycle_lock:
             if (
-                not self.reload_requested.is_set()
+                not (self.reload_requested.is_set() or self.restart_requested.is_set())
                 or self.stopping
                 or self.recording
                 or self.processing
@@ -685,10 +712,104 @@ class VoiceToText:
             self.reloading = True
             return True
 
+    def _apply_settings(self) -> None:
+        """SIGHUP: read config.toml again and change only what changed, in this process.
+
+        A new speech or cleanup model replaces just that model, the old one freed
+        first so the two never sit in memory together; cleanup turned off drops its
+        model; a new hotkey counts from the next press; settings read per dictation
+        just apply. A new capture rate, a config.toml that no longer loads, or a model
+        that fails to load restarts the engine with os.execv, as every change did
+        before. Runs on the model-owning thread, claimed by _begin_reload."""
+        self.reload_requested.clear()  # a change saved from here on is applied after this one
+        if not self.reloadable:  # launch flags override config.toml: only a restart keeps them
+            self._reload()
+            return
+        t0 = time.perf_counter()
+        try:
+            new = config.load()
+        except SystemExit as error:  # _validate's message, or a Stop meanwhile
+            if self.stopping:
+                raise
+            logger.error(f"config.toml does not load ({error}); restarting v2t")
+            self._reload()
+            return
+        except Exception as error:  # unreadable TOML
+            logger.error(f"config.toml does not load ({error}); restarting v2t")
+            self._reload()
+            return
+        if new.pause_music and not shutil.which("nowplaying-cli"):
+            logger.warning("nowplaying-cli not found (brew install nowplaying-cli) — music pause disabled.")
+            new.pause_music = False
+        old = self.cfg
+        changed = [
+            f.name for f in dataclasses.fields(Config) if getattr(new, f.name) != getattr(old, f.name)
+        ]
+        if any(name in RESTART_SETTINGS for name in changed):
+            logger.info(f"Settings changed ({', '.join(changed)}); restarting v2t to apply them")
+            self._reload()
+            return
+        speech = any(name in SPEECH_SETTINGS for name in changed)
+        cleanup = any(name in CLEANUP_SETTINGS for name in changed) and (
+            old.cleanup_enabled or new.cleanup_enabled
+        )
+        # Nemotron's preview is its own model: it goes when its settings change, and when
+        # the new speech model cannot stream (it previews only streamed recordings)
+        preview = any(name in PREVIEW_SETTINGS for name in changed)
+        try:
+            self.cfg = new
+            self.stt_model = new.stt_model or backends.STT[new.backend].default_model
+            self.status_details = self._details(new)
+            if "hotkey" in changed:
+                self.hotkey = _resolve_hotkey(new.hotkey)
+                if new.hotkey == "fn" and (warning := globe_key_warning()):
+                    logger.warning(warning)
+            # every model that goes is freed before any new one loads (16 GB Macs)
+            if speech:
+                stt, self.stt = self.stt, None
+                getattr(stt, "close", lambda: None)()  # a model its library holds (Whisper)
+                del stt
+            if preview or (speech and not getattr(backends.STT[new.backend], "streaming", False)):
+                self.preview = None  # its settings changed, or the new speech model cannot stream
+            if cleanup:
+                self.cleaner = None
+            if speech or preview or cleanup:
+                self._free_models()  # before any load: the old and new never share memory
+            if speech:
+                self._load_stt()
+            if not self.can_stream() or new.preview != "nemotron":
+                self.preview = None  # a preview kept from before a speech model that cannot stream
+            elif self.preview is None and (preview or speech):
+                self._set_state("loading-stt")  # its download, compile and warmup take a while
+                self.preview = self._load_preview()
+            if cleanup and new.cleanup_enabled:
+                self._load_cleanup()
+        except (Exception, SystemExit) as error:  # SystemExit: a missing extra, or a Stop
+            if self.stopping and isinstance(error, SystemExit):
+                raise
+            logger.error(f"Could not apply the new settings in place ({error}); restarting v2t")
+            self._reload()
+            return
+        with self.lifecycle_lock:
+            self.reloading = False
+        self._set_state("idle")
+        logger.success(
+            f"Settings applied in {time.perf_counter() - t0:.1f}s ({', '.join(changed) or 'no change'})"
+        )
+
+    @staticmethod
+    def _free_models() -> None:
+        """Hand the memory of the models just dropped back before loading others."""
+        gc.collect()
+        if "mlx.core" in sys.modules:  # a Core ML-only engine never imports MLX
+            backends.release_cache()
+        if "v2t.coreml" in sys.modules:  # inputs a dropped Core ML model handed over (#66)
+            sys.modules["v2t.coreml"].release_orphaned()
+
     def _reload(self) -> None:
-        """Replace this process with one that reads the new config.toml; the
-        engine reads it once, at start. Same PID, as for the microphone restart."""
-        logger.info("Settings changed; restarting v2t to apply them")
+        """Replace this process with a fresh one: Restart v2t, or a setting that cannot
+        change in place. Same PID, as for the microphone restart."""
+        logger.info("Restarting v2t")
         self._await_mic_closed(MIC_STUCK_S)  # the last dictation's stop, if still running
         if self.stopping:  # a Stop that arrived meanwhile wins: shut down, don't restart
             return
@@ -1564,7 +1685,10 @@ class VoiceToText:
                 self.pred_last_tap = at
 
     def _queue_key(self, kind: str, key, at: float) -> None:
-        if key == self.hotkey:
+        # whether this event counts in hotkey_pending, kept with it: a settings change may
+        # swap the hotkey before the hotkey thread handles it (_apply_settings)
+        counted = key == self.hotkey
+        if counted:
             with self.pending_lock:
                 if not self.hotkey_pending and not self.esc_waiting:  # nothing queued: start from the real state
                     self.pred_latched, self.pred_last_tap = self.latched, self.last_tap_at
@@ -1578,9 +1702,9 @@ class VoiceToText:
                 if kind == "down":
                     self.last_press_queued_at = at
                     self.queued_presses += 1
-        self.key_events.put((kind, key, at))
+        self.key_events.put((kind, key, at, counted))
 
-    def _handle_key_event(self, kind: str, key, at) -> None:
+    def _handle_key_event(self, kind: str, key, at, counted: bool | None = None) -> None:
         try:
             if kind == "esc":
                 try:
@@ -1613,7 +1737,7 @@ class VoiceToText:
                     self.chords_for[press] -= 1
                     if not self.chords_for[press]:
                         del self.chords_for[press]
-            if kind in ("down", "up") and key == self.hotkey:
+            if kind in ("down", "up") and (key == self.hotkey if counted is None else counted):
                 with self.pending_lock:
                     self.hotkey_pending -= 1
                     self.presses_pending -= kind == "down"
@@ -1846,6 +1970,14 @@ class VoiceToText:
 
     def warmup(self):
         self.refresh_dictionary()
+        self._load_stt()
+        if self.cfg.preview == "nemotron" and self.can_stream():
+            self.preview = self._load_preview()
+        if self.cfg.cleanup_enabled:
+            self._load_cleanup()
+
+    def _load_stt(self) -> None:
+        """Load the speech model and run a second of silence through it."""
         logger.info("Loading transcription model...")
         self._set_state("loading-stt")
         t0 = time.perf_counter()
@@ -1853,8 +1985,6 @@ class VoiceToText:
         # one second of silence through the path dictations take
         self._transcribe_whole(np.zeros(self.cfg.sample_rate, dtype=np.float32))
         logger.success(f"{self.cfg.backend} ready ({time.perf_counter() - t0:.1f}s)")
-        if self.cfg.preview == "nemotron" and self.can_stream():
-            self.preview = self._load_preview()
         if self.can_stream():
             logger.info("Transcribing while the hotkey is held, in pieces")
         else:
@@ -1864,27 +1994,29 @@ class VoiceToText:
                 else f"Transcribing after release: audio.sample_rate must be {self.stt.sample_rate}"
             )
 
-        if self.cfg.cleanup_enabled:
-            self._set_state("loading-cleanup")
-            t0 = time.perf_counter()
-            self.cleaner = backends.make_cleanup(
-                self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+    def _load_cleanup(self) -> None:
+        """Load the cleanup model and clean one word with it."""
+        self._set_state("loading-cleanup")
+        t0 = time.perf_counter()
+        self.cleaner = backends.make_cleanup(
+            self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
+        )
+        self.cleaner.vocabulary = tuple(self.vocabulary)
+        try:
+            self.cleaner.cleanup("hi", self.cfg.mode)
+            logger.success(
+                f"cleanup ({self.cfg.cleanup_engine}) ready ({time.perf_counter() - t0:.1f}s)"
             )
-            self.cleaner.vocabulary = tuple(self.vocabulary)
-            try:
-                self.cleaner.cleanup("hi", self.cfg.mode)
-                logger.success(
-                    f"cleanup ({self.cfg.cleanup_engine}) ready ({time.perf_counter() - t0:.1f}s)"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"cleanup warmup failed ({e}); will retry per transcription"
-                )
+        except Exception as e:
+            logger.warning(
+                f"cleanup warmup failed ({e}); will retry per transcription"
+            )
 
     def run(self):
         # Before the lock: the menu signals whichever process holds it, and an
         # unhandled SIGHUP would kill a replacement that has not set this yet.
         signal.signal(signal.SIGHUP, self.request_reload)
+        signal.signal(signal.SIGUSR2, self.request_restart)
         try:
             self.instance_lock = config.acquire_instance_lock()
         except BlockingIOError:
@@ -1921,7 +2053,10 @@ class VoiceToText:
                     if self._should_restart_for_microphone():
                         self._restart_for_microphone()
                     if self._begin_reload():
-                        self._reload()
+                        if self.restart_requested.is_set():
+                            self._reload()
+                        else:
+                            self._apply_settings()
                 if not self.stopping and not listener.is_alive():
                     raise RuntimeError("global hotkey listener stopped unexpectedly")
         except KeyboardInterrupt:
@@ -1948,7 +2083,8 @@ class VoiceToText:
             except OSError:
                 pass
         if (
-            not self.startup_complete
+            # still loading, at start or in a settings change: stop now, not after the load
+            (not self.startup_complete or self.reloading)
             and not self.finalizing_recording
             and not self.processing
         ):

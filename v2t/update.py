@@ -178,7 +178,7 @@ def check(
 
     `update` is true only when the commands bring something to `latest`:
     `commands` run in order while the app keeps running, then `restart` says
-    what to restart: `engine` (SIGHUP), or `app`, which quits and runs
+    what to restart: `engine` (SIGUSR2, or SIGHUP for an older engine), or `app`, which quits and runs
     `relaunch` once it has gone (it reopens or rebuilds the app).
     """
     release = latest_release(now, fetch)

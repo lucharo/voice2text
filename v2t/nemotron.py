@@ -242,6 +242,12 @@ class NemotronStream:
     loaded again and the step retried once.
     """
 
+    def __del__(self) -> None:
+        # dropped by a settings change: Core ML may release the last inputs after this (#66)
+        from .coreml import orphan_held
+
+        orphan_held(self)
+
     def __init__(self, folder: Path | None = None, language: str = "auto"):
         from .coreml import CoreMLParakeet, _import_coremltools
 
