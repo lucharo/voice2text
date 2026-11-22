@@ -4,10 +4,10 @@ lint:
 
 # Fast checks; no models, microphone, or permissions needed
 check: lint
-    uv run python -m unittest -v tests.test_smoke tests.test_cleanup_eval tests.test_cleanup_judge
+    uv run python -m unittest -v tests.test_smoke tests.test_cleanup_eval tests.test_cleanup_judge tests.test_agents
     uv run python -m v2t.config
     uv run python -m v2t.backends
-    xcrun swiftc -typecheck -parse-as-library v2t/native/Voice2Text.swift -framework AppKit -framework AVFoundation -framework ApplicationServices
+    xcrun swiftc -typecheck -parse-as-library -target "$(uname -m)-apple-macos13.0" v2t/native/*.swift -framework AppKit -framework AVFoundation -framework ApplicationServices -framework SwiftUI
 
 # Contributor benchmark harness (the dev group includes optional Whisper)
 bench *args:

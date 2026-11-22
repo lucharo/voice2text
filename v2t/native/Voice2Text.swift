@@ -19,7 +19,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var engine: Process?
     private var timer: Timer?
-    private var phase = "off"
+    private var phase = "off" {
+        didSet { noteLifecycle(from: oldValue) }
+    }
+    /// A restart in progress (Restart, an update, a setting applied by the engine), so the
+    /// pill says "Restarting…" for the stop and keeps going through the loads.
+    private var restarting = false
+    /// "Ready" or "Stopped", shown on the pill for a moment after a start or a stop ends.
+    private var lifecycleFlash: (text: String, icon: PillView.StatusIcon, until: Date)?
     private var status: [String: Any] = [:]
     private var externalEngine = false
     private var lockFD: Int32 = -1
@@ -28,6 +35,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var terminationPending = false
     private var lastTranscription: String?
     private let pill = Pill()
+    /// What the Voice2Text window (AppWindow.swift) shows, kept current by `syncAppState`.
+    private let appState = AppState()
+    private lazy var appWindow = AppWindow(state: appState)
+    private var settingsReadForWindowAt: Date?
     private var liveSource: DispatchSourceRead?
     private var liveSocketID: (device: dev_t, inode: ino_t)?
     private var menuIsOpen = false
@@ -107,6 +118,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         pill.onUndo = { [weak self] in self?.undoDictation() }
         pill.onLog = { [weak self] in self?.appendLog($0) }
+        pill.anchor = { [weak self] in self?.item.button?.window?.frame }
         menu.delegate = self
         listenForLiveEvents()
         render()
@@ -119,10 +131,22 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // them, Start stays a deliberate click that leads to the prompts.
         refresh()
         checkForUpdate()
+        connectAppState()
+        beginOnboardingIfNew()
+        if let index = CommandLine.arguments.firstIndex(of: "--window") {
+            let name = CommandLine.arguments.dropFirst(index + 1).first
+            showWindow(name.flatMap(WindowSection.init(rawValue:)), activate: false)
+        }
         let granted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && AXIsProcessTrusted()
         if CommandLine.arguments.contains("--start") || granted {
             start()
         }
+    }
+
+    /// Opening the app again (Finder, Spotlight, `open -a Voice2Text`) while it runs opens its window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow(nil, activate: true)
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -437,6 +461,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func launchEngine() {
         guard engine == nil else { return }
+        writeCleanupOffIfPending()
         guard let python = pythonExecutable else {
             phase = "no-engine"
             render()
@@ -496,6 +521,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func stop() {
         restartWhenStopped = false
+        restarting = false  // a Stop cancels a restart in progress: it ends on Stopped
         if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
@@ -513,9 +539,11 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func restartEngine() {
         if let pid = status["pid"] as? Int, engineOwnsLock(pid), engineRestartsOnSignal {
             appendLog("restart requested")
+            restarting = true
             kill(pid_t(pid), status["restart_signal"] as? String == "USR2" ? SIGUSR2 : SIGHUP)
         } else if let engine {
             appendLog("restart requested: stopping, then starting")
+            restarting = true
             terminateEngine(engine)
             phase = "stopping"
             restartWhenStopped = true  // after the reset in a Stop, which this is not
@@ -683,6 +711,20 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             launchEngine()
             return
         }
+        // Our engine is still running but has cleared its status: it is replacing itself to
+        // apply a setting or a Restart (`os.execv`, same PID). Say so until it reports a load.
+        if !live, engine != nil, ["idle", "cancelled", "delivering"].contains(phase) {
+            restarting = true
+            phase = "starting"
+        }
+        // A terminal engine asked to Restart clears its status and execs under the same PID:
+        // keep saying Restarting while that PID lives, and Off only once it has exited.
+        if !live, engine == nil, externalEngine, restarting, let pid = status["pid"] as? Int, kill(pid_t(pid), 0) == 0 {
+            phase = "starting"
+            sendPendingReload()
+            render()
+            return
+        }
         if !live && engine == nil && !["permissions", "permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
             phase = "off"
             status = [:]
@@ -692,8 +734,6 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine == nil, let message = try? String(contentsOf: home.appendingPathComponent("run/last-error"), encoding: .utf8), !message.isEmpty {
             phase = "error"
         }
-        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
-                    liveTranscript: status["live_transcript"] as? Bool ?? false)
         sendPendingReload()
         render()
     }
@@ -762,11 +802,60 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return owner == String(pid)
     }
 
+    /// What the pill says while the engine starts, loads, stops or restarts, so a hotkey
+    /// pressed then is not met with silence; nil when nothing is starting or stopping.
+    private var lifecycleStatus: (text: String, icon: PillView.StatusIcon)? {
+        switch phase {
+        case "permissions", "starting": return (restarting ? "Restarting…" : "Starting…", .spinner)
+        // a Restart reads Restarting… through its loads; a start or an in-place model swap names the model
+        case "loading-stt": return (restarting ? "Restarting…" : "Loading speech model…", .spinner)
+        case "loading-cleanup": return (restarting ? "Restarting…" : "Loading cleanup model…", .spinner)
+        case "stopping": return (restarting || restartWhenStopped || updating ? "Restarting…" : "Stopping…", .spinner)
+        default: break
+        }
+        if let flash = lifecycleFlash, flash.until > Date() { return (flash.text, flash.icon) }
+        return nil
+    }
+
+    private func updatePill() {
+        pill.update(phase: phase, partial: status["partial"] as? String ?? "",
+                    liveTranscript: status["live_transcript"] as? Bool ?? false, lifecycle: lifecycleStatus)
+    }
+
+    /// Ends a start or a stop with a short "Ready" or "Stopped" on the pill.
+    private func noteLifecycle(from before: String) {
+        guard phase != before else { return }
+        let loading: Set = ["starting", "loading-stt", "loading-cleanup"]
+        var flash: (String, PillView.StatusIcon)?
+        if phase == "idle" && loading.contains(before) {
+            flash = ("Ready", .check)
+            restarting = false
+        } else if phase == "off" && before == "stopping" {
+            // A restart's stop is followed by its start; a quit takes the pill with it.
+            if !restarting && !restartWhenStopped && !terminationPending { flash = ("Stopped", .stopped) }
+        } else if ["error", "permission-error", "no-engine", "off"].contains(phase) {
+            restarting = false
+        }
+        guard let (text, icon) = flash else { return }
+        let until = Date().addingTimeInterval(Self.lifecycleFlashSeconds)
+        lifecycleFlash = (text, icon, until)
+        let timer = Timer(fire: until.addingTimeInterval(0.05), interval: 0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            if let flash = self.lifecycleFlash, flash.until <= Date() { self.lifecycleFlash = nil }
+            self.updatePill()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    static let lifecycleFlashSeconds: TimeInterval = 1.4
+
     // The menu is rebuilt on every state change and every open. Layout, top to
     // bottom: state (bold, with its symbol) and the models under it in small
     // grey type; start/stop; the last transcription with a copy action; the two
     // permission rows with coloured status dots; links; quit.
     private func render() {
+        updatePill()
+        syncAppState()
         let microphone = microphoneGranted
         let accessibility = AXIsProcessTrusted()
         let stt = status["stt"] as? String ?? ""
@@ -870,10 +959,13 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        add(microphone ? "Microphone · Granted" : "Microphone · Click to grant",
-            action: #selector(openMicrophone), image: statusDot(microphone))
-        add(accessibility ? "Accessibility · Granted" : "Accessibility · Click to grant",
-            action: #selector(openAccessibility), image: statusDot(accessibility))
+        // Only what still needs doing: granted permissions no longer take two rows.
+        if !microphone {
+            add("Microphone · Click to grant", action: #selector(openMicrophone), image: statusDot(false))
+        }
+        if !accessibility {
+            add("Accessibility · Click to grant", action: #selector(openAccessibility), image: statusDot(false))
+        }
         if globeKeyOpensSomething {
             let row = add("Globe Key · Click to set Do Nothing", action: #selector(openKeyboardSettings), image: statusDot(false))
             row.toolTip = "Until \"Press 🌐 key to\" is Do Nothing, pressing Fn can also open the emoji picker or switch input source, and dictated text can land there."
@@ -881,7 +973,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ["permission-error", "awaiting-accessibility"].contains(phase) {
             add("Reset Permissions", action: #selector(resetPermissions), image: symbol("arrow.counterclockwise"))
         }
-        menu.addItem(.separator())
+        if !microphone || !accessibility || globeKeyOpensSomething { menu.addItem(.separator()) }
 
         let pillStyles = NSMenu()
         for style in PillStyle.allCases {
@@ -891,6 +983,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.state = style == pill.style ? .on : .off
             pillStyles.addItem(row)
         }
+        if appState.onboarding != nil {
+            add("Finish Setting Up…", action: #selector(openWindow), image: symbol("checklist"))
+        }
+        add("Open Voice2Text…", action: #selector(openWindow), image: symbol("macwindow"), key: ",")
         add("Pill", image: symbol("capsule")).submenu = pillStyles
         if let rows = models["transcription"] as? [[String: Any]], !rows.isEmpty {
             transcriptionPicker = NSMenu()
@@ -1206,7 +1302,155 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         open.arguments = ["-t", file.path]
         try? open.run()
     }
-    @objc private func openHistory() { NSWorkspace.shared.open(home.appendingPathComponent("history")) }
+    @objc private func openHistory() { showWindow(.history, activate: true) }
+    @objc private func openWindow() { showWindow(nil, activate: true) }
+
+    // MARK: The window
+
+    /// Wires the window's buttons to the menu's own code paths.
+    private func connectAppState() {
+        appState.historyFile = home.appendingPathComponent("history/history.sqlite")
+        appState.choose = { [weak self] pairs in
+            guard let self else { return }
+            // An explicit cleanup choice settles a new install's pending Off: cleared before the
+            // write (whose render would otherwise retry the Off over it), restored if it failed.
+            let defaults = UserDefaults.standard
+            let wasPending = defaults.bool(forKey: "cleanupOffPending")
+            let index = pairs.firstIndex(of: "cleanup.enabled")
+            if index != nil { defaults.set(false, forKey: "cleanupOffPending") }
+            // the same path as a menu row: chooseSetting reads the pairs from the item
+            let row = NSMenuItem()
+            row.representedObject = pairs
+            self.chooseSetting(row)
+            if wasPending, let index, index + 1 < pairs.count,
+               (self.settings["cleanup.enabled"] as? Bool).map(String.init) != pairs[index + 1] {
+                defaults.set(true, forKey: "cleanupOffPending")
+            }
+        }
+        appState.start = { [weak self] in self?.start() }
+        appState.requestMicrophone = { [weak self] in self?.openMicrophone() }
+        appState.requestAccessibility = { [weak self] in self?.openAccessibility() }
+        appState.openKeyboardSettings = { [weak self] in self?.openKeyboardSettings() }
+        appState.finishOnboarding = { [weak self] in
+            UserDefaults.standard.set(true, forKey: "onboardingDone")
+            self?.appState.onboarding = nil
+            self?.appState.section = .models
+            self?.rendered = ""
+            self?.render()
+        }
+        appState.importLegacyHistory = { [weak self] done in
+            // whenever the JSONL is there: the import is incremental (meta.legacy_offset), so it also
+            // takes lines an older engine appended since, and retries one that was cut short
+            guard let self, let python = self.pythonExecutable,
+                  FileManager.default.fileExists(atPath: self.home.appendingPathComponent("history/transcriptions.jsonl").path)
+            else { done(); return }
+            let environment = self.engineEnvironment(python: python)
+            DispatchQueue.global(qos: .userInitiated).async {
+                // reading the history creates the database and imports the JSONL, which stays
+                _ = Self.engineJSON(python, ["history", "--last", "1", "--json"], environment)
+                DispatchQueue.main.async { done() }
+            }
+        }
+        appState.agentsCommand = { [weak self] arguments, done in
+            guard let self, let python = self.pythonExecutable else { done(nil); return }
+            let environment = self.engineEnvironment(python: python)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Self.engineJSON(python, ["agents"] + arguments + ["--json"], environment)
+                DispatchQueue.main.async { done(result) }
+            }
+        }
+    }
+
+    /// A first launch (no config.toml and no history yet), or one that quit mid-setup,
+    /// opens the onboarding. New installs start with cleanup off; the onboarding offers it.
+    private func beginOnboardingIfNew() {
+        let defaults = UserDefaults.standard
+        let fresh = !FileManager.default.fileExists(atPath: editableConfigFile.path)
+            && !["history/history.sqlite", "history/transcriptions.jsonl"].contains {
+                FileManager.default.fileExists(atPath: home.appendingPathComponent($0).path)
+            }
+        guard fresh || (defaults.bool(forKey: "onboardingStarted") && !defaults.bool(forKey: "onboardingDone")) else { return }
+        if fresh {
+            defaults.set(true, forKey: "cleanupOffPending")
+            writeCleanupOffIfPending()
+            defaults.set(false, forKey: "onboardingDone")
+        }
+        defaults.set(true, forKey: "onboardingStarted")
+        appState.onboarding = .welcome
+        // After launch has finished, when an app opened from Finder is active: it comes
+        // to the front then, and one started in the background opens behind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.showWindow(nil, activate: false)
+        }
+    }
+
+    /// A new install starts with cleanup off. Written as soon as an engine can write it:
+    /// with no engine installed yet the write waits, retried before each start and while
+    /// the window shows, and a choice made in the window (either way) settles it.
+    private func writeCleanupOffIfPending() {
+        guard UserDefaults.standard.bool(forKey: "cleanupOffPending"), pythonExecutable != nil else { return }
+        guard runConfig(["set", "cleanup.enabled", "false"]) else { return }
+        UserDefaults.standard.set(false, forKey: "cleanupOffPending")
+        // an engine already running (one from Terminal, or ours) reloads it, as chooseSetting asks
+        if let pid = status["pid"] as? Int, engineOwnsLock(pid) {
+            if engineCanReload { kill(pid_t(pid), SIGHUP) } else { staleEnginePID = pid }
+        } else if engine != nil {
+            reloadWhenReady = true
+        }
+    }
+
+    private func showWindow(_ section: WindowSection?, activate: Bool) {
+        runConfig([])  // a model pulled or downloaded since changes no config.toml date
+        settingsReadForWindowAt = Date()
+        appWindow.show(section, activate: activate)
+        syncAppState()
+    }
+
+    /// Copies what the menu knows into the window's state, changing only what changed.
+    private func syncAppState() {
+        let state = appState
+        func assign<T: Equatable>(_ key: ReferenceWritableKeyPath<AppState, T>, _ value: T) {
+            if state[keyPath: key] != value { state[keyPath: key] = value }
+        }
+        let shown = appWindow.isVisible || state.onboarding != nil
+        // The window shows whether each model is downloaded or pulled: re-read when config.toml
+        // changed (at most every 3 s) and every 15 s anyway, since a download changes no file of ours.
+        let sinceRead = Date().timeIntervalSince(settingsReadForWindowAt ?? .distantPast)
+        if shown && sinceRead > 3 { writeCleanupOffIfPending() }
+        if shown, sinceRead > 15 || (sinceRead > 3 && (settings.isEmpty || modified(configFile) != configDate)) {
+            settingsReadForWindowAt = Date()
+            runConfig([])
+        }
+        assign(\.phase, phase)
+        assign(\.engineInstalled, pythonExecutable != nil)
+        assign(\.microphone, microphoneGranted)
+        assign(\.accessibility, AXIsProcessTrusted())
+        assign(\.cleanupEnabled, settings["cleanup.enabled"] as? Bool ?? false)
+        assign(\.cleanupEngine, settings["cleanup.engine"] as? String ?? "")
+        assign(\.cleanupModel, settings["cleanup.model"] as? String ?? "")
+        assign(\.hotkey, settings["hotkey.key"] as? String ?? "fn")
+        if shown { assign(\.globeKeyConflict, globeKeyOpensSomething) }
+        assign(\.speech, (models["transcription"] as? [[String: Any]] ?? []).map(ModelRow.init))
+        assign(\.cleanup, (models["cleanup"] as? [[String: Any]] ?? []).map(ModelRow.init))
+        var bytes: Int64?
+        if shown, ["starting", "permissions", "loading-stt"].contains(phase),
+           let folder = state.speech.first(where: \.current)?.downloadDir {
+            bytes = Self.folderSize(URL(fileURLWithPath: folder))
+        }
+        assign(\.downloadedBytes, bytes)
+    }
+
+    /// The bytes under `folder`, partial downloads included: how far a first download has got.
+    private static func folderSize(_ folder: URL) -> Int64? {
+        guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey, .isSymbolicLinkKey])
+        else { return nil }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink != true { total += Int64(values?.fileSize ?? 0) }
+        }
+        return total
+    }
     @objc private func openDictionary() {
         let url = home.appendingPathComponent("dictionary.txt")
         if !FileManager.default.fileExists(atPath: url.path) {
@@ -1268,6 +1512,8 @@ final class Pill: NSObject {
     private var screen: NSScreen?
     var onUndo: (() -> Void)?
     var onLog: ((String) -> Void)?
+    /// The menu bar icon's frame on screen: the engine's start and stop show under it.
+    var anchor: (() -> NSRect?)?
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     var style: PillStyle {
         get { PillStyle(rawValue: UserDefaults.standard.string(forKey: "pillPlacement") ?? "") ?? .cursorBubble }
@@ -1312,7 +1558,17 @@ final class Pill: NSObject {
 
     /// Keep the recording waveform when placement or transcript visibility changes.
     /// Words show only with the experimental `live_transcript` config key on.
-    func update(phase: String, partial: String, liveTranscript: Bool) {
+    func update(phase: String, partial: String, liveTranscript: Bool,
+                lifecycle: (text: String, icon: PillView.StatusIcon)? = nil) {
+        let dictationPhases: Set = ["recording", "transcribing", "cleaning", "cancelled", "delivering"]
+        if let lifecycle, !dictationPhases.contains(phase) {
+            showStatus(lifecycle)
+            return
+        }
+        if view.phase == "status" {  // the start or stop is over: put it away first
+            hide()
+            view.phase = "idle"
+        }
         if phase == "recording" && view.phase != "recording" {
             followGeneration += 1
             following = false
@@ -1350,6 +1606,29 @@ final class Pill: NSObject {
         if visible { view.push(level) }
     }
 
+    /// The engine starting, loading a model, stopping or restarting, then "Ready" or
+    /// "Stopped": a small chip under the menu bar icon (the bottom of the screen when
+    /// the icon is hidden), whatever the pill's placement. Off hides this too.
+    private func showStatus(_ lifecycle: (text: String, icon: PillView.StatusIcon)) {
+        guard style != .off else { hide(); return }
+        let changed = view.phase != "status" || view.statusText != lifecycle.text || view.statusIcon != lifecycle.icon
+        view.phase = "status"
+        view.statusText = lifecycle.text
+        view.statusIcon = lifecycle.icon
+        undoButton.isHidden = true
+        panel.ignoresMouseEvents = true
+        guard changed || !visible else { return }
+        onLog?("pill status: \(lifecycle.text)")
+        target = nil
+        pane = nil
+        view.style = .compactBottom
+        let anchorFrame = anchor?()
+        let location = anchorFrame.map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
+        screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
+        if !visible { show() } else { position() }
+        view.needsDisplay = true
+    }
+
     /// A speech bubble up and to the right of the caret, its tail curling down-left
     /// at 45 degrees to just above it, so neither the caret nor the text beside it
     /// is covered (placed on a design surface, 2026-10-06). Without room above, it
@@ -1357,7 +1636,7 @@ final class Pill: NSObject {
     /// is assumed at its start; a box taller than 40% of the screen with no caret
     /// is a document or terminal pane, and the pill sits at its bottom centre.
     private func show() {
-        guard place() else { return }
+        guard view.phase == "status" ? screen != nil : place() else { return }
         position()
         panel.invalidateShadow()
         panel.alphaValue = 0
@@ -1401,7 +1680,7 @@ final class Pill: NSObject {
     /// timeout) and move the bubble when the caret or the field changed. The
     /// Undo chip stays put: it belongs to the dictation just cancelled.
     private func follow() {
-        guard visible, !following, view.phase != "cancelled", style == .cursorBubble else { return }
+        guard visible, !following, view.phase != "cancelled", view.phase != "status", style == .cursorBubble else { return }
         following = true
         let generation = followGeneration
         followQueue.async { [weak self] in
@@ -1409,7 +1688,9 @@ final class Pill: NSObject {
             DispatchQueue.main.async {
                 guard let self, generation == self.followGeneration else { return }
                 self.following = false
-                guard let now = read, self.visible, self.view.phase != "cancelled", now != self.focus
+                // a stop that turned the bubble into a status pill meanwhile keeps it under the icon
+                guard let now = read, self.visible, self.view.phase != "cancelled", self.view.phase != "status",
+                      now != self.focus
                 else { return }
                 self.focus = now
                 if self.place() { self.position() }
@@ -1463,6 +1744,9 @@ final class Pill: NSObject {
                 y = target.minY - 8 - tail - size.height
                 view.tailBelow = false
             }
+        } else if view.phase == "status", let icon = anchor?(), NSMouseInRect(NSPoint(x: icon.midX, y: icon.midY), screen.frame, false) {
+            x = icon.midX - size.width / 2
+            y = icon.minY - 6 - size.height
         } else {
             let base = pane.map { area.intersection($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? area
             x = base.midX - size.width / 2
@@ -1867,6 +2151,10 @@ final class Pill: NSObject {
 /// Input levels scroll while recording; transcription travels across the bars;
 /// cleanup pulses in place. Optional live words have no placeholder/status text.
 final class PillView: NSView {
+    /// The engine's start or stop: bars travelling while it works, then a mark.
+    enum StatusIcon: Equatable { case spinner, check, stopped }
+    var statusText = ""
+    var statusIcon = StatusIcon.spinner
     var style = PillStyle.cursorBubble
     var phase = "idle" {
         didSet {
@@ -1892,7 +2180,9 @@ final class PillView: NSView {
     var compactSize: NSSize {
         // Reuse the waveform-only pill width when there are no words to show.
         let textWidth = min(252, ceil((partial as NSString).size(withAttributes: [.font: Self.font]).width))
+        let statusWidth = ceil((statusText as NSString).size(withAttributes: [.font: Self.font]).width)
         let width: CGFloat = phase == "recording" && !partial.isEmpty ? 16 + 44 + 12 + textWidth + 16
+            : phase == "status" ? 14 + (statusIcon == .spinner ? 28 : 16) + 8 + statusWidth + 16
             : phase == "cleaning" ? 132 : 116
         return NSSize(width: width, height: 34 + (style == .cursorBubble ? Self.tail : 0))
     }
@@ -1973,6 +2263,26 @@ final class PillView: NSView {
         NSColor(white: 1, alpha: 0.14).setStroke()
         capsule.stroke()
         NSGraphicsContext.restoreGraphicsState()
+        if phase == "status" {
+            let mark: CGFloat = statusIcon == .spinner ? 28 : 16
+            if statusIcon == .spinner {
+                drawBars(in: NSRect(x: 14, y: body.minY + 10, width: mark, height: body.height - 20))
+            } else if let image = NSImage(systemSymbolName: statusIcon == .check ? "checkmark" : "stop.fill",
+                                          accessibilityDescription: statusText)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold)) {
+                let tinted = NSImage(size: image.size, flipped: false) { rect in
+                    image.draw(in: rect)
+                    NSColor(white: 1, alpha: 0.9).set()
+                    rect.fill(using: .sourceAtop)
+                    return true
+                }
+                tinted.draw(in: NSRect(x: 14 + (mark - image.size.width) / 2, y: body.midY - image.size.height / 2,
+                                       width: image.size.width, height: image.size.height))
+            }
+            drawText(statusText, in: NSRect(x: 14 + mark + 8, y: body.minY, width: body.width - mark - 36, height: body.height),
+                     color: NSColor(white: 1, alpha: 0.9))
+            return
+        }
         if phase == "cancelled" {
             drawText("Cancelled", in: NSRect(x: 16, y: 0, width: bounds.width - 112, height: bounds.height),
                      color: NSColor(white: 1, alpha: 0.9))

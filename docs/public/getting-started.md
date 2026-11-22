@@ -40,7 +40,9 @@ brew tap lucharo/voice2text https://github.com/lucharo/voice2text.git
 brew install --cask voice2text
 ```
 
-Stop the terminal engine with Ctrl+C, then open **Voice2Text** in `/Applications` and grant its Microphone and Accessibility permissions. The menu says **Ready** once the models load.
+Stop the terminal engine with Ctrl+C, then open **Voice2Text** in `/Applications`. On a new install it walks you through setup: the Microphone and Accessibility permissions, the speech model it picked for your Mac (downloaded once, with its progress shown), whether to clean up text (off unless you turn it on) and how to dictate. The menu says **Ready** once the models load.
+
+**Open Voice2Text…** in the menu (⌘,) opens its window: **Models** to change the speech or cleanup model, **History** to search and copy past dictations, and **Agents** to give Claude Code, Codex or Pi the v2t skills.
 
 To start the menu app at login, quit **Voice2Text**, then run:
 
