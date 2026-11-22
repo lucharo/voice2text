@@ -3900,7 +3900,10 @@ class V2TSmokeTests(unittest.TestCase):
     def test_a_model_still_to_download_names_the_cache_folder_it_downloads_into(self):
         # The menu app's window measures this folder to show how far a first download has got.
         cache = Path(self.tempdir.name) / "hub"
-        with mock.patch("huggingface_hub.constants.HF_HUB_CACHE", str(cache)):
+        # a stand-in module: CI's minimal smoke environment may not have huggingface_hub
+        constants = types.SimpleNamespace(HF_HUB_CACHE=str(cache))
+        hub = types.SimpleNamespace(constants=constants)
+        with mock.patch.dict(sys.modules, {"huggingface_hub": hub, "huggingface_hub.constants": constants}):
             rows = {r["id"]: r for r in self._pickers(config.Config())["transcription"]}
             cleanup = {r["id"]: r for r in self._pickers(config.Config())["cleanup"]}
 

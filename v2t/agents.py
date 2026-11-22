@@ -13,7 +13,12 @@ MARKER = "<!-- voice2text -->"
 # The same line when add_line also put a blank line before it, so remove_line takes
 # that blank line too and leaves one the file already had.
 MARKER_WITH_BLANK = "<!-- voice2text +blank -->"
-_MARK = "<!-- voice2text"  # what both start with
+
+
+def _ours(line: str) -> bool:
+    """A line add_line wrote: it carries one of the two whole markers, not any comment
+    that merely starts the same way (`<!-- voice2text privacy -->` is the user's own)."""
+    return MARKER in line or MARKER_WITH_BLANK in line
 LINE = (
     "I dictate with voice2text (v2t), so my messages can contain misheard words. "
     "When one looks wrong, check the raw transcript with `v2t history --last 1 --raw` "
@@ -90,7 +95,7 @@ def _lookup_harness(harness_id: str) -> Harness:
 def _contains_marker(path: Path) -> bool:
     if not path.exists():
         return False
-    return any(_MARK in line for line in _read_text(path).splitlines())
+    return any(_ours(line) for line in _read_text(path).splitlines())
 
 
 def _read_bytes(node) -> bytes:
@@ -207,7 +212,7 @@ def add_line(harness_id: str) -> None:
     harness = _lookup_harness(harness_id)
     harness.instructions.parent.mkdir(parents=True, exist_ok=True)
     text = _read_text(harness.instructions) if harness.instructions.exists() else ""
-    if any(_MARK in line for line in text.splitlines()):
+    if any(_ours(line) for line in text.splitlines()):
         return
     line = LINE
     if text:
@@ -226,11 +231,11 @@ def remove_line(harness_id: str) -> None:
     if not harness.instructions.exists():
         return
     lines = _read_text(harness.instructions).splitlines(keepends=True)
-    if not any(_MARK in line for line in lines):
+    if not any(_ours(line) for line in lines):
         return
     kept: list[str] = []
     for line in lines:
-        if _MARK in line:
+        if _ours(line):
             if MARKER_WITH_BLANK in line and kept and not kept[-1].strip():
                 kept.pop()
             continue

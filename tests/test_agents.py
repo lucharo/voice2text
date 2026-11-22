@@ -120,6 +120,19 @@ class AgentsTests(unittest.TestCase):
 
         self.assertEqual(instructions.read_bytes(), original)
 
+    def test_a_users_own_comment_that_starts_like_the_marker_is_left_alone(self):
+        home = self._home_case()
+        instructions = home / ".claude" / "CLAUDE.md"
+        instructions.parent.mkdir(parents=True, exist_ok=True)
+        own = "Keep recordings local. <!-- voice2text privacy -->\n"
+        instructions.write_text(own, encoding="utf-8")
+
+        before = next(h for h in agents.status()["harnesses"] if h["id"] == "claude")["line_present"]
+        agents.remove_line("claude")
+
+        self.assertFalse(before)
+        self.assertEqual(instructions.read_text(encoding="utf-8"), own)
+
     def test_cli_json_before_the_action_still_prints_json(self):
         self._home_case()
         stdout = io.StringIO()

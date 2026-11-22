@@ -806,8 +806,9 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lifecycleStatus: (text: String, icon: PillView.StatusIcon)? {
         switch phase {
         case "permissions", "starting": return (restarting ? "Restarting…" : "Starting…", .spinner)
-        case "loading-stt": return ("Loading speech model…", .spinner)
-        case "loading-cleanup": return ("Loading cleanup model…", .spinner)
+        // a Restart reads Restarting… through its loads; a start or an in-place model swap names the model
+        case "loading-stt": return (restarting ? "Restarting…" : "Loading speech model…", .spinner)
+        case "loading-cleanup": return (restarting ? "Restarting…" : "Loading cleanup model…", .spinner)
         case "stopping": return (restarting || restartWhenStopped || updating ? "Restarting…" : "Stopping…", .spinner)
         default: break
         }
@@ -1309,11 +1310,16 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func connectAppState() {
         appState.historyFile = home.appendingPathComponent("history/history.sqlite")
         appState.choose = { [weak self] pairs in
-            if pairs.contains("cleanup.enabled") { UserDefaults.standard.set(false, forKey: "cleanupOffPending") }
+            guard let self else { return }
             // the same path as a menu row: chooseSetting reads the pairs from the item
             let row = NSMenuItem()
             row.representedObject = pairs
-            self?.chooseSetting(row)
+            self.chooseSetting(row)
+            // an explicit cleanup choice settles a new install's pending Off, once it is saved
+            if let index = pairs.firstIndex(of: "cleanup.enabled"), index + 1 < pairs.count,
+               (self.settings["cleanup.enabled"] as? Bool).map(String.init) == pairs[index + 1] {
+                UserDefaults.standard.set(false, forKey: "cleanupOffPending")
+            }
         }
         appState.start = { [weak self] in self?.start() }
         appState.requestMicrophone = { [weak self] in self?.openMicrophone() }
@@ -1408,6 +1414,8 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         assign(\.microphone, microphoneGranted)
         assign(\.accessibility, AXIsProcessTrusted())
         assign(\.cleanupEnabled, settings["cleanup.enabled"] as? Bool ?? false)
+        assign(\.cleanupEngine, settings["cleanup.engine"] as? String ?? "")
+        assign(\.cleanupModel, settings["cleanup.model"] as? String ?? "")
         assign(\.hotkey, settings["hotkey.key"] as? String ?? "fn")
         assign(\.speech, (models["transcription"] as? [[String: Any]] ?? []).map(ModelRow.init))
         assign(\.cleanup, (models["cleanup"] as? [[String: Any]] ?? []).map(ModelRow.init))

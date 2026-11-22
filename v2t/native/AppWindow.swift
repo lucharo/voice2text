@@ -121,6 +121,9 @@ final class AppState: ObservableObject {
     @Published var speech: [ModelRow] = []
     @Published var cleanup: [ModelRow] = []
     @Published var cleanupEnabled = false
+    /// cleanup.engine and cleanup.model, kept while cleanup is off.
+    @Published var cleanupEngine = ""
+    @Published var cleanupModel = ""
     @Published var hotkey = "fn"
     @Published var microphone = false
     @Published var accessibility = false
@@ -150,7 +153,11 @@ final class AppState: ObservableObject {
     var recommendedCleanup: ModelRow? { cleanup.first(where: \.recommended) ?? cleanup.first { $0.id != "off" } }
     /// The cleanup model that runs when the switch is on: the one config.toml names, which
     /// turning cleanup off keeps (the picker marks only Off as current then).
-    var chosenCleanup: ModelRow? { cleanup.first { $0.current && $0.id != "off" } ?? recommendedCleanup }
+    var chosenCleanup: ModelRow? {
+        // a row's pairs: cleanup.enabled, true, cleanup.engine, <engine>, cleanup.model, <model>
+        cleanup.first { $0.pairs.count == 6 && $0.pairs[3] == cleanupEngine && $0.pairs[5] == cleanupModel }
+            ?? cleanup.first { $0.current && $0.id != "off" } ?? recommendedCleanup
+    }
 
     /// Cleanup on or off, changing only `cleanup.enabled`, so a chosen engine and model stay.
     var cleanupSwitch: Binding<Bool> {
@@ -203,35 +210,32 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Newest first; `search` matches the raw or the cleaned text.
+    /// Newest first; `search` matches the raw or the cleaned text, as a literal substring
+    /// ignoring case for any letter (café finds CAFÉ), as `v2t history TERM` does.
     func history(search: String, limit: Int = 300) -> [HistoryEntry] {
         var db: OpaquePointer?
         guard sqlite3_open_v2(historyFile.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return [] }
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 200)
-        var query = "SELECT id, ts, audio_s, COALESCE(raw, ''), COALESCE(clean, '') FROM transcriptions"
-            + " WHERE (COALESCE(raw, '') != '' OR COALESCE(clean, '') != '')"
         let term = search.trimmingCharacters(in: .whitespaces)
-        if !term.isEmpty { query += " AND (raw LIKE ?1 ESCAPE '\\' OR clean LIKE ?1 ESCAPE '\\')" }
-        query += " ORDER BY id DESC LIMIT \(limit)"
+        // SQLite's LIKE folds ASCII case only, so a search reads every row and matches here
+        let query = "SELECT id, ts, audio_s, COALESCE(raw, ''), COALESCE(clean, '') FROM transcriptions"
+            + " WHERE (COALESCE(raw, '') != '' OR COALESCE(clean, '') != '') ORDER BY id DESC"
+            + (term.isEmpty ? " LIMIT \(limit)" : "")
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
-        if !term.isEmpty {
-            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-            // the search is literal: % and _ in it match themselves, as in `v2t history TERM`
-            let literal = term.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
-            sqlite3_bind_text(statement, 1, "%\(literal)%", -1, transient)
-        }
         func text(_ column: Int32) -> String {
             sqlite3_column_text(statement, column).map { String(cString: $0) } ?? ""
         }
         var entries: [HistoryEntry] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while entries.count < limit, sqlite3_step(statement) == SQLITE_ROW {
+            let raw = text(3), clean = text(4)
+            if !term.isEmpty && raw.range(of: term, options: .caseInsensitive) == nil
+                && clean.range(of: term, options: .caseInsensitive) == nil { continue }
             let seconds = sqlite3_column_type(statement, 2) == SQLITE_NULL ? nil : sqlite3_column_double(statement, 2)
             entries.append(HistoryEntry(id: sqlite3_column_int64(statement, 0), date: Self.parse(text(1)),
-                                        seconds: seconds, raw: text(3), clean: text(4)))
+                                        seconds: seconds, raw: raw, clean: clean))
         }
         return entries
     }
