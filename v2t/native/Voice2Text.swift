@@ -521,6 +521,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func stop() {
         restartWhenStopped = false
+        restarting = false  // a Stop cancels a restart in progress: it ends on Stopped
         if let engine { terminateEngine(engine) }
         phase = "stopping"
         render()
@@ -1311,19 +1312,25 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appState.historyFile = home.appendingPathComponent("history/history.sqlite")
         appState.choose = { [weak self] pairs in
             guard let self else { return }
+            // An explicit cleanup choice settles a new install's pending Off: cleared before the
+            // write (whose render would otherwise retry the Off over it), restored if it failed.
+            let defaults = UserDefaults.standard
+            let wasPending = defaults.bool(forKey: "cleanupOffPending")
+            let index = pairs.firstIndex(of: "cleanup.enabled")
+            if index != nil { defaults.set(false, forKey: "cleanupOffPending") }
             // the same path as a menu row: chooseSetting reads the pairs from the item
             let row = NSMenuItem()
             row.representedObject = pairs
             self.chooseSetting(row)
-            // an explicit cleanup choice settles a new install's pending Off, once it is saved
-            if let index = pairs.firstIndex(of: "cleanup.enabled"), index + 1 < pairs.count,
-               (self.settings["cleanup.enabled"] as? Bool).map(String.init) == pairs[index + 1] {
-                UserDefaults.standard.set(false, forKey: "cleanupOffPending")
+            if wasPending, let index, index + 1 < pairs.count,
+               (self.settings["cleanup.enabled"] as? Bool).map(String.init) != pairs[index + 1] {
+                defaults.set(true, forKey: "cleanupOffPending")
             }
         }
         appState.start = { [weak self] in self?.start() }
         appState.requestMicrophone = { [weak self] in self?.openMicrophone() }
         appState.requestAccessibility = { [weak self] in self?.openAccessibility() }
+        appState.openKeyboardSettings = { [weak self] in self?.openKeyboardSettings() }
         appState.finishOnboarding = { [weak self] in
             UserDefaults.standard.set(true, forKey: "onboardingDone")
             self?.appState.onboarding = nil
@@ -1417,6 +1424,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         assign(\.cleanupEngine, settings["cleanup.engine"] as? String ?? "")
         assign(\.cleanupModel, settings["cleanup.model"] as? String ?? "")
         assign(\.hotkey, settings["hotkey.key"] as? String ?? "fn")
+        if shown { assign(\.globeKeyConflict, globeKeyOpensSomething) }
         assign(\.speech, (models["transcription"] as? [[String: Any]] ?? []).map(ModelRow.init))
         assign(\.cleanup, (models["cleanup"] as? [[String: Any]] ?? []).map(ModelRow.init))
         var bytes: Int64?

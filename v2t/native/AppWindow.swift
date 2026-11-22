@@ -125,6 +125,8 @@ final class AppState: ObservableObject {
     @Published var cleanupEngine = ""
     @Published var cleanupModel = ""
     @Published var hotkey = "fn"
+    /// fn is the hotkey and macOS's "Press 🌐 key to" still opens emoji or switches input.
+    @Published var globeKeyConflict = false
     @Published var microphone = false
     @Published var accessibility = false
     @Published var engineInstalled = true
@@ -142,6 +144,7 @@ final class AppState: ObservableObject {
     var start: () -> Void = {}
     var requestMicrophone: () -> Void = {}
     var requestAccessibility: () -> Void = {}
+    var openKeyboardSettings: () -> Void = {}
     var finishOnboarding: () -> Void = {}
     /// Imports a legacy transcriptions.jsonl into history.sqlite (through `v2t history`),
     /// then calls back; calls back at once when there is nothing to import.
@@ -754,6 +757,14 @@ struct StepBody: View {
                 }
                 Text("Hold \(state.hotkeyName), speak, and let go: the text is pasted where you're typing. Double-tap \(state.hotkeyName) to keep recording hands-free, and tap again to stop.")
                     .fixedSize(horizontal: false, vertical: true)
+                if state.globeKeyConflict {
+                    HStack(alignment: .firstTextBaseline) {
+                        StatusLabel(text: "First set Keyboard → \"Press 🌐 key to\" to Do Nothing, or fn opens emoji instead.",
+                                    symbol: "exclamationmark.triangle", tint: .primary)
+                        Spacer()
+                        Button("Open Keyboard Settings") { state.openKeyboardSettings() }
+                    }
+                }
                 TextField("Click here, then hold \(state.hotkeyName) and speak", text: $tryText, axis: .vertical)
                     .lineLimit(3...5)
                     .textFieldStyle(.roundedBorder)
