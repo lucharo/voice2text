@@ -575,7 +575,7 @@ struct HarnessRows: View {
             }
         }
         .help(skills.joined(separator: ", "))
-        .disabled(state.agentsBusy)
+        .disabled(state.agentsBusy || !harness.present)
         HStack {
             let file = (harness.instructions as NSString).lastPathComponent
             StatusLabel(text: harness.linePresent ? "Line in \(file)" : "Line not in \(file)",
@@ -798,8 +798,12 @@ struct OnboardingButtons: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!flow.canContinue(step))
         }
+        // A permission step moves on once granted, and at once when it already was
         .onChange(of: flow.canContinue(step)) { granted in
             if granted && (step == .microphone || step == .accessibility) { flow.next(after: step) }
+        }
+        .onAppear {
+            if flow.canContinue(step) && (step == .microphone || step == .accessibility) { flow.next(after: step) }
         }
     }
 }
@@ -845,7 +849,7 @@ struct OnboardingView: View {
                 Text(stepHeading(step)).font(.title.weight(.semibold))
                 StepBody(state: state, step: step)
                 Spacer()
-                OnboardingButtons(state: state, step: step)
+                OnboardingButtons(state: state, step: step).id(step)  // new per step, so onAppear runs on each
             }
             .padding(.top, 40)
             .padding(24)

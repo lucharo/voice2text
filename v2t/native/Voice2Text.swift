@@ -716,6 +716,14 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             restarting = true
             phase = "starting"
         }
+        // A terminal engine asked to Restart clears its status and execs under the same PID:
+        // keep saying Restarting while that PID lives, and Off only once it has exited.
+        if !live, engine == nil, externalEngine, restarting, let pid = status["pid"] as? Int, kill(pid_t(pid), 0) == 0 {
+            phase = "starting"
+            sendPendingReload()
+            render()
+            return
+        }
         if !live && engine == nil && !["permissions", "permission-error", "awaiting-accessibility", "error", "no-engine"].contains(phase) {
             phase = "off"
             status = [:]
@@ -1659,7 +1667,9 @@ final class Pill: NSObject {
             DispatchQueue.main.async {
                 guard let self, generation == self.followGeneration else { return }
                 self.following = false
-                guard let now = read, self.visible, self.view.phase != "cancelled", now != self.focus
+                // a stop that turned the bubble into a status pill meanwhile keeps it under the icon
+                guard let now = read, self.visible, self.view.phase != "cancelled", self.view.phase != "status",
+                      now != self.focus
                 else { return }
                 self.focus = now
                 if self.place() { self.position() }
