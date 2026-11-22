@@ -100,19 +100,6 @@ enum WindowSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// The deliberately different designs of the window, for the owner to choose one.
-enum WindowLook: String, CaseIterable, Identifiable {
-    case sidebar = "A", tabs = "B", page = "C"
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .sidebar: "A · Sidebar"
-        case .tabs: "B · Tabs"
-        case .page: "C · One list"
-        }
-    }
-}
-
 enum OnboardingStep: Int, CaseIterable {
     case welcome, microphone, accessibility, model, cleanup, tryIt
     var title: String {
@@ -146,11 +133,6 @@ final class AppState: ObservableObject {
     @Published var agentsBusy = false
     /// Set when the last agents command failed, until the next one succeeds.
     @Published var agentsFailed = false
-    @Published var look: WindowLook = WindowLook(rawValue: UserDefaults.standard.string(forKey: "windowLook") ?? "") ?? .sidebar {
-        didSet { UserDefaults.standard.set(look.rawValue, forKey: "windowLook") }
-    }
-    /// Shows the A/B/C switch while the designs are being compared.
-    var showsLookSwitch: Bool { UserDefaults.standard.bool(forKey: "showLookSwitch") }
 
     var historyFile = URL(fileURLWithPath: "/dev/null")
     var choose: ([String]) -> Void = { _ in }
@@ -378,10 +360,8 @@ struct RecommendedBadge: View {
 
 /// Why the recommended speech model, and where the comparison lives.
 struct RecommendationNote: View {
-    var centred = false
-
     var body: some View {
-        VStack(alignment: centred ? .center : .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("The fastest of the accurate models: 5% of words wrong on 208 real dictations, run on this Mac's Neural Engine, offline.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -624,41 +604,24 @@ struct SectionContent: View {
     }
 }
 
-// MARK: - Root and the three looks
+// MARK: - Root
 
 struct AppRoot: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let step = state.onboarding {
                 OnboardingView(state: state, step: step)
             } else {
-                switch state.look {
-                case .sidebar: SidebarLook(state: state)
-                case .tabs: TabsLook(state: state)
-                case .page: PageLook(state: state)
-                }
-            }
-            if state.showsLookSwitch {
-                Divider()
-                HStack {
-                    Picker("Look", selection: $state.look) {
-                        ForEach(WindowLook.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 320)
-                    Toggle("Onboarding", isOn: Binding(
-                        get: { state.onboarding != nil }, set: { state.onboarding = $0 ? .welcome : nil }))
-                }
-                .padding(8)
+                SidebarLook(state: state)
             }
         }
         .frame(minWidth: 560, minHeight: 420)
     }
 }
 
-/// A: a sidebar like System Settings.
+/// Sections in a sidebar, like System Settings; the engine's state at its foot.
 struct SidebarLook: View {
     @ObservedObject var state: AppState
 
@@ -672,81 +635,6 @@ struct SidebarLook: View {
         } detail: {
             SectionContent(state: state, section: state.section)
                 .navigationTitle(state.section.title)
-        }
-    }
-}
-
-/// B: three tabs across the top, the content below.
-struct TabsLook: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 2) {
-                ForEach(WindowSection.allCases) { section in
-                    Button {
-                        state.section = section
-                    } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: section.symbol).font(.title3)
-                            Text(section.title).font(.caption)
-                        }
-                        .frame(width: 76, height: 46)
-                        .background(RoundedRectangle(cornerRadius: 6)
-                            .fill(state.section == section ? Color.secondary.opacity(0.18) : .clear))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(state.section == section ? .isSelected : [])
-                }
-            }
-            .padding(.top, 30)
-            .padding(.bottom, 8)
-            Divider()
-            SectionContent(state: state, section: state.section)
-            Divider()
-            StatusFooter(state: state).padding(.horizontal, 14).padding(.vertical, 6)
-        }
-        .ignoresSafeArea(edges: .top)
-    }
-}
-
-/// C: one list, as on the iPhone: what this Mac uses at the top, the rest one click away.
-struct PageLook: View {
-    @ObservedObject var state: AppState
-
-    /// Models is the page itself; History or Agents, asked for by the menu or a link, is pushed on it.
-    private var path: Binding<[WindowSection]> {
-        Binding(get: { state.section == .models ? [] : [state.section] },
-                set: { state.section = $0.last ?? .models })
-    }
-
-    var body: some View {
-        NavigationStack(path: path) {
-            Form {
-                Section {
-                    HStack(spacing: 12) {
-                        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 40, height: 40)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Voice2Text").font(.headline)
-                            StatusFooter(state: state)
-                        }
-                    }
-                }
-                ModelsSection(state: state)
-                Section {
-                    NavigationLink(value: WindowSection.history) {
-                        Label("History", systemImage: WindowSection.history.symbol)
-                    }
-                    NavigationLink(value: WindowSection.agents) {
-                        Label("Agents", systemImage: WindowSection.agents.symbol)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .navigationDestination(for: WindowSection.self) { section in
-                SectionContent(state: state, section: section).navigationTitle(section.title)
-            }
         }
     }
 }
@@ -775,18 +663,6 @@ struct StatusFooter: View {
 
 // MARK: - Onboarding
 
-struct OnboardingView: View {
-    @ObservedObject var state: AppState
-    let step: OnboardingStep
-
-    var body: some View {
-        switch state.look {
-        case .sidebar: CentredOnboarding(state: state, step: step)
-        case .tabs: StepListOnboarding(state: state, step: step)
-        case .page: FormOnboarding(state: state, step: step)
-        }
-    }
-}
 
 /// Advances on its own once a permission is granted, so nobody has to click Continue
 /// after flipping a switch in System Settings.
@@ -812,15 +688,14 @@ struct OnboardingFlow {
     }
 }
 
-/// The content of each step, shared by the three onboarding looks.
+/// The content of each setup step.
 struct StepBody: View {
     @ObservedObject var state: AppState
     let step: OnboardingStep
-    var centred = false
     @State private var tryText = ""
 
     var body: some View {
-        VStack(alignment: centred ? .center : .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             switch step {
             case .welcome:
                 Text("Speak, and your words appear where you're typing. Offline, on this Mac.")
@@ -841,7 +716,7 @@ struct StepBody: View {
                         Text(model.name).font(.headline)
                         RecommendedBadge()
                     }
-                    RecommendationNote(centred: centred)
+                    RecommendationNote()
                     DownloadProgress(state: state, model: model)
                 } else if !state.engineInstalled {
                     Text("Install v2t first, in Terminal: uv tool install --python 3.13 voice2text")
@@ -868,7 +743,6 @@ struct StepBody: View {
                 StatusFooter(state: state)
             }
         }
-        .multilineTextAlignment(centred ? .center : .leading)
     }
 }
 
@@ -941,36 +815,8 @@ private func stepHeading(_ step: OnboardingStep) -> String {
     }
 }
 
-/// A: centred, one thing per screen, dots for progress.
-struct CentredOnboarding: View {
-    @ObservedObject var state: AppState
-    let step: OnboardingStep
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            if step == .welcome {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 96, height: 96)
-            }
-            Text(stepHeading(step)).font(.largeTitle.weight(.semibold))
-            StepBody(state: state, step: step, centred: true).frame(maxWidth: 440)
-            Spacer()
-            HStack(spacing: 7) {
-                ForEach(OnboardingStep.allCases, id: \.self) { s in
-                    Image(systemName: s.rawValue <= step.rawValue ? "circle.fill" : "circle")
-                        .font(.system(size: 7))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityLabel("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)")
-            OnboardingButtons(state: state, step: step)
-        }
-        .padding(28)
-    }
-}
-
-/// B: the steps listed on the left, ticked as they are done.
-struct StepListOnboarding: View {
+/// The setup: its steps listed on the left like the window's sidebar, ticked as they are done.
+struct OnboardingView: View {
     @ObservedObject var state: AppState
     let step: OnboardingStep
 
@@ -1006,38 +852,5 @@ struct StepListOnboarding: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .ignoresSafeArea(edges: .top)
-    }
-}
-
-/// C: a grouped list like the iPhone app's setup section.
-struct FormOnboarding: View {
-    @ObservedObject var state: AppState
-    let step: OnboardingStep
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    HStack(spacing: 12) {
-                        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 48, height: 48)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(stepHeading(step)).font(.title2.weight(.semibold))
-                            Text("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Section { StepBody(state: state, step: step) }
-                if step == .welcome {
-                    Section("What happens next") {
-                        Label("Allow the microphone", systemImage: "mic")
-                        Label("Allow Accessibility, to paste", systemImage: "hand.raised")
-                        Label("Download the speech model, once", systemImage: "arrow.down.circle")
-                        Label("Choose whether to clean up text", systemImage: "text.badge.checkmark")
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            OnboardingButtons(state: state, step: step).padding(16)
-        }
     }
 }
