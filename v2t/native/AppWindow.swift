@@ -427,6 +427,7 @@ struct CleanupSection: View {
                 }
             }
             .toggleStyle(.switch)
+            CleanupExample()
             if state.cleanupEnabled {
                 ForEach(state.cleanup.filter { $0.id != "off" }) { ModelRowView(state: state, row: $0) }
             }
@@ -742,24 +743,33 @@ struct StepBody: View {
                     Text("Clean up my text")
                 }
                 .toggleStyle(.switch)
+                CleanupExample()
                 Text(state.cleanupEnabled
-                     ? "On: \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? "")) adds punctuation and drops ums. It takes a moment more per dictation."
-                     : "Off: you get the raw text, plus your dictionary's replacements. Turn it on to clean up with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once), now or later under Models.")
+                     ? "On, with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? "")). It takes a moment more per dictation."
+                     : "Off: you get the raw text, plus your dictionary's replacements. Turn it on to use \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once), now or later under Models.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .tryIt:
-                HStack(spacing: 14) {
-                    KeyCap(name: state.hotkeyName)
-                    Picker("Dictation key", selection: Binding(get: { state.hotkey }, set: { state.choose(["hotkey.key", $0]) })) {
-                        ForEach(AppState.hotkeys, id: \.0) { Text($0.1).tag($0.0) }
+                // the key, one line on how, the box to try it in; the key picker and the
+                // Globe warning only take room when they are needed
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(spacing: 6) {
+                        KeyCap(name: state.hotkeyName)
+                        Menu("Change key") {
+                            ForEach(AppState.hotkeys, id: \.0) { key in
+                                Button(key.1) { state.choose(["hotkey.key", key.0]) }
+                            }
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .font(.caption)
                     }
-                    .frame(maxWidth: 260)
+                    Text("Hold \(state.hotkeyName), speak, let go.\nDouble-tap for hands-free.")
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Hold \(state.hotkeyName), speak, and let go: the text is pasted where you're typing. Double-tap \(state.hotkeyName) to keep recording hands-free, and tap again to stop.")
-                    .fixedSize(horizontal: false, vertical: true)
                 if state.globeKeyConflict {
                     HStack(alignment: .firstTextBaseline) {
-                        StatusLabel(text: "First set Keyboard → \"Press 🌐 key to\" to Do Nothing, or fn opens emoji instead.",
+                        StatusLabel(text: "Set Keyboard → \"Press 🌐 key to\" to Do Nothing first.",
                                     symbol: "exclamationmark.triangle", tint: .primary)
                         Spacer()
                         Button("Open Keyboard Settings") { state.openKeyboardSettings() }
@@ -768,9 +778,27 @@ struct StepBody: View {
                 TextField("Click here, then hold \(state.hotkeyName) and speak", text: $tryText, axis: .vertical)
                     .lineLimit(3...5)
                     .textFieldStyle(.roundedBorder)
-                StatusFooter(state: state)
             }
         }
+    }
+}
+
+/// What cleanup does, on one sentence: the raw text above, the cleaned text below.
+struct CleanupExample: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label {
+                Text("so um I think we should uh ship it on friday and and tell alice")
+            } icon: { Text("Raw").font(.caption.weight(.semibold)).frame(width: 52, alignment: .leading) }
+            Label {
+                Text("So I think we should ship it on Friday and tell Alice.")
+            } icon: { Text("Cleaned").font(.caption.weight(.semibold)).frame(width: 52, alignment: .leading) }
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+        .accessibilityElement(children: .combine)
     }
 }
 
