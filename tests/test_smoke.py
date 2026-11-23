@@ -6849,6 +6849,31 @@ class V2TSmokeTests(unittest.TestCase):
         history.assert_not_called()
         self.assertEqual(voice.cleanup_failed, "")
 
+    def test_a_failed_cleanup_load_after_a_stop_still_keeps_the_waiting_dictation(self):
+        """A Stop with a released dictation waiting lets the load go on; if it then fails
+        with its own SystemExit, the dictation still goes to history."""
+        voice = app.VoiceToText(config.Config(save_history=True))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.startup_complete = True
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value="raw words"))
+        voice.cleanup_pending = True
+        voice.recording = True
+        voice.frames = [np.full((8, 1), 0.1, dtype=np.float32)]
+        voice.stop_recording()  # released: processing
+        voice._handle_signal(signal.SIGTERM)  # does not raise: a dictation waits
+
+        with (
+            mock.patch.object(backends, "make_cleanup", side_effect=SystemExit("cleanup needs mlx-lm")),
+            mock.patch.object(voice, "paste_to_cursor") as paste,
+            mock.patch.object(app.config, "append_history") as history,
+            self.assertRaises(SystemExit),
+        ):
+            voice._load_deferred_cleanup()
+
+        paste.assert_not_called()
+        self.assertEqual(history.call_args.args[0]["raw"], "raw words")
+
     def test_the_cleanup_load_ending_keeps_an_undo_window_on_screen(self):
         voice = app.VoiceToText(config.Config())
         lock = config.acquire_instance_lock()

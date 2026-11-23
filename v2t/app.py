@@ -473,6 +473,7 @@ class VoiceToText:
         # The cleanup model is still loading after the hotkey went live (#212): set by
         # warmup, cleared by _load_deferred_cleanup once it is ready.
         self.cleanup_pending = False
+        self.stop_exit = False  # _handle_signal raised SystemExit to stop (not a load error)
         self.cleanup_failed = ""  # why that load failed: dictations in hand are kept, not pasted
         self.state = ""  # the last state published by _set_state
         self.latched = False  # hands-free recording after a double-tap
@@ -2011,7 +2012,7 @@ class VoiceToText:
         try:
             self._load_cleanup(announce=False)
         except (Exception, SystemExit) as error:
-            if self.stopping and isinstance(error, SystemExit):
+            if self.stop_exit:
                 raise  # a Stop during the load (_handle_signal): exit now, not a failed load
             self._keep_dictations_without_cleanup(error)
             raise
@@ -2136,6 +2137,7 @@ class VoiceToText:
     def _handle_signal(self, signum=None, _frame=None):
         if self.stopping:
             if signum == signal.SIGINT:
+                self.stop_exit = True
                 raise SystemExit(0)
             return
         self.stopping = True
@@ -2152,6 +2154,7 @@ class VoiceToText:
             and not self.finalizing_recording
             and not self.processing
         ):
+            self.stop_exit = True
             raise SystemExit(0)
 
     def shutdown(self) -> None:
