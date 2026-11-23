@@ -96,11 +96,11 @@ def write(home: Path, pairs: list[tuple[str, str]]) -> None:
 
 
 def run_checkout(name: str, source: Path, scratch: Path, rnd: int, log, arms: set[str],
-                 cleanups: tuple[str, str]) -> list[dict]:
+                 cleanups: tuple[str, str], named_cleanup: bool = False) -> list[dict]:
     home = Path(tempfile.mkdtemp(prefix=f"v2t-bench-{name}-", dir=scratch))
     cleanup, speech, mode = rnd % 2, rnd % 2, rnd % 2  # alternate the direction per round
-    if "cleanup" not in arms:
-        cleanup = 0
+    if "cleanup" not in arms or named_cleanup:
+        cleanup = 0  # --cleanup: every start uses the named model, the swap goes to the other
     if "speech" not in arms:
         speech = 0
     backend, stt_label = SPEECH[speech]
@@ -190,7 +190,8 @@ def main() -> int:
     p.add_argument("--max-load", type=float, default=25.0, help="wait while the 1-minute load is above this")
     p.add_argument("--arms", default=",".join(ARMS[2:]),
                    help="comma-separated: cleanup, speech, setting (start and stop always run)")
-    p.add_argument("--cleanup", choices=CLEANUP, help="the cleanup model to start with (default the first)")
+    p.add_argument("--cleanup", choices=CLEANUP,
+                   help="start every round with this cleanup model (default: alternate between the two)")
     a = p.parse_args()
     arms = set(a.arms.split(",")) | {"live", "start", "stop"}
     unknown = arms - set(ARMS)
@@ -206,7 +207,7 @@ def main() -> int:
             for name, source in order:
                 while os.getloadavg()[0] > a.max_load:
                     time.sleep(30)
-                rows += run_checkout(name, source, a.scratch, rnd, log, arms, cleanups)
+                rows += run_checkout(name, source, a.scratch, rnd, log, arms, cleanups, bool(a.cleanup))
     print("\nmedian seconds (n)")
     for arm in (arm for arm in ARMS if arm in arms):
         cells = []
