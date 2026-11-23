@@ -15,6 +15,8 @@ struct ModelRow: Identifiable, Equatable {
     let downloaded: Bool?
     let available: Bool
     let current: Bool
+    /// The model that runs when the feature is on (cleanup: even while it is off).
+    let chosen: Bool
     let note: String
     let downloadDir: String?
     let pairs: [String]
@@ -28,6 +30,7 @@ struct ModelRow: Identifiable, Equatable {
         downloaded = row["downloaded"] as? Bool
         available = row["available"] as? Bool == true
         current = row["current"] as? Bool == true
+        chosen = row["chosen"] as? Bool == true
         note = row["note"] as? String ?? ""
         downloadDir = row["download_dir"] as? String
         pairs = (row["set"] as? [[String]] ?? []).flatMap { $0 }
@@ -124,6 +127,8 @@ final class AppState: ObservableObject {
     /// cleanup.engine and cleanup.model, kept while cleanup is off.
     @Published var cleanupEngine = ""
     @Published var cleanupModel = ""
+    /// The short name of a cleanup model set by hand that no row offers, while cleanup is off.
+    @Published var cleanupCustom = ""
     @Published var hotkey = "fn"
     /// fn is the hotkey and macOS's "Press 🌐 key to" still opens emoji or switches input.
     @Published var globeKeyConflict = false
@@ -158,8 +163,20 @@ final class AppState: ObservableObject {
     /// turning cleanup off keeps (the picker marks only Off as current then).
     var chosenCleanup: ModelRow? {
         // a row's pairs: cleanup.enabled, true, cleanup.engine, <engine>, cleanup.model, <model>
-        cleanup.first { $0.pairs.count == 6 && $0.pairs[3] == cleanupEngine && $0.pairs[5] == cleanupModel }
+        // the engine marks it, resolving an empty model to the engine's default (#215)
+        cleanup.first(where: \.chosen)
+            // an engine older than 0.6.1 marks none
+            ?? cleanup.first { $0.pairs.count == 6 && $0.pairs[3] == cleanupEngine && $0.pairs[5] == cleanupModel }
+            // a model set by hand that no row offers: its short name, with no size
+            ?? (cleanupCustom.isEmpty ? nil : ModelRow(["id": "custom", "label": cleanupCustom]))
             ?? cleanup.first { $0.current && $0.id != "off" } ?? recommendedCleanup
+    }
+    /// The chosen cleanup model for the window's text: "Qwen3.5 0.8B (0.65 GB, downloaded once)",
+    /// or just the name when there is no size to give.
+    func chosenCleanupPhrase(_ sizeNote: String = "") -> String {
+        let name = chosenCleanup?.name ?? "a small local model"
+        guard let size = chosenCleanup?.size, !size.isEmpty else { return name }
+        return "\(name) (\(size)\(sizeNote))"
     }
 
     /// Cleanup on or off, changing only `cleanup.enabled`, so a chosen engine and model stay.
@@ -422,7 +439,7 @@ struct CleanupSection: View {
                     Text("Clean up text")
                     Text(state.cleanupEnabled
                          ? "A small local model adds punctuation and drops ums before pasting."
-                         : "Off: you get the raw text, plus your dictionary's replacements. On, it cleans up with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once).")
+                         : "Off: you get the raw text, plus your dictionary's replacements. On, it cleans up with \(state.chosenCleanupPhrase(", downloaded once")).")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -745,8 +762,8 @@ struct StepBody: View {
                 .toggleStyle(.switch)
                 CleanupExample()
                 Text(state.cleanupEnabled
-                     ? "On, with \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? "")). It takes a moment more per dictation."
-                     : "Off: you get the raw text, plus your dictionary's replacements. Turn it on to use \(state.chosenCleanup?.name ?? "a small local model") (\(state.chosenCleanup?.size ?? ""), downloaded once), now or later under Models.")
+                     ? "On, with \(state.chosenCleanupPhrase()). It takes a moment more per dictation."
+                     : "Off: you get the raw text, plus your dictionary's replacements. Turn it on to use \(state.chosenCleanupPhrase(", downloaded once")), now or later under Models.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .tryIt:

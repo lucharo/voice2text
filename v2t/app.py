@@ -470,6 +470,12 @@ class VoiceToText:
         self.stopping = False
         self.finalizing_recording = False
         self.startup_complete = False
+        # The cleanup model is still loading after the hotkey went live (#212): set by
+        # warmup, cleared by _load_deferred_cleanup once it is ready.
+        self.cleanup_pending = False
+        self.stop_exit = False  # _handle_signal raised SystemExit to stop (not a load error)
+        self.cleanup_failed = ""  # why that load failed: dictations in hand are kept, not pasted
+        self.state = ""  # the last state published by _set_state
         self.latched = False  # hands-free recording after a double-tap
         self.trigger = "hold"  # hold | latched: how the current recording started
         self.input_device: str | None = None  # device the current recording uses
@@ -552,6 +558,9 @@ class VoiceToText:
                 # SIGHUP applies settings in this process; Restart v2t sends this one for a
                 # fresh process (new code). Engines without the key restart on SIGHUP.
                 "restart_signal": "USR2",
+                # the hotkey works, but the cleanup model is still loading (#212): a dictation
+                # released meanwhile waits for it ("loading-cleanup") before it pastes
+                "cleanup_loading": self.cleanup_pending,
                 "config": str(config.config_path()),
                 "error": clean_error,
                 "warning": self.warning,
@@ -559,6 +568,7 @@ class VoiceToText:
             if partial:  # what the streaming recogniser has heard so far
                 status["words"] = len(partial.split())
                 status["partial"] = _tail(partial)
+            self.state = state
             config.write_status(status)
             self._send_live(status)
 
@@ -1045,15 +1055,23 @@ class VoiceToText:
                     self.frames = []
                     self.processing = True
                     live.finish(duration)
+                    self._await_cleanup_shown()
                 elif self.frames:
                     frames, self.frames = self.frames, []
                     self.processing = True
                     self.jobs.put((frames, duration))
+                    self._await_cleanup_shown()
                 else:
                     self._restore_media()
                     self._set_state("idle")
             finally:
                 self.finalizing_recording = False
+
+    def _await_cleanup_shown(self) -> None:
+        """A dictation released before the cleanup model is ready waits in the queue for
+        it (the model thread is loading it, #212): say so until its transcription starts."""
+        if self.cleanup_pending:
+            self._set_state("loading-cleanup")
 
     def process_audio(self, frames: list[np.ndarray], audio_s: float):
         next_state, error_message, levels = "idle", "", None
@@ -1410,6 +1428,11 @@ class VoiceToText:
         if self.cancel_requested:
             return
         levels = levels or {}
+        if self.cleanup_failed:  # kept for `v2t history`, never pasted uncleaned (#212)
+            logger.warning("Not pasted: the cleanup model did not load; the raw text is in history")
+            self._record(audio_s, levels, streamed=streamed, stt_s=round(stt_s, 3), raw=raw_text,
+                         outcome=f"error: {self.cleanup_failed}")
+            return
         cleaned_text, cleanup_s, stats = raw_text, 0.0, {}
         extra: dict = {}
         if self.cleaner is not None:
@@ -1969,12 +1992,34 @@ class VoiceToText:
         return stream
 
     def warmup(self):
+        """Load what a dictation needs before the hotkey goes live: the dictionary, the
+        speech model and Nemotron's preview. The cleanup model loads once the hotkey is
+        live, in _load_deferred_cleanup, while the first dictation can already record (#212)."""
         self.refresh_dictionary()
         self._load_stt()
         if self.cfg.preview == "nemotron" and self.can_stream():
             self.preview = self._load_preview()
-        if self.cfg.cleanup_enabled:
-            self._load_cleanup()
+        self.cleanup_pending = self.cfg.cleanup_enabled
+
+    def _load_deferred_cleanup(self) -> None:
+        """Load the cleanup model warmup left for later, on the model-owning thread with
+        the hotkey already live (#212). A dictation released meanwhile waits in the job
+        queue behind this load, so it is never pasted uncleaned; one still recording is
+        decoded when the load is done. A failed load stops the engine, as it did when the
+        load came before the hotkey."""
+        if not self.cleanup_pending:
+            return
+        try:
+            self._load_cleanup(announce=False)
+        except (Exception, SystemExit) as error:
+            if self.stop_exit:
+                raise  # a Stop during the load (_handle_signal): exit now, not a failed load
+            self._keep_dictations_without_cleanup(error)
+            raise
+        with self.lifecycle_lock:
+            self.cleanup_pending = False
+            if self.state == "idle":  # nothing in hand: the menu's Ready loses "loading"
+                self._set_state("idle")
 
     def _load_stt(self) -> None:
         """Load the speech model and run a second of silence through it."""
@@ -1994,9 +2039,25 @@ class VoiceToText:
                 else f"Transcribing after release: audio.sample_rate must be {self.stt.sample_rate}"
             )
 
-    def _load_cleanup(self) -> None:
-        """Load the cleanup model and clean one word with it."""
-        self._set_state("loading-cleanup")
+    def _keep_dictations_without_cleanup(self, error: BaseException) -> None:
+        """The deferred cleanup load failed with the hotkey already live: refuse new
+        recordings, end one in progress as if released, and run every dictation in hand
+        through transcription, so each lands in history (raw text, an error outcome) and
+        keeps its audio instead of being dropped with the engine. Nothing is pasted:
+        uncleaned text never is (#212)."""
+        logger.error(f"The cleanup model did not load ({error}); keeping the dictations in hand")
+        self.cleanup_failed = f"cleanup model failed to load: {error}"
+        with self.lifecycle_lock:
+            self.stopping = True  # start_recording refuses from here
+        self.stop_recording()
+        while self.process_next(timeout=0) and not self.jobs.empty():
+            pass
+
+    def _load_cleanup(self, announce: bool = True) -> None:
+        """Load the cleanup model and clean one word with it; with `announce`, the
+        status says "loading-cleanup" meanwhile (a settings change, not a start)."""
+        if announce:
+            self._set_state("loading-cleanup")
         t0 = time.perf_counter()
         self.cleaner = backends.make_cleanup(
             self.cfg.cleanup_engine, self.cfg.cleanup_model, self.cfg.ollama_url
@@ -2046,6 +2107,8 @@ class VoiceToText:
             with _listener(
                 self.key_down, self.key_up, self.consume_escape, self.take_undo_shortcut
             ) as listener:
+                # with the hotkey live: the first dictation records while this loads (#212)
+                self._load_deferred_cleanup()
                 while listener.is_alive() and self._keep_running():
                     if not self.process_next(timeout=0.25):
                         break
@@ -2074,6 +2137,7 @@ class VoiceToText:
     def _handle_signal(self, signum=None, _frame=None):
         if self.stopping:
             if signum == signal.SIGINT:
+                self.stop_exit = True
                 raise SystemExit(0)
             return
         self.stopping = True
@@ -2083,11 +2147,14 @@ class VoiceToText:
             except OSError:
                 pass
         if (
-            # still loading, at start or in a settings change: stop now, not after the load
-            (not self.startup_complete or self.reloading)
+            # still loading, at start (the cleanup model included, #212) or in a settings
+            # change: stop now, not after the load. A recording in progress is dropped, as
+            # any Stop mid-recording drops it; a released one (processing) is pasted first.
+            (not self.startup_complete or self.reloading or self.cleanup_pending)
             and not self.finalizing_recording
             and not self.processing
         ):
+            self.stop_exit = True
             raise SystemExit(0)
 
     def shutdown(self) -> None:

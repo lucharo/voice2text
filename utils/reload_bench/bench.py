@@ -10,7 +10,13 @@ signal until the status file says idle with the new setting:
     speech   the transcription model, Parakeet v3 on Core ML <-> on MLX
     setting  a setting read per dictation, casual <-> strict
 
-then sends SIGTERM and times it until the process exits. Every engine runs with
+then sends SIGTERM and times it until the process exits. The start is timed twice:
+"live" until the status first says idle (the hotkey listener starts right after;
+since 0.6.1 that is before the cleanup model loads, #212) and "start" until it says
+idle with no cleanup model still loading (`cleanup_loading`, which older engines
+never set, so for them the two are the same). The start and Stop always run;
+`--arms stop` runs only those, with the first speech and cleanup model (`--cleanup` picks another), so a scratch
+folder needs just those two models. Every engine runs with
 its own temporary V2T_HOME, and HOME / HF_HOME pointing at a scratch folder that
 already holds the models (HF_HUB_OFFLINE=1), so nothing under ~ is read or written.
 The 1-minute load is recorded with every timing.
@@ -43,6 +49,7 @@ CLEANUP_LABEL = {CLEANUP[0]: "Qwen3.5-0.8B", CLEANUP[1]: "Qwen3.5-2B"}
 SPEECH = (("parakeet-coreml", "parakeet-v3-coreml"), ("parakeet", "parakeet-v3"))
 MODES = ("casual", "strict")
 TIMEOUT_S = 300.0
+ARMS = ("live", "start", "cleanup", "speech", "setting", "stop")
 
 
 def status(home: Path) -> dict | None:
@@ -50,6 +57,23 @@ def status(home: Path) -> dict | None:
         return json.loads((home / "run" / "status.json").read_text())
     except (OSError, ValueError):
         return None
+
+
+def wait_start(home: Path, expect: dict, proc: subprocess.Popen, since: float) -> tuple[float, float]:
+    """Seconds from `since` until the status first says idle with `expect`'s fields (the
+    hotkey goes live) and until it also says no cleanup model is still loading (Ready)."""
+    live = None
+    while time.perf_counter() - since < TIMEOUT_S:
+        if proc.poll() is not None:
+            raise RuntimeError(f"engine exited ({proc.returncode})")
+        s = status(home)
+        if s and s.get("state") == "idle" and all(s.get(k) == v for k, v in expect.items()):
+            now = time.perf_counter() - since
+            live = now if live is None else live
+            if not s.get("cleanup_loading"):
+                return live, now
+        time.sleep(0.01)
+    raise TimeoutError(f"not idle with {expect} after {TIMEOUT_S:.0f}s")
 
 
 def wait_idle(home: Path, expect: dict, proc: subprocess.Popen, since: float) -> float:
@@ -71,13 +95,18 @@ def write(home: Path, pairs: list[tuple[str, str]]) -> None:
     config.set_values(pairs)
 
 
-def run_checkout(name: str, source: Path, scratch: Path, rnd: int, log) -> list[dict]:
+def run_checkout(name: str, source: Path, scratch: Path, rnd: int, log, arms: set[str],
+                 cleanups: tuple[str, str], named_cleanup: bool = False) -> list[dict]:
     home = Path(tempfile.mkdtemp(prefix=f"v2t-bench-{name}-", dir=scratch))
     cleanup, speech, mode = rnd % 2, rnd % 2, rnd % 2  # alternate the direction per round
+    if "cleanup" not in arms or named_cleanup:
+        cleanup = 0  # --cleanup: every start uses the named model, the swap goes to the other
+    if "speech" not in arms:
+        speech = 0
     backend, stt_label = SPEECH[speech]
     write(home, [
         ("transcription.backend", backend),
-        ("cleanup.model", CLEANUP[cleanup]),
+        ("cleanup.model", cleanups[cleanup]),
         ("cleanup.mode", MODES[mode]),
     ])
     env = dict(
@@ -109,31 +138,37 @@ def run_checkout(name: str, source: Path, scratch: Path, rnd: int, log) -> list[
         print(json.dumps(r), flush=True)
 
     try:
-        row("start", wait_idle(home, {"stt": stt_label, "cleanup": CLEANUP_LABEL[CLEANUP[cleanup]]}, proc, t0),
-            "cold")
+        live, ready = wait_start(
+            home, {"stt": stt_label, "cleanup": CLEANUP_LABEL[cleanups[cleanup]]}, proc, t0
+        )
+        row("live", live, "cold")
+        row("start", ready, "cold")
         time.sleep(2)  # let the start's own work settle
 
-        new = CLEANUP[1 - cleanup]
-        write(home, [("cleanup.model", new)])
-        t = time.perf_counter()
-        os.kill(proc.pid, signal.SIGHUP)
-        row("cleanup", wait_idle(home, {"cleanup": CLEANUP_LABEL[new]}, proc, t),
-            f"{CLEANUP_LABEL[CLEANUP[cleanup]]}->{CLEANUP_LABEL[new]}")
-        time.sleep(2)
+        if "cleanup" in arms:
+            new = cleanups[1 - cleanup]
+            write(home, [("cleanup.model", new)])
+            t = time.perf_counter()
+            os.kill(proc.pid, signal.SIGHUP)
+            row("cleanup", wait_idle(home, {"cleanup": CLEANUP_LABEL[new]}, proc, t),
+                f"{CLEANUP_LABEL[cleanups[cleanup]]}->{CLEANUP_LABEL[new]}")
+            time.sleep(2)
 
-        new_backend, new_label = SPEECH[1 - speech]
-        write(home, [("transcription.backend", new_backend)])
-        t = time.perf_counter()
-        os.kill(proc.pid, signal.SIGHUP)
-        row("speech", wait_idle(home, {"stt": new_label}, proc, t), f"{stt_label}->{new_label}")
-        time.sleep(2)
+        if "speech" in arms:
+            new_backend, new_label = SPEECH[1 - speech]
+            write(home, [("transcription.backend", new_backend)])
+            t = time.perf_counter()
+            os.kill(proc.pid, signal.SIGHUP)
+            row("speech", wait_idle(home, {"stt": new_label}, proc, t), f"{stt_label}->{new_label}")
+            time.sleep(2)
 
-        new_mode = MODES[1 - mode]
-        write(home, [("cleanup.mode", new_mode)])
-        t = time.perf_counter()
-        os.kill(proc.pid, signal.SIGHUP)
-        row("setting", wait_idle(home, {"mode": new_mode}, proc, t), f"{MODES[mode]}->{new_mode}")
-        time.sleep(2)
+        if "setting" in arms:
+            new_mode = MODES[1 - mode]
+            write(home, [("cleanup.mode", new_mode)])
+            t = time.perf_counter()
+            os.kill(proc.pid, signal.SIGHUP)
+            row("setting", wait_idle(home, {"mode": new_mode}, proc, t), f"{MODES[mode]}->{new_mode}")
+            time.sleep(2)
 
         t = time.perf_counter()
         os.kill(proc.pid, signal.SIGTERM)
@@ -153,7 +188,16 @@ def main() -> int:
     p.add_argument("--rounds", type=int, default=6)
     p.add_argument("--checkout", action="append", required=True, help="name=path to a v2t checkout")
     p.add_argument("--max-load", type=float, default=25.0, help="wait while the 1-minute load is above this")
+    p.add_argument("--arms", default=",".join(ARMS[2:]),
+                   help="comma-separated: cleanup, speech, setting (start and stop always run)")
+    p.add_argument("--cleanup", choices=CLEANUP,
+                   help="start every round with this cleanup model (default: alternate between the two)")
     a = p.parse_args()
+    arms = set(a.arms.split(",")) | {"live", "start", "stop"}
+    unknown = arms - set(ARMS)
+    if unknown:
+        p.error(f"unknown arms: {', '.join(sorted(unknown))}")
+    cleanups = (a.cleanup, *(c for c in CLEANUP if c != a.cleanup)) if a.cleanup else CLEANUP
     a.scratch = a.scratch.resolve()  # the engines run with their temporary home as cwd
     checkouts = [(n, Path(s).resolve()) for n, s in (c.split("=", 1) for c in a.checkout)]
     rows = []
@@ -163,9 +207,9 @@ def main() -> int:
             for name, source in order:
                 while os.getloadavg()[0] > a.max_load:
                     time.sleep(30)
-                rows += run_checkout(name, source, a.scratch, rnd, log)
+                rows += run_checkout(name, source, a.scratch, rnd, log, arms, cleanups, bool(a.cleanup))
     print("\nmedian seconds (n)")
-    for arm in ("start", "cleanup", "speech", "setting", "stop"):
+    for arm in (arm for arm in ARMS if arm in arms):
         cells = []
         for name, _ in checkouts:
             xs = [r["seconds"] for r in rows if r["arm"] == arm and r["checkout"] == name]
