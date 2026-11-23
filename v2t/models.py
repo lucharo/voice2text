@@ -97,7 +97,7 @@ def _size(gb: float) -> str:
 
 
 def _row(choice: backends.ModelChoice, cfg: config.Config, current: bool, default: bool,
-         settings: list[list[str]]) -> dict:
+         settings: list[list[str]], chosen: bool | None = None) -> dict:
     downloaded = _downloaded(choice, cfg)
     available, note = True, ""
     if not _extra_installed(choice.extra):
@@ -118,6 +118,9 @@ def _row(choice: backends.ModelChoice, cfg: config.Config, current: bool, defaul
         "downloaded": downloaded,
         "available": available,
         "current": current,
+        # the model that runs when this picker's feature is on: for cleanup, the one
+        # config.toml names even while cleanup is off (the window says what it would use)
+        "chosen": current if chosen is None else chosen,
         "note": note,
         "download_dir": _download_dir(choice) if downloaded is False else None,
         "set": settings,
@@ -128,7 +131,7 @@ def _custom(model: str) -> dict:
     """A model set by hand in config.toml that no row offers: shown ticked, not pickable."""
     return {
         "id": "custom", "label": backends.short_model(model), "size_gb": None,
-        "downloaded": None, "available": False, "current": True,
+        "downloaded": None, "available": False, "current": True, "chosen": True,
         "note": "set in config.toml", "download_dir": None, "set": [],
     }
 
@@ -157,15 +160,18 @@ def cleanup(cfg: config.Config) -> list[dict]:
         ("off", "") if not cfg.cleanup_enabled
         else (cfg.cleanup_engine, cfg.cleanup_model or _default_model(cfg.cleanup_engine))
     )
+    chosen = (cfg.cleanup_engine, cfg.cleanup_model or _default_model(cfg.cleanup_engine))
     rows = []
     for choice in backends.CLEANUP_CHOICES:
         if choice.backend == "off":
             rows.append(_row(choice, cfg, current=in_use[0] == "off", default=False,
-                             settings=[["cleanup.enabled", "false"]]))
+                             settings=[["cleanup.enabled", "false"]], chosen=False))
             continue
+        model = (choice.backend, choice.model or _default_model(choice.backend))
         rows.append(_row(
             choice, cfg,
-            current=in_use == (choice.backend, choice.model or _default_model(choice.backend)),
+            current=in_use == model,
+            chosen=chosen == model,
             default=(choice.backend, choice.model) == (default.cleanup_engine, default.cleanup_model),
             settings=[["cleanup.enabled", "true"], ["cleanup.engine", choice.backend],
                       ["cleanup.model", choice.model]],
@@ -177,4 +183,12 @@ def cleanup(cfg: config.Config) -> list[dict]:
 
 def pickers(cfg: config.Config) -> dict:
     """The `models` section of `v2t config --json`."""
-    return {"transcription": transcription(cfg), "cleanup": cleanup(cfg)}
+    rows = cleanup(cfg)
+    return {
+        "transcription": transcription(cfg),
+        "cleanup": rows,
+        # cleanup is off and config.toml names a model no row offers: its short name,
+        # for the window's "Turn it on to use …" (the picker itself lists no such row)
+        "cleanup_custom": "" if any(row["chosen"] for row in rows)
+        else backends.short_model(cfg.cleanup_model or cfg.cleanup_engine),
+    }

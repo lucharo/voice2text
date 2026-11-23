@@ -1434,6 +1434,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if shown { assign(\.globeKeyConflict, globeKeyOpensSomething) }
         assign(\.speech, (models["transcription"] as? [[String: Any]] ?? []).map(ModelRow.init))
         assign(\.cleanup, (models["cleanup"] as? [[String: Any]] ?? []).map(ModelRow.init))
+        assign(\.cleanupCustom, models["cleanup_custom"] as? String ?? "")
         var bytes: Int64?
         if shown, ["starting", "permissions", "loading-stt"].contains(phase),
            let folder = state.speech.first(where: \.current)?.downloadDir {

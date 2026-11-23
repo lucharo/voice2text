@@ -3897,7 +3897,8 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual([r["current"] for r in rows], [False] * 6 + [True])
         self.assertEqual(rows[-1], {
             "id": "custom", "label": "whisper-small", "size_gb": None, "downloaded": None,
-            "available": False, "current": True, "note": "set in config.toml", "download_dir": None, "set": [],
+            "available": False, "current": True, "chosen": True, "note": "set in config.toml",
+            "download_dir": None, "set": [],
         })
 
     def test_a_model_still_to_download_names_the_cache_folder_it_downloads_into(self):
@@ -3941,6 +3942,22 @@ class V2TSmokeTests(unittest.TestCase):
             [["cleanup.enabled", "false"]],
             [["cleanup.enabled", "true"], ["cleanup.engine", "mlx"], ["cleanup.model", ""]],
         ])
+
+    def test_cleanup_picker_marks_the_model_cleanup_would_use_while_it_is_off(self):
+        """#215: the window names the configured model, an explicit default id included."""
+        cases = {
+            "": ("mlx", ""),
+            backends.MLX_CLEANUP_DEFAULT: ("mlx", ""),
+            "mlx-community/Qwen3.5-2B-4bit": ("mlx:mlx-community/Qwen3.5-2B-4bit", ""),
+            "llama3.2:3b": (None, "llama3.2:3b"),
+        }
+        for model, (row_id, custom) in cases.items():
+            engine = "ollama" if model == "llama3.2:3b" else "mlx"
+            with self.subTest(model=model):
+                picked = self._pickers(config.Config(cleanup_enabled=False, cleanup_engine=engine, cleanup_model=model))
+                self.assertEqual([r["id"] for r in picked["cleanup"] if r["chosen"]], [row_id] if row_id else [])
+                self.assertEqual(picked["cleanup_custom"], custom)
+                self.assertEqual([r["id"] for r in picked["cleanup"] if r["current"]], ["off"])
 
     def test_every_picker_row_names_a_backend_v2t_accepts_once(self):
         for picker, accepted in ((backends.STT_CHOICES, backends.STT),
