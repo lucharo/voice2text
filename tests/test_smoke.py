@@ -2970,6 +2970,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "live_transcript": False,
                     "reload": True,
                     "restart_signal": "USR2",
+                    "cleanup_loading": False,
                     "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
@@ -2997,6 +2998,7 @@ class V2TSmokeTests(unittest.TestCase):
                 "live_transcript": False,
                 "reload": True,
                 "restart_signal": "USR2",
+                "cleanup_loading": False,
                 "config": str(config.config_path()),
                 "error": "",
                 "warning": "",
@@ -3030,6 +3032,7 @@ class V2TSmokeTests(unittest.TestCase):
                     "live_transcript": available and live,
                     "reload": True,
                     "restart_signal": "USR2",
+                    "cleanup_loading": False,
                     "config": str(config.config_path()),
                     "error": "",
                     "warning": "",
@@ -6680,6 +6683,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertFalse(constants.HF_HUB_OFFLINE)
 
     def _warm(self, make_stt, make_cleanup):
+        """warmup, then the cleanup load run() makes once the hotkey is live."""
         config.ensure_dirs()
         voice = app.VoiceToText(config.Config())
         voice.cfg.preview = ""
@@ -6688,7 +6692,131 @@ class V2TSmokeTests(unittest.TestCase):
             mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
         ):
             voice.warmup()
+            voice._load_deferred_cleanup()
         return voice
+
+    @staticmethod
+    def _cleaner(*_args):
+        return mock.Mock(model_id="cleaner", cleanup=mock.Mock(return_value=("Clean words.", 0.1, 0.2)))
+
+    def test_warmup_loads_the_speech_model_and_leaves_cleanup_for_after_the_hotkey(self):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config())
+        voice.cfg.preview = ""
+        make_cleanup = mock.Mock(side_effect=self._cleaner)
+        with (
+            mock.patch.object(backends, "make_stt", side_effect=self._stt),
+            mock.patch.object(backends, "make_cleanup", make_cleanup),
+        ):
+            voice.warmup()
+
+        self.assertIsNotNone(voice.stt)
+        make_cleanup.assert_not_called()
+        self.assertTrue(voice.cleanup_pending)
+
+    def test_warmup_with_cleanup_off_leaves_nothing_to_load(self):
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        voice.cfg.preview = ""
+        with mock.patch.object(backends, "make_stt", side_effect=self._stt):
+            voice.warmup()
+
+        self.assertFalse(voice.cleanup_pending)
+
+    def test_the_hotkey_goes_live_before_the_cleanup_model_loads(self):
+        """#212: the status says idle (with cleanup_loading) and the listener runs before
+        the cleanup model loads; a setting changed during that load applies after it."""
+        config.ensure_dirs()
+        voice = app.VoiceToText(config.Config())
+        voice.cfg.preview = ""
+        events = []
+        handlers = {}
+
+        class Listener:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                events.append("listener")
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return True
+
+        def make_cleanup(*args):
+            status = config.read_status()
+            events.append(("cleanup", status["state"], status["cleanup_loading"]))
+            handlers[signal.SIGHUP](signal.SIGHUP, None)  # a setting changes meanwhile
+            return self._cleaner(*args)
+
+        def apply():
+            events.append(("apply", voice.cleaner is not None, config.read_status()["cleanup_loading"]))
+            voice.stopping = True  # leave the loop
+
+        with (
+            mock.patch.object(app, "_listener", Listener),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app, "globe_key_warning", return_value=""),
+            mock.patch.object(app.signal, "signal", side_effect=lambda signum, handler: handlers.__setitem__(signum, handler)),
+            mock.patch.object(voice, "_start_hotkey_thread"),
+            mock.patch.object(backends, "make_stt", side_effect=self._stt),
+            mock.patch.object(backends, "make_cleanup", side_effect=make_cleanup),
+            mock.patch.object(voice, "_apply_settings", side_effect=apply),
+        ):
+            voice.run()
+
+        self.assertEqual(events, ["listener", ("cleanup", "idle", True), ("apply", True, False)])
+
+    def test_a_dictation_released_while_cleanup_loads_waits_for_it_then_pastes_it_cleaned(self):
+        voice = app.VoiceToText(config.Config(save_history=False))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value="raw words"))
+        voice.cleanup_pending = True
+        voice.recording = True
+        voice.frames = [np.ones((8, 1), dtype=np.float32)]
+
+        voice.stop_recording()
+
+        self.assertEqual(config.read_status()["state"], "loading-cleanup")
+        with mock.patch.object(backends, "make_cleanup", side_effect=self._cleaner):
+            voice._load_deferred_cleanup()
+        self.assertEqual(config.read_status()["state"], "loading-cleanup")  # not Ready meanwhile
+        with mock.patch.object(voice, "paste_to_cursor") as paste:
+            voice.process_next(timeout=0)
+
+        paste.assert_called_once_with("Clean words.")
+        self.assertFalse(voice.processing)
+
+    def test_the_cleanup_load_ending_keeps_an_undo_window_on_screen(self):
+        voice = app.VoiceToText(config.Config())
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.cleanup_pending = True
+        voice._set_state("cancelled")
+
+        with mock.patch.object(backends, "make_cleanup", side_effect=self._cleaner):
+            voice._load_deferred_cleanup()
+
+        self.assertEqual(config.read_status()["state"], "cancelled")
+        self.assertFalse(voice.cleanup_pending)
+
+    def test_a_stop_while_cleanup_loads_exits_at_once_unless_a_dictation_waits(self):
+        voice = app.VoiceToText(config.Config())
+        voice.startup_complete = True
+        voice.cleanup_pending = True
+        with self.assertRaises(SystemExit):
+            voice._handle_signal(signal.SIGTERM)
+
+        waiting = app.VoiceToText(config.Config())
+        waiting.startup_complete = True
+        waiting.cleanup_pending = True
+        waiting.processing = True  # released: it is pasted before the engine stops
+        waiting._handle_signal(signal.SIGTERM)
+        self.assertTrue(waiting.stopping)
 
     @staticmethod
     def _stt(*_args):

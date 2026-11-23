@@ -864,15 +864,17 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // much it has heard so far: a word count and the tail of the text.
         let heardWords = phase == "recording" ? status["words"] as? Int ?? 0 : 0
         let heardTail = phase == "recording" ? status["partial"] as? String ?? "" : ""
+        // the hotkey already works while the cleanup model loads after a start (#212)
+        let cleanupLoading = status["cleanup_loading"] as? Bool == true
         let other = otherCopy
-        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)|\(availableUpdate ?? "")|\(updating)|\(updateFailed)|\(engineRestartsOnSignal)"
+        let signature = "\(pill.style.rawValue)|\(other?.path ?? "")|\(phase)|\(stt)|\(cleanup)|\(engine != nil)|\(externalEngine)|\(microphone)|\(accessibility)|\(lastTranscription ?? "")|\(heardWords)|\(heardTail)|\(needsRestart)|\(availableUpdate ?? "")|\(updating)|\(updateFailed)|\(engineRestartsOnSignal)|\(cleanupLoading)"
         guard rendered != signature else { return }
         rendered = signature
         let presentation: (String, String, NSColor?) = switch phase {
         case "permissions": ("hourglass", "Checking permissions…", nil)
         case "starting", "loading-stt": ("hourglass", "Loading transcription model…", nil)
         case "loading-cleanup": ("hourglass", "Loading cleanup model…", nil)
-        case "idle": ("waveform", "Ready", nil)
+        case "idle": ("waveform", cleanupLoading ? "Ready · cleanup model loading…" : "Ready", nil)
         case "cancelled": ("arrow.uturn.backward", "Dictation cancelled · Undo available", nil)
         case "recording": ("waveform.circle.fill", heardWords > 0 ? "Recording… \(heardWords) words" : "Recording…", .systemRed)
         case "transcribing": ("ellipsis.circle", "Transcribing…", nil)
