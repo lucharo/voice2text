@@ -14,8 +14,8 @@ then sends SIGTERM and times it until the process exits. The start is timed twic
 "live" until the status first says idle (the hotkey listener starts right after;
 since 0.6.1 that is before the cleanup model loads, #212) and "start" until it says
 idle with no cleanup model still loading (`cleanup_loading`, which older engines
-never set, so for them the two are the same). `--arms start,stop` runs only those,
-with the first speech and cleanup model (`--cleanup` picks another), so a scratch
+never set, so for them the two are the same). The start and Stop always run;
+`--arms stop` runs only those, with the first speech and cleanup model (`--cleanup` picks another), so a scratch
 folder needs just those two models. Every engine runs with
 its own temporary V2T_HOME, and HOME / HF_HOME pointing at a scratch folder that
 already holds the models (HF_HUB_OFFLINE=1), so nothing under ~ is read or written.
@@ -189,10 +189,10 @@ def main() -> int:
     p.add_argument("--checkout", action="append", required=True, help="name=path to a v2t checkout")
     p.add_argument("--max-load", type=float, default=25.0, help="wait while the 1-minute load is above this")
     p.add_argument("--arms", default=",".join(ARMS[2:]),
-                   help="comma-separated: start (always), cleanup, speech, setting, stop")
+                   help="comma-separated: cleanup, speech, setting (start and stop always run)")
     p.add_argument("--cleanup", choices=CLEANUP, help="the cleanup model to start with (default the first)")
     a = p.parse_args()
-    arms = set(a.arms.split(",")) | {"live", "start"}
+    arms = set(a.arms.split(",")) | {"live", "start", "stop"}
     unknown = arms - set(ARMS)
     if unknown:
         p.error(f"unknown arms: {', '.join(sorted(unknown))}")
