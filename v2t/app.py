@@ -2011,6 +2011,8 @@ class VoiceToText:
         try:
             self._load_cleanup(announce=False)
         except (Exception, SystemExit) as error:
+            if self.stopping and isinstance(error, SystemExit):
+                raise  # a Stop during the load (_handle_signal): exit now, not a failed load
             self._keep_dictations_without_cleanup(error)
             raise
         with self.lifecycle_lock:

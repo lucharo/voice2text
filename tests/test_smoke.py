@@ -6833,6 +6833,22 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertTrue(voice.jobs.empty())
         self.assertTrue(voice.stopping)
 
+    def test_a_stop_during_the_cleanup_load_is_not_taken_for_a_failed_load(self):
+        voice = app.VoiceToText(config.Config(save_history=True))
+        voice.startup_complete = True
+        voice.cleanup_pending = True
+        voice.recording = True  # the hotkey still held: Stop drops it
+
+        with (
+            mock.patch.object(backends, "make_cleanup", side_effect=lambda *_: voice._handle_signal(signal.SIGTERM)),
+            mock.patch.object(app.config, "append_history") as history,
+            self.assertRaises(SystemExit),
+        ):
+            voice._load_deferred_cleanup()
+
+        history.assert_not_called()
+        self.assertEqual(voice.cleanup_failed, "")
+
     def test_the_cleanup_load_ending_keeps_an_undo_window_on_screen(self):
         voice = app.VoiceToText(config.Config())
         lock = config.acquire_instance_lock()
