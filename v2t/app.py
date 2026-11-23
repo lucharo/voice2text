@@ -473,6 +473,7 @@ class VoiceToText:
         # The cleanup model is still loading after the hotkey went live (#212): set by
         # warmup, cleared by _load_deferred_cleanup once it is ready.
         self.cleanup_pending = False
+        self.cleanup_failed = ""  # why that load failed: dictations in hand are kept, not pasted
         self.state = ""  # the last state published by _set_state
         self.latched = False  # hands-free recording after a double-tap
         self.trigger = "hold"  # hold | latched: how the current recording started
@@ -1426,6 +1427,11 @@ class VoiceToText:
         if self.cancel_requested:
             return
         levels = levels or {}
+        if self.cleanup_failed:  # kept for `v2t history`, never pasted uncleaned (#212)
+            logger.warning("Not pasted: the cleanup model did not load; the raw text is in history")
+            self._record(audio_s, levels, streamed=streamed, stt_s=round(stt_s, 3), raw=raw_text,
+                         outcome=f"error: {self.cleanup_failed}")
+            return
         cleaned_text, cleanup_s, stats = raw_text, 0.0, {}
         extra: dict = {}
         if self.cleaner is not None:
@@ -2002,7 +2008,11 @@ class VoiceToText:
         load came before the hotkey."""
         if not self.cleanup_pending:
             return
-        self._load_cleanup(announce=False)
+        try:
+            self._load_cleanup(announce=False)
+        except (Exception, SystemExit) as error:
+            self._keep_dictations_without_cleanup(error)
+            raise
         with self.lifecycle_lock:
             self.cleanup_pending = False
             if self.state == "idle":  # nothing in hand: the menu's Ready loses "loading"
@@ -2025,6 +2035,20 @@ class VoiceToText:
                 if not getattr(self.stt, "streaming", False)
                 else f"Transcribing after release: audio.sample_rate must be {self.stt.sample_rate}"
             )
+
+    def _keep_dictations_without_cleanup(self, error: BaseException) -> None:
+        """The deferred cleanup load failed with the hotkey already live: refuse new
+        recordings, end one in progress as if released, and run every dictation in hand
+        through transcription, so each lands in history (raw text, an error outcome) and
+        keeps its audio instead of being dropped with the engine. Nothing is pasted:
+        uncleaned text never is (#212)."""
+        logger.error(f"The cleanup model did not load ({error}); keeping the dictations in hand")
+        self.cleanup_failed = f"cleanup model failed to load: {error}"
+        with self.lifecycle_lock:
+            self.stopping = True  # start_recording refuses from here
+        self.stop_recording()
+        while self.process_next(timeout=0) and not self.jobs.empty():
+            pass
 
     def _load_cleanup(self, announce: bool = True) -> None:
         """Load the cleanup model and clean one word with it; with `announce`, the

@@ -6808,6 +6808,31 @@ class V2TSmokeTests(unittest.TestCase):
         paste.assert_called_once_with("Clean words.")
         self.assertFalse(voice.processing)
 
+    def test_a_failed_cleanup_load_keeps_a_waiting_dictation_in_history_unpasted(self):
+        voice = app.VoiceToText(config.Config(save_history=True))
+        lock = config.acquire_instance_lock()
+        self.addCleanup(lock.close)
+        voice.stt = mock.Mock(transcribe=mock.Mock(return_value="raw words"))
+        voice.cleanup_pending = True
+        voice.recording = True
+        voice.frames = [np.full((8, 1), 0.1, dtype=np.float32)]
+        voice.stop_recording()
+
+        with (
+            mock.patch.object(backends, "make_cleanup", side_effect=SystemExit("cleanup needs mlx-lm")),
+            mock.patch.object(voice, "paste_to_cursor") as paste,
+            mock.patch.object(app.config, "append_history") as history,
+            self.assertRaises(SystemExit),
+        ):
+            voice._load_deferred_cleanup()
+
+        paste.assert_not_called()
+        row = history.call_args.args[0]
+        self.assertEqual((row["raw"], row["outcome"]),
+                         ("raw words", "error: cleanup model failed to load: cleanup needs mlx-lm"))
+        self.assertTrue(voice.jobs.empty())
+        self.assertTrue(voice.stopping)
+
     def test_the_cleanup_load_ending_keeps_an_undo_window_on_screen(self):
         voice = app.VoiceToText(config.Config())
         lock = config.acquire_instance_lock()
