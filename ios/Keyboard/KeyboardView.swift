@@ -21,6 +21,7 @@ final class KeyboardView: UIView {
   /// The user tapped shift (rather than a sentence start): number keys show and type their second marks.
   var shiftManual = false { didSet { if shiftManual != oldValue { relabel() } } }
   var returnLabel = "return" { didSet { relabel() } }
+  var micVisual: MicKeyVisual = .idle { didSet { if micVisual != oldValue { relabel() } } }
   /// The debug log (#162), when it is on: every finger's landing, lift and the arbiter's verdict.
   var debugLog: KeyboardDebugLog?
   /// Numbers the fingers in the debug log.
@@ -96,9 +97,9 @@ final class KeyboardView: UIView {
     }
   }
 
-  /// A key's resting colour: the mic key is red, with a white waveform, so it stands out (#111).
+  /// A key's resting colour: the mic key is red while idle or listening, muted while transcribing.
   private func keyColor(_ k: Key) -> UIColor {
-    if k.action == .mic { return Palette.record }
+    if k.action == .mic { return micVisual == .busy ? Palette.specialKey : Palette.record }
     return isSpecial(k) ? Palette.specialKey : Palette.key
   }
 
@@ -176,7 +177,17 @@ final class KeyboardView: UIView {
       let (text, size) = label(for: k)
       if let symbol = symbol(for: k), let sym = symbolLayers[k.id] {
         t.string = nil
-        let img = k.action == .mic ? V2TMark.glyph(height: 20, color: .white) : Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
+        let img: UIImage
+        if k.action == .mic {
+          switch micVisual {
+          case .idle: img = V2TMark.glyph(height: 20, color: .white)
+          case .listening: img = Self.render("stop.fill", size: 17, color: .white)
+          case .busy: img = Self.render("ellipsis", size: 18, color: UIColor.secondaryLabel.resolvedColor(with: traitCollection))
+          }
+          keyLayers[k.id]?.backgroundColor = keyColor(k).resolvedColor(with: traitCollection).cgColor
+        } else {
+          img = Self.render(symbol, size: size, color: UIColor.label.resolvedColor(with: traitCollection))
+        }
         sym.contents = img.cgImage
         sym.contentsScale = img.scale
         sym.frame = CGRect(origin: .zero, size: k.frame.size)
@@ -206,7 +217,12 @@ final class KeyboardView: UIView {
     case .delete: "delete"
     case .space: "space"
     case .returnKey: returnLabel
-    case .mic: "dictate"
+    case .mic:
+      switch micVisual {
+      case .idle: "dictate"
+      case .listening: "stop dictating"
+      case .busy: "transcribing"
+      }
     case .emoji: "emoji"
     case .nextKeyboard: "next keyboard"
     case .dismiss: "hide keyboard"
@@ -222,7 +238,12 @@ final class KeyboardView: UIView {
     case .shift: shift == .locked ? "capslock.fill" : (shift == .on ? "shift.fill" : "shift")
     case .delete: "delete.left"
     case .returnKey where returnLabel == "return" || returnLabel == "intro": "return.left"
-    case .mic: "mic"
+    case .mic:
+      switch micVisual {
+      case .idle: "mic"
+      case .listening: "stop.fill"
+      case .busy: "ellipsis"
+      }
     case .emoji: "face.smiling"
     case .nextKeyboard: "globe"
     case .dismiss: "keyboard.chevron.compact.down"
@@ -260,7 +281,7 @@ final class KeyboardView: UIView {
     guard let l = keyLayers[k.id] else { return }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    let pressed = k.action == .mic ? Palette.recordPressed : Palette.pressed
+    let pressed = k.action == .mic ? (micVisual == .busy ? Palette.specialKey : Palette.recordPressed) : Palette.pressed
     l.backgroundColor = (on ? pressed : keyColor(k)).resolvedColor(with: traitCollection).cgColor
     CATransaction.commit()
   }

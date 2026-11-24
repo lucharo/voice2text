@@ -26,6 +26,11 @@ final class SuggestionBar: UIView {
   /// A short note over the slots ("Done in 1.4 s"), gone after a moment or at the next key touch.
   private let notice = UILabel()
   private var noticeTimer: Timer?
+  private let pendingContainer = UIView()
+  private let pendingDismiss = UIButton(type: .system)
+  private let pendingInsert = UIButton(type: .system)
+  private var onPendingInsert: (() -> Void)?
+  private var onPendingDismiss: (() -> Void)?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -65,10 +70,39 @@ final class SuggestionBar: UIView {
     notice.isHidden = true
     notice.accessibilityIdentifier = "v2t.notice"
     addSubview(notice)
+
+    pendingContainer.isHidden = true
+    var dc = UIButton.Configuration.filled()
+    dc.image = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+    dc.baseBackgroundColor = .secondarySystemFill
+    dc.baseForegroundColor = .secondaryLabel
+    dc.cornerStyle = .capsule
+    dc.contentInsets = .zero
+    pendingDismiss.configuration = dc
+    pendingDismiss.accessibilityIdentifier = "v2t.pending.dismiss"
+    pendingDismiss.accessibilityLabel = "Dismiss dictation"
+    pendingDismiss.addAction(UIAction { [weak self] _ in self?.onPendingDismiss?() }, for: .touchUpInside)
+
+    var ic = UIButton.Configuration.tinted()
+    ic.baseBackgroundColor = .systemBlue
+    ic.baseForegroundColor = .systemBlue
+    ic.cornerStyle = .capsule
+    ic.image = UIImage(systemName: "waveform", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+    ic.imagePadding = 6
+    ic.titleLineBreakMode = .byTruncatingTail
+    ic.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
+    pendingInsert.configuration = ic
+    pendingInsert.accessibilityIdentifier = "v2t.pending.insert"
+    pendingInsert.addAction(UIAction { [weak self] _ in self?.onPendingInsert?() }, for: .touchUpInside)
+
+    pendingContainer.addSubview(pendingDismiss)
+    pendingContainer.addSubview(pendingInsert)
+    addSubview(pendingContainer)
   }
 
   /// Shows `text` in place of the suggestions for `seconds`, or until `clearNotice()`.
   func showNotice(_ text: String, for seconds: TimeInterval = 2) {
+    guard pendingContainer.isHidden else { return }
     notice.text = text
     setNotice(visible: true)
     noticeTimer?.invalidate()
@@ -86,10 +120,50 @@ final class SuggestionBar: UIView {
     }
   }
 
+  /// Shows a tappable banner to insert a transcript that arrived while the user kept typing after Done.
+  func showPendingTranscript(_ text: String, onInsert: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+    noticeTimer?.invalidate()
+    noticeTimer = nil
+    notice.isHidden = true
+    notice.alpha = 0
+    onPendingInsert = onInsert
+    onPendingDismiss = onDismiss
+    var cfg = pendingInsert.configuration
+    var title = AttributedString("Insert: \(text)")
+    title.font = .systemFont(ofSize: 14, weight: .medium)
+    cfg?.attributedTitle = title
+    pendingInsert.configuration = cfg
+    pendingInsert.accessibilityLabel = "Insert dictation: \(text)"
+    pendingContainer.isHidden = false
+    for v in slots as [UIView] + dividers {
+      v.alpha = 0
+      v.isUserInteractionEnabled = false
+    }
+    setNeedsLayout()
+  }
+
+  func clearPendingTranscript() {
+    guard !pendingContainer.isHidden || onPendingInsert != nil else { return }
+    pendingContainer.isHidden = true
+    onPendingInsert = nil
+    onPendingDismiss = nil
+    if notice.isHidden {
+      for v in slots as [UIView] + dividers {
+        v.alpha = 1
+        v.isUserInteractionEnabled = true
+      }
+    }
+  }
+
   private func setNotice(visible: Bool) {
     if visible { notice.isHidden = false }
     notice.alpha = visible ? 1 : 0
-    for v in slots as [UIView] + dividers { v.alpha = visible ? 0 : 1 }  // hidden slots take no taps
+    if visible || pendingContainer.isHidden {
+      for v in slots as [UIView] + dividers {
+        v.alpha = visible ? 0 : 1  // hidden slots take no taps
+        v.isUserInteractionEnabled = !visible
+      }
+    }
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -110,6 +184,13 @@ final class SuggestionBar: UIView {
       : CGRect(x: bounds.width - 12, y: bounds.midY - 3, width: 6, height: 6)
     bringSubviewToFront(debugDot)
     notice.frame = CGRect(x: inset, y: 0, width: end - inset, height: bounds.height)
+    let pendingW = max(0, end - inset)
+    pendingContainer.frame = CGRect(x: inset, y: 0, width: pendingW, height: bounds.height)
+    pendingDismiss.frame = CGRect(x: 4, y: (bounds.height - 30) / 2, width: 30, height: 30)
+    let insX = pendingDismiss.frame.maxX + 6
+    pendingInsert.frame = CGRect(x: insX, y: (bounds.height - 32) / 2, width: max(0, pendingW - insX - 4), height: 32)
+    bringSubviewToFront(pendingContainer)
+    bringSubviewToFront(debugDot)
   }
 
   /// Shows up to three suggestions: the word as typed in quotes (when it is not the best guess), then the
