@@ -18,6 +18,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var engine: Process?
+    /// When this app started the engine and when it asked it to stop, for the
+    /// seconds in v2t.log's "engine exited" line (#207).
+    private var engineStartedAt: Date?
+    private var engineStopAskedAt: Date?
     private var timer: Timer?
     private var phase = "off" {
         didSet { noteLifecycle(from: oldValue) }
@@ -192,8 +196,12 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// status but is still running `teardownGrace` later. Work in hand, however long
     /// (an Ollama cleanup may take a minute), is never cut short.
     private func terminateEngine(_ process: Process) {
-        process.terminate()
         let pid = process.processIdentifier
+        if engineStopAskedAt == nil {
+            engineStopAskedAt = Date()
+            appendLog("stopping the engine (pid \(pid))")
+        }
+        process.terminate()
         let status = home.appendingPathComponent("run/status.json").path
         var clearedAt: Date?
         // In the common modes: while quitting, AppKit waits for the engine in its modal
@@ -485,9 +493,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             process.standardOutput = handle
             process.standardError = handle
         }
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] ended in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.logEngineExit(ended)
                 let shouldQuit = self.terminationPending
                 let restart = self.restartWhenStopped
                 self.restartWhenStopped = false
@@ -510,7 +519,10 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             phase = "starting"
             render()
             engine = process
+            engineStopAskedAt = nil
             try process.run()
+            engineStartedAt = Date()
+            appendLog("started the engine (pid \(process.processIdentifier), \(python))")
         } catch {
             engine = nil
             reloadWhenReady = false
@@ -1110,6 +1122,17 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func undoDictation() {
         guard phase == "cancelled", let pid = status["pid"] as? Int, engineOwnsLock(pid) else { return }
         kill(pid_t(pid), SIGUSR1)
+    }
+
+    /// How long the engine took to exit after Stop, or that it exited on its own, and
+    /// how long it ran: a slow stop or start reads from v2t.log alone (#207).
+    private func logEngineExit(_ ended: Process) {
+        let seconds = { (since: Date?) in since.map { String(format: "%.1fs", Date().timeIntervalSince($0)) } ?? "?" }
+        let how = ended.terminationReason == .uncaughtSignal ? "signal \(ended.terminationStatus)" : "status \(ended.terminationStatus)"
+        let when = engineStopAskedAt == nil ? "on its own" : "\(seconds(engineStopAskedAt)) after Stop"
+        appendLog("engine exited \(when) (\(how), ran \(seconds(engineStartedAt)))")
+        engineStartedAt = nil
+        engineStopAskedAt = nil
     }
 
     /// A line in the engine's log, in its format, appended (O_APPEND) so it

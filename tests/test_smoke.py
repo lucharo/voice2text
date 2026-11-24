@@ -317,6 +317,26 @@ class V2TSmokeTests(unittest.TestCase):
                 cli.cmd_run([])
             execve.assert_not_called()
 
+    def test_run_first_logs_the_version_pid_python_and_how_long_the_code_took_to_load(self):
+        logged: list[str] = []
+        sink = app.logger.add(lambda m: logged.append(str(m).strip()), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+        import v2t
+
+        with (
+            mock.patch.object(cli, "_which", return_value=None),
+            mock.patch.dict(os.environ, {"V2T_LAUNCH_CONTEXT": "menubar"}, clear=False),
+            mock.patch.object(app, "VoiceToText", return_value=mock.Mock()),
+            mock.patch.object(v2t, "LOADING_STARTED", 100.0),
+            mock.patch.object(cli.time, "perf_counter", return_value=121.44),
+        ):
+            cli.cmd_run([])
+
+        self.assertEqual(logged, [
+            f"v2t {v2t.__version__} starting (pid {os.getpid()}, {sys.executable}): "
+            "loading its code took 21.4s",
+        ])
+
     def test_permission_statuses_use_native_macos_checks(self):
         application_services = types.SimpleNamespace(
             AXIsProcessTrusted=lambda: True,
@@ -645,6 +665,42 @@ class V2TSmokeTests(unittest.TestCase):
             voice.run()
 
         process.assert_called_once()
+
+    def test_run_logs_how_long_after_v2t_began_loading_it_was_ready(self):
+        voice = app.VoiceToText(config.Config(cleanup_enabled=False))
+        logged: list[str] = []
+        sink = app.logger.add(lambda m: logged.append(str(m).strip()), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+        import v2t
+
+        class Listener:
+            def __init__(self, **_callbacks):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def is_alive(self):
+                return True
+
+        def stop():
+            voice.stopping = True
+
+        with (
+            mock.patch.object(app, "_listener", return_value=Listener()),
+            mock.patch.object(app, "_resolve_hotkey", return_value=object()),
+            mock.patch.object(app.signal, "signal"),
+            mock.patch.object(voice, "warmup", side_effect=stop),
+            mock.patch.object(v2t, "LOADING_STARTED", time.perf_counter() - 30.0),
+        ):
+            voice.run()
+
+        ready = [line for line in logged if line.startswith("Ready ")]
+        self.assertEqual(len(ready), 1)
+        self.assertRegex(ready[0], r"^Ready 30\.\ds after v2t began loading$")
 
     def test_shutdown_blocks_late_recording_and_closes_a_racing_stream(self):
         voice = app.VoiceToText(config.Config(cleanup_enabled=False))
@@ -1665,6 +1721,41 @@ class V2TSmokeTests(unittest.TestCase):
         retained.clear()
         model._release_held()
         self.assertEqual(model._held, {})
+
+    def _coreml_load_logs(self, clock: list[float]) -> list[str]:
+        """The lines CoreMLParakeet logs while loading, with `clock` as perf_counter's
+        readings: before and after `import coremltools`, then before and after each model."""
+        logged: list[str] = []
+        sink = app.logger.add(lambda m: logged.append(str(m).strip()), format="{message}")
+        self.addCleanup(app.logger.remove, sink)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for name in coreml.FILES[:4]:
+                (folder / name).mkdir()
+            (folder / coreml.FILES[4]).write_text("{}")
+            with (
+                mock.patch.object(coreml, "_import_coremltools", return_value=mock.Mock()),
+                mock.patch.object(coreml.time, "perf_counter", side_effect=clock),
+            ):
+                coreml.CoreMLParakeet(folder)
+        return logged
+
+    def test_coreml_load_logs_the_import_and_each_model_and_names_one_prepared_again(self):
+        logged = self._coreml_load_logs([0.0, 25.4, 30.0, 30.1, 31.0, 43.6, 44.0, 44.1, 45.0, 45.2])
+
+        self.assertEqual(logged, [
+            "import coremltools 25.4s",
+            "Core ML models: Preprocessor 0.1s, Encoder_v2 12.6s, Decoder 0.1s, JointDecisionv3 0.2s",
+            "Core ML prepared Encoder_v2 for the Neural Engine again: macOS had cleared its cache of it",
+        ])
+
+    def test_coreml_load_with_its_cache_warm_says_nothing_was_prepared_again(self):
+        logged = self._coreml_load_logs([0.0, 1.7, 2.0, 2.1, 3.0, 3.09, 4.0, 4.1, 5.0, 5.2])
+
+        self.assertEqual(logged, [
+            "import coremltools 1.7s",
+            "Core ML models: Preprocessor 0.1s, Encoder_v2 0.1s, Decoder 0.1s, JointDecisionv3 0.2s",
+        ])
 
     def test_coreml_without_its_model_files_names_the_missing_ones(self):
         with tempfile.TemporaryDirectory() as directory:

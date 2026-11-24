@@ -2094,6 +2094,9 @@ class VoiceToText:
             self.warmup()
             self.startup_complete = True
             self._set_state("idle")
+            from . import LOADING_STARTED
+
+            logger.info(f"Ready {time.perf_counter() - LOADING_STARTED:.1f}s after v2t began loading")
             logger.info(f"Voice-to-Text — {self.cfg.backend} · {self.cfg.mode}")
             if self.cfg.pause_music:
                 logger.info("Pause Music — on")
