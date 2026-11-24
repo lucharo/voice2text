@@ -45,11 +45,11 @@ FILES = (
     "JointDecisionv3.mlmodelc",
     "parakeet_v3_vocab.json",
 )
-# A load slower than this means Core ML prepared the model for the Neural Engine again,
-# because macOS had evicted its cached copy (#207): with the cache warm the four models
-# load in 0.1 to 0.3 s (#56), and the encoder took 12.6 to 20.8 s each time it was
-# prepared again, in the #207 probe.
-PREPARED_AGAIN_S = 3.0
+# A Neural Engine model that loads slower than this was prepared for the Neural Engine
+# rather than read from Core ML's cache: on its first load, or after macOS evicted the
+# cached copy (#207). With the cache warm the four models load in 0.1 to 0.3 s (#56), and
+# the encoder took 12.6 to 20.8 s each time it was prepared, in the #207 probe.
+PREPARED_S = 3.0
 # Bark 3.0 Pro (ConwayResearch, CC-BY-4.0), English only, opt-in as
 # transcription.model = BARK_PRO_REPO. A fine-tune of Parakeet v3 shipping Core ML
 # files in FluidAudio's layout, with the same inputs and outputs, so CoreMLParakeet
@@ -331,11 +331,14 @@ class CoreMLParakeet:
         logger.info(f"import coremltools {time.perf_counter() - start:.1f}s")
         units = ct.ComputeUnit
         took: dict[str, float] = {}
+        prepared: list[str] = []  # Neural Engine models slow enough to have been prepared
 
         def load(name: str, compute_units):
             began = time.perf_counter()
             loaded = ct.models.CompiledMLModel(str(folder / name), compute_units=compute_units)
-            took[name.removesuffix(".mlmodelc")] = time.perf_counter() - began
+            seconds = took[name.removesuffix(".mlmodelc")] = time.perf_counter() - began
+            if compute_units != units.CPU_ONLY and seconds > PREPARED_S:
+                prepared.append(name.removesuffix(".mlmodelc"))
             return loaded
 
         self.pre = load(FILES[0], units.CPU_ONLY)
@@ -343,10 +346,10 @@ class CoreMLParakeet:
         self.dec = load(FILES[2], units.CPU_AND_NE)
         self.joint = load(FILES[3], units.CPU_AND_NE)
         logger.info("Core ML models: " + ", ".join(f"{name} {s:.1f}s" for name, s in took.items()))
-        if slow := [name for name, s in took.items() if s > PREPARED_AGAIN_S]:
+        if prepared:
             logger.warning(
-                f"Core ML prepared {', '.join(slow)} for the Neural Engine again: "
-                "macOS had cleared its cache of it"
+                f"Core ML prepared {', '.join(prepared)} for the Neural Engine instead of reading "
+                "its cache: a first load, or macOS had cleared that cache"
             )
         vocab = json.loads((folder / FILES[4]).read_text())
         self.vocab = {int(k): v for k, v in vocab.items()}

@@ -1740,13 +1740,22 @@ class V2TSmokeTests(unittest.TestCase):
                 coreml.CoreMLParakeet(folder)
         return logged
 
-    def test_coreml_load_logs_the_import_and_each_model_and_names_one_prepared_again(self):
+    def test_coreml_load_logs_the_import_and_each_model_and_names_one_prepared(self):
         logged = self._coreml_load_logs([0.0, 25.4, 30.0, 30.1, 31.0, 43.6, 44.0, 44.1, 45.0, 45.2])
 
         self.assertEqual(logged, [
             "import coremltools 25.4s",
             "Core ML models: Preprocessor 0.1s, Encoder_v2 12.6s, Decoder 0.1s, JointDecisionv3 0.2s",
-            "Core ML prepared Encoder_v2 for the Neural Engine again: macOS had cleared its cache of it",
+            "Core ML prepared Encoder_v2 for the Neural Engine instead of reading its cache: "
+            "a first load, or macOS had cleared that cache",
+        ])
+
+    def test_coreml_slow_cpu_only_preprocessor_is_not_called_neural_engine_preparation(self):
+        logged = self._coreml_load_logs([0.0, 1.7, 2.0, 6.0, 7.0, 7.1, 8.0, 8.1, 9.0, 9.2])
+
+        self.assertEqual(logged, [
+            "import coremltools 1.7s",
+            "Core ML models: Preprocessor 4.0s, Encoder_v2 0.1s, Decoder 0.1s, JointDecisionv3 0.2s",
         ])
 
     def test_coreml_load_with_its_cache_warm_says_nothing_was_prepared_again(self):
