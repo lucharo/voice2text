@@ -44,6 +44,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   private var doneIn: TimeInterval?
   private var heightConstraint: NSLayoutConstraint?
   private var keysHeightConstraint: NSLayoutConstraint?
+  private var barTopConstraint: NSLayoutConstraint?
+  private var emojiPanelTopConstraint: NSLayoutConstraint?
+  private var panelCompactHeight: NSLayoutConstraint?
+  private var panelExpandedBottom: NSLayoutConstraint?
+  private var recordingUI = RecordingUIState()
   private let haptics = UIImpactFeedbackGenerator(style: .light)
   private let decodeQueue = DispatchQueue(label: "v2t.swipe", qos: .userInteractive)
   /// Bumped by every edit, cursor move or host change: a swipe still decoding when it moves is dropped, so its
@@ -120,22 +125,32 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     // the app may end without another notification (quit or crashed): the panel checks the heartbeat itself
     panel.liveState = { [weak self] in self?.dictation.state }
     panel.onStateChange = { [weak self] state in self?.showDictation(state) }
+    panel.onToggleMode = { [weak self] in
+      guard let self else { return }
+      self.recordingUI.togglePresentation()
+      self.panel.show(self.panel.state, mode: self.recordingUI.presentation, bottomRow: self.expandedBottomRow())
+      self.applyRecordingLayout(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
     panel.isHidden = true
     for v in [bar, keyboardView!, panel] as [UIView] {
       v.translatesAutoresizingMaskIntoConstraints = false
       view.addSubview(v)
     }
     view.bringSubviewToFront(keyboardView)
-    view.bringSubviewToFront(panel)  // the recording view covers the keys (key previews draw outside them)
     let h = view.heightAnchor.constraint(equalToConstant: SuggestionBar.height + layout.height)
     h.priority = .defaultHigh
     heightConstraint = h
+    let bt = bar.topAnchor.constraint(equalTo: view.topAnchor)
+    barTopConstraint = bt
     barHeightConstraint = bar.heightAnchor.constraint(equalToConstant: SuggestionBar.height)
     let kh = keyboardView.heightAnchor.constraint(equalToConstant: layout.height)
     keysHeightConstraint = kh
+    let pch = panel.heightAnchor.constraint(equalToConstant: SuggestionBar.height)
+    panelCompactHeight = pch
+    let peb = panel.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor)
+    panelExpandedBottom = peb
     NSLayoutConstraint.activate([
-      h, kh,
-      bar.topAnchor.constraint(equalTo: view.topAnchor),
+      h, kh, bt,
       bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       barHeightConstraint!,
@@ -143,7 +158,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       keyboardView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       keyboardView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       panel.topAnchor.constraint(equalTo: view.topAnchor),
-      panel.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor),
+      pch,
       panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
     ])
@@ -152,15 +167,29 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       // the log keeps a dictation's length, not its words: History already holds them, in the app
       dlog("dictation", [.init("chars", .i(text.count)), .init("words", .i(text.split(whereSeparator: \.isWhitespace).count))])
       if let id = documentID { dictatedFields.insert(id) }
-      edit { $0.insertFinished(text) }
-      // the text usually comes while the panel still shows the wait; the stop time is then the panel's
-      // (stoppedAt is set only once Done was tapped or the wait shown, so it may still read .listening when the
-      // app went straight to idle)
-      let from = panel.isHidden ? waitEndedFrom : (cancelled ? nil : panel.stoppedAt)
-      waitEndedFrom = nil
-      if let from {  // stop times are cleared per request, so any wait, however long, is this dictation's
-        doneIn = Date().timeIntervalSince(from)
-        if panel.isHidden { showDoneIn() }  // otherwise once the panel closes
+      switch recordingUI.receiveTranscript(text) {
+      case .insertImmediately(let t):
+        edit(userInitiated: false) { $0.insertFinished(t) }
+        // the text usually comes while the panel still shows the wait; the stop time is then the panel's
+        // (stoppedAt is set only once Done was tapped or the wait shown, so it may still read .listening when the
+        // app went straight to idle)
+        let from = panel.isHidden ? waitEndedFrom : (cancelled ? nil : panel.stoppedAt)
+        waitEndedFrom = nil
+        if let from {  // stop times are cleared per request, so any wait, however long, is this dictation's
+          doneIn = Date().timeIntervalSince(from)
+          if panel.isHidden { showDoneIn() }  // otherwise once the panel closes
+        }
+      case .offerBanner(let t):
+        waitEndedFrom = nil
+        doneIn = nil
+        bar.showPendingTranscript(t, onInsert: { [weak self] in
+          guard let self, let pending = self.recordingUI.acceptPendingTranscript() else { return }
+          self.bar.clearPendingTranscript()
+          self.edit(userInitiated: false) { $0.insertFinished(pending) }
+        }, onDismiss: { [weak self] in
+          self?.recordingUI.dismissPendingTranscript()
+          self?.bar.clearPendingTranscript()
+        })
       }
     }
     dictation.onState = { [weak self] state in self?.showDictation(state) }
@@ -181,7 +210,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
         bar.showNotice(DictationState.doneLabel(elapsed: 1.4), for: 600)  // UI tests: the bar once the text is in
       } else {
         panel.preview = true
-        showDictation(DictationState(rawValue: p).flatMap { $0 == .listening ? nil : $0 } ?? .listening)
+        let expanded = p == "listening-expanded"
+        let st = DictationState(rawValue: p).flatMap { $0 == .listening ? nil : $0 } ?? .listening
+        showDictation(st)
+        if expanded {
+          recordingUI.expand()
+          panel.show(st, mode: .expanded, bottomRow: expandedBottomRow())
+          applyRecordingLayout(animated: false)
+        }
       }
     }
     // tells the app's setup list the keyboard is on with Full Access; without it the keyboard cannot write here
@@ -212,6 +248,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
     dictation.detach()
+    panel.stopTimer()
     dlog("disappear")
     debugLog?.flush(wait: true)  // iOS may end a closed keyboard before a queued write runs
   }
@@ -284,7 +321,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     dlog("page", [.init("page", .s("\(page)")), .init("form", .s("\(layout.form)")), .init("width", .d(Double(layout.width)))])
     keyboardView.setLayout(layout)
     bar.showsDismiss = !layout.form.isPad
-    heightConstraint?.constant = barHeight + layout.height
+    barTopConstraint?.constant = barTopOffset
+    emojiPanelTopConstraint?.constant = recordingUI.showsCompactBar ? SuggestionBar.height : 0
+    heightConstraint?.constant = barTopOffset + barHeight + layout.height
     keysHeightConstraint?.constant = layout.height
     if !panel.isHidden { showDictation(panel.state) }  // a rotation moves the bottom row the buttons sit on
     syncEmojiPanel()  // the layout language or the keyboard's form may have changed under an open panel
@@ -462,8 +501,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
 
   /// Runs an engine edit without treating the resulting text change as the host's. Logs how long our own
   /// handling took (engine, proxy calls, suggestion refresh): `log stream --predicate 'category == "latency"'`.
-  private func edit(_ name: String = "key", _ body: (TypingEngine) -> Void) {
+  private func edit(_ name: String = "key", userInitiated: Bool = true, _ body: (TypingEngine) -> Void) {
     let t0 = CACurrentMediaTime()
+    if userInitiated { recordingUI.noteUserTyped() }
     if name != "swipe-apply" { inputEpoch += 1 }  // a swipe's own word leaves the next queued swipe valid
     bar.clearNotice()  // typing again (by touch or VoiceOver): the suggestions come back
     engineEditing = true
@@ -512,7 +552,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   func keyboardViewKeyDown(_ v: KeyboardView) {
     bar.clearNotice()  // any key touch, shift and page keys too, brings the suggestions back
     if hasFullAccess { haptics.impactOccurred(intensity: 0.6) }
-    UIDevice.current.playInputClick()
+    if !recordingUI.mutesKeyClicks { UIDevice.current.playInputClick() }
   }
 
   func keyboardView(_ v: KeyboardView, typed text: String, at point: CGPoint?) {
@@ -570,6 +610,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   func keyboardView(_ v: KeyboardView, moveCursor by: Int) {
     guard emojiSearch == nil else { return }  // the space-bar trackpad must not move the document's cursor
     dlog("cursor", [.init("by", .i(by))])
+    recordingUI.noteUserTyped()
     inputEpoch += 1
     engineEditing = true
     textDocumentProxy.adjustTextPosition(byCharacterOffset: by)
@@ -619,17 +660,19 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
       resizeBar()  // the keyboard grows by the panel's search row
       view.layoutIfNeeded()  // a new panel gets its size before it picks the section to open at
       p.show()
-      p.isHidden = !panel.isHidden  // a recording already on screen stays on top until it ends
+      p.isHidden = recordingUI.showsExpandedPanel  // an expanded recording overlay stays on top until collapsed or ended
     } else {
       emojiPanel?.removeFromSuperview()
       emojiPanel = nil
+      emojiPanelTopConstraint = nil
       resizeBar()
     }
-    keyboardView.accessibilityElementsHidden = on
-    bar.accessibilityElementsHidden = on
+    let expanded = recordingUI.showsExpandedPanel
+    keyboardView.accessibilityElementsHidden = on || expanded
+    bar.accessibilityElementsHidden = on || recordingUI.active
     // the panel is clear like the rest of the keyboard, so the keys and bar it covers are hidden
-    keyboardView.isHidden = on || !panel.isHidden
-    bar.isHidden = on || !panel.isHidden
+    keyboardView.isHidden = on || expanded
+    bar.isHidden = on || recordingUI.active
     UIAccessibility.post(notification: .screenChanged, argument: on ? emojiPanel : nil)
   }
 
@@ -659,8 +702,10 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     }
     p.translatesAutoresizingMaskIntoConstraints = false
     view.insertSubview(p, belowSubview: panel)  // dictation's panel still covers everything
+    let top = p.topAnchor.constraint(equalTo: view.topAnchor, constant: recordingUI.showsCompactBar ? SuggestionBar.height : 0)
+    emojiPanelTopConstraint = top
     NSLayoutConstraint.activate([
-      p.topAnchor.constraint(equalTo: view.topAnchor),
+      top,
       p.bottomAnchor.constraint(equalTo: keyboardView.bottomAnchor),
       p.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       p.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -712,37 +757,59 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     showEmoji(true)
   }
 
+  private var barTopOffset: CGFloat {
+    (recordingUI.showsCompactBar && (emojiPanel != nil || emojiSearch != nil)) ? SuggestionBar.height : 0
+  }
+
   private func resizeBar() {
+    barTopConstraint?.constant = barTopOffset
+    emojiPanelTopConstraint?.constant = recordingUI.showsCompactBar ? SuggestionBar.height : 0
     barHeightConstraint?.constant = barHeight
-    heightConstraint?.constant = barHeight + keyboardView.layout.height
+    heightConstraint?.constant = barTopOffset + barHeight + keyboardView.layout.height
     refresh()
   }
 
   // MARK: dictation
 
   private func startDictation() {
+    if dictation.state == .listening {
+      panel.markStopped()
+      dictation.toggle()
+      return
+    }
+    guard dictation.state == .idle || dictation.state == .needsApp else { return }
     // a new request, whether or not its listening state is ever seen here (the app hand-off): no old timing
     waitEndedFrom = nil
     doneIn = nil
+    recordingUI.dismissPendingTranscript()
+    bar.clearPendingTranscript()
     dictation.toggle()
   }
 
-  /// Covers the keys with the recording panel while dictating; the keys come back once the text is in.
+  /// Returns the bottom key row's frame in `view` coordinates as positioned when expanded (`barTopOffset == 0`).
+  private func expandedBottomRow() -> CGRect {
+    let layout = keyboardView.layout
+    let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+    return row.offsetBy(dx: 0, dy: barHeight)
+  }
+
+  /// Shows the compact recording bar (default) or expanded recording panel while dictating.
   private func showDictation(_ state: DictationState) {
     let active = [.listening, .transcribing, .cleaningUp].contains(state)
     if state == .listening { waitEndedFrom = nil; doneIn = nil }
     // the wait after Done ended before its text came: keep when it began, for the bar's total
     if !active, !panel.isHidden, !cancelled { waitEndedFrom = panel.stoppedAt }
     if !active { cancelled = false }
-    guard (active && !cancelled) || panel.preview else {
+    let visible = (active && !cancelled) || panel.preview
+    recordingUI.update(active: visible, listening: visible && state == .listening)
+    keyboardView.micVisual = recordingUI.micKeyVisual
+    guard visible else {
       setPanel(visible: false)
       showDoneIn()
       return
     }
     view.layoutIfNeeded()
-    let layout = keyboardView.layout
-    let row = layout.keys.filter { $0.row == layout.metrics.rows - 1 }.map(\.frame).reduce(CGRect.null) { $0.union($1) }
-    panel.show(state, bottomRow: keyboardView.convert(row, to: panel))
+    panel.show(state, mode: recordingUI.presentation, bottomRow: expandedBottomRow())
     // show() can find the app gone and hide the panel at once (onStateChange): then the keys must come back
     setPanel(visible: !panel.isHidden)
     showDoneIn()
@@ -756,21 +823,48 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
     bar.showNotice(DictationState.doneLabel(elapsed: seconds))
   }
 
-  /// While the panel covers them, the keys and the bar are hidden from VoiceOver and focus moves to Done.
   private func setPanel(visible: Bool) {
     if !visible { panel.hide() }
+    applyRecordingLayout(animated: false)
+  }
+
+  /// Syncs panel constraints, z-order, subview visibility, and VoiceOver modal state for compact vs expanded mode.
+  private func applyRecordingLayout(animated: Bool) {
+    let visible = !panel.isHidden
+    let expanded = visible && recordingUI.showsExpandedPanel
+    if expanded {
+      panelCompactHeight?.isActive = false
+      panelExpandedBottom?.isActive = true
+      view.bringSubviewToFront(panel)
+    } else {
+      panelExpandedBottom?.isActive = false
+      panelCompactHeight?.isActive = true
+      if visible {
+        // Keep keyboardView in front in compact mode so top-row key balloons draw over the 44 pt bar;
+        // if emojiPanel is open, keep panel above it at the top edge.
+        if let emojiPanel { view.insertSubview(panel, aboveSubview: emojiPanel) }
+        view.bringSubviewToFront(keyboardView)
+      }
+    }
+
     let wasModal = panel.accessibilityViewIsModal
     // the emoji panel covers the keys and the bar; emoji search brings the keys back, in place of the bar
     let emoji = emojiPanel != nil && emojiSearch == nil
-    keyboardView.accessibilityElementsHidden = visible || emoji
+    keyboardView.accessibilityElementsHidden = expanded || emoji
     bar.accessibilityElementsHidden = visible || emojiPanel != nil
-    // the panel is clear like the rest of the keyboard, so the keys and bar it replaces are hidden
-    keyboardView.isHidden = visible || emoji
+    // the panel is clear like the rest of the keyboard, so the keys and bar it covers are hidden
+    keyboardView.isHidden = expanded || emoji
     bar.isHidden = visible || emojiPanel != nil
-    emojiPanel?.isHidden = visible || emojiSearch != nil  // the clear recording panel would show the emoji grid through it
-    emojiSearch?.isHidden = visible
-    panel.accessibilityViewIsModal = visible
-    if visible != wasModal { UIAccessibility.post(notification: .screenChanged, argument: visible ? panel.focusTarget : nil) }
+    emojiPanel?.isHidden = expanded || emojiSearch != nil  // an expanded recording panel covers the emoji grid too
+    emojiSearch?.isHidden = expanded
+    panel.accessibilityViewIsModal = expanded
+    resizeBar()
+    if animated {
+      UIView.animate(withDuration: 0.22, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
+        self.view.layoutIfNeeded()
+      }
+    }
+    if expanded != wasModal { UIAccessibility.post(notification: .screenChanged, argument: expanded ? panel.focusTarget : nil) }
   }
 }
 

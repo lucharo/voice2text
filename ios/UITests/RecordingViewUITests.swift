@@ -22,7 +22,7 @@ import XCTest
     XCTAssertTrue(field.waitForExistence(timeout: 10))
     sleep(2)  // the setup list settles before the field is tapped
     field.tap()
-    // while the recording view is up the keys are hidden from accessibility, so look for the panel instead
+    // Compact recording previews keep the keys accessible; expanded mode hides them.
     let v2t = preview == nil || preview == "done" ? key("letters-q") : app.staticTexts["v2t.recording.status"]
     for _ in 0..<5 where !v2t.waitForExistence(timeout: 3) {
       // a fresh Simulator's Apple keyboard first shows a one-time introduction with a Continue button
@@ -31,14 +31,30 @@ import XCTest
       if globe.exists { globe.tap() }
     }
     XCTAssertTrue(v2t.waitForExistence(timeout: 10), app.debugDescription)
-    if preview != nil, preview != "done" { XCTAssertFalse(key("letters-q").exists, "keys under the recording view are still in the accessibility tree") }
+    if preview == "listening-expanded" {
+      XCTAssertFalse(key("letters-q").exists, "keys under the expanded recording view are still in the accessibility tree")
+    } else if preview != nil, preview != "done" {
+      XCTAssertTrue(key("letters-q").exists, "keys should stay visible under the compact recording bar")
+    }
     sleep(2)  // let the preview waveform fill
   }
 
   func testRecordingView() {
     showKeyboard(preview: "listening")
     XCTAssertTrue(app.buttons["v2t.recording.done"].isHittable && app.buttons["v2t.recording.cancel"].isHittable)
-    shot("rec-listening")
+    XCTAssertTrue(app.buttons["v2t.recording.expand"].isHittable)
+    XCTAssertTrue(key("letters-q").isHittable)
+    key("letters-a").tap()
+    XCTAssertEqual((app.textFields["v2t.try"].value as? String) ?? "", "A")
+    shot("rec-listening-compact")
+
+    app.buttons["v2t.recording.expand"].tap()
+    XCTAssertFalse(key("letters-q").exists)
+    XCTAssertTrue(app.buttons["v2t.recording.collapse"].waitForExistence(timeout: 3))
+    shot("rec-listening-expanded")
+
+    app.buttons["v2t.recording.collapse"].tap()
+    XCTAssertTrue(key("letters-q").waitForExistence(timeout: 3))
     app.terminate()
     showKeyboard(preview: "transcribing")
     XCTAssertFalse(app.buttons["v2t.recording.done"].isHittable)

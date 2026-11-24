@@ -1,27 +1,35 @@
 import UIKit
+import V2TKeyboardCore
 
-/// What the keyboard shows while it records and transcribes, in place of the keys: a live waveform of the
-/// microphone, then Cancel (drop the recording) and Done (type it) where the bottom row of keys was. Cancel
-/// stays while the app transcribes, so a slow transcription can always be ended.
-final class RecordingPanel: UIView {
+/// Dictation controls and live waveform: starts as a 44 pt compact bar over the suggestion bar (so the
+/// keys remain usable while speaking), and expands to a full-height overlay on tap or swipe down.
+final class RecordingPanel: UIView, UIGestureRecognizerDelegate {
   var onStop: (() -> Void)?
   var onCancel: (() -> Void)?
+  var onToggleMode: (() -> Void)?
   /// Reads the dictation state now; checked once a second while the panel is up.
   var liveState: (() -> DictationState?)?
   /// The state read through liveState changed without a notification (the app quit or crashed).
   var onStateChange: ((DictationState) -> Void)?
-  /// The control VoiceOver lands on when the panel appears.
-  var focusTarget: UIView { state == .listening ? done : status }
+  /// The control VoiceOver lands on when the expanded panel appears.
+  var focusTarget: UIView { mode == .expanded ? (state == .listening ? done : status) : status }
 
+  private(set) var mode: RecordingPresentation = .compact
+  private var configuredMode: RecordingPresentation?
   private let wave = CAShapeLayer()
   private let status = UILabel()
-  /// The microphone the app records from, top right while listening ("iPhone Microphone", "AirPods Pro").
+  /// The microphone the app records from ("iPhone Microphone", "AirPods Pro").
   private let mic = UILabel()
   private var shownMicrophone: Microphone?
+  private var shownMicFontSize: CGFloat = 0
   private let dot = UIView()
   private let spinner = UIActivityIndicatorView(style: .medium)
   private let cancel = UIButton(type: .system)
   private let done = UIButton(type: .system)
+  private let expandButton = UIButton(type: .system)
+  private let collapseButton = UIButton(type: .system)
+  private var compactWaveRect: CGRect = .zero
+  private var compactExpandHitArea: CGRect = .zero
   private var timer: Timer?
   private var started = Date()
   /// When Done was tapped (or the wait was first shown): the wait after it ticks from here, and the
@@ -30,46 +38,94 @@ final class RecordingPanel: UIView {
   private var levels: [Float] = []
   private(set) var state: DictationState = .idle
   private var ticks = 0
-  /// The bottom row of keys, in this view's coordinates, so the controls sit where the keys were.
+  /// The bottom row of keys, in this view's coordinates, so the expanded controls sit where the keys were.
   private var bottomRow: CGRect = .zero
   /// UI tests: a made-up waveform instead of the app's levels file.
   var preview = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    backgroundColor = .clear  // the keyboard's glass, as behind the keys (the controller hides the keys)
+    backgroundColor = .clear  // the keyboard's glass, behind the bar or expanded overlay
     wave.fillColor = UIColor.label.cgColor
     layer.addSublayer(wave)
-    status.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+    status.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
     status.textColor = .secondaryLabel
+    status.lineBreakMode = .byTruncatingTail
     status.accessibilityIdentifier = "v2t.recording.status"
-    mic.font = .systemFont(ofSize: 13, weight: .medium)
+    mic.font = .systemFont(ofSize: 11, weight: .medium)
     mic.textColor = .secondaryLabel
     mic.lineBreakMode = .byTruncatingTail
     mic.accessibilityIdentifier = "v2t.recording.mic"
     dot.backgroundColor = .systemRed
-    dot.layer.cornerRadius = 4
+    dot.layer.cornerRadius = 3.5
     spinner.hidesWhenStopped = true
-    for v in [status, mic, dot, spinner, cancel, done] as [UIView] { addSubview(v) }
 
-    done.configuration = Self.filled(title: "Done", symbol: "checkmark", color: .systemBlue)
+    expandButton.setImage(UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), for: .normal)
+    expandButton.tintColor = .secondaryLabel
+    expandButton.accessibilityIdentifier = "v2t.recording.expand"
+    expandButton.accessibilityLabel = "Expand recording view"
+    expandButton.addAction(UIAction { [weak self] _ in self?.onToggleMode?() }, for: .touchUpInside)
+
+    collapseButton.setImage(UIImage(systemName: "chevron.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)), for: .normal)
+    collapseButton.tintColor = .secondaryLabel
+    collapseButton.accessibilityIdentifier = "v2t.recording.collapse"
+    collapseButton.accessibilityLabel = "Show keyboard"
+    collapseButton.addAction(UIAction { [weak self] _ in self?.onToggleMode?() }, for: .touchUpInside)
+
+    for v in [status, mic, dot, spinner, cancel, done, expandButton, collapseButton] as [UIView] { addSubview(v) }
+
     done.accessibilityIdentifier = "v2t.recording.done"
     done.addAction(UIAction { [weak self] _ in
       self?.stoppedAt = Date()  // the tap itself, before the app hears of it
       self?.onStop?()
     }, for: .touchUpInside)
-    var c = UIButton.Configuration.filled()
-    c.title = "Cancel"
-    c.baseBackgroundColor = Palette.key
-    c.baseForegroundColor = .label
-    c.cornerStyle = .large
-    c.titleTextAttributesTransformer = .init { var a = $0; a.font = .systemFont(ofSize: 18, weight: .medium); return a }
-    cancel.configuration = c
     cancel.accessibilityIdentifier = "v2t.recording.cancel"
     cancel.addAction(UIAction { [weak self] _ in self?.onCancel?() }, for: .touchUpInside)
+
+    let tap = UITapGestureRecognizer(target: self, action: #selector(handleCompactTap(_:)))
+    tap.cancelsTouchesInView = false
+    tap.delegate = self
+    addGestureRecognizer(tap)
+
+    let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeDown))
+    swipeDown.direction = .down
+    addGestureRecognizer(swipeDown)
+
+    let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeUp))
+    swipeUp.direction = .up
+    addGestureRecognizer(swipeUp)
+
+    configureButtons(for: .compact)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    !(touch.view is UIControl)
+  }
+
+  @objc private func handleCompactTap(_ g: UITapGestureRecognizer) {
+    guard mode == .compact else { return }
+    let p = g.location(in: self)
+    guard compactExpandHitArea.contains(p),
+          !cancel.frame.contains(p),
+          !done.frame.contains(p),
+          !expandButton.frame.contains(p) else { return }
+    onToggleMode?()
+  }
+
+  @objc private func handleSwipeDown() {
+    if mode == .compact { onToggleMode?() }
+  }
+
+  @objc private func handleSwipeUp() {
+    if mode == .expanded { onToggleMode?() }
+  }
+
+  /// Stamps the stop time when dictation is stopped externally (e.g. via the bottom-row mic key).
+  func markStopped() {
+    stoppedAt = Date()
+  }
 
   private static func filled(title: String, symbol: String, color: UIColor) -> UIButton.Configuration {
     var c = UIButton.Configuration.filled()
@@ -83,20 +139,72 @@ final class RecordingPanel: UIView {
     return c
   }
 
-  /// Shows the panel for `state`, with its buttons laid over the keyboard's `bottomRow`.
-  func show(_ state: DictationState, bottomRow: CGRect) {
+  private func configureButtons(for mode: RecordingPresentation) {
+    guard configuredMode != mode else { return }
+    configuredMode = mode
+    if mode == .compact {
+      var c = UIButton.Configuration.filled()
+      c.image = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+      c.baseBackgroundColor = Palette.key
+      c.baseForegroundColor = .label
+      c.cornerStyle = .capsule
+      c.contentInsets = .zero
+      cancel.configuration = c
+      cancel.accessibilityLabel = "Cancel"
+
+      var d = UIButton.Configuration.filled()
+      d.title = "Done"
+      d.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold))
+      d.imagePadding = 4
+      d.baseBackgroundColor = .systemBlue
+      d.baseForegroundColor = .white
+      d.cornerStyle = .capsule
+      d.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
+      d.titleTextAttributesTransformer = .init { var a = $0; a.font = .systemFont(ofSize: 14, weight: .semibold); return a }
+      done.configuration = d
+
+      status.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+      mic.font = .systemFont(ofSize: 11, weight: .medium)
+      dot.layer.cornerRadius = 3.5
+      spinner.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+    } else {
+      var c = UIButton.Configuration.filled()
+      c.title = "Cancel"
+      c.baseBackgroundColor = Palette.key
+      c.baseForegroundColor = .label
+      c.cornerStyle = .large
+      c.titleTextAttributesTransformer = .init { var a = $0; a.font = .systemFont(ofSize: 18, weight: .medium); return a }
+      cancel.configuration = c
+      cancel.accessibilityLabel = nil
+
+      done.configuration = Self.filled(title: "Done", symbol: "checkmark", color: .systemBlue)
+
+      status.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+      mic.font = .systemFont(ofSize: 13, weight: .medium)
+      dot.layer.cornerRadius = 4
+      spinner.transform = .identity
+    }
+  }
+
+  /// Shows the panel for `state` in `mode`, with expanded buttons laid over the keyboard's `bottomRow`.
+  func show(_ state: DictationState, mode: RecordingPresentation = .compact, bottomRow: CGRect) {
     if isHidden || state != self.state { started = state == .listening ? Date() : started }
     // a new recording forgets the last wait; Done's own tap re-shows .listening and must keep its time
     if state == .listening, isHidden || self.state != .listening { stoppedAt = nil }
     if state != .listening, stoppedAt == nil { stoppedAt = Date() }
     self.state = state
+    self.mode = mode
     self.bottomRow = bottomRow
+    configureButtons(for: mode)
     isHidden = false
     let listening = state == .listening
+    status.textColor = (mode == .compact && listening) ? .label : .secondaryLabel
     cancel.isHidden = ![.listening, .transcribing, .cleaningUp].contains(state)
     done.isHidden = !listening
     dot.isHidden = !listening
     mic.isHidden = !listening
+    expandButton.isHidden = mode != .compact
+    collapseButton.isHidden = mode != .expanded
     refreshMicrophone()
     if listening { spinner.stopAnimating() } else { spinner.startAnimating() }
     if timer == nil {
@@ -111,21 +219,54 @@ final class RecordingPanel: UIView {
   func hide() {
     isHidden = true
     stoppedAt = nil  // the controller took it before hiding; a later wait (the app hand-off) starts afresh
-    timer?.invalidate()
-    timer = nil
+    stopTimer()
     levels = []
     state = .idle
   }
 
+  /// Stops the 30 Hz UI timer when the keyboard disappears or leaves its window.
+  func stopTimer() {
+    timer?.invalidate()
+    timer = nil
+  }
+
+  override func willMove(toWindow newWindow: UIWindow?) {
+    super.willMove(toWindow: newWindow)
+    if newWindow == nil { stopTimer() }
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
+    if mode == .compact {
+      status.sizeToFit()
+      mic.sizeToFit()
+      let doneW = done.sizeThatFits(CGSize(width: 200, height: 32)).width
+      let hasMic = !mic.isHidden && mic.attributedText != nil
+      let g = CompactBarGeometry.compute(
+        size: bounds.size, listening: state == .listening,
+        statusSize: status.frame.size, micSize: mic.frame.size, hasMic: hasMic, doneWidth: doneW)
+      cancel.frame = g.cancel
+      dot.frame = g.dot
+      if !g.spinner.isEmpty { spinner.center = CGPoint(x: g.spinner.midX, y: g.spinner.midY) }
+      status.frame = g.status
+      mic.frame = g.mic
+      expandButton.frame = g.expandButton
+      done.frame = g.done
+      compactWaveRect = g.wave
+      compactExpandHitArea = g.expandHitArea
+      drawWave()
+      return
+    }
+
     let side: CGFloat = 12
+    collapseButton.frame = CGRect(x: bounds.maxX - side - 34, y: 5, width: 34, height: 34)
     status.sizeToFit()
     dot.frame = CGRect(x: side + 4, y: 18, width: 8, height: 8)
     status.frame.origin = CGPoint(x: dot.isHidden ? side + 4 : dot.frame.maxX + 6, y: 22 - status.frame.height / 2)
     mic.sizeToFit()
-    let micWidth = min(mic.frame.width, bounds.width - status.frame.maxX - 2 * side - 8)
-    mic.frame = CGRect(x: bounds.maxX - side - 4 - micWidth, y: 22 - mic.frame.height / 2, width: max(0, micWidth), height: mic.frame.height)
+    let micLimit = collapseButton.frame.minX - status.frame.maxX - 16
+    let micWidth = min(mic.frame.width, max(0, micLimit))
+    mic.frame = CGRect(x: collapseButton.frame.minX - 6 - micWidth, y: 22 - mic.frame.height / 2, width: micWidth, height: mic.frame.height)
     spinner.center = CGPoint(x: bounds.midX, y: (bottomRow.minY > 0 ? bottomRow.midY : bounds.maxY - 30))
     let row = bottomRow.height > 0 ? bottomRow : CGRect(x: 3, y: bounds.maxY - 50, width: bounds.width - 6, height: 42)
     let cw = (row.width - 2 * side) * 0.32
@@ -160,8 +301,10 @@ final class RecordingPanel: UIView {
   /// Shows the app's microphone as a mic icon and its name; hidden when the app has not said which.
   private func refreshMicrophone() {
     let now = preview ? Microphone(name: "iPhone Microphone") : DictationChannel.readMicrophone(from: Settings.shared.defaults)
-    guard now != shownMicrophone else { return }
+    let fontSize = mic.font.pointSize
+    guard now != shownMicrophone || fontSize != shownMicFontSize else { return }
     shownMicrophone = now
+    shownMicFontSize = fontSize
     guard let now else { mic.attributedText = nil; mic.accessibilityLabel = nil; return }
     let text = NSMutableAttributedString()
     if let image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(font: mic.font))?.withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal) {
@@ -174,19 +317,37 @@ final class RecordingPanel: UIView {
     setNeedsLayout()
   }
 
-  /// Bars 3 pt wide, newest on the right, scrolling left as Voice Memos does; flat while transcribing.
+  /// Bars scrolling left as Voice Memos does; compact bar shows live bars only while listening.
   private func drawWave() {
-    let top: CGFloat = 40, bottom = (bottomRow.minY > 0 ? bottomRow.minY : bounds.maxY - 56) - 14
-    guard bottom > top else { wave.path = nil; return }
-    let mid = (top + bottom) / 2, maxH = bottom - top, bar: CGFloat = 3, pitch: CGFloat = 6
-    let n = Int((bounds.width - 24) / pitch)
+    let rect: CGRect
+    let bar: CGFloat
+    let pitch: CGFloat
+    if mode == .compact {
+      guard state == .listening, compactWaveRect.width >= 12, compactWaveRect.height >= 8 else {
+        wave.path = nil
+        return
+      }
+      rect = compactWaveRect
+      bar = 2.5
+      pitch = 5
+    } else {
+      let top: CGFloat = 40, bottom = (bottomRow.minY > 0 ? bottomRow.minY : bounds.maxY - 56) - 14
+      guard bottom > top else { wave.path = nil; return }
+      rect = CGRect(x: 12, y: top, width: max(0, bounds.width - 24), height: bottom - top)
+      bar = 3
+      pitch = 6
+    }
+
+    let mid = rect.midY, maxH = rect.height
+    let n = max(0, Int(rect.width / pitch))
+    guard n > 0 else { wave.path = nil; return }
     let recent = state == .listening ? Array(levels.suffix(n)) : []
     let path = UIBezierPath()
     for i in 0..<n {
       let j = i - (n - recent.count)
       let v = j >= 0 ? CGFloat(recent[j]) : 0
       let h = max(bar, v * maxH)
-      let x = 12 + CGFloat(i) * pitch
+      let x = rect.minX + CGFloat(i) * pitch
       path.append(UIBezierPath(roundedRect: CGRect(x: x, y: mid - h / 2, width: bar, height: h), cornerRadius: bar / 2))
     }
     CATransaction.begin()
