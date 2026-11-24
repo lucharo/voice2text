@@ -79,8 +79,14 @@ def cmd_run(argv: list[str]) -> int:
     }
     cfg = config.load(overrides)
 
-    from . import app  # lazy: needs audio + MLX, unlike the commands above
+    from . import LOADING_STARTED, __version__, app  # lazy: needs audio + MLX, unlike the commands above
 
+    # the engine's first line: which v2t this is, and how long its code took to load,
+    # which is long when the install left no bytecode (#207)
+    app.logger.info(
+        f"v2t {__version__} starting (pid {os.getpid()}, {sys.executable}): "
+        f"loading its code took {time.perf_counter() - LOADING_STARTED:.1f}s"
+    )
     if cfg.pause_music and not _which("nowplaying-cli"):
         from loguru import logger
 
@@ -657,7 +663,7 @@ def _setup() -> int:
     package = {"whisper": "'voice2text[whisper]'", "qwen3-asr": "'voice2text[qwen]'"}.get(
         backend, "voice2text"
     )
-    print(f"run:  v2t   (install with: uv tool install --python 3.13 {package})")
+    print(f"run:  v2t   (install with: uv tool install --python 3.13 --compile-bytecode {package})")
     return 0
 
 

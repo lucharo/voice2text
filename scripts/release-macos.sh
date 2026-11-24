@@ -195,7 +195,7 @@ if [[ "$publish" == true ]]; then
     if [[ ! -s "$notes" ]]; then
       echo "Release $version of voice2text." > "$notes"
     fi
-    printf '\n---\n\nNotarised Developer ID build of %s. Install the menu app with `brew install --cask %s` (see README) and the engine with `uv tool install voice2text==%s`.\n' "$head_sha" "$cask_token" "$version" >> "$notes"
+    printf '\n---\n\nNotarised Developer ID build of %s. Install the menu app with `brew install --cask %s` (see README) and the engine with `uv tool install --compile-bytecode voice2text==%s`.\n' "$head_sha" "$cask_token" "$version" >> "$notes"
     gh release create "$tag" --repo "$gh_repo" --verify-tag --title "voice2text $version" --notes-file "$notes"
   fi
   # The tag is proven to be HEAD, so replacing the asset only ever rebuilds the same source.

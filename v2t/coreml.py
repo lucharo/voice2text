@@ -23,6 +23,7 @@ import ctypes
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -44,6 +45,11 @@ FILES = (
     "JointDecisionv3.mlmodelc",
     "parakeet_v3_vocab.json",
 )
+# A Neural Engine model that loads slower than this was prepared for the Neural Engine
+# rather than read from Core ML's cache: on its first load, or after macOS evicted the
+# cached copy (#207). With the cache warm the four models load in 0.1 to 0.3 s (#56), and
+# the encoder took 12.6 to 20.8 s each time it was prepared, in the #207 probe.
+PREPARED_S = 3.0
 # Bark 3.0 Pro (ConwayResearch, CC-BY-4.0), English only, opt-in as
 # transcription.model = BARK_PRO_REPO. A fine-tune of Parakeet v3 shipping Core ML
 # files in FluidAudio's layout, with the same inputs and outputs, so CoreMLParakeet
@@ -310,20 +316,41 @@ class CoreMLParakeet:
                 f"{', '.join(missing)}. Leave transcription.model blank to download them "
                 f"from huggingface.co/{COREML_REPO}, or set backend = \"parakeet\"."
             )
+        from loguru import logger
+
+        start = time.perf_counter()
         try:
             ct = _import_coremltools()
         except ImportError as e:
             raise SystemExit(
                 "parakeet-coreml needs coremltools and its native library, which has no Python 3.14 "
-                "build: reinstall voice2text (uv tool install --reinstall --python 3.13 voice2text)"
+                "build: reinstall voice2text (uv tool install --reinstall --python 3.13 --compile-bytecode voice2text)"
             ) from e
         # Every array handed to predict(), by address, kept until Core ML has let go (_predict).
         self._held: dict[int, np.ndarray] = {}
-        model, units = ct.models.CompiledMLModel, ct.ComputeUnit
-        self.pre = model(str(folder / FILES[0]), compute_units=units.CPU_ONLY)
-        self.enc = model(str(folder / FILES[1]), compute_units=units.CPU_AND_NE)
-        self.dec = model(str(folder / FILES[2]), compute_units=units.CPU_AND_NE)
-        self.joint = model(str(folder / FILES[3]), compute_units=units.CPU_AND_NE)
+        logger.info(f"import coremltools {time.perf_counter() - start:.1f}s")
+        units = ct.ComputeUnit
+        took: dict[str, float] = {}
+        prepared: list[str] = []  # Neural Engine models slow enough to have been prepared
+
+        def load(name: str, compute_units):
+            began = time.perf_counter()
+            loaded = ct.models.CompiledMLModel(str(folder / name), compute_units=compute_units)
+            seconds = took[name.removesuffix(".mlmodelc")] = time.perf_counter() - began
+            if compute_units != units.CPU_ONLY and seconds > PREPARED_S:
+                prepared.append(name.removesuffix(".mlmodelc"))
+            return loaded
+
+        self.pre = load(FILES[0], units.CPU_ONLY)
+        self.enc = load(FILES[1], units.CPU_AND_NE)
+        self.dec = load(FILES[2], units.CPU_AND_NE)
+        self.joint = load(FILES[3], units.CPU_AND_NE)
+        logger.info("Core ML models: " + ", ".join(f"{name} {s:.1f}s" for name, s in took.items()))
+        if prepared:
+            logger.warning(
+                f"Core ML prepared {', '.join(prepared)} for the Neural Engine instead of reading "
+                "its cache: a first load, or macOS had cleared that cache"
+            )
         vocab = json.loads((folder / FILES[4]).read_text())
         self.vocab = {int(k): v for k, v in vocab.items()}
         self.lead = int(lead_silence_s * SAMPLE_RATE)

@@ -63,10 +63,10 @@ summary line when they finish.
 
 | Symptom | Fix |
 |---|---|
-| `command not found: v2t` | `uv tool install voice2text` (Apple Silicon only). `transcribe` needs ≥ 0.3.0; while PyPI lags, install from this checkout: `uv tool install --force .` |
+| `command not found: v2t` | `uv tool install --python 3.13 --compile-bytecode voice2text` (Apple Silicon only). `transcribe` needs ≥ 0.3.0; while PyPI lags, install from this checkout: `uv tool install --force .` |
 | Ran the repo's source but saw an older CLI | the global `v2t` is a separate install — `uv tool install --force .` after changing the source, or `uv run v2t …` from the repo root |
 | `FFmpeg is not installed` | `brew install ffmpeg` — both backends decode through it |
-| `whisper backend needs …` | `uv tool install 'voice2text[whisper]'` (quote the brackets in zsh) |
+| `whisper backend needs …` | `uv tool install --python 3.13 --compile-bytecode 'voice2text[whisper]'` (quote the brackets in zsh) |
 | `uv run v2t` outside this repo ran something else | with no project in cwd/parents, `uv run` execs the PATH copy — `cd` here first |
 
 ## Beyond one file
