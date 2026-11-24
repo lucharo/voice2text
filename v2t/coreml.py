@@ -315,7 +315,7 @@ class CoreMLParakeet:
         except ImportError as e:
             raise SystemExit(
                 "parakeet-coreml needs coremltools and its native library, which has no Python 3.14 "
-                "build: reinstall voice2text (uv tool install --reinstall --python 3.13 voice2text)"
+                "build: reinstall voice2text (uv tool install --reinstall --python 3.13 --compile-bytecode voice2text)"
             ) from e
         # Every array handed to predict(), by address, kept until Core ML has let go (_predict).
         self._held: dict[int, np.ndarray] = {}

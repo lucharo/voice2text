@@ -15,7 +15,7 @@ If Fn opens the emoji picker, the menu's **Globe Key** row opens that setting. T
 The default Core ML backend needs Python 3.11 to 3.13. Reinstall with:
 
 ```bash
-uv tool install --reinstall --python 3.13 voice2text
+uv tool install --reinstall --python 3.13 --compile-bytecode voice2text
 ```
 
 ## It records, but does not paste

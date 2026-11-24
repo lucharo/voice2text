@@ -193,7 +193,7 @@ def check(
         # the tool folder this engine lives in, which a bundle may have baked from a
         # custom UV_TOOL_DIR the app's environment no longer sets
         tools = str((prefix or Path(sys.prefix)).parent)
-        commands.append(["/usr/bin/env", f"UV_TOOL_DIR={tools}", uv, "tool", "upgrade", "voice2text"])
+        commands.append(["/usr/bin/env", f"UV_TOOL_DIR={tools}", uv, "tool", "upgrade", "--compile-bytecode", "voice2text"])
         if menu == "local" and app is not None:
             # compiled from the engine's package, so rebuilt from the new one; a failed
             # build leaves the old bundle in place (menubar.build swaps only on success),

@@ -413,7 +413,7 @@ struct ModelsSection: View {
                 ModelRowView(state: state, row: recommended)
                 RecommendationNote()
             } else {
-                Text(state.engineInstalled ? "Reading models…" : "v2t is not installed. Run: uv tool install --python 3.13 voice2text")
+                Text(state.engineInstalled ? "Reading models…" : "v2t is not installed. Run: uv tool install --python 3.13 --compile-bytecode voice2text")
                     .foregroundStyle(.secondary)
             }
             let others = state.speech.filter { $0.id != state.recommendedSpeech?.id }
@@ -750,7 +750,7 @@ struct StepBody: View {
                     RecommendationNote()
                     DownloadProgress(state: state, model: model)
                 } else if !state.engineInstalled {
-                    Text("Install v2t first, in Terminal: uv tool install --python 3.13 voice2text")
+                    Text("Install v2t first, in Terminal: uv tool install --python 3.13 --compile-bytecode voice2text")
                         .textSelection(.enabled)
                 } else {
                     Text("Reading models…").foregroundStyle(.secondary)
@@ -854,7 +854,7 @@ struct DownloadProgress: View {
         switch state.phase {
         case "error", "no-engine", "permission-error":
             StatusLabel(text: state.phase == "permission-error" ? "A permission is missing: allow it, then Start v2t in the menu"
-                        : state.phase == "no-engine" ? "v2t is not installed: run uv tool install --python 3.13 voice2text"
+                        : state.phase == "no-engine" ? "v2t is not installed: run uv tool install --python 3.13 --compile-bytecode voice2text"
                         : "Could not start: open Log in the menu, then Start v2t again",
                         symbol: "exclamationmark.triangle", tint: .primary)
         case "idle", "recording", "transcribing", "cleaning", "delivering", "cancelled", "loading-cleanup":

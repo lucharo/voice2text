@@ -1711,7 +1711,7 @@ class V2TSmokeTests(unittest.TestCase):
             ):
                 coreml.CoreMLParakeet(folder)
 
-        self.assertIn("uv tool install --reinstall --python 3.13 voice2text", str(caught.exception))
+        self.assertIn("uv tool install --reinstall --python 3.13 --compile-bytecode voice2text", str(caught.exception))
 
     def test_parakeet_coreml_decodes_and_cuts_held_pieces_on_core_ml_without_mlx(self):
         windows: list[tuple[tuple, np.dtype]] = []
@@ -2096,7 +2096,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             backends.make_stt("qwen3-asr")
 
-        self.assertIn("uv tool install --python 3.13 'voice2text[qwen]'", str(caught.exception))
+        self.assertIn("uv tool install --python 3.13 --compile-bytecode 'voice2text[qwen]'", str(caught.exception))
 
     def test_config_accepts_the_qwen3_asr_backend_and_its_template_names_it(self):
         config._validate(config.Config(backend="qwen3-asr"))  # no SystemExit
@@ -3581,7 +3581,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_setup([])
 
-        self.assertIn("uv tool install --python 3.13 voice2text", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 --compile-bytecode voice2text", output.getvalue())
         self.assertNotIn("voice2text[parakeet]", output.getvalue())
         self.assertEqual(stat.S_IMODE(config.config_path().stat().st_mode), 0o600)
 
@@ -4044,7 +4044,7 @@ class V2TSmokeTests(unittest.TestCase):
         self.assertEqual(routes, ["cask", "other", "local", "other", None])
         self.assertEqual(beside_the_cask, "other")  # menubar install would refuse the rebuild
 
-    UV_UPGRADE = ["/usr/bin/env", "UV_TOOL_DIR=/tools", "/bin/uv", "tool", "upgrade", "voice2text"]
+    UV_UPGRADE = ["/usr/bin/env", "UV_TOOL_DIR=/tools", "/bin/uv", "tool", "upgrade", "--compile-bytecode", "voice2text"]
 
     def _update_check(self, *, engine_route, app_route, app_version="0.5.16", engine_version="0.5.16"):
         tools = {"uv": "/bin/uv", "brew": "/bin/brew"}
@@ -4134,7 +4134,7 @@ class V2TSmokeTests(unittest.TestCase):
 
         self.assertEqual(output.getvalue().splitlines(), [
             "v2t 0.5.17 is out (you have engine 0.5.17, menu app 0.5.16). Run:",
-            "  /usr/bin/env 'UV_TOOL_DIR=/Users/a/Voice Tools' /bin/uv tool upgrade voice2text",
+            "  /usr/bin/env 'UV_TOOL_DIR=/Users/a/Voice Tools' /bin/uv tool upgrade --compile-bytecode voice2text",
             f"then quit Voice2Text and run: {shlex.join([sys.executable, '-m', 'v2t', 'menubar', 'install'])}",
         ])
 
@@ -4221,7 +4221,7 @@ class V2TSmokeTests(unittest.TestCase):
         ):
             cli.cmd_setup([])
 
-        self.assertIn("uv tool install --python 3.13 'voice2text[whisper]'", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 --compile-bytecode 'voice2text[whisper]'", output.getvalue())
 
     def test_setup_offers_qwen3_asr_and_names_its_extra(self):
         output = io.StringIO()
@@ -4232,7 +4232,7 @@ class V2TSmokeTests(unittest.TestCase):
             cli.cmd_setup([])
 
         self.assertEqual(config.load().backend, "qwen3-asr")
-        self.assertIn("uv tool install --python 3.13 'voice2text[qwen]'", output.getvalue())
+        self.assertIn("uv tool install --python 3.13 --compile-bytecode 'voice2text[qwen]'", output.getvalue())
 
     def test_menubar_install_builds_a_grantable_native_app(self):
         destination = Path(self.tempdir.name) / "Voice2Text.app"

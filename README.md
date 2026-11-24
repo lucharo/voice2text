@@ -10,7 +10,7 @@
 The default speech and cleanup models run on your Apple Silicon Mac. Model files download on first use.
 
 ```bash
-uv tool install --python 3.13 voice2text
+uv tool install --python 3.13 --compile-bytecode voice2text
 v2t
 ```
 

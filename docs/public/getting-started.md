@@ -9,7 +9,7 @@
 ## Install and dictate
 
 ```bash
-uv tool install --python 3.13 voice2text
+uv tool install --python 3.13 --compile-bytecode voice2text
 v2t
 ```
 
@@ -53,7 +53,7 @@ v2t service install
 ## Update
 
 ```bash
-uv tool upgrade voice2text
+uv tool upgrade --compile-bytecode voice2text
 ```
 
 If you installed the menu app, also run `brew upgrade --cask voice2text`. Choose **Restart v2t** in its menu, or stop and rerun the terminal engine.

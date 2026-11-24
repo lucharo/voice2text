@@ -75,8 +75,8 @@ The menu's **Settings**, **Transcription Model** and **Cleanup Model** choices u
 |---|---|---|
 | `parakeet-coreml` | `FluidInference/parakeet-tdt-0.6b-v3-coreml`, Neural Engine | Included |
 | `parakeet` | `mlx-community/parakeet-tdt-0.6b-v3`, MLX on the GPU | Included |
-| `whisper` | `mlx-community/whisper-large-v3-turbo` | `uv tool install --python 3.13 'voice2text[whisper]'` |
-| `qwen3-asr` | `mlx-community/Qwen3-ASR-1.7B-8bit` | `uv tool install --python 3.13 'voice2text[qwen]'` |
+| `whisper` | `mlx-community/whisper-large-v3-turbo` | `uv tool install --python 3.13 --compile-bytecode 'voice2text[whisper]'` |
+| `qwen3-asr` | `mlx-community/Qwen3-ASR-1.7B-8bit` | `uv tool install --python 3.13 --compile-bytecode 'voice2text[qwen]'` |
 
 Core ML also supports the English-only `ConwayResearch/Underdog-Bark-3.0-Pro` model. See [benchmarks](../benchmarks.md) before switching models.
 

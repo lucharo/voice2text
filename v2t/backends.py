@@ -408,7 +408,7 @@ class WhisperSTT:
             import mlx_whisper
         except ImportError as e:
             raise SystemExit(
-                "whisper backend needs: uv tool install --python 3.13 'voice2text[whisper]'"
+                "whisper backend needs: uv tool install --python 3.13 --compile-bytecode 'voice2text[whisper]'"
             ) from e
         from huggingface_hub import snapshot_download
 
@@ -460,7 +460,7 @@ class QwenASRSTT:
             from mlx_audio.stt import load
         except ImportError as e:
             raise SystemExit(
-                "qwen3-asr backend needs: uv tool install --python 3.13 'voice2text[qwen]'"
+                "qwen3-asr backend needs: uv tool install --python 3.13 --compile-bytecode 'voice2text[qwen]'"
             ) from e
         repo = model or self.default_model
         self.model = load_cache_first(repo, lambda: load(repo))
