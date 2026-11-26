@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **An update from the menu says Restarting…, not Stopping….** When an update relaunched the menu app, the pill read Stopping… while the engine shut down, as if you had pressed Stop. It now reads Restarting….
+
 ## 0.6.2
 
 - **The first start after an update is no longer slow.** `uv tool install` and `uv tool upgrade` leave the engine's Python code uncompiled, so the first start after an update compiled about 1,500 files before it could load anything: a restart on 24 Nov took about 60 s to reach Ready instead of a few seconds. The menu's **Update to …** row, and the install and update commands in the docs, the cask and v2t's own messages, now pass `--compile-bytecode`, which does that work during the install. If you update by hand, use `uv tool upgrade --compile-bytecode voice2text`.
