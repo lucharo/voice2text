@@ -73,7 +73,7 @@ final class TestClock: @unchecked Sendable {
   let clock = TestClock()
 
   /// A service with its model "on the device" (a temporary folder), no cleanup, and `speech` as the model.
-  func service(_ speech: StubSpeech, loadedBefore: Bool = false,
+  func service(_ speech: StubSpeech, loadedBefore: Bool = false, recorder: AudioSource = StoppedAudio(),
                recommendation: Recommendation = .choose(for: .init(appleIntelligence: false, appleIntelligenceCompatible: false))) throws -> DictationService {
     let model = dir.appending(path: "Models/model")
     try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
@@ -82,7 +82,7 @@ final class TestClock: @unchecked Sendable {
     if loadedBefore { store.markLoaded() }
     let dictation = DictationService(
       recommendation: recommendation, history: History(file: dir.appending(path: "h.json")),
-      dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: StoppedAudio(), store: store,
+      dictionary: PersonalDictionary(file: dir.appending(path: "d.txt")), recorder: recorder, store: store,
       engine: speech, defaults: defaults, now: { [clock] in clock.now })
     dictation.refreshModelStorage()
     return dictation
@@ -202,6 +202,52 @@ final class TestClock: @unchecked Sendable {
     #expect(dictation.history.items.count == 1)
     #expect(dictation.state == .idle)
     dictation.coolDown()
+  }
+
+  /// With "Stop after each recording" (-1), Stop turns off the microphone right away while still transcribing and
+  /// delivering the text, then stops the heartbeat.
+  @Test func stopAfterEachRecordingFreesTheMicrophoneAtStop() async throws {
+    defaults.set(-1, forKey: "warmMinutes")
+    let speech = StubSpeech()
+    let audio = StoppedAudio()
+    let dictation = try service(speech, recorder: audio)
+    await dictation.prepareModel()
+    dictation.warmUp()
+    dictation.start()
+    #expect(audio.running)
+    await speech.holdTheNextDecode()
+    dictation.stop()
+    await speech.waitUntilHeld()
+    #expect(audio.running == false)
+    #expect(dictation.state == .transcribing)
+
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(dictation.state == .needsApp)
+    #expect(defaults.double(forKey: DictationChannel.heartbeatKey) == 0)
+    #expect(defaults.string(forKey: DictationChannel.resultKey) == "<208800> <192000> <231200>")
+  }
+
+  /// Cancelling after Done with "Stop after each recording" frees the mic, stops the heartbeat and delivers nothing.
+  @Test func cancelAfterDoneWithStopAfterEachRecordingStopsHeartbeat() async throws {
+    defaults.set(-1, forKey: "warmMinutes")
+    let speech = StubSpeech()
+    let audio = StoppedAudio()
+    let dictation = try service(speech, recorder: audio)
+    await dictation.prepareModel()
+    dictation.warmUp()
+    dictation.start()
+    await speech.holdTheNextDecode()
+    dictation.stop()
+    await speech.waitUntilHeld()
+
+    dictation.cancelTranscription()
+    try await releaseAndWaitForTheWork(dictation, speech)
+
+    #expect(audio.running == false)
+    #expect(dictation.state == .needsApp)
+    #expect(defaults.double(forKey: DictationChannel.heartbeatKey) == 0)
+    expectNothingDelivered(dictation)
   }
 }
 

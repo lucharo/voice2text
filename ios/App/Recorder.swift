@@ -23,9 +23,26 @@ final class Recorder: AudioSource, @unchecked Sendable {
   private var samples: [Float] = []
   private var capturing = false
   private var converter: AVAudioConverter?
+  private var resetConverter = false
   private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
   private(set) var running = false
   private var lastLevel: Float = 0
+  /// Called on the main actor if iOS stops the audio engine unexpectedly (e.g. a route/format change).
+  var onUnexpectedStop: (@MainActor @Sendable () -> Void)?
+  private var configObserver: NSObjectProtocol?
+
+  init() {
+    configObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+    ) { [weak self] _ in
+      guard let self, self.running, !self.engine.isRunning else { return }
+      MainActor.assumeIsolated { self.onUnexpectedStop?() }
+    }
+  }
+
+  deinit {
+    if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+  }
 
   var level: Float { lock.lock(); defer { lock.unlock() }; return capturing ? lastLevel : 0 }
 
@@ -41,13 +58,21 @@ final class Recorder: AudioSource, @unchecked Sendable {
     let session = AVAudioSession.sharedInstance()
     let choice = Settings.shared.microphoneChoice
     try session.setCategory(.playAndRecord, mode: .default, options: Self.options(for: choice))
+    // iOS mutes haptics and system sounds while an app records, and the input runs for the whole warm session:
+    // without this the keyboard's key haptics and clicks go quiet for as long as the mic is ready
+    try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
     try session.setActive(true)
     // a wired headset would otherwise take over the input even with the iPhone's microphone chosen
     let builtIn = session.availableInputs?.first { $0.portType == .builtInMic }
     try? session.setPreferredInput(choice == .iPhone ? builtIn : nil)
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
-    converter = AVAudioConverter(from: format, to: target)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      release()
+      throw NSError(domain: "Recorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone input format is unavailable."])
+    }
+    let conv = AVAudioConverter(from: format, to: target)
+    lock.lock(); converter = conv; resetConverter = false; lock.unlock()
     input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in self?.append(buffer) }
     engine.prepare()
     do {
@@ -78,14 +103,16 @@ final class Recorder: AudioSource, @unchecked Sendable {
   }
 
   private func release() {
+    lock.lock(); capturing = false; samples = []; lastLevel = 0; resetConverter = false; lock.unlock()
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
+    engine.reset()
+    lock.lock(); converter = nil; lock.unlock()
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    lock.lock(); capturing = false; samples = []; lock.unlock()
   }
 
   func begin() {
-    lock.lock(); samples = []; capturing = true; lock.unlock()
+    lock.lock(); samples = []; lastLevel = 0; capturing = true; resetConverter = true; lock.unlock()
   }
 
   func end() -> [Float] {
@@ -102,14 +129,20 @@ final class Recorder: AudioSource, @unchecked Sendable {
   }
 
   private func append(_ buffer: AVAudioPCMBuffer) {
-    lock.lock(); let on = capturing; lock.unlock()
-    guard on, let converter else { return }
+    lock.lock()
+    let on = capturing
+    let conv = converter
+    let shouldReset = resetConverter
+    if shouldReset { resetConverter = false }
+    lock.unlock()
+    guard on, let conv else { return }
+    if shouldReset { conv.reset() }
     let ratio = target.sampleRate / buffer.format.sampleRate
     let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 32)
     guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-    var fed = false
+    nonisolated(unsafe) var fed = false
     var error: NSError?
-    converter.convert(to: out, error: &error) { _, status in
+    conv.convert(to: out, error: &error) { _, status in
       if fed { status.pointee = .noDataNow; return nil }
       fed = true
       status.pointee = .haveData

@@ -212,6 +212,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardViewDelegate 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
     dictation.detach()
+    panel.stopTimer()
     dlog("disappear")
     debugLog?.flush(wait: true)  // iOS may end a closed keyboard before a queued write runs
   }

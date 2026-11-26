@@ -240,6 +240,7 @@ struct ModelRow: View {
 
 struct WarmRow: View {
   @EnvironmentObject var dictation: DictationService
+  @AppStorage("warmMinutes", store: Settings.shared.defaults) private var warmMinutes = Settings.defaultWarmMinutes
   var body: some View {
     Toggle(isOn: Binding(get: { dictation.state != .needsApp }, set: { $0 ? dictation.warmUp() : dictation.coolDown() })) {
       VStack(alignment: .leading, spacing: 2) {
@@ -256,6 +257,7 @@ struct WarmRow: View {
   }
   var subtitle: String {
     guard dictation.state != .needsApp else { return "Off: the keyboard's mic opens v2t once to turn it on." }
+    if warmMinutes < 0 { return "On: turns off after each recording." }
     if let until = dictation.warmUntil { return "On: dictate from any app until \(until.formatted(date: .omitted, time: .shortened)), 15 minutes after your last dictation unless changed below. The orange dot shows while it's on; only what you say between the mic taps is kept." }
     return "Dictate from any app until you turn this off. The orange dot shows while it's on."
   }
@@ -566,6 +568,7 @@ struct WarmLengthRow: View {
   @State private var warm = Settings.shared.warmMinutes
   var body: some View {
     Picker("Keep the mic ready for", selection: $warm) {
+      Text("Stop after each recording").tag(-1)
       Text("5 minutes").tag(5)
       Text("15 minutes").tag(15)
       Text("1 hour").tag(60)
