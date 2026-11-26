@@ -699,6 +699,7 @@ final class Voice2TextMenu: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLog("quitting to relaunch: \(command.joined(separator: " "))")
+        restarting = true  // the pill says "Restarting…", not "Stopping…", while the update relaunches
         quitSoon()
     }
 
